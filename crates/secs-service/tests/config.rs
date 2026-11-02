@@ -116,6 +116,33 @@ fn new_project(service: &Service, path: &Path, preset: &str) {
 }
 
 #[test]
+fn target_preset_follows_the_points_not_the_stored_label() {
+    let root = root("target-label");
+    let project = root.join("label.secs");
+    let service = Service::new(Deps::default());
+    new_project(&service, &project, "2.0");
+    // A new project stores upstream's `target_preset = "flat"` next to the
+    // non-flat default points; upstream's menu checks 사용자 지정 for it.
+    let Response::TargetGet(target) = call(&service, Request::TargetGet) else {
+        panic!()
+    };
+    assert_ne!(
+        target.points,
+        [(25.0, 0.0), (200.0, 0.0), (1000.0, 0.0), (16000.0, 0.0)]
+    );
+    assert_eq!(target.preset, None);
+    let Response::TargetSetPoints(edited) = call(
+        &service,
+        Request::TargetSetPoints(TargetPointsParams {
+            points: vec![(16000.0, 0.0), (25.0, 0.0), (1000.0, 0.0), (200.0, 0.0)],
+        }),
+    ) else {
+        panic!()
+    };
+    assert_eq!(edited.preset.as_deref(), Some("flat"));
+}
+
+#[test]
 fn config_edit_methods_mark_dirty_and_emit_upstream_patch_sheet() {
     let root = root("edit");
     let project = root.join("edit.secs");
