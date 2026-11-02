@@ -128,6 +128,36 @@ class ApiTests(unittest.TestCase):
                 with patch.dict(os.environ, {}, clear=True), self.assertRaises(api.urllib.error.HTTPError):
                     api.run(directory, "trusted", {}, lambda *_: self.fail("sent"), counter)
 
+    def test_a_full_prompt_over_the_byte_ceiling_with_its_policy_falls_back_to_the_diff(self):
+        # prepare bounds the prompt alone; the request carries the policy too.
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            prepared(directory, full="x" * 15)
+            calls = []
+            with patch.object(api, "MAX_INPUT_BYTES", 20), patch.dict(os.environ, {}, clear=True):
+                api.run(directory, "trusted", {}, lambda body, timeout: calls.append(body) or completed(),
+                        lambda body: counted(10))
+            self.assertEqual([call["input"] for call in calls], ["diff prompt"])
+
+    def test_effort_defaults_to_xhigh(self):
+        body = api.build_request("diff", "policy", {}, "gpt-6.1-sol", "xhigh", 16000)
+        self.assertEqual(body["reasoning"], {"effort": "xhigh"})
+        workflow = (Path(__file__).parents[1] / "workflows/sol-review.yml").read_text()
+        self.assertIn("vars.SOL_REVIEW_EFFORT || 'xhigh'", workflow)
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            prepared(directory)
+            calls = []
+            with patch.dict(os.environ, {}, clear=True):
+                api.run(directory, "trusted", {}, lambda body, timeout: calls.append(body) or completed(),
+                        lambda body: counted(10))
+            self.assertEqual(calls[0]["reasoning"], {"effort": "xhigh"})
+
+    def test_policy_carries_the_korean_writing_rules(self):
+        policy = (Path(__file__).parents[1] / "codex/policy.txt").read_text(encoding="utf-8")
+        self.assertIn("한국어 답변은 존댓말로 작성하라.", policy)
+        self.assertIn("em-dash를 사용하지 마라.", policy)
+
     def test_a_prompt_dropped_by_the_byte_ceiling_is_not_counted(self):
         with tempfile.TemporaryDirectory() as tmp:
             directory = Path(tmp)

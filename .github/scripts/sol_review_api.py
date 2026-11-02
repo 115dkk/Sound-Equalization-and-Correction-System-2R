@@ -49,7 +49,7 @@ def build_request(prompt, policy, schema, model, effort, output_tokens):
         raise ValueError("Input missing or exceeds byte budget")
     if model != "gpt-6.1-sol":
         raise ValueError("Model change requires reviewing capabilities and pricing")
-    if effort not in ("low", "medium", "high"):
+    if effort not in ("low", "medium", "high", "xhigh"):
         raise ValueError("Unsupported reasoning effort")
     return {
         "model": model, "instructions": policy,
@@ -116,10 +116,15 @@ def choose(directory, policy, schema, counter=None):
         path = directory / name
         if not path.is_file():
             continue
+        prompt = path.read_text()
+        # prepare could bound only the prompt; the request also carries the
+        # policy, so a full prompt just under the ceiling still falls to diff.
+        if index < len(PROMPTS) - 1 and len((prompt + policy).encode()) > MAX_INPUT_BYTES:
+            continue
         body = build_request(
-            path.read_text(), policy, schema,
+            prompt, policy, schema,
             os.environ.get("REVIEW_MODEL", "gpt-6.1-sol"),
-            os.environ.get("REVIEW_EFFORT", "high"),
+            os.environ.get("REVIEW_EFFORT", "xhigh"),
             os.environ.get("REVIEW_MAX_OUTPUT_TOKENS", "64000"),
         )
         try:
@@ -146,7 +151,7 @@ def run(directory, policy, schema, transport=None, counter=None):
     meta = strict_json(metadata.read_text())
     meta["context_mode"], meta["input_tokens"] = mode, tokens
     metadata.write_text(json.dumps(meta))
-    timeout = bounded_int(os.environ.get("REVIEW_TIMEOUT_SECONDS", "1200"), 30, 1800)
+    timeout = bounded_int(os.environ.get("REVIEW_TIMEOUT_SECONDS", "1800"), 30, 1800)
     result = transport(body, timeout) if transport else post("responses", body, timeout)
     value = extract_result(result)
     output.write_text(json.dumps(value, ensure_ascii=False))

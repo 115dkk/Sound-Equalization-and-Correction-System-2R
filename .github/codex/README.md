@@ -67,13 +67,16 @@ OIDC 계정/연결, secret 등록, 보안 규칙 변경은 이 코드의 작업�
 | SOL_REVIEW_ENABLED | 켜짐 | 문자열 `false`일 때만 전체 실행 제외 |
 | SOL_REVIEW_PUBLISH | 켜짐 | 문자열 `false`일 때만 게시 대신 dry-run |
 | SOL_REVIEW_MODEL | gpt-6.1-sol | 현재 허용 모델 하나; 교체 시 기능/가격과 allowlist 검토 |
-| SOL_REVIEW_EFFORT | high | low/medium/high |
+| SOL_REVIEW_EFFORT | xhigh | low/medium/high/xhigh |
 | SOL_REVIEW_MAX_OUTPUT_TOKENS | 64000 | 1024–128000, reasoning/output API 한도 |
-| SOL_REVIEW_TIMEOUT_SECONDS | 1200 | 30–1800초, 별도 Actions 단계 32분/리뷰 잡 40분 한도 |
+| SOL_REVIEW_TIMEOUT_SECONDS | 1800 | 30–1800초, 별도 Actions 단계 32분/리뷰 잡 40분 한도 |
 
-실행당 유료 Responses 호출은 **1회**입니다. tools, 이전 응답 연결, 자동 재시도가 없습니다.
-입력 byte 제한은 정확한 토큰 또는 달러 상한이 아닙니다. 무료 잔액이나 무료-only를 보장하지 않습니다.
-2026-11-02의 가격(입력 100만 토큰당 2달러, 출력 100만 토큰당 10달러)으로 한도를 다 쓰면 한 번에 약 2달러이고, 보통 PR은 그보다 적습니다.
+effort 기본값은 `xhigh`이고(유지보수자 결정 2026-11-02), 생각이 길어지는 만큼 응답 시한 기본값도 허용 최대인 1800초입니다.
+`xhigh`의 추론 토큰도 출력 한도(`SOL_REVIEW_MAX_OUTPUT_TOKENS`)에 들어가므로, 출력 한도에 걸린 불완전 응답이 잦으면 그 값을 올려야 합니다.
+
+실행당 모델 응답 호출은 **1회**이고, 그 앞에 입력 토큰 계산 호출이 프롬프트마다 한 번(많아야 두 번) 있습니다.
+tools, 이전 응답 연결, 자동 재시도가 없습니다. 무료 잔액이나 무료-only를 보장하지 않습니다.
+2026-11-02의 가격(입력 100만 토큰당 2달러, 출력 100만 토큰당 10달러)으로 입력 922,000 토큰과 출력 64,000 토큰을 다 쓰면 한 번에 약 2.5달러이고, 보통 PR은 그보다 적습니다.
 출력 한도 도달 등 불완전 응답은 COMMENT로 알립니다. 재실행은 추가 API 비용이 생길 수 있습니다.
 
 ## 검증
