@@ -2,7 +2,7 @@ use super::{ConvolutionRoute, ConvolutionRouting, convolution_reaper, lua_string
 use std::fs;
 use std::path::PathBuf;
 
-fn example(name: Option<&str>) -> String {
+fn example_at(name: Option<&str>, sample_rate: u32) -> String {
     let inputs = vec!["L".to_owned(), "R".to_owned()];
     let outputs = vec!["R".to_owned(), "L".to_owned(), "SW1".to_owned()];
     let paths = [("R", "SW1"), ("L", "R")]
@@ -19,7 +19,7 @@ fn example(name: Option<&str>) -> String {
     convolution_reaper(
         &ConvolutionRouting {
             schema: 1,
-            sample_rate: 48_000,
+            sample_rate,
             length: 4096,
             format: "f32",
             headroom_db: 0.0,
@@ -29,6 +29,18 @@ fn example(name: Option<&str>) -> String {
         },
         name,
     )
+}
+
+fn example(name: Option<&str>) -> String {
+    example_at(name, 48_000)
+}
+
+#[test]
+fn reaper_script_uses_routing_sample_rate_in_success_text() {
+    let script = example_at(Some("거실"), 96_000);
+    assert!(script.contains("local sample_rate = 96000\n"));
+    assert!(script.contains("%d Hz project and audio device"));
+    assert!(script.contains(", sample_rate)"));
 }
 
 #[test]

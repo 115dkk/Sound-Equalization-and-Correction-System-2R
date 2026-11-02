@@ -43,6 +43,66 @@ class SetVersionTest(unittest.TestCase):
             u.rewritten_manifest(b"version.workspace = true\n", '1.0.0"\nevil=true', Path("x"))
 
 
+class UpdateAddressTest(unittest.TestCase):
+    def test_default_urls_and_old_version_match_the_existing_scenario(self):
+        self.assertEqual(u.OLD_VERSION, "0.0.1")
+        self.assertEqual(u.update_endpoint(), "http://127.0.0.1:8765/latest.json")
+        self.assertEqual(u.update_base_url(), "http://127.0.0.1:8765/")
+        self.assertEqual(u.update_endpoint(), u.ENDPOINT)
+        self.assertEqual(u.update_base_url(), u.BASE_URL)
+
+    def test_tls_urls_use_https_on_the_same_loopback_port(self):
+        self.assertEqual(u.update_endpoint(True), "https://127.0.0.1:8765/latest.json")
+        self.assertEqual(u.update_base_url(True), "https://127.0.0.1:8765/")
+
+
+class ArtifactArgumentsTest(unittest.TestCase):
+    def test_old_installer_name_follows_old_version(self):
+        self.assertEqual(
+            u.old_installer_name("0.8.7-rc.1"),
+            "SECS2R-0.8.7-rc.1-windows-x64-setup.exe",
+        )
+
+    def test_manifest_previous_follows_old_version(self):
+        arguments = u.updater_manifest_command(
+            Path("updater_manifest.py"),
+            "0.9.0",
+            "0.9.0-ci.2",
+            "0.8.7",
+            Path("notes.md"),
+            Path("assets"),
+            "https://127.0.0.1:8765/",
+            "2026-11-02T00:00:00Z",
+            Path("latest.json"),
+        )
+        previous = arguments.index("--previous")
+        self.assertEqual(arguments[previous + 1], "0.8.7")
+
+
+class CertificateCommandTest(unittest.TestCase):
+    def test_openssl_command_creates_a_one_day_loopback_server_leaf(self):
+        self.assertEqual(
+            u.openssl_certificate_command(Path("openssl"), Path("cert.pem"), Path("key.pem")),
+            [
+                "openssl", "req", "-x509", "-newkey", "rsa:2048", "-sha256", "-nodes",
+                "-keyout", "key.pem", "-out", "cert.pem", "-days", "1", "-subj",
+                "/CN=127.0.0.1", "-addext", "subjectAltName=IP:127.0.0.1", "-addext",
+                "extendedKeyUsage=serverAuth", "-addext",
+                "basicConstraints=critical,CA:FALSE",
+            ],
+        )
+
+    def test_certutil_commands_add_the_file_and_delete_its_serial(self):
+        self.assertEqual(
+            u.certutil_add_command(Path("cert.pem")),
+            ["certutil.exe", "-addstore", "-f", "Root", "cert.pem"],
+        )
+        self.assertEqual(
+            u.certutil_delete_command("01A2B3"),
+            ["certutil.exe", "-delstore", "Root", "01A2B3"],
+        )
+
+
 class EnvironmentTest(unittest.TestCase):
     def test_builder_copies_input_and_overrides_only_the_endpoint(self):
         base = {"PATH": "runner-bin", "SECS2R_UPDATE_ENDPOINT": "https://release.invalid/latest.json"}
@@ -53,6 +113,10 @@ class EnvironmentTest(unittest.TestCase):
         })
         self.assertEqual(base["SECS2R_UPDATE_ENDPOINT"], "https://release.invalid/latest.json")
         self.assertIsNot(environment, base)
+
+    def test_tls_builder_pins_children_to_the_https_endpoint(self):
+        environment = u.build_environment({"PATH": "runner-bin"}, tls=True)
+        self.assertEqual(environment["SECS2R_UPDATE_ENDPOINT"], u.update_endpoint(True))
 
 
 class UninstallVersionTest(unittest.TestCase):
@@ -209,11 +273,23 @@ class ParserTest(unittest.TestCase):
             "--artifacts", "artifacts",
         ])
         self.assertEqual(args.old, Path("old"))
+        self.assertEqual(args.old_version, "0.0.1")
+        self.assertFalse(args.tls)
         self.assertEqual(args.asset_version, "0.0.0-ci.42")
         self.assertEqual(args.tauri_driver, Path("tauri-driver.exe"))
         self.assertEqual(args.msedgedriver, Path("msedgedriver.exe"))
         self.assertIs(args.function, u.run)
         self.assertIn("set-version", u.parser().format_help())
+
+    def test_run_parser_accepts_old_version_and_tls(self):
+        args = u.parser().parse_args([
+            "run", "--old", "old", "--old-version", "0.8.7", "--new", "new",
+            "--version", "0.9.0", "--asset-version", "0.9.0-ci.2",
+            "--tauri-driver", "tauri-driver.exe", "--msedgedriver", "msedgedriver.exe",
+            "--report", "report.md", "--artifacts", "artifacts", "--tls",
+        ])
+        self.assertEqual(args.old_version, "0.8.7")
+        self.assertTrue(args.tls)
 
 
 if __name__ == "__main__":

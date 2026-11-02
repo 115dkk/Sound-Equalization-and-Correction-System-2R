@@ -8,12 +8,16 @@ and step orchestration.
 from __future__ import annotations
 
 import argparse
+import functools
+import http.server
 import json
 import os
 import re
 import shutil
+import ssl
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.request
 from contextlib import contextmanager
@@ -88,6 +92,135 @@ def validate_version(version: str) -> None:
     require(SEMVER.fullmatch(version) is not None, f"invalid semantic version: {version!r}")
 
 
+def update_endpoint(tls: bool = False) -> str:
+    return f"{'https' if tls else 'http'}://127.0.0.1:8765/latest.json"
+
+
+def update_base_url(tls: bool = False) -> str:
+    return f"{'https' if tls else 'http'}://127.0.0.1:8765/"
+
+
+def old_installer_name(version: str) -> str:
+    validate_version(version)
+    return f"{PRODUCT}-{version}-windows-x64-setup.exe"
+
+
+def openssl_certificate_command(openssl: Path, certificate: Path, private_key: Path) -> list[str]:
+    """Build the non-interactive command for the runner-local TLS leaf certificate."""
+    return [
+        str(openssl),
+        "req",
+        "-x509",
+        "-newkey",
+        "rsa:2048",
+        "-sha256",
+        "-nodes",
+        "-keyout",
+        str(private_key),
+        "-out",
+        str(certificate),
+        "-days",
+        "1",
+        "-subj",
+        "/CN=127.0.0.1",
+        "-addext",
+        "subjectAltName=IP:127.0.0.1",
+        "-addext",
+        "extendedKeyUsage=serverAuth",
+        "-addext",
+        "basicConstraints=critical,CA:FALSE",
+    ]
+
+
+def certutil_add_command(certificate: Path) -> list[str]:
+    return ["certutil.exe", "-addstore", "-f", "Root", str(certificate)]
+
+
+def certutil_delete_command(serial: str) -> list[str]:
+    require(re.fullmatch(r"[0-9A-Fa-f]+", serial) is not None,
+            f"invalid certificate serial: {serial!r}")
+    return ["certutil.exe", "-delstore", "Root", serial]
+
+
+def find_openssl() -> Path:
+    """Find OpenSSL on PATH or in a Git for Windows installation."""
+    candidates: list[Path] = []
+    on_path = shutil.which("openssl")
+    if on_path:
+        candidates.append(Path(on_path))
+
+    git = shutil.which("git")
+    if git:
+        git_directory = Path(git).resolve().parent
+        git_root = git_directory.parent if git_directory.name.lower() in {"bin", "cmd"} else git_directory
+        candidates.extend((git_root / "usr" / "bin" / "openssl.exe",
+                           git_root / "mingw64" / "bin" / "openssl.exe"))
+
+    for variable in ("ProgramW6432", "ProgramFiles", "ProgramFiles(x86)"):
+        root = os.environ.get(variable)
+        if root:
+            candidates.extend((Path(root) / "Git" / "usr" / "bin" / "openssl.exe",
+                               Path(root) / "Git" / "mingw64" / "bin" / "openssl.exe"))
+
+    seen: set[Path] = set()
+    for candidate in candidates:
+        if candidate not in seen and candidate.is_file():
+            return candidate
+        seen.add(candidate)
+    raise CheckError(
+        "OpenSSL is missing; expected openssl on PATH or under Git for Windows "
+        r"(usr\bin or mingw64\bin)"
+    )
+
+
+def read_certificate_serial(openssl: Path, certificate: Path) -> str:
+    result = command([openssl, "x509", "-in", certificate, "-noout", "-serial"])
+    match = re.fullmatch(r"serial=([0-9A-Fa-f]+)\s*", result.stdout)
+    require(match is not None, f"OpenSSL returned an invalid certificate serial: {result.stdout!r}")
+    return match.group(1)
+
+
+def updater_manifest_command(
+        script: Path, version: str, asset_version: str, previous: str, notes: Path,
+        assets: Path, base_url: str, pub_date: str, output: Path) -> list[str]:
+    """Build updater_manifest.py argv so the previous version is unit-testable."""
+    return [
+        sys.executable,
+        "-I",
+        str(script),
+        "latest",
+        "--only",
+        "windows",
+        "--version",
+        version,
+        "--asset-version",
+        asset_version,
+        "--previous",
+        previous,
+        "--notes-file",
+        str(notes),
+        "--assets",
+        str(assets),
+        "--base-url",
+        base_url,
+        "--pub-date",
+        pub_date,
+        "--out",
+        str(output),
+    ]
+
+
+def serve_https(args) -> None:
+    """Serve one directory over runner-local TLS 1.2 or newer."""
+    handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(args.directory))
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", args.port), handler)
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
+    context.load_cert_chain(certfile=str(args.cert), keyfile=str(args.key))
+    server.socket = context.wrap_socket(server.socket, server_side=True)
+    server.serve_forever()
+
+
 def rewritten_manifest(data: bytes, version: str, path: Path) -> bytes:
     """Replace the package's workspace version line exactly once."""
     validate_version(version)
@@ -118,10 +251,10 @@ def set_versions(root: Path, version: str) -> list[Path]:
     return [path for path, _data in pending]
 
 
-def build_environment(base: dict[str, str] | None = None) -> dict[str, str]:
+def build_environment(base: dict[str, str] | None = None, tls: bool = False) -> dict[str, str]:
     """Return a child environment pinned to the runner-local update endpoint."""
     environment = dict(os.environ if base is None else base)
-    environment["SECS2R_UPDATE_ENDPOINT"] = ENDPOINT
+    environment["SECS2R_UPDATE_ENDPOINT"] = update_endpoint(tls)
     return environment
 
 
@@ -285,9 +418,11 @@ class UpdateScenario:
         self.artifacts = args.artifacts
         self.driver = WebDriver()
         self.records: list[dict] = []
+        self.endpoint = update_endpoint(args.tls)
+        self.base_url = update_base_url(args.tls)
         self.facts = [
-            f"Old build: {OLD_VERSION}; target build: {args.version}; asset name version: {args.asset_version}.",
-            f"Every child process inherited SECS2R_UPDATE_ENDPOINT={ENDPOINT}.",
+            f"Old build: {args.old_version}; target build: {args.version}; asset name version: {args.asset_version}.",
+            f"Every child process inherited SECS2R_UPDATE_ENDPOINT={self.endpoint}.",
             "The updater signature remained enabled; latest.json used the new installer's .sig file.",
         ]
         self.server = None
@@ -295,9 +430,15 @@ class UpdateScenario:
         self.shell = None
         self.handles = []
         self.server_dir = self.artifacts / "update-server"
+        # Outside the artifacts folder: the workflow uploads that folder, and
+        # the private key has no business in a downloadable artifact.
+        tls_folder = Path(tempfile.mkdtemp(prefix="secs2r-update-tls-"))
+        self.certificate = tls_folder / "update-server-cert.pem"
+        self.private_key = tls_folder / "update-server-key.pem"
+        self.certificate_serial = None
         self.edge_binary = args.msedgedriver
         self.installed_folders: set[Path] = set()
-        self.old_installer = args.old / f"{PRODUCT}-{OLD_VERSION}-windows-x64-setup.exe"
+        self.old_installer = args.old / old_installer_name(args.old_version)
         self.new_installer = args.new / f"{PRODUCT}-{args.asset_version}-windows-x64-setup.exe"
         self.served_installer = self.server_dir / self.new_installer.name
         self.app_data = Path(os.environ["APPDATA"]) / "io.github.115dkk.secs2r"
@@ -354,40 +495,58 @@ class UpdateScenario:
         notes.write_text(TEST_NOTE, encoding="utf-8")
         manifest_script = Path(__file__).with_name("updater_manifest.py")
         pub_date = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-        command([
-            sys.executable,
-            "-I",
+        command(updater_manifest_command(
             manifest_script,
-            "latest",
-            "--only",
-            "windows",
-            "--version",
             self.args.version,
-            "--asset-version",
             self.args.asset_version,
-            "--previous",
-            OLD_VERSION,
-            "--notes-file",
+            self.args.old_version,
             notes,
-            "--assets",
             self.server_dir,
-            "--base-url",
-            BASE_URL,
-            "--pub-date",
+            self.base_url,
             pub_date,
-            "--out",
             self.server_dir / "latest.json",
-        ])
+        ))
+        if self.args.tls:
+            openssl = find_openssl()
+            # Git for Windows' usr\bin openssl is an MSYS program that rewrites
+            # arguments starting with "/" (the -subj value) into Windows paths.
+            command(openssl_certificate_command(openssl, self.certificate, self.private_key),
+                    env=os.environ | {"MSYS_NO_PATHCONV": "1", "MSYS2_ARG_CONV_EXCL": "*"})
+            self.certificate_serial = read_certificate_serial(openssl, self.certificate)
+            command(certutil_add_command(self.certificate))
+            server_arguments = [
+                sys.executable,
+                "-I",
+                Path(__file__),
+                "serve-https",
+                "--dir",
+                self.server_dir,
+                "--cert",
+                self.certificate,
+                "--key",
+                self.private_key,
+                "--port",
+                "8765",
+            ]
+            context = ssl.create_default_context(cafile=str(self.certificate))
+            opener = urllib.request.build_opener(
+                urllib.request.ProxyHandler({}), urllib.request.HTTPSHandler(context=context)
+            )
+        else:
+            server_arguments = [
+                sys.executable, "-I", "-m", "http.server", "8765", "--bind", "127.0.0.1"
+            ]
+            opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
         self.server = self.start_background(
-            [sys.executable, "-I", "-m", "http.server", "8765", "--bind", "127.0.0.1"],
+            server_arguments,
             "update-server.log",
-            self.server_dir,
+            None if self.args.tls else self.server_dir,
         )
-        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
         def manifest_ready():
-            with opener.open(ENDPOINT, timeout=2) as response:
-                require(response.geturl() == ENDPOINT, f"local update endpoint redirected to {response.geturl()}")
+            with opener.open(self.endpoint, timeout=2) as response:
+                require(response.geturl() == self.endpoint,
+                        f"local update endpoint redirected to {response.geturl()}")
                 value = json.load(response)
             return value
 
@@ -400,11 +559,11 @@ class UpdateScenario:
         return f"127.0.0.1:8765 served latest.json for {manifest['version']} and {self.served_installer.name}.sig"
 
     def environment(self) -> str:
-        require(os.environ.get("SECS2R_UPDATE_ENDPOINT") == ENDPOINT,
+        require(os.environ.get("SECS2R_UPDATE_ENDPOINT") == self.endpoint,
                 "the process environment is not pinned to the runner-local endpoint")
-        require(self.environment_values.get("SECS2R_UPDATE_ENDPOINT") == ENDPOINT,
+        require(self.environment_values.get("SECS2R_UPDATE_ENDPOINT") == self.endpoint,
                 "the child environment is not pinned to the runner-local endpoint")
-        return f"parent and explicit child environments use {ENDPOINT}"
+        return f"parent and explicit child environments use {self.endpoint}"
 
     def host_status(self, host: Path) -> dict:
         return parse_status(command([host, "status"], timeout=10).stdout)
@@ -414,13 +573,14 @@ class UpdateScenario:
         folder = find_installed_app()
         self.installed_folders.add(folder)
         version = uninstall_entry_version(detailed_uninstall_entries)
-        require(version == OLD_VERSION, f"old installer registered DisplayVersion {version!r}")
+        require(version == self.args.old_version,
+                f"old installer registered DisplayVersion {version!r}")
         host = folder / "secs2r-host.exe"
         command([host, "install"], timeout=120)
         status = wait_for(
             "old service status",
             lambda: self.host_status(host),
-            lambda value: value.get("version") == OLD_VERSION,
+            lambda value: value.get("version") == self.args.old_version,
             timeout=60,
             interval=1,
         )
@@ -528,7 +688,7 @@ ConvertTo-Json -InputObject $rows -Compress
         def finished():
             version = installed_version_or_none()
             processes = self.installer_processes()
-            notice = check_update_json(self.update_json, OLD_VERSION, self.args.version)
+            notice = check_update_json(self.update_json, self.args.old_version, self.args.version)
             return {"version": version, "installer_processes": processes, "notice": notice,
                     "app_processes": self.app_processes()}
 
@@ -541,7 +701,7 @@ ConvertTo-Json -InputObject $rows -Compress
         )
         return (
             f"DisplayVersion={evidence['version']}; no installer process remained; "
-            f"{self.update_json} records {OLD_VERSION} -> {self.args.version}"
+            f"{self.update_json} records {self.args.old_version} -> {self.args.version}"
         )
 
     def service_update(self) -> str:
@@ -627,15 +787,18 @@ ConvertTo-Json -InputObject $rows -Compress
         command([self.old_installer, "/S"], timeout=240)
         folder = find_installed_app()
         self.installed_folders.add(folder)
-        require(uninstall_entry_version(detailed_uninstall_entries) == OLD_VERSION,
-                "the second old-build installation did not register version 0.0.1")
+        old_version = uninstall_entry_version(detailed_uninstall_entries)
+        require(old_version == self.args.old_version,
+                f"the second old-build installation registered version {old_version!r}")
         shell = folder / "secs2r-host-shell.exe"
         self.shell = self.start_background([shell, "--hidden"], "host-shell-update.log")
 
         def updated():
             return {
                 "version": installed_version_or_none(),
-                "notice": check_update_json(self.update_json, OLD_VERSION, self.args.version),
+                "notice": check_update_json(
+                    self.update_json, self.args.old_version, self.args.version
+                ),
             }
 
         evidence = wait_for(
@@ -659,6 +822,12 @@ ConvertTo-Json -InputObject $rows -Compress
         except subprocess.TimeoutExpired:
             process.kill()
             process.wait(timeout=10)
+
+    def remove_tls_certificate(self) -> None:
+        if self.certificate_serial is None:
+            return
+        command(certutil_delete_command(self.certificate_serial))
+        self.certificate_serial = None
 
     def cleanup(self) -> str:
         errors = []
@@ -688,11 +857,16 @@ ConvertTo-Json -InputObject $rows -Compress
                 self.silent_uninstall()
         except Exception as error:
             errors.append(f"uninstall: {error}")
-        for label, process in (("tauri-driver", self.tauri), ("HTTP server", self.server)):
+        for label, process in (("tauri-driver", self.tauri), ("update server", self.server)):
             try:
                 self.stop_tree(process)
             except Exception as error:
                 errors.append(f"stop {label}: {error}")
+        if self.certificate_serial is not None:
+            try:
+                self.remove_tls_certificate()
+            except Exception as error:
+                errors.append(f"remove runner-local root certificate: {error}")
         try:
             if self.edge_binary.is_file():
                 kill_installed_process(self.edge_binary)
@@ -704,26 +878,34 @@ ConvertTo-Json -InputObject $rows -Compress
             except OSError as error:
                 errors.append(f"close log: {error}")
         require(not errors, "; ".join(errors))
-        return "uninstalled SECS 2R and stopped the shell, tauri-driver, Edge driver, and local HTTP server"
+        certificate_detail = " and removed the runner-local root certificate" if self.args.tls else ""
+        return ("uninstalled SECS 2R and stopped the shell, tauri-driver, Edge driver, "
+                f"and local update server{certificate_detail}")
 
 
 def run(args) -> None:
     runner_only()
+    validate_version(args.old_version)
     validate_version(args.version)
     validate_version(args.asset_version)
     args.artifacts.mkdir(parents=True, exist_ok=True)
     args.report.parent.mkdir(parents=True, exist_ok=True)
-    environment = build_environment()
+    environment = build_environment(tls=args.tls)
     with applied_environment(environment):
         scenario = UpdateScenario(args, environment)
         try:
             execute_steps(scenario)
         finally:
-            scenario.write_report()
-            summary = os.environ.get("GITHUB_STEP_SUMMARY")
-            if summary:
-                with open(summary, "a", encoding="utf-8") as stream:
-                    stream.write(render_report(scenario.records, scenario.facts))
+            try:
+                # Normally the cleanup step already removed it. This retry also covers
+                # interruption before that step or before its operation could begin.
+                scenario.remove_tls_certificate()
+            finally:
+                scenario.write_report()
+                summary = os.environ.get("GITHUB_STEP_SUMMARY")
+                if summary:
+                    with open(summary, "a", encoding="utf-8") as stream:
+                        stream.write(render_report(scenario.records, scenario.facts))
 
 
 def parser() -> argparse.ArgumentParser:
@@ -738,6 +920,7 @@ def parser() -> argparse.ArgumentParser:
         help="install old build A and observe its signed update to B; GitHub Windows runners only",
     )
     scenario.add_argument("--old", type=Path, required=True)
+    scenario.add_argument("--old-version", default=OLD_VERSION)
     scenario.add_argument("--new", type=Path, required=True)
     scenario.add_argument("--version", required=True)
     scenario.add_argument("--asset-version", required=True)
@@ -745,7 +928,15 @@ def parser() -> argparse.ArgumentParser:
     scenario.add_argument("--msedgedriver", type=Path, required=True)
     scenario.add_argument("--report", type=Path, required=True)
     scenario.add_argument("--artifacts", type=Path, required=True)
+    scenario.add_argument("--tls", action="store_true")
     scenario.set_defaults(function=run)
+
+    https = subparsers.add_parser("serve-https", help=argparse.SUPPRESS)
+    https.add_argument("--dir", dest="directory", type=Path, required=True)
+    https.add_argument("--cert", type=Path, required=True)
+    https.add_argument("--key", type=Path, required=True)
+    https.add_argument("--port", type=int, required=True)
+    https.set_defaults(function=serve_https)
     return result
 
 

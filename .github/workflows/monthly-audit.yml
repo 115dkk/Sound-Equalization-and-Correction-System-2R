@@ -587,6 +587,13 @@ jobs:
               echo ""
               cat "$body"
             } >> "$GITHUB_STEP_SUMMARY"
+            # Without the issue nobody would find this audit, and a tagged
+            # baseline would make the next scheduled run skip it for good.
+            # Fail here (the report artifact still uploads below) so
+            # commit-baseline does not run and a rerun files the issue
+            # (audit #155 TD-140).
+            echo "::error::The audit issue was not created; the baseline is not updated."
+            exit 1
           fi
 
       - name: Collect report artifacts

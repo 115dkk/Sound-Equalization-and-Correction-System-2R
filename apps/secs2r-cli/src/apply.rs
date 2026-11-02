@@ -25,6 +25,16 @@ impl ApplyAdapter for NativeApply {
         secs_sys::camilla_apply(address, config_path, config_text, timeout)
     }
 
+    fn camilla_apply_report(
+        &self,
+        address: &str,
+        config_path: &Path,
+        config_text: &str,
+        timeout: Duration,
+    ) -> Result<(ApplyOutcome, Option<String>), IpcError> {
+        secs_sys::camilla_apply_report(address, config_path, config_text, timeout)
+    }
+
     fn eqapo_include_state(&self, config_text: &str) -> IncludeState {
         secs_sys::eqapo_include_state(config_text)
     }

@@ -36,6 +36,7 @@ crates/
   secs-graph/             내보내기 그래프: 신호 사슬과 MIMO 경로의 유일한 검증, 작성기가 함께 읽는 계획과 서포트 묶음
   secs-camilla/           CamillaDSP v4 설정과 FIR
   secs-filters/           필터 값 텍스트와 Equalizer APO 설정
+  secs-apply/             CamillaDSP WebSocket 클라이언트와 Equalizer APO config.txt 편집 (게시하지 않음, ADR 0018)
   secs-service/           애플리케이션 서비스 (깊은 모듈)
   secs-local-api/         127.0.0.1 로컬 HTTP·WebSocket API 서버 (앱이 띄움, ADR 0016)
   secs-api/               공개 크레이트 sound-equalization-and-correction-system-rust-api: Engine과 로컬 API Client (ADR 0016)
@@ -47,6 +48,9 @@ apps/
   secs2r/                 Tauri 2 셸 (커맨드 하나)
   secs2r/ui/              React 19 + TypeScript + Vite 화면
   secs2r-cli/             헤드리스 CLI
+  secs2r-host/            Windows 관리 서비스: 사용자 세션으로 CamillaDSP를 띄우고 Equalizer APO Include를 지킴 (ADR 0018)
+  secs2r-host-shell/      관리 서비스의 트레이 셸 (Tauri 2)
+bindings/python/          PyPI 패키지 secs2r (pyo3로 공개 Rust API를 감쌈, ADR 0019)
 src/, tests/, tools/      업스트림 SECS 2 (파이썬, 오라클, 고치지 않음)
 oracle/                   골든 내보내기 스크립트와 골든 (oracle/README.md)
 ```
@@ -73,13 +77,17 @@ ui ──IPC──> secs2r ─┬─> secs-service ─┬─> secs-engine ─┬
                     ├─> secs-gpu ─────> secs-engine (RidgeBackend seam), secs-compute, secs-types
                     │        └───────> secs-cuda-sys (선택적 네이티브 라이브러리)
                     ├─> secs-sys ─────> wasapi, cpal, OS 조회 크레이트
-                    │        └───────> secs-audio, secs-rew, secs-compute (어댑터가 구현하는 seam)
+                    │        └───────> secs-apply, secs-audio, secs-rew, secs-compute (어댑터가 구현하는 seam)
                     ├─> secs-local-api ─> secs-service, secs-types, axum, tokio
                     └─> secs-rew, secs-types
 secs2r-cli ─────────> secs-service, secs-sys, secs-gpu, secs-rew, secs-compute, secs-types
 secs-api ───────────> secs-types; engine 기능: secs-service, secs-audio, secs-rew;
                       client 기능: ureq, tungstenite
 secs-graph ─────────> secs-dsp, secs-types (작성기를 의존하지 않음)
+secs-apply ─────────> tungstenite (서비스는 시험에서만 의존)
+secs2r-host ────────> secs-sys, secs-apply, secs-types
+secs2r-host-shell ──> secs-sys, secs-types, tauri
+bindings/python ────> secs-api (engine, client 기능), pyo3
 secs-policy ────────> (파일 시스템만 읽음; 테스트가 IPC 메서드 목록 때문에 secs-types)
 secs-engine-testkit ─> secs-engine, secs-oracle (테스트와 예제만 의존; 출하하지 않음)
 ```
@@ -142,7 +150,7 @@ IPC의 기본 동작은 바꾸지 않습니다.
 ## 7. 서비스와 화면
 
 - 화면 결과는 역할·개수·성적표 중심의 요약입니다. FIR 계수와 DSP 사슬은 Rust의 최신 결과와 내부 캐시에 두며, 완료 이벤트와 작업 이력에는 싣지 않습니다. 보정·MIMO 완료 뒤 요약을 한 번 조회하고, 작업 기록은 완료 32개와 모든 활성 작업으로 제한합니다(0009).
-- `secs-service`의 인터페이스는 `call(Request) -> Envelope`와 잡 이벤트입니다. 잡은 종류마다 하나만 동시에 돌고, 취소 토큰이 엔진 안쪽 반복까지 내려갑니다. 결과는 버리지 않고 낡음으로 표시합니다(다시 계산해도 MIMO 결과는 남고 '다시 계산 필요'로 바뀜).
+- `secs-service`의 인터페이스는 `call(Request) -> Envelope`와 잡 이벤트입니다. 잡은 종류마다 하나만 동시에 돌고, 취소 토큰이 엔진 안쪽 반복까지 내려갑니다. 결과는 버리지 않고 낡음으로 표시합니다. 이번 세션에서 계산한 MIMO 결과는 다시 보정해도 남고 '다시 계산 필요'로 바뀝니다. 프로젝트를 다시 열어 캐시에서 되살린 MIMO는 새 보정과 짝이 맞지 않으므로 새 보정이 들어오면 빼고 MIMO를 다시 계산하게 합니다(`crates/secs-service/src/results_tests.rs`, 감사 #155 Q2).
 - 화면은 다섯 단계 레일입니다. 시스템(구성·배선) → 연결·점검(REW 경로 또는 자체 측정 장치, 레벨) → 측정·가져오기 → 보정 → 내보내기. 측정 파일(REW mdat, Dirac 프로젝트) 가져오기 경로를 고르면 연결·점검 단계가 나타나지 않습니다.
 - 설정은 주 경로와 해당 절에서 펼치는 세부 항목으로 공개합니다. 전역 전문가 표시나 숙련도별 접근 제한은 두지 않습니다. 로고의 '전문가 모드 / 킹반인 모드'는 외형 선택이며 설정 접근과 무관합니다. 설정마다 정본 위치는 하나입니다(P58).
 - 설정의 라벨·단위·선택지는 설명 없이도 의미를 알 수 있게 씁니다. 정적 보충 설명은 해당 항목의 도움말로 열고, 현재 상태·추천값·오류·사용 불가 사유·다음 행동은 화면에 유지합니다(P55).

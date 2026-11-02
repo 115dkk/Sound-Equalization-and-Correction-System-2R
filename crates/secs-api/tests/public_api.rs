@@ -40,6 +40,17 @@ fn engine_bootstrap_and_invalid_json() {
 
 #[cfg(feature = "engine")]
 #[test]
+fn engine_subscribe_keeps_its_receiver_return_type_td127() {
+    use std::sync::mpsc::Receiver;
+
+    use sound_equalization_and_correction_system_rust_api::{Engine, JobEvent};
+
+    let engine = Engine::new();
+    let _: Receiver<JobEvent> = engine.subscribe();
+}
+
+#[cfg(feature = "engine")]
+#[test]
 fn engine_calibrate_passes_the_mimo_flag() {
     use sound_equalization_and_correction_system_rust_api::types::compute::ComputePreference;
     use sound_equalization_and_correction_system_rust_api::types::ipc::CalibrateParams;

@@ -26,9 +26,9 @@ class ApiTests(unittest.TestCase):
     def test_invalid_limits_and_model_fail(self):
         for args in (("diff", "policy", {}, "other-model", "high", 16000),
                      ("diff", "policy", {}, "gpt-6.1-sol", "unknown", 16000),
-                     ("diff", "policy", {}, "gpt-6.1-sol", "high", 32001),
+                     ("diff", "policy", {}, "gpt-6.1-sol", "high", 128001),
                      ("diff", "policy", {}, "gpt-6.1-sol", "high", 0),
-                     ("x" * 300001, "policy", {}, "gpt-6.1-sol", "high", 16000)):
+                     ("x" * 1500001, "policy", {}, "gpt-6.1-sol", "high", 16000)):
             with self.subTest(args=args[-3:]), self.assertRaises(ValueError):
                 api.build_request(*args)
 
