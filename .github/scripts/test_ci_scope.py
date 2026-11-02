@@ -75,6 +75,16 @@ class HeavyInputsTest(unittest.TestCase):
             {"test", "integrity", "eqapo-playback", "camilla-playback", "reaper-playback",
              "bundle", "manage-e2e", "update-e2e", "gallery", "miri", "fuzz"})
 
+    def test_needs_in_any_form_carries_the_gate(self):
+        workflow = (
+            "jobs:\n"
+            "  heavy:\n    if: needs.scope.outputs.heavy == 'true'\n"
+            "  inline:\n    needs: heavy\n"
+            "  listed:\n    needs: [lint, inline]\n"
+            "  block:\n    needs:\n      - lint\n      - listed\n    runs-on: x\n"
+            "  free:\n    needs:\n      - lint\n")
+        self.assertEqual(set(s.gated_jobs(workflow)), {"heavy", "inline", "listed", "block"})
+
 
 class DecideTest(unittest.TestCase):
     def test_ci_and_docs_commits_on_light_files_skip_the_heavy_jobs(self):

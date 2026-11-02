@@ -34,7 +34,8 @@ LIGHT_SUBJECT = re.compile(r"^(ci|docs)(\([^)]*\))?!?:")
 GATE = "needs.scope.outputs.heavy == 'true'"
 WORKFLOW = ".github/workflows/ci.yml"
 JOB_START = re.compile(r"^  ([A-Za-z0-9_-]+):\s*$")
-NEEDS = re.compile(r"^    needs:\s*(.+)$", re.MULTILINE)
+# `needs: x`, `needs: [x, y]` or a block list under `needs:`.
+NEEDS = re.compile(r"^    needs:[ \t]*(.*)\n((?:      - .*\n)*)", re.MULTILINE)
 GITHUB_PATH = re.compile(r"\.github/[A-Za-z0-9_./-]+")
 IMPORT = re.compile(r"^\s*(?:from|import)\s+([A-Za-z_][A-Za-z0-9_]*)", re.MULTILINE)
 STRING = re.compile(r"""["']([A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*)["']""")
@@ -63,8 +64,8 @@ def gated_jobs(workflow: str) -> dict[str, str]:
             jobs[current] = []
         elif current:
             jobs[current].append(line)
-    texts = {name: "\n".join(lines) for name, lines in jobs.items()}
-    needs = {name: set(re.findall(r"[A-Za-z0-9_-]+", match.group(1)))
+    texts = {name: "\n".join(lines) + "\n" for name, lines in jobs.items()}
+    needs = {name: set(re.findall(r"[A-Za-z0-9_][A-Za-z0-9_-]*", match.group(1) + " " + match.group(2)))
              for name, text in texts.items()
              if (match := NEEDS.search(text))}
     gated = {name for name, text in texts.items() if GATE in text}
