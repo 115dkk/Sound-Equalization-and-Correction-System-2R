@@ -62,6 +62,19 @@ def code(text):
     return f"{fence}{pad}{text}{pad}{fence}"
 
 
+def locations(meta, path, line):
+    """Where a finding points, as GitHub links: the PR diff at that line (its
+    anchor is the SHA-256 of the path) and a permalink to the lines around it,
+    which GitHub shows as code when it stands alone on a line. A removed file
+    has only its base side."""
+    removed = path in meta.get("removed_files", [])
+    side, sha = ("L", meta["base_sha"]) if removed else ("R", meta["head_sha"])
+    repo = f'https://github.com/{meta["repository"]}'
+    diff = f'{repo}/pull/{meta["pr"]}/files#diff-{hashlib.sha256(path.encode()).hexdigest()}{side}{line}'
+    start, end = max(1, line - 2), min(meta["line_limits"][path], line + 2)
+    return diff, f'{repo}/blob/{sha}/{quote(path, safe="/")}#L{start}-L{end}'
+
+
 def require(ok, message):
     if not ok:
         raise ValueError(message)
@@ -225,6 +238,7 @@ def prepare(event, output, policy, request=api):
     for name in PROMPT_FILES.values():
         (output / name).unlink(missing_ok=True)
     meta["files"] = [f["filename"] for f in files]
+    meta["removed_files"] = [f["filename"] for f in files if f["status"] == "removed"]
     meta["line_limits"] = line_limits
     meta["changed_lines"] = {f["filename"]: changed_ranges(f["patch"], f["status"] == "removed") for f in files}
     meta["prompt_sha256"] = {mode: hashlib.sha256(text.encode()).hexdigest() for mode, text in prompts.items()}
@@ -361,10 +375,11 @@ def publish(event, directory, enabled=False, request=api):
         for index, f in enumerate(result["findings"], 1):
             note = " (병합 차단 범위 밖이라 의견으로 남깁니다)" if f["severity"] == "blocking" and not blocks(f, meta) else ""
             title = " ".join(f["title"].split())
-            location = code(f'{f["path"]}:{f["line"]}')
+            diff, snippet = locations(meta, f["path"], f["line"])
+            location = f'[{code(f["path"] + ":" + str(f["line"]))}]({diff})'
             evidence = "\n".join("> " + line for line in f["evidence"].splitlines())
             body += (f'\n\n**{index}. {title}**{note}\n'
-                     f'{code(f["severity"])} · {code(f["category"])} · {location}\n\n{evidence}')
+                     f'{code(f["severity"])} · {code(f["category"])} · {location}\n\n{snippet}\n\n{evidence}')
     if len(body.encode()) > MAX_RESULT_BYTES:
         decision = "COMMENT"
         body = marker + "\n리뷰 결과가 게시 크기 한도를 초과하여 완료 결과를 적용하지 않았습니다. 수동 검토가 필요합니다. 코드 결함 판정이 아닙니다."

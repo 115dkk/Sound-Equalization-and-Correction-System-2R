@@ -194,12 +194,22 @@ class ReviewTests(unittest.TestCase):
         ]
         self.assertEqual(self.publish(enabled=True), "APPROVE")
         body = self.writes[-1]["body"]
+        anchor = review.hashlib.sha256(b"file.rs").hexdigest()
+        diff = f"https://github.com/115dkk/SECS/pull/7/files#diff-{anchor}"
+        blob = "https://github.com/115dkk/SECS/blob/" + "b" * 40 + "/file.rs"
         self.assertIn("### 지적사항 (2)", body)
-        self.assertIn("**1. Stale prompt**\n`minor` · `behavior` · `file.rs:2`\n\n> first line\n> second line", body)
-        self.assertIn("**2. Concrete defect** (병합 차단 범위 밖이라 의견으로 남깁니다)\n`blocking` · `security` · `file.rs:1`", body)
+        # The location opens the PR diff at that line; the permalink alone on
+        # its line makes GitHub show the lines around it.
+        self.assertIn(f"**1. Stale prompt**\n`minor` · `behavior` · [`file.rs:2`]({diff}R2)\n\n"
+                      f"{blob}#L1-L2\n\n> first line\n> second line", body)
+        self.assertIn(f"**2. Concrete defect** (병합 차단 범위 밖이라 의견으로 남깁니다)\n"
+                      f"`blocking` · `security` · [`file.rs:1`]({diff}R1)\n\n{blob}#L1-L2", body)
         self.assertNotIn("[minor/behavior]", body)
         self.assertEqual(review.code("a`b"), "``a`b``")
         self.assertEqual(review.code("`x"), "`` `x ``")
+        # A removed file has only its base side: the left diff line and the base blob.
+        self.assertEqual(review.locations(self.meta | {"removed_files": ["file.rs"]}, "file.rs", 2),
+                         (f"{diff}L2", "https://github.com/115dkk/SECS/blob/" + "a" * 40 + "/file.rs#L1-L2"))
 
     def test_a_dropped_full_prompt_leaves_no_older_prompt_behind(self):
         review.prepare(self.event, self.directory, "policy", self.request)
