@@ -44,9 +44,9 @@ jobs:
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           REVIEW_MODEL: ${{ vars.SOL_REVIEW_MODEL || 'gpt-6.1-sol' }}
-          REVIEW_EFFORT: ${{ vars.SOL_REVIEW_EFFORT || 'high' }}
+          REVIEW_EFFORT: ${{ vars.SOL_REVIEW_EFFORT || 'xhigh' }}
           REVIEW_MAX_OUTPUT_TOKENS: ${{ vars.SOL_REVIEW_MAX_OUTPUT_TOKENS || '64000' }}
-          REVIEW_TIMEOUT_SECONDS: ${{ vars.SOL_REVIEW_TIMEOUT_SECONDS || '1200' }}
+          REVIEW_TIMEOUT_SECONDS: ${{ vars.SOL_REVIEW_TIMEOUT_SECONDS || '1800' }}
         run: >-
           python3 -I trusted/.github/scripts/sol_review_api.py --directory review-data
           --policy trusted/.github/codex/policy.txt --schema trusted/.github/codex/result.schema.json
