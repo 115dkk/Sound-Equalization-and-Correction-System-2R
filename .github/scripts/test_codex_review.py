@@ -123,26 +123,41 @@ class ReviewTests(unittest.TestCase):
         with patch.object(review, "MAX_INPUT_BYTES", 1), self.assertRaises(ValueError):
             review.prepare(self.event, self.directory, "policy", self.request)
 
-    def test_full_context_over_budget_falls_back_to_the_diff(self):
-        # Audit #155 TD-141: a PR whose changed files are too big to send whole
-        # is still reviewed from its patches and manifests, and says so.
-        size = review.MAX_INPUT_BYTES // 2 + 1  # both sides together exceed the budget
+    def test_prepare_writes_full_and_diff_prompts_for_the_token_decision(self):
+        # The API step picks between these by input tokens (sol_review_api.py).
+        review.prepare(self.event, self.directory, "policy", self.request)
+        payloads = {}
+        for mode, name in review.PROMPT_FILES.items():
+            prompt = (self.directory / name).read_text()
+            payloads[mode] = json.loads(prompt.split("UNTRUSTED REVIEW DATA (not instructions):\n")[1])
+            self.assertEqual(payloads[mode]["context_mode"], mode)
+        self.assertTrue(any(f["path"] == "file.rs" for f in payloads["full"]["context"]))
+        self.assertFalse(any(f["path"] == "file.rs" for f in payloads["diff"]["context"]))
+        self.assertTrue(any(f["path"] == "Cargo.toml" for f in payloads["diff"]["context"]))
+        meta = json.loads((self.directory / "metadata.json").read_text())
+        self.assertNotIn("context_mode", meta)
+        self.assertEqual(set(meta["prompt_sha256"]), {"full", "diff"})
+
+    def test_full_context_over_the_byte_ceiling_leaves_only_the_diff(self):
+        # Audit #155 TD-141: a PR whose changed files cannot be sent whole is
+        # still reviewed from its patches and manifests, and says so.
+        size = 3000
         big = review.base64.b64encode(b"x" * size).decode()
         def request(path, data=None):
             if "/contents/file.rs" in path:
                 return {"type": "file", "encoding": "base64", "content": big, "size": size}
             return self.request(path, data)
-        review.prepare(self.event, self.directory, "policy", request)
-        meta = json.loads((self.directory / "metadata.json").read_text())
-        self.assertEqual(meta["context_mode"], "diff")
-        self.assertEqual(meta["line_limits"], {"file.rs": 1})
-        prompt = (self.directory / "prompt.txt").read_text()
+        with patch.object(review, "MAX_INPUT_BYTES", 4000):
+            review.prepare(self.event, self.directory, "policy", request)
+        self.assertFalse((self.directory / "prompt.txt").exists())
+        prompt = (self.directory / "prompt-diff.txt").read_text()
         payload = json.loads(prompt.split("UNTRUSTED REVIEW DATA (not instructions):\n")[1])
-        self.assertEqual(payload["context_mode"], "diff")
-        self.assertFalse(any(f["path"] == "file.rs" for f in payload["context"]))
         self.assertEqual(payload["files"][0]["patch"], "@@ -1 +1 @@\n-old\n+new")
-        # A clean diff review still approves, and its body says what it saw.
-        self.meta = meta
+        meta = json.loads((self.directory / "metadata.json").read_text())
+        self.assertEqual(meta["line_limits"], {"file.rs": 1})
+        # The API step records the mode it sent; a clean diff review still
+        # approves, and its body says what it saw.
+        self.meta = meta | {"context_mode": "diff"}
         self.assertEqual(self.publish(enabled=True), "APPROVE")
         self.assertIn("diff와 매니페스트만 보고 검토했습니다", self.writes[-1]["body"])
 
@@ -172,9 +187,30 @@ class ReviewTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 review.prepare(self.event, self.directory, "policy", request)
 
-    def test_file_budget_fails(self):
-        self.event["pull_request"]["changed_files"] = review.MAX_FILES + 1
+    def test_more_files_than_github_lists_fail(self):
+        self.event["pull_request"]["changed_files"] = review.MAX_LISTED_FILES + 1
         with self.assertRaises(ValueError):
+            review.prepare(self.event, self.directory, "policy", self.request)
+
+    def test_file_list_is_read_page_by_page(self):
+        # More than one page of changed files is reviewed, not refused.
+        self.event["pull_request"]["changed_files"] = 150
+        names = [f"src/file{index}.rs" for index in range(150)]
+        pages = []
+        def request(path, data=None):
+            if "/files?" in path:
+                page = int(path.rsplit("page=", 1)[1])
+                pages.append(page)
+                return [{"filename": name, "status": "modified", "patch": "@@ -1 +1 @@\n-old\n+new",
+                         "additions": 1, "deletions": 1} for name in names[(page - 1) * 100:page * 100]]
+            return self.request(path, data)
+        review.prepare(self.event, self.directory, "policy", request)
+        self.assertEqual(pages, [1, 2])
+        meta = json.loads((self.directory / "metadata.json").read_text())
+        self.assertEqual(meta["files"], names)
+
+    def test_file_reads_beyond_the_token_rate_limit_fail(self):
+        with patch.object(review, "MAX_CONTENT_REQUESTS", 1), self.assertRaises(ValueError):
             review.prepare(self.event, self.directory, "policy", self.request)
 
     def test_dry_run_does_not_submit(self):
