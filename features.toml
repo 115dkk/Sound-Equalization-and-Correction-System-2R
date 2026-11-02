@@ -1611,7 +1611,7 @@ id = "ipc.target_get"
 kind = "ipc"
 milestone = "M5"
 status = "implemented"
-tests = ["secs-service::project_edit_surface_round_trips_dsp_layout_target_and_calibration"]
+tests = ["secs-service::project_edit_surface_round_trips_dsp_layout_target_and_calibration", "secs-service::target_preset_follows_the_points_not_the_stored_label"]
 
 [[feature]]
 id = "ipc.target_set_points"

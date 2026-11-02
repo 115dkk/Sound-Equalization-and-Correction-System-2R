@@ -285,13 +285,20 @@ fn set_extra(project: &mut Project, key: &str, value: PyJson) {
     }
 }
 
-fn target_preset(project: &Project) -> Option<String> {
-    project
-        .bc
-        .get("target_preset")
-        .and_then(PyJson::str)
-        .filter(|value| !value.is_empty())
-        .map(str::to_owned)
+/// The preset whose points the target has, `None` for 사용자 지정 (upstream
+/// `target_editor.preset_of`). Upstream's menu never reads the stored
+/// `bc.target_preset`: a new project keeps `"flat"` there beside non-flat
+/// default points.
+fn preset_of(target: &TargetCurve) -> Option<String> {
+    fn sorted(mut points: Vec<(f64, f64)>) -> Vec<(f64, f64)> {
+        points.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        points
+    }
+    let points = sorted(target.points.clone());
+    TargetCurve::presets()
+        .into_iter()
+        .find(|(_, preset)| sorted(preset.points.clone()) == points)
+        .map(|(key, _)| key.to_owned())
 }
 
 fn set_target_preset(project: &mut Project, preset: Option<&str>) {
@@ -312,7 +319,7 @@ fn set_target_preset(project: &mut Project, preset: Option<&str>) {
 fn target_result(project: &Project) -> TargetResult {
     TargetResult {
         points: project.target.points.clone(),
-        preset: target_preset(project),
+        preset: preset_of(&project.target),
         presets: TargetCurve::presets()
             .into_iter()
             .map(|(key, target)| (key.into(), target.points))
