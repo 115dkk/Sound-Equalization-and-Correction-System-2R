@@ -112,7 +112,7 @@ def input_tokens(body, counter=None):
 def choose(directory, policy, schema, counter=None):
     """The first prepared prompt whose request fits MAX_INPUT_TOKENS, as
     (mode, body, tokens): the full prompt, else the diff prompt."""
-    for mode, name in PROMPTS:
+    for index, (mode, name) in enumerate(PROMPTS):
         path = directory / name
         if not path.is_file():
             continue
@@ -122,7 +122,15 @@ def choose(directory, policy, schema, counter=None):
             os.environ.get("REVIEW_EFFORT", "high"),
             os.environ.get("REVIEW_MAX_OUTPUT_TOKENS", "64000"),
         )
-        tokens = input_tokens(body, counter)
+        try:
+            tokens = input_tokens(body, counter)
+        except urllib.error.HTTPError as error:
+            # With truncation off (the default) the endpoint refuses an input
+            # past the model's context window with 400 instead of counting it.
+            # The last prompt keeps the error, so a malformed request still shows.
+            if error.code != 400 or index == len(PROMPTS) - 1:
+                raise
+            continue
         if tokens <= MAX_INPUT_TOKENS:
             return mode, body, tokens
     raise ValueError("PR exceeds input token budget")

@@ -100,6 +100,34 @@ class ApiTests(unittest.TestCase):
                 self.assertEqual(set(counts[0]), set(api.COUNTED_FIELDS))
                 self.assertEqual(counts[0]["text"], calls[0]["text"])
 
+    def test_a_full_prompt_the_counter_refuses_falls_back_to_the_diff(self):
+        def refused(code):
+            return api.urllib.error.HTTPError("https://api.openai.com/v1/responses/input_tokens", code, "refused", None, None)
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            prepared(directory)
+            def counter(body):
+                if body["input"] == "full prompt":
+                    raise refused(400)
+                return counted(1000)
+            calls = []
+            with patch.dict(os.environ, {}, clear=True):
+                api.run(directory, "trusted", {}, lambda body, timeout: calls.append(body) or completed(), counter)
+            self.assertEqual([call["input"] for call in calls], ["diff prompt"])
+            self.assertEqual(json.loads((directory / "metadata.json").read_text())["context_mode"], "diff")
+        # A refused diff, or any other refusal, is the API failure it is.
+        for full_code, diff_code in ((400, 400), (500, None)):
+            with self.subTest(full_code=full_code), tempfile.TemporaryDirectory() as tmp:
+                directory = Path(tmp)
+                prepared(directory)
+                def counter(body):
+                    code = full_code if body["input"] == "full prompt" else diff_code
+                    if code:
+                        raise refused(code)
+                    return counted(10)
+                with patch.dict(os.environ, {}, clear=True), self.assertRaises(api.urllib.error.HTTPError):
+                    api.run(directory, "trusted", {}, lambda *_: self.fail("sent"), counter)
+
     def test_a_prompt_dropped_by_the_byte_ceiling_is_not_counted(self):
         with tempfile.TemporaryDirectory() as tmp:
             directory = Path(tmp)
