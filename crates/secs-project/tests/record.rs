@@ -917,6 +917,94 @@ fn ir_writes_reject_symlinked_store_and_destination_td16() {
 }
 
 #[test]
+fn oversized_measurement_source_sidecar_is_absent_on_open_td112() {
+    const SIDECAR_LIMIT: u64 = 16 * 1024 * 1024;
+
+    let directory = TempDir::new();
+    let project_path = directory.0.join("oversized-source.secs");
+    let irs = project_path.with_extension("irs");
+    fs::create_dir_all(&irs).unwrap();
+    let wav = irs.join("shared.wav");
+    fs::write(&wav, write_wav_float32(&[0.25], 48_000)).unwrap();
+    let source = source_path(&wav);
+    fs::File::create(&source)
+        .unwrap()
+        .set_len(SIDECAR_LIMIT + 1)
+        .unwrap();
+
+    let mut project = Project::from_preset("2.0").unwrap();
+    project.measurements = PyJson::Array(vec![
+        entry_at(1, "oversized-source.irs/shared.wav"),
+        entry_at(2, "oversized-source.irs/shared.wav"),
+    ]);
+    fs::write(&project_path, project.save_text()).unwrap();
+
+    let store = MeasurementStore::open(&project_path).unwrap();
+    assert!(load_project_sources(store.project(), &project_path).is_empty());
+}
+
+#[test]
+fn shared_source_materialisation_keeps_only_entries_within_budget_td112() {
+    let directory = TempDir::new();
+    let project_path = directory.0.join("shared-source-budget.secs");
+    let irs = project_path.with_extension("irs");
+    fs::create_dir_all(&irs).unwrap();
+    let wav = irs.join("shared.wav");
+    fs::write(&wav, write_wav_float32(&[0.25], 48_000)).unwrap();
+    let info = SourceInfo {
+        notes: Some("x".repeat(8 * 1024 * 1024)),
+        ..SourceInfo::default()
+    };
+    save_source(&wav, Some(&info)).unwrap();
+
+    let mut project = Project::from_preset("2.0").unwrap();
+    project.measurements = PyJson::Array(
+        (1..=9)
+            .map(|position| entry_at(position, "shared-source-budget.irs/shared.wav"))
+            .collect(),
+    );
+    fs::write(&project_path, project.save_text()).unwrap();
+
+    let store = MeasurementStore::open(&project_path).unwrap();
+    let sources = load_project_sources(store.project(), &project_path);
+    assert!(!sources.is_empty());
+    assert!(sources.len() < 9);
+    assert!(sources.contains_key(&1));
+    assert!(!sources.contains_key(&9));
+}
+
+#[test]
+fn load_project_sources_skips_only_the_bad_sidecar_td112() {
+    let directory = TempDir::new();
+    let project_path = directory.0.join("source-skip.secs");
+    let irs = project_path.with_extension("irs");
+    fs::create_dir_all(&irs).unwrap();
+    let good = irs.join("good.wav");
+    let bad = irs.join("bad.wav");
+    fs::write(&good, write_wav_float32(&[0.25], 48_000)).unwrap();
+    fs::write(&bad, write_wav_float32(&[0.5], 48_000)).unwrap();
+    let info = SourceInfo {
+        notes: Some("kept".into()),
+        ..SourceInfo::default()
+    };
+    save_source(&good, Some(&info)).unwrap();
+    fs::File::create(source_path(&bad))
+        .unwrap()
+        .set_len(16 * 1024 * 1024 + 1)
+        .unwrap();
+
+    let mut project = Project::from_preset("2.0").unwrap();
+    project.measurements = PyJson::Array(vec![
+        entry_at(1, "source-skip.irs/good.wav"),
+        entry_at(2, "source-skip.irs/bad.wav"),
+    ]);
+
+    let sources = load_project_sources(&project, &project_path);
+    assert_eq!(sources.len(), 1);
+    assert_eq!(sources[&1]["L"], info);
+}
+
+#[test]
 fn oversized_project_and_wav_reads_are_rejected_td19() {
     let directory = TempDir::new();
     let project_path = directory.0.join("oversized.secs");

@@ -93,22 +93,22 @@ export function useConnectScreen(active: boolean): { view: ConnectView | null; a
         }
       });
     };
-    const micCal = (busy: NonNullable<ConnectView["micCalibration"]["busy"]>, work: (epoch: number) => Promise<unknown>) => session.run(async () => {
+    const micCal = (busy: NonNullable<ConnectView["micCalibration"]["busy"]>, work: (guard: ReturnType<typeof session.projectGuard>) => Promise<unknown>) => session.run(async () => {
       if (session.host.getSnapshot().micCalBusy !== null) return;
-      const epoch = session.jobs.epoch;
+      const guard = session.projectGuard();
       session.host.set({ micCalBusy: busy, micCalError: null });
-      try { await work(epoch); }
+      try { await work(guard); }
       catch (error) {
         if (!(error instanceof IpcFailure)) throw error;
-        if (epoch === session.jobs.epoch) session.host.set({ micCalError: error.error });
+        if (guard.alive()) session.host.set({ micCalError: error.error });
       } finally {
-        if (epoch === session.jobs.epoch) session.host.set({ micCalBusy: null });
+        if (guard.alive()) session.host.set({ micCalBusy: null });
       }
     });
     return {
-      pickMicCalibration: () => micCal("pick", async (epoch) => {
+      pickMicCalibration: () => micCal("pick", async (guard) => {
         const path = await session.call({ method: "dialog_open_file", params: { kind: "mic_calibration" } });
-        if (path !== null && epoch === session.jobs.epoch) await session.call({ method: "mic_calibration_set", params: { path } });
+        if (path !== null && guard.alive()) await session.call({ method: "mic_calibration_set", params: { path } });
       }),
       clearMicCalibration: () => micCal("clear", () => session.call({ method: "mic_calibration_clear" })),
       attachMicCalibration: () => micCal("attach", () => session.call({ method: "mic_calibration_attach" })),

@@ -162,8 +162,10 @@ fn envelope_result(envelope: secs_types::ipc::Envelope) -> Result<Response> {
 
 #[cfg(feature = "engine")]
 mod engine {
-    use std::collections::HashMap;
+    use std::collections::{HashMap, VecDeque};
+    use std::fmt;
     use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::{Arc, Condvar, Mutex, MutexGuard, mpsc};
     use std::time::{Duration, Instant};
 
@@ -176,10 +178,19 @@ mod engine {
     type AudioFactory = Arc<dyn Fn() -> Box<dyn secs_audio::AudioBackend> + Send + Sync>;
     type RewFactory = Arc<dyn Fn() -> Box<dyn secs_rew::Transport> + Send + Sync>;
 
+    const TERMINAL_RETENTION: usize = 32;
+    const SUBSCRIPTION_CAPACITY: usize = 1024;
+
+    struct Subscriber {
+        sender: mpsc::SyncSender<JobEvent>,
+        dropped: DroppedEventCount,
+    }
+
     #[derive(Default)]
     struct EventState {
-        subscribers: Vec<mpsc::Sender<JobEvent>>,
+        subscribers: Vec<Subscriber>,
         terminal: HashMap<JobId, JobEvent>,
+        terminal_order: VecDeque<JobId>,
     }
 
     struct Observer {
@@ -206,13 +217,43 @@ mod engine {
                 external.send(event.clone());
             }
             let mut state = lock(&self.state);
-            state
-                .subscribers
-                .retain(|subscriber| subscriber.send(event.clone()).is_ok());
-            if let JobEvent::Finished { job, .. } = &event {
-                state.terminal.insert(*job, event);
+            state.subscribers.retain(|subscriber| {
+                match subscriber.sender.try_send(event.clone()) {
+                    Ok(()) => true,
+                    Err(mpsc::TrySendError::Full(_)) => {
+                        subscriber.dropped.0.fetch_add(1, Ordering::Relaxed);
+                        true
+                    }
+                    Err(mpsc::TrySendError::Disconnected(_)) => false,
+                }
+            });
+            let terminal_job = match &event {
+                JobEvent::Finished { job, .. } => Some(*job),
+                _ => None,
+            };
+            if let Some(job) = terminal_job {
+                if state.terminal.insert(job, event).is_none() {
+                    state.terminal_order.push_back(job);
+                }
+                while state.terminal_order.len() > TERMINAL_RETENTION {
+                    if let Some(expired) = state.terminal_order.pop_front() {
+                        state.terminal.remove(&expired);
+                    }
+                }
                 self.changed.notify_all();
             }
+        }
+    }
+
+    /// A shared count of events dropped from one bounded subscription queue.
+    #[derive(Clone, Debug, Default)]
+    pub struct DroppedEventCount(Arc<AtomicU64>);
+
+    impl DroppedEventCount {
+        /// Returns how many events were dropped because the queue was full.
+        #[must_use]
+        pub fn get(&self) -> u64 {
+            self.0.load(Ordering::Relaxed)
         }
     }
 
@@ -351,12 +392,29 @@ mod engine {
             self.service.call_value(request, Arc::new(NoEvents))
         }
 
-        /// Subscribes to every job event emitted after this call.
+        /// Subscribes to job events emitted after this call.
+        ///
+        /// The queue holds 1024 events. A full queue drops the incoming event
+        /// without blocking the service. Use [`Self::subscribe_with_drop_count`]
+        /// when the dropped-event count is needed.
         #[must_use]
         pub fn subscribe(&self) -> mpsc::Receiver<JobEvent> {
-            let (sender, receiver) = mpsc::channel();
-            lock(&self.observer.state).subscribers.push(sender);
-            receiver
+            self.subscribe_with_drop_count().0
+        }
+
+        /// Subscribes to job events and returns a shared dropped-event count.
+        ///
+        /// This additive API keeps [`Self::subscribe`] compatible with its
+        /// original standard-library receiver return type.
+        #[must_use]
+        pub fn subscribe_with_drop_count(&self) -> (mpsc::Receiver<JobEvent>, DroppedEventCount) {
+            let (sender, receiver) = mpsc::sync_channel(SUBSCRIPTION_CAPACITY);
+            let dropped = DroppedEventCount::default();
+            lock(&self.observer.state).subscribers.push(Subscriber {
+                sender,
+                dropped: dropped.clone(),
+            });
+            (receiver, dropped)
         }
 
         /// Waits for the terminal event of `job_id` until `timeout` expires.
@@ -408,11 +466,59 @@ mod engine {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    use std::fmt;
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn a_full_subscription_counts_drops_without_blocking_td127() {
+            let observer = Observer {
+                state: Mutex::new(EventState::default()),
+                changed: Condvar::new(),
+                external: None,
+            };
+            let (sender, receiver) = mpsc::sync_channel(1024);
+            let dropped = DroppedEventCount::default();
+            lock(&observer.state).subscribers.push(Subscriber {
+                sender,
+                dropped: dropped.clone(),
+            });
+            for id in 0..=1024 {
+                observer.send(JobEvent::Started {
+                    job: JobId(u64::try_from(id).unwrap()),
+                    kind: secs_types::ipc::JobKind::Export,
+                });
+            }
+            assert_eq!(dropped.get(), 1);
+            assert_eq!(receiver.try_iter().count(), 1024);
+        }
+
+        #[test]
+        fn terminal_events_keep_only_the_service_retention_td127() {
+            let observer = Observer {
+                state: Mutex::new(EventState::default()),
+                changed: Condvar::new(),
+                external: None,
+            };
+            for id in 0..40 {
+                observer.send(JobEvent::Finished {
+                    job: JobId(id),
+                    status: secs_types::ipc::JobStatus::Succeeded,
+                    result: None,
+                    error: None,
+                });
+            }
+            let state = lock(&observer.state);
+            assert_eq!(state.terminal.len(), 32);
+            assert!(!state.terminal.contains_key(&JobId(7)));
+            assert!(state.terminal.contains_key(&JobId(8)));
+            assert!(state.terminal.contains_key(&JobId(39)));
+        }
+    }
 }
 
 #[cfg(feature = "engine")]
-pub use engine::{Engine, EngineBuilder};
+pub use engine::{DroppedEventCount, Engine, EngineBuilder};
 
 #[cfg(feature = "client")]
 mod client {

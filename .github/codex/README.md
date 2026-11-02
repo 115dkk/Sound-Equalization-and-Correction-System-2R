@@ -29,8 +29,10 @@ GitHub API 접근이나 게시 잡 자체가 실패하면 안내조차 게시되
 기본 브랜치의 정확한 base SHA에서 실행 코드와 정책을 가져옵니다. PR 코드·설치 스크립트·AGENTS
 지시는 실행하지 않습니다. PR diff, base/head 전체 변경 파일, 주변 Cargo.toml/package.json을
 데이터로만 보냅니다. 모델에는 tools를 주지 않으며 자율 실행 루프가 없습니다.
-fork/draft PR은 대상에서 제외합니다. 최대 100개 파일, 추가 문맥 조회 40개, 정책 포함 입력 300 KB입니다.
-한도를 넘거나 파일 내용이 없으면 조용히 자르지 않고 미완료 COMMENT로 안내합니다.
+fork/draft PR은 대상에서 제외합니다. 최대 100개 파일, 추가 문맥 조회 40개, 정책 포함 입력 1.5 MB입니다.
+1.5 MB는 gpt-6.1-sol의 프롬프트 한도(922,000 토큰) 안에 토큰당 2바이트로 계산해도 들어가는 크기입니다.
+바뀐 파일 전체가 이 한도를 넘으면 diff와 매니페스트만 보내고(`context_mode: diff`), 리뷰 본문에 그 사실을 표시합니다.
+diff만으로도 한도를 넘거나 파일 내용이 없으면 조용히 자르지 않고 미완료 COMMENT로 안내합니다.
 
 전체 저장소를 탐색하지 않으므로 추가 문맥이 필요한 구조 변경은 `complete=false`로 반환하도록 합니다.
 reviewed_files가 전체 변경 목록과 정확히 일치하는지, 지적 줄 번호가 파일 범위에 있는지 확인합니다.
@@ -57,11 +59,12 @@ OIDC 계정/연결, secret 등록, 보안 규칙 변경은 이 코드의 작업�
 | SOL_REVIEW_PUBLISH | 켜짐 | 문자열 `false`일 때만 게시 대신 dry-run |
 | SOL_REVIEW_MODEL | gpt-6.1-sol | 현재 허용 모델 하나; 교체 시 기능/가격과 allowlist 검토 |
 | SOL_REVIEW_EFFORT | high | low/medium/high |
-| SOL_REVIEW_MAX_OUTPUT_TOKENS | 16000 | 1024–32000, reasoning/output API 한도 |
-| SOL_REVIEW_TIMEOUT_SECONDS | 600 | 30–900초, 별도 Actions 단계 16분/리뷰 잡 25분 한도 |
+| SOL_REVIEW_MAX_OUTPUT_TOKENS | 64000 | 1024–128000, reasoning/output API 한도 |
+| SOL_REVIEW_TIMEOUT_SECONDS | 1200 | 30–1800초, 별도 Actions 단계 32분/리뷰 잡 40분 한도 |
 
 실행당 유료 Responses 호출은 **1회**입니다. tools, 이전 응답 연결, 자동 재시도가 없습니다.
 입력 byte 제한은 정확한 토큰 또는 달러 상한이 아닙니다. 무료 잔액이나 무료-only를 보장하지 않습니다.
+2026-11-02의 가격(입력 100만 토큰당 2달러, 출력 100만 토큰당 10달러)으로 한도를 다 쓰면 한 번에 약 2달러이고, 보통 PR은 그보다 적습니다.
 출력 한도 도달 등 불완전 응답은 COMMENT로 알립니다. 재실행은 추가 API 비용이 생길 수 있습니다.
 
 ## 검증

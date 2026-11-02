@@ -453,7 +453,7 @@ fn stale_reason(
 ) -> Option<&'static str> {
     if signature != signature_key(project) {
         Some("measurements")
-    } else if config_key_at_run.is_some_and(|key| key != config_key(project)) {
+    } else if config_key_at_run.is_none_or(|key| key != config_key(project)) {
         Some("config")
     } else if engine_key != calibration_from_project(project).engine_key() {
         Some("settings")

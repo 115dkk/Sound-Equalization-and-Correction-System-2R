@@ -21,9 +21,8 @@ import type { AxisRangeValue } from "../../ui/plot/AxisRange";
 
 /**
  * How this project gets its measurements. `measure`: a measurement method is
- * chosen in 연결·점검 (`config.method`); `none`: no method chosen yet (the
- * service itself has no such value, it falls back to `native`; P33 derives
- * it from the 연결·점검 choice); `import`: the mdat import path, where
+ * chosen in 연결·점검 (`config.method`); `none`: the stored method is `none`;
+ * `import`: the stored method is `mdat`, where
  * 연결·점검 is skipped and the primary action imports instead of measuring.
  */
 export type MeasurePath = "measure" | "none" | "import";
@@ -33,9 +32,8 @@ export type { PositionRecord } from "../../ipc/bindings/PositionRecord";
 
 /**
  * A sweep length the device can play, with its duration at the device's
- * sample rate (upstream `fill_sweep_combo`: "256k · 5.5 s"). Service gap:
- * `MeasureConfigResult` has the chosen length but neither the choices nor
- * the sample rate.
+ * sample rate (upstream `fill_sweep_combo`: "256k · 5.5 s"), from
+ * `MeasureConfigResult.sweep_lengths` and `sample_rate`.
  */
 export type SweepOption = { samples: number; seconds: number };
 
@@ -56,8 +54,7 @@ export type DeviceJob = {
    * Last `progress` event. For `measure` the stage is the role just recorded
    * and done/total count the plan's roles. Before the first sweep the start
    * delay counts down as stage `countdown` with done = seconds passed and
-   * total = the delay. Service gap: the measure job does not run the start
-   * delay yet (upstream counts down in the screen before starting).
+   * total = the delay; the service's measurement job owns the countdown.
    */
   progress: JobProgress | null;
 };

@@ -455,10 +455,10 @@ fn stale_reasons_prioritize_measurements_then_config_settings_and_target() {
         stale_reason(&signature, &engine, &target, Some(&config), &project),
         None
     );
-    // Caches older than the config key are not stale for it.
+    // audit #155 TD-10 (Q1): unknown config identity is not current.
     assert_eq!(
         stale_reason(&signature, &engine, &target, None, &project),
-        None
+        Some("config")
     );
 }
 

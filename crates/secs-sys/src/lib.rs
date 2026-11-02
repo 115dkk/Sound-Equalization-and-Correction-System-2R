@@ -102,17 +102,35 @@ pub fn camilla_apply(
     config_text: &str,
     timeout: Duration,
 ) -> Result<ApplyOutcome, IpcError> {
+    camilla_apply_report(address, config_path, config_text, timeout)
+        .map(|(outcome, _previous_path)| outcome)
+}
+
+/// Validates, selects, and reloads one CamillaDSP configuration, retaining the
+/// path CamillaDSP reported before the attempt.
+pub fn camilla_apply_report(
+    address: &str,
+    config_path: &Path,
+    config_text: &str,
+    timeout: Duration,
+) -> Result<(ApplyOutcome, Option<String>), IpcError> {
     let transport = camilla_connect(address, timeout)?;
     match secs_apply::camilla::Camilla::new(transport)
         .apply(&config_path.to_string_lossy(), config_text)
         .map_err(camilla_error)?
     {
-        secs_apply::camilla::ApplyOutcome::Applied { .. } => Ok(ApplyOutcome::Applied),
-        secs_apply::camilla::ApplyOutcome::RolledBack { error, .. } => {
-            Ok(ApplyOutcome::RolledBack {
-                error: IpcError::new(ErrorCode::ApplyFailed, error),
-            })
+        secs_apply::camilla::ApplyOutcome::Applied { previous_path } => {
+            Ok((ApplyOutcome::Applied, previous_path))
         }
+        secs_apply::camilla::ApplyOutcome::RolledBack {
+            error,
+            previous_path,
+        } => Ok((
+            ApplyOutcome::RolledBack {
+                error: IpcError::new(ErrorCode::ApplyFailed, error),
+            },
+            previous_path,
+        )),
     }
 }
 
@@ -193,6 +211,13 @@ fn camilla_error(error: secs_apply::ApplyError) -> IpcError {
             ..
         }
     );
+    let previous_path = match &error {
+        secs_apply::ApplyError::RollbackFailed { previous_path, .. }
+        | secs_apply::ApplyError::SelectionUncertain { previous_path, .. } => {
+            Some(previous_path.clone())
+        }
+        _ => None,
+    };
     let mut ipc = IpcError::new(ErrorCode::ApplyFailed, error.to_string());
     ipc.retryable = matches!(
         error,
@@ -201,6 +226,9 @@ fn camilla_error(error: secs_apply::ApplyError) -> IpcError {
     if connection_refused {
         ipc.params
             .insert("reason".to_owned(), "connection_refused".to_owned());
+    }
+    if let Some(previous_path) = previous_path {
+        ipc.params.insert("previous_path".to_owned(), previous_path);
     }
     ipc
 }
@@ -315,6 +343,19 @@ mod tests {
             EqApoVariant::Official
         );
         assert_eq!(eqapo_variant(r"D:\Audio\APO"), EqApoVariant::Unknown);
+    }
+
+    #[test]
+    fn rollback_failure_error_keeps_the_previous_config_path() {
+        let error = camilla_error(secs_apply::ApplyError::RollbackFailed {
+            command: "Reload".into(),
+            message: "reload and rollback failed".into(),
+            previous_path: "generation-a/configs/main.yml".into(),
+        });
+        assert_eq!(
+            error.params.get("previous_path").map(String::as_str),
+            Some("generation-a/configs/main.yml")
+        );
     }
 
     #[test]

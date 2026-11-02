@@ -612,6 +612,10 @@ pub fn inspect_state_directory(_path: &Path) -> Result<StateDirectoryFacts, IpcE
 /// Reads the kind and owner of an existing Program Files service directory.
 #[cfg(target_os = "windows")]
 pub fn inspect_service_directory(path: &Path) -> Result<ServiceDirectoryFacts, IpcError> {
+    // The installer creates this folder directly under Program Files, so its ACL
+    // inherits Program Files protection. We reject reparse points and
+    // unprivileged owners instead of walking inherited DACLs; changing the
+    // parent ACL already requires administrator access (audit #155 Q10).
     use std::fs::OpenOptions;
     use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
     use win_custody::{ObjectSecurityDescriptor, OwnedSid};
