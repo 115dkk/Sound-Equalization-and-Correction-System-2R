@@ -167,7 +167,8 @@ fn weighted_residual(req: &FitRequest<'_>, h: Vec<C>) -> Vec<f64> {
         .enumerate()
         .map(|(i, h)| {
             let w = if req.in_range(req.g[i]) { 1.0 } else { 0.15 };
-            w * (20.0 * (response::magnitude(h) + 1e-12).log10() - req.corr_db[i])
+            let value = w * (20.0 * (response::magnitude(h) + 1e-12).log10() - req.corr_db[i]);
+            if value.is_finite() { value } else { 1e12 }
         })
         .collect()
 }
@@ -387,8 +388,11 @@ pub fn fit_peq_with(
                 None,
             )
         }
-    }
-    .expect("valid PEQ fit");
+    };
+    let Ok(sol) = sol else {
+        // Measurement-dependent probes can still make a fit numerically invalid.
+        return result_bands(req, &seed.x0);
+    };
     result_bands(req, &sol.x)
 }
 
@@ -761,6 +765,84 @@ pub fn replay_fitter(
 #[cfg(test)]
 mod analytic_tests {
     use super::*;
+
+    #[test]
+    fn a_nonfinite_response_bin_weighs_as_a_large_finite_residual() {
+        let g = [1_000.0, 24_000.0];
+        let corr = [0.0, 0.0];
+        let req = FitRequest {
+            g: &g,
+            corr_db: &corr,
+            n: 1,
+            lo: 20.0,
+            hi: 20_000.0,
+            boost: 6.0,
+            ring_ms: None,
+            f_max: None,
+            bands: None,
+        };
+        let h = vec![C::new(1.0, 0.0), C::new(f64::NAN, f64::NAN)];
+        assert_eq!(
+            weighted_residual(&req, h),
+            [20.0 * (1.0_f64 + 1e-12).log10(), 1e12]
+        );
+    }
+
+    // A band centred on Nyquist expands its RBJ response to 0/0 there. Which
+    // Nyquist multiple hits it depends on the platform's libm (24 kHz itself
+    // on the macOS self-test, where `f_max = 1.2 × 20 kHz` puts the bound on
+    // Nyquist), so the test searches and skips when none cancels exactly.
+    #[test]
+    fn fit_survives_a_band_whose_perturbed_response_is_not_finite() {
+        let Some(upper) = (1..=1_000_000)
+            .map(|multiple| 24_000.0 * f64::from(multiple))
+            .find(|&f| {
+                let h =
+                    response::peaking_response(&[24_000.0], f.ln().exp(), 15.0, -6.0, 48_000.0)[0];
+                !h.re.is_finite() || !h.im.is_finite()
+            })
+        else {
+            eprintln!("skipped: no Nyquist multiple cancels to 0/0 with this libm");
+            return;
+        };
+        let lower = upper * (1.0 - 1e-9);
+        let g = [24_000.0, lower];
+        let corr = [0.0, -6.0];
+        let bands = [(lower, upper)];
+        let req = FitRequest {
+            g: &g,
+            corr_db: &corr,
+            n: 1,
+            lo: lower,
+            hi: upper,
+            boost: 6.0,
+            ring_ms: None,
+            f_max: Some(upper),
+            bands: Some(&bands),
+        };
+        let seed = seed(&req);
+        assert!(
+            residual(&req, &seed.x0)
+                .iter()
+                .all(|value| value.is_finite())
+        );
+        let mut probe = seed.x0.clone();
+        probe[0] = seed.ub[0];
+        let raw = response::peq_response(req.g, &result_bands(&req, &probe));
+        assert!(raw.iter().any(|h| !h.re.is_finite() || !h.im.is_finite()));
+
+        for result in [
+            fit_peq(&req),
+            fit_peq_with(&req, &|| false, PeqDerivatives::Analytic),
+        ] {
+            assert_eq!(result.len(), 1);
+            assert!(
+                result
+                    .iter()
+                    .all(|&(f, q, gain)| f.is_finite() && q.is_finite() && gain.is_finite())
+            );
+        }
+    }
 
     #[test]
     fn analytic_peq_jacobian_differentiates_the_weighted_residual() {

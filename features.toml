@@ -81,6 +81,8 @@ tests = [
   "secs-engine::peq_results_within_secs2_spread",
   "secs-engine::xo_target_rebuilt_inputs",
   "secs-engine::replay_fitter_rejects_mismatch",
+  "secs-engine::a_nonfinite_response_bin_weighs_as_a_large_finite_residual",
+  "secs-engine::fit_survives_a_band_whose_perturbed_response_is_not_finite",
   "secs-engine::gd_flat_response_has_no_cuts",
 ]
 note = "End results gated on SECS 2's own spread (twelve runs, ADR 0004); bound-stride replay errors are SciPy select_step's own sensitivity (P07c). P09 checks GD-cut inputs and application."
