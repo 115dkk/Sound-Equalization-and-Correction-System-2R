@@ -3,12 +3,22 @@ import argparse
 import json
 import os
 from pathlib import Path
+import time
 import urllib.request
 import urllib.error
 
-MAX_INPUT_BYTES = 1_500_000
+# The Responses API takes an input string of at most 10,485,760 characters.
+MAX_INPUT_BYTES = 10_000_000
+# gpt-6.1-sol's prompt ceiling. The token count OpenAI reports for the request
+# decides what is sent, not its size in bytes (maintainer request 2026-11-02).
+MAX_INPUT_TOKENS = 922_000
 MAX_RESPONSE_BYTES = 2_000_000
 MAX_OUTPUT_TOKENS = 128_000
+# Prompts codex_review.py prepares, tried in this order.
+PROMPTS = (("full", "prompt.txt"), ("diff", "prompt-diff.txt"))
+# Request fields the input token count endpoint accepts; it takes no output
+# limit or storage flag.
+COUNTED_FIELDS = ("model", "instructions", "input", "reasoning", "text")
 # Error codes OpenAI sends when the account has no usable credit or quota left.
 QUOTA_CODES = {"insufficient_quota", "billing_hard_limit_reached", "billing_not_active"}
 
@@ -40,7 +50,7 @@ def build_request(prompt, policy, schema, model, effort, output_tokens):
         raise ValueError("Input missing or exceeds byte budget")
     if model != "gpt-6.1-sol":
         raise ValueError("Model change requires reviewing capabilities and pricing")
-    if effort not in ("low", "medium", "high"):
+    if effort not in ("low", "medium", "high", "xhigh"):
         raise ValueError("Unsupported reasoning effort")
     return {
         "model": model, "instructions": policy,
@@ -74,31 +84,80 @@ def extract_result(response):
     return value
 
 
-def run(directory, policy, schema, transport=None):
+def post(path, body, timeout):
+    request = urllib.request.Request(
+        "https://api.openai.com/v1/" + path, data=json.dumps(body).encode(),
+        headers={"Authorization": "Bearer " + os.environ["OPENAI_API_KEY"],
+                 "Content-Type": "application/json"},
+    )
+    # One attempt only. HTTP error bodies may contain sensitive input; never print them.
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        raw = response.read(MAX_RESPONSE_BYTES + 1)
+    if len(raw) > MAX_RESPONSE_BYTES:
+        raise ValueError("API response exceeds limit")
+    return strict_json(raw)
+
+
+def input_tokens(body, counter=None):
+    """The input tokens OpenAI counts for `body`, from the counting endpoint."""
+    counted = {key: body[key] for key in COUNTED_FIELDS}
+    value = counter(counted) if counter else post("responses/input_tokens", counted, 120)
+    if not isinstance(value, dict) or value.get("object") != "response.input_tokens":
+        raise ValueError("Invalid input token count")
+    tokens = value.get("input_tokens")
+    if type(tokens) is not int or tokens <= 0:
+        raise ValueError("Invalid input token count")
+    return tokens
+
+
+def choose(directory, policy, schema, counter=None):
+    """The first prepared prompt whose request fits MAX_INPUT_TOKENS, as
+    (mode, body, tokens): the full prompt, else the diff prompt."""
+    for index, (mode, name) in enumerate(PROMPTS):
+        path = directory / name
+        if not path.is_file():
+            continue
+        prompt = path.read_text()
+        # prepare could bound only the prompt; the request also carries the
+        # policy, so a full prompt just under the ceiling still falls to diff.
+        if index < len(PROMPTS) - 1 and len((prompt + policy).encode()) > MAX_INPUT_BYTES:
+            continue
+        body = build_request(
+            prompt, policy, schema,
+            os.environ.get("REVIEW_MODEL", "gpt-6.1-sol"),
+            os.environ.get("REVIEW_EFFORT", "xhigh"),
+            os.environ.get("REVIEW_MAX_OUTPUT_TOKENS", "64000"),
+        )
+        try:
+            tokens = input_tokens(body, counter)
+        except urllib.error.HTTPError as error:
+            # With truncation off (the default) the endpoint refuses an input
+            # past the model's context window with 400 instead of counting it.
+            # The last prompt keeps the error, so a malformed request still shows.
+            if error.code != 400 or index == len(PROMPTS) - 1:
+                raise
+            continue
+        if tokens <= MAX_INPUT_TOKENS:
+            return mode, body, tokens
+    raise ValueError("PR exceeds input token budget")
+
+
+def run(directory, policy, schema, transport=None, counter=None):
     # An old output must never survive a failed retry.
     output = directory / "result.json"
     output.unlink(missing_ok=True)
-    body = build_request(
-        (directory / "prompt.txt").read_text(), policy, schema,
-        os.environ.get("REVIEW_MODEL", "gpt-6.1-sol"),
-        os.environ.get("REVIEW_EFFORT", "high"),
-        os.environ.get("REVIEW_MAX_OUTPUT_TOKENS", "64000"),
-    )
-    timeout = bounded_int(os.environ.get("REVIEW_TIMEOUT_SECONDS", "1200"), 30, 1800)
-    if transport is None:
-        request = urllib.request.Request(
-            "https://api.openai.com/v1/responses", data=json.dumps(body).encode(),
-            headers={"Authorization": "Bearer " + os.environ["OPENAI_API_KEY"],
-                     "Content-Type": "application/json"},
-        )
-        # One attempt only. HTTP error bodies may contain sensitive input; never print them.
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            raw = response.read(MAX_RESPONSE_BYTES + 1)
-        if len(raw) > MAX_RESPONSE_BYTES:
-            raise ValueError("API response exceeds limit")
-        result = strict_json(raw)
-    else:
-        result = transport(body, timeout)
+    timeout = bounded_int(os.environ.get("REVIEW_TIMEOUT_SECONDS", "1800"), 30, 1800)
+    started = time.monotonic()
+    mode, body, tokens = choose(directory, policy, schema, counter)
+    # The workflow step's limit covers the token counts and the model call
+    # together, so the counts come out of the model's wait.
+    timeout = max(30, timeout - int(time.monotonic() - started))
+    # The publisher says in the review body when only the diff was sent.
+    metadata = directory / "metadata.json"
+    meta = strict_json(metadata.read_text())
+    meta["context_mode"], meta["input_tokens"] = mode, tokens
+    metadata.write_text(json.dumps(meta))
+    result = transport(body, timeout) if transport else post("responses", body, timeout)
     value = extract_result(result)
     output.write_text(json.dumps(value, ensure_ascii=False))
 
