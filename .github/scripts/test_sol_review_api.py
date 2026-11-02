@@ -139,6 +139,23 @@ class ApiTests(unittest.TestCase):
                         lambda body: counted(10))
             self.assertEqual([call["input"] for call in calls], ["diff prompt"])
 
+    def test_token_counting_time_comes_out_of_the_model_timeout(self):
+        # The Actions step allows 32 minutes for counting and the model together.
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            prepared(directory)
+            timeouts = []
+            with patch.object(api.time, "monotonic", side_effect=[1000.0, 1300.0]), \
+                    patch.dict(os.environ, {}, clear=True):
+                api.run(directory, "trusted", {}, lambda body, timeout: timeouts.append(timeout) or completed(),
+                        lambda body: counted(10))
+            self.assertEqual(timeouts, [1500])
+            with patch.object(api.time, "monotonic", side_effect=[0.0, 1790.0]), \
+                    patch.dict(os.environ, {}, clear=True):
+                api.run(directory, "trusted", {}, lambda body, timeout: timeouts.append(timeout) or completed(),
+                        lambda body: counted(10))
+            self.assertEqual(timeouts[-1], 30)
+
     def test_effort_defaults_to_xhigh(self):
         body = api.build_request("diff", "policy", {}, "gpt-6.1-sol", "xhigh", 16000)
         self.assertEqual(body["reasoning"], {"effort": "xhigh"})

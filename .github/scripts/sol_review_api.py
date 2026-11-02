@@ -3,6 +3,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+import time
 import urllib.request
 import urllib.error
 
@@ -145,13 +146,17 @@ def run(directory, policy, schema, transport=None, counter=None):
     # An old output must never survive a failed retry.
     output = directory / "result.json"
     output.unlink(missing_ok=True)
+    timeout = bounded_int(os.environ.get("REVIEW_TIMEOUT_SECONDS", "1800"), 30, 1800)
+    started = time.monotonic()
     mode, body, tokens = choose(directory, policy, schema, counter)
+    # The workflow step's limit covers the token counts and the model call
+    # together, so the counts come out of the model's wait.
+    timeout = max(30, timeout - int(time.monotonic() - started))
     # The publisher says in the review body when only the diff was sent.
     metadata = directory / "metadata.json"
     meta = strict_json(metadata.read_text())
     meta["context_mode"], meta["input_tokens"] = mode, tokens
     metadata.write_text(json.dumps(meta))
-    timeout = bounded_int(os.environ.get("REVIEW_TIMEOUT_SECONDS", "1800"), 30, 1800)
     result = transport(body, timeout) if transport else post("responses", body, timeout)
     value = extract_result(result)
     output.write_text(json.dumps(value, ensure_ascii=False))
