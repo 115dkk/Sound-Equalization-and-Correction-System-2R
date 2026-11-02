@@ -1,6 +1,7 @@
+use std::io::{self, Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::path::Path;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde_json::Value;
 use tungstenite::{Message, WebSocket};
@@ -134,8 +135,74 @@ pub trait Transport {
 }
 
 #[derive(Debug)]
+struct DeadlineStream {
+    stream: TcpStream,
+    deadline: Instant,
+}
+
+impl DeadlineStream {
+    fn new(stream: TcpStream, timeout: Duration) -> Self {
+        Self {
+            stream,
+            deadline: Instant::now() + timeout,
+        }
+    }
+
+    fn set_deadline(&mut self, deadline: Instant) {
+        self.deadline = deadline;
+    }
+
+    fn remaining(&self) -> io::Result<Duration> {
+        self.deadline
+            .checked_duration_since(Instant::now())
+            .filter(|remaining| !remaining.is_zero())
+            .ok_or_else(timed_out)
+    }
+
+    fn map_timeout(&self, error: io::Error) -> io::Error {
+        if matches!(
+            error.kind(),
+            io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock
+        ) && Instant::now() >= self.deadline
+        {
+            timed_out()
+        } else {
+            error
+        }
+    }
+}
+
+impl Read for DeadlineStream {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        self.stream.set_read_timeout(Some(self.remaining()?))?;
+        self.stream
+            .read(buffer)
+            .map_err(|error| self.map_timeout(error))
+    }
+}
+
+impl Write for DeadlineStream {
+    fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+        self.stream.set_write_timeout(Some(self.remaining()?))?;
+        self.stream
+            .write(buffer)
+            .map_err(|error| self.map_timeout(error))
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.stream.set_write_timeout(Some(self.remaining()?))?;
+        self.stream.flush().map_err(|error| self.map_timeout(error))
+    }
+}
+
+fn timed_out() -> io::Error {
+    io::Error::new(io::ErrorKind::TimedOut, "websocket request timed out")
+}
+
+#[derive(Debug)]
 pub struct WsTransport {
-    socket: WebSocket<TcpStream>,
+    socket: WebSocket<DeadlineStream>,
+    timeout: Duration,
 }
 
 impl WsTransport {
@@ -171,14 +238,7 @@ impl WsTransport {
             ),
             connection_refused,
         })?;
-        stream
-            .set_read_timeout(Some(timeout))
-            .and_then(|()| stream.set_write_timeout(Some(timeout)))
-            .map_err(|error| ApplyError::Connect {
-                addr: addr.to_owned(),
-                message: error.to_string(),
-                connection_refused: false,
-            })?;
+        let stream = DeadlineStream::new(stream, timeout);
         let (socket, _) = tungstenite::client(format!("ws://{addr}"), stream).map_err(|error| {
             ApplyError::Connect {
                 addr: addr.to_owned(),
@@ -186,12 +246,14 @@ impl WsTransport {
                 connection_refused: false,
             }
         })?;
-        Ok(Self { socket })
+        Ok(Self { socket, timeout })
     }
 }
 
 impl Transport for WsTransport {
     fn request(&mut self, message: &str) -> Result<String, ApplyError> {
+        let deadline = Instant::now() + self.timeout;
+        self.socket.get_mut().set_deadline(deadline);
         self.socket
             .send(Message::Text(message.to_owned().into()))
             .map_err(|error| ApplyError::Transport(error.to_string()))?;
@@ -359,7 +421,27 @@ impl<T: Transport> Camilla<T> {
         )))?;
         let previous_value = self.command(&Command::GetConfigFilePath)?;
         let previous_path = value_as_optional_string(previous_value, &Command::GetConfigFilePath)?;
-        self.command(&Command::SetConfigFilePath(config_path.to_owned()))?;
+        if let Err(select_error) = self.command(&Command::SetConfigFilePath(config_path.to_owned()))
+        {
+            // A reply that never came may still have changed the selection, so
+            // put the previous path back and report it either way: the caller
+            // keeps that generation (audit #155 TD-108).
+            let Some(path) = previous_path else {
+                return Err(select_error);
+            };
+            let restore = self.command(&Command::SetConfigFilePath(path.clone()));
+            return Err(ApplyError::SelectionUncertain {
+                message: match restore {
+                    Ok(_) => format!("{select_error}; previous path restored"),
+                    Err(restore_error) => {
+                        format!(
+                            "{select_error}; restoring the previous path failed: {restore_error}"
+                        )
+                    }
+                },
+                previous_path: path,
+            });
+        }
 
         match self.command(&Command::Reload) {
             Ok(_) => Ok(ApplyOutcome::Applied { previous_path }),
@@ -370,9 +452,10 @@ impl<T: Transport> Camilla<T> {
                         .command(&Command::SetConfigFilePath(path.clone()))
                         .and_then(|_| self.command(&Command::Reload));
                     if let Err(rollback_error) = rollback {
-                        return Err(ApplyError::Rejected {
+                        return Err(ApplyError::RollbackFailed {
                             command: "Reload".into(),
                             message: format!("{error}; rollback failed: {rollback_error}"),
+                            previous_path: path.clone(),
                         });
                     }
                 }
@@ -498,6 +581,11 @@ mod tests {
     use std::net::TcpListener;
     use std::thread;
     use std::time::{Duration, Instant};
+
+    use tungstenite::protocol::frame::{
+        Frame,
+        coding::{Data, OpCode},
+    };
 
     use super::*;
 
@@ -747,12 +835,42 @@ mod tests {
         let mut camilla = Camilla::new(FakeTransport::from_replies(replies));
         assert!(matches!(
             camilla.apply("new.yml", "title: new"),
-            Err(ApplyError::Rejected { command, message })
-                if command == "Reload"
-                    && message.contains("cannot start")
-                    && message.contains("rollback failed")
-                    && message.contains("cannot restore")
+            Err(ApplyError::RollbackFailed {
+                command,
+                message,
+                previous_path,
+            }) if command == "Reload"
+                && previous_path == "old.yml"
+                && message.contains("cannot start")
+                && message.contains("rollback failed")
+                && message.contains("cannot restore")
         ));
+    }
+
+    #[test]
+    fn unanswered_selection_restores_and_reports_the_previous_path() {
+        let mut transport = FakeTransport::from_replies([
+            ok("ValidateConfig", serde_json::json!("validated")),
+            ok("GetConfigFilePath", serde_json::json!("old.yml")),
+        ]);
+        transport
+            .replies
+            .push_back(Err(ApplyError::Transport("request timed out".into())));
+        transport
+            .replies
+            .push_back(Ok(ok_without_value("SetConfigFilePath")));
+        let mut camilla = Camilla::new(transport);
+        assert!(matches!(
+            camilla.apply("new.yml", "title: new"),
+            Err(ApplyError::SelectionUncertain {
+                message,
+                previous_path,
+            }) if previous_path == "old.yml"
+                && message.contains("request timed out")
+                && message.contains("previous path restored")
+        ));
+        assert_eq!(camilla.transport.sent.len(), 4);
+        assert!(camilla.transport.sent[3].contains("old.yml"));
     }
 
     #[test]
@@ -799,6 +917,81 @@ mod tests {
     }
 
     #[test]
+    fn websocket_ping_frames_do_not_extend_request_deadline() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            let mut socket = tungstenite::accept(stream).unwrap();
+            let _ = socket.read().unwrap();
+            let deadline = Instant::now() + Duration::from_millis(400);
+            while Instant::now() < deadline {
+                if socket.send(Message::Ping(Vec::new().into())).is_err() {
+                    break;
+                }
+                thread::sleep(Duration::from_millis(20));
+            }
+        });
+
+        let mut transport =
+            WsTransport::connect(&addr.to_string(), Duration::from_secs(2)).unwrap();
+        transport.timeout = Duration::from_millis(100);
+        let started = Instant::now();
+        assert!(matches!(
+            transport.request(r#""GetState""#),
+            Err(ApplyError::Transport(_))
+        ));
+        assert!(started.elapsed() < Duration::from_millis(300));
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn incomplete_fragment_stream_does_not_extend_request_deadline() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            let mut socket = tungstenite::accept(stream).unwrap();
+            let _ = socket.read().unwrap();
+            if socket
+                .send(Message::Frame(Frame::message(
+                    b"{".as_slice(),
+                    OpCode::Data(Data::Text),
+                    false,
+                )))
+                .is_err()
+            {
+                return;
+            }
+            let deadline = Instant::now() + Duration::from_millis(400);
+            while Instant::now() < deadline {
+                thread::sleep(Duration::from_millis(20));
+                if socket
+                    .send(Message::Frame(Frame::message(
+                        b" ".as_slice(),
+                        OpCode::Data(Data::Continue),
+                        false,
+                    )))
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        });
+
+        let mut transport =
+            WsTransport::connect(&addr.to_string(), Duration::from_secs(2)).unwrap();
+        transport.timeout = Duration::from_millis(100);
+        let started = Instant::now();
+        assert!(matches!(
+            transport.request(r#""GetState""#),
+            Err(ApplyError::Transport(_))
+        ));
+        assert!(started.elapsed() < Duration::from_millis(300));
+        server.join().unwrap();
+    }
+
+    #[test]
     fn websocket_read_obeys_the_timeout() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
@@ -810,7 +1003,8 @@ mod tests {
         });
 
         let mut transport =
-            WsTransport::connect(&addr.to_string(), Duration::from_millis(100)).unwrap();
+            WsTransport::connect(&addr.to_string(), Duration::from_secs(2)).unwrap();
+        transport.timeout = Duration::from_millis(100);
         let started = Instant::now();
         assert!(matches!(
             transport.request(r#""GetState""#),

@@ -12,44 +12,127 @@ use tauri::{AppHandle, Manager};
 /// The logo the main window shows. The window starts with the bundle icon;
 /// a settings write that keeps the logo (a recent-projects update) leaves
 /// the window alone.
+#[derive(Debug, Default)]
+struct IconState {
+    shown: AppIcon,
+    desired: AppIcon,
+    queued: bool,
+}
+
+impl IconState {
+    fn request(&mut self, icon: AppIcon) -> bool {
+        self.desired = icon;
+        if self.queued || self.desired == self.shown {
+            false
+        } else {
+            self.queued = true;
+            true
+        }
+    }
+
+    fn next(&mut self) -> Option<AppIcon> {
+        if self.desired == self.shown {
+            self.queued = false;
+            None
+        } else {
+            Some(self.desired)
+        }
+    }
+
+    fn mark_shown(&mut self, icon: AppIcon) {
+        self.shown = icon;
+    }
+
+    fn failed(&mut self) {
+        self.queued = false;
+    }
+}
+
 #[derive(Default)]
-pub(crate) struct Shown(Mutex<AppIcon>);
+pub(crate) struct Shown(Mutex<IconState>);
+
+impl Shown {
+    fn request(&self, icon: AppIcon) -> bool {
+        self.0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .request(icon)
+    }
+
+    fn next(&self) -> Option<AppIcon> {
+        self.0.lock().unwrap_or_else(PoisonError::into_inner).next()
+    }
+
+    fn mark_shown(&self, icon: AppIcon) {
+        self.0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .mark_shown(icon);
+    }
+
+    fn failed(&self) {
+        self.0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .failed();
+    }
+}
+
+fn image(app: &AppHandle, scale: f64, icon: AppIcon) -> Option<Image<'static>> {
+    match icon {
+        AppIcon::Expert => app.default_window_icon().cloned().map(Image::to_owned),
+        AppIcon::Civilian => Some(civilian(scale)),
+    }
+}
 
 /// Shows `icon` on the main window if it is not already there. A failure
 /// keeps the previous icon: the logo is decoration, so nothing is reported.
 pub(crate) fn show(app: &AppHandle, icon: AppIcon) {
     let shown = app.state::<Shown>();
-    let current = shown.0.lock().unwrap_or_else(PoisonError::into_inner);
-    if *current == icon {
+    if !shown.request(icon) {
         return;
     }
-    drop(current);
     let Some(window) = app.get_webview_window("main") else {
-        return;
-    };
-    let image: Option<Image<'static>> = match icon {
-        AppIcon::Expert => app.default_window_icon().cloned().map(Image::to_owned),
-        AppIcon::Civilian => Some(civilian(window.scale_factor().unwrap_or(1.0))),
-    };
-    let Some(image) = image else {
+        shown.failed();
         return;
     };
 
     #[cfg(target_os = "windows")]
     {
-        let app: AppHandle = app.clone();
-        let _ = window.clone().run_on_main_thread(move || {
-            if window.set_icon(image.clone()).is_ok() {
+        let callback_app: AppHandle = app.clone();
+        let result = window.clone().run_on_main_thread(move || {
+            let shown = callback_app.state::<Shown>();
+            while let Some(desired) = shown.next() {
+                let Some(image) =
+                    image(&callback_app, window.scale_factor().unwrap_or(1.0), desired)
+                else {
+                    shown.failed();
+                    break;
+                };
+                if window.set_icon(image.clone()).is_err() {
+                    shown.failed();
+                    break;
+                }
                 let _ =
                     secs_sys::set_large_icon(&window, image.rgba(), image.width(), image.height());
-                let shown = app.state::<Shown>();
-                *shown.0.lock().unwrap_or_else(PoisonError::into_inner) = icon;
+                shown.mark_shown(desired);
             }
         });
+        if result.is_err() {
+            shown.failed();
+        }
     }
     #[cfg(not(target_os = "windows"))]
-    if window.set_icon(image).is_ok() {
-        *shown.0.lock().unwrap_or_else(PoisonError::into_inner) = icon;
+    while let Some(desired) = shown.next() {
+        let Some(image) = image(app, window.scale_factor().unwrap_or(1.0), desired) else {
+            shown.failed();
+            break;
+        };
+        if window.set_icon(image).is_err() {
+            shown.failed();
+            break;
+        }
+        shown.mark_shown(desired);
     }
 }
 
@@ -80,6 +163,29 @@ fn window_icon_size(scale: f64) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn queued_icon_callback_uses_the_latest_desired_icon_td115() {
+        let mut state = IconState::default();
+        assert!(state.request(AppIcon::Civilian));
+        assert!(!state.request(AppIcon::Expert));
+        assert_eq!(state.desired, AppIcon::Expert);
+        assert!(state.queued);
+    }
+
+    #[test]
+    fn callback_rechecks_a_request_between_read_and_mark_td115() {
+        let mut state = IconState::default();
+        assert!(state.request(AppIcon::Civilian));
+        let callback_icon = state.next().unwrap();
+        assert!(!state.request(AppIcon::Expert));
+        state.mark_shown(callback_icon);
+        let latest = state.next().unwrap();
+        state.mark_shown(latest);
+        assert_eq!(state.next(), None);
+        assert_eq!(state.shown, state.desired);
+        assert!(!state.queued);
+    }
 
     #[test]
     fn windows_icon_size_follows_the_display_scale() {

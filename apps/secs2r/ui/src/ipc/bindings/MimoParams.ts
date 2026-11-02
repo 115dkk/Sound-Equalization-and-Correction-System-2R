@@ -6,6 +6,9 @@ import type { CalibrationSettings } from "./CalibrationSettings";
  */
 export type MimoParams = { 
 /**
- * Settings override; absent uses the open project.
+ * Settings for this run only; absent uses the open project. The override
+ * is not stored: the result book still judges the result against the
+ * project's stored settings, so a MIMO computed with other options than
+ * the project's shows as stale (audit #155 Q4).
  */
 settings: CalibrationSettings | null, };

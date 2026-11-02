@@ -63,6 +63,67 @@ it.each(["open", "close"] as const)("asks about unsaved changes on %s while an e
     await act(async () => { release(); await edit; });
   } finally { release(); await edit; hook.unmount(); session.dispose(); mock.dispose(); }
 });
+it.each(["open", "close"] as const)("waits for every queued edit before save then %s and stops on failure", async (action) => {
+  for (const fails of [false, true]) {
+    const mock = createMockService({ tickMs: 0 });
+    let release!: () => void;
+    const delayed = new Promise<void>((resolve) => { release = resolve; });
+    let edits = 0;
+    const session = createSession({ ...mock, request: async (request) => {
+      if (request.method === "dsp_set" && ++edits === 1) {
+        await delayed;
+        if (fails) throw new Error("edit refused");
+      }
+      return mock.request(request);
+    } });
+    await session.start(); await session.settled();
+    const close = vi.fn(async () => {});
+    const hook = renderHook(() => useProjectScreen(close), { wrapper: ({ children }: { children: ReactNode }) => createElement(SessionProvider, { value: session, children }) });
+    const first = session.writers.dsp.edit({ fir_taps: 4096 });
+    const second = session.writers.dsp.edit({ fir_budget: 12345 });
+    try {
+      act(() => action === "open" ? hook.result.current.actions.openRecent("C:/other.secs") : hook.result.current.requestClose());
+      act(() => hook.result.current.actions.saveAndContinue());
+      await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+      expect(mock.calls.filter((r) => r.method === "project_save")).toHaveLength(0);
+      await act(async () => { release(); await Promise.all([first, second]); await session.settled(); });
+      await waitFor(() => expect(hook.result.current.view.busy).toBe(false));
+      expect(mock.calls.filter((r) => r.method === "project_save")).toHaveLength(fails ? 0 : 1);
+      expect(mock.calls.filter((r) => r.method === "project_open")).toHaveLength(!fails && action === "open" ? 1 : 0);
+      expect(close).toHaveBeenCalledTimes(!fails && action === "close" ? 1 : 0);
+      if (!fails) {
+        const methods = mock.calls.map((r) => r.method);
+        expect(methods.lastIndexOf("dsp_set")).toBeLessThan(methods.indexOf("project_save"));
+      }
+    } finally { release(); await Promise.all([first, second]); hook.unmount(); session.dispose(); await session.settled(); mock.dispose(); }
+  }
+});
+
+it.each(["open", "close"] as const)("remembers an edit failure before save and continue on %s", async (action) => {
+  const mock = createMockService({ tickMs: 0 });
+  let release!: () => void;
+  const delayed = new Promise<void>((resolve) => { release = resolve; });
+  const session = createSession({ ...mock, request: async (request) => {
+    if (request.method === "dsp_set") { await delayed; throw new Error("edit refused"); }
+    return mock.request(request);
+  } });
+  await session.start(); await session.settled();
+  const close = vi.fn(async () => {});
+  const hook = renderHook(() => useProjectScreen(close), { wrapper: ({ children }: { children: ReactNode }) => createElement(SessionProvider, { value: session, children }) });
+  const edit = session.writers.dsp.edit({ fir_taps: 4096 });
+  try {
+    act(() => action === "open" ? hook.result.current.actions.openRecent("C:/other.secs") : hook.result.current.requestClose());
+    expect(hook.result.current.view.dialog?.kind).toBe("unsaved");
+    await act(async () => { release(); expect(await edit).toBe(false); await session.settled(); });
+    await act(async () => { hook.result.current.actions.saveAndContinue(); await session.settled(); });
+    await waitFor(() => expect(hook.result.current.view.busy).toBe(false));
+    expect(mock.calls.filter((r) => r.method === "project_save")).toHaveLength(0);
+    expect(mock.calls.filter((r) => r.method === "project_open")).toHaveLength(0);
+    expect(close).not.toHaveBeenCalled();
+    expect(await session.projectEditsSettled()).toBe(true);
+  } finally { release(); await edit; hook.unmount(); session.dispose(); await session.settled(); mock.dispose(); }
+});
+
 it("keeps jobs on cancelled close and saves before an approved close", async () => {
   const mock = createMockService({ tickMs: 0 });
   const session = createSession(mock);

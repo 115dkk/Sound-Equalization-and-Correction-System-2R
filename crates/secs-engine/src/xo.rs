@@ -321,6 +321,13 @@ pub fn recommend_xo(
     } else {
         xo_bytes(&inputs.measurements, &inputs.config)
     };
+    // Schroeder does not depend on XO. Analyze before holding shared/candidate
+    // permits, never from a Rayon task that might wait on its own batch.
+    let schroeder = if candidates.is_empty() {
+        levels::Schroeder::default()
+    } else {
+        levels::Schroeder::analyze(&inputs.measurements, &inputs.config, ctx)?
+    };
     let _shared = crate::memory::reserve(ctx, shared, candidate)?;
     // Empty candidate lists retain their old no-preparation behaviour.
     let prepared = if candidates.is_empty() {
@@ -375,6 +382,7 @@ pub fn recommend_xo(
                 &inner,
                 &*production_fitters_with(inner.cancel(), peq_derivatives),
                 prepared,
+                schroeder,
             )?;
             // Only the unfiltered windows are shared. The final multiplication
             // by BA-derived sub filters still happens per candidate, in order.

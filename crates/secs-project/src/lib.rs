@@ -31,7 +31,7 @@ pub use project::{
     FOCUS_STEPS, PROJECT_VERSION, Project, migrate_calibration_keys, migrate_group_keys,
     rename_keys, snap_focus,
 };
-pub use pyjson::{PyJson, PyJsonError, dumps, dumps_compact, loads};
+pub use pyjson::{PyJson, PyJsonError, dumps, dumps_compact, loads, loads_with_budget};
 pub use record::{
     AttachedCalibration, IR_CACHE_LIMIT_BYTES, IrCache, LoadedIr, MAX_PROJECT_BYTES,
     MeasurementRecord, MeasurementResult, MeasurementStore, MigrationWarning, RemovedPosition,

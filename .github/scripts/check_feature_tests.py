@@ -44,6 +44,8 @@ IGNORED_CI_TESTS = {
     "secs-filters::exported_configs_play_as_designed": "eqapo-playback",
     "secs-filters::reaper_plays_convolution_bundles_as_written": "reaper-playback",
     "secs-camilla::camilla_exports_play_as_designed": "camilla-playback",
+    "secs-filters::generation_entry_plays_from_unrelated_working_directory_across_two_applies": "eqapo-playback",
+    "secs-camilla::one_running_pipeline_switches_generation_firs_by_unique_paths": "camilla-playback",
 }
 
 

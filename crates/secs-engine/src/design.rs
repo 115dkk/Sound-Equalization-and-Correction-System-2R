@@ -354,6 +354,7 @@ pub(crate) fn design_observed(
     let bytes = DesignBytes::new(req.measurements, config, &setup, req.subs_only);
     let held =
         measurement::preparation_bytes(req.measurements, &setup).saturating_add(bytes.retained);
+    let schroeder = levels::Schroeder::analyze(req.measurements, config, ctx)?;
     let _permit = crate::memory::reserve(ctx, held, bytes.channel)?;
     let prepared = measurement::prepare_until(req.measurements, config, &setup, &|| {
         ctx.cancel().is_cancelled()
@@ -370,6 +371,7 @@ pub(crate) fn design_observed(
             held,
             channel: bytes.channel,
         },
+        schroeder,
     )
 }
 
@@ -391,6 +393,7 @@ pub(crate) fn design_prepared(
         &Setup::new(req.config),
         req.subs_only,
     );
+    let schroeder = levels::Schroeder::analyze(req.measurements, req.config, ctx)?;
     let _permit = crate::memory::reserve(ctx, bytes.retained, bytes.channel)?;
     design_prepared_scored(
         req,
@@ -403,6 +406,7 @@ pub(crate) fn design_prepared(
             held: bytes.retained,
             channel: bytes.channel,
         },
+        schroeder,
     )
 }
 
@@ -415,6 +419,7 @@ pub(crate) fn design_prepared_for_xo(
     ctx: &Context,
     fitters: &FitterFactory<'_>,
     prepared: &measurement::Prepared,
+    schroeder: levels::Schroeder,
 ) -> Result<Design, EngineError> {
     design_prepared_scored(
         req,
@@ -424,6 +429,7 @@ pub(crate) fn design_prepared_for_xo(
         &|_, _| {},
         false,
         ChannelBytes::RESERVED,
+        schroeder,
     )
 }
 
@@ -443,6 +449,7 @@ impl ChannelBytes {
     };
 }
 
+#[allow(clippy::too_many_arguments)]
 fn design_prepared_scored(
     req: &DesignRequest<'_>,
     ctx: &Context,
@@ -451,6 +458,7 @@ fn design_prepared_scored(
     observed: &(dyn Fn(&str, std::time::Duration) + Sync),
     include_scores: bool,
     reserve: ChannelBytes,
+    schroeder: levels::Schroeder,
 ) -> Result<Design, EngineError> {
     if req.config.rc_range.1.is_none() && req.config.rc_hi_basis == RcHiBasis::Agreement {
         let count = agreement_positions(req.measurements, req.config);
@@ -467,6 +475,7 @@ fn design_prepared_scored(
             observed,
             false,
             reserve,
+            schroeder,
             RcPass::Probe,
         )?;
         let limit = levels::median(limits).clamp(100.0, 2000.0);
@@ -480,6 +489,7 @@ fn design_prepared_scored(
             observed,
             include_scores,
             reserve,
+            schroeder,
             RcPass::Final(limit),
         )
         .map(|(design, _)| design);
@@ -492,6 +502,7 @@ fn design_prepared_scored(
         observed,
         include_scores,
         reserve,
+        schroeder,
         RcPass::Normal,
     )
     .map(|(design, _)| design)
@@ -524,6 +535,7 @@ fn design_pass(
     observed: &(dyn Fn(&str, std::time::Duration) + Sync),
     include_scores: bool,
     reserve: ChannelBytes,
+    schroeder: levels::Schroeder,
     pass: RcPass,
 ) -> Result<(Design, Vec<f64>), EngineError> {
     check(ctx)?;
@@ -551,12 +563,8 @@ fn design_pass(
         notes.push(Note::SubFilters(setup.sub_filters.clone()));
     }
     let rc_auto = setup.rc_hi_manual.is_none();
-    let schroeder_hz = rc_auto
-        .then(|| levels::schroeder_hz(req.measurements, config))
-        .flatten();
-    let lenient = (rc_auto && config.rc_hi_basis == RcHiBasis::Lenient)
-        .then(|| levels::lenient_schroeder_hz(req.measurements, config))
-        .flatten();
+    let schroeder_hz = schroeder.strict;
+    let lenient = schroeder.lenient;
     if rc_auto {
         if !matches!(config.rc_hi_transition, 1 | 2 | 4) {
             return Err(EngineError::Input(

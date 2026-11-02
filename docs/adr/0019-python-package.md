@@ -13,7 +13,7 @@ Python 바인딩은 PyO3로 만듭니다. PyO3 0.30.1의 `#[pymodule]`, `#[pyfun
 - **크레이트.** `bindings/python`에 `secs-py`를 둡니다. `cdylib`이고 crates.io에는 올리지 않습니다. 공개 Rust API(`sound-equalization-and-correction-system-rust-api`)의 `engine`과 `client` 기능만 쓰며, 운영체제 의존성과 GPU는 넣지 않습니다.
 - **unsafe 규칙.** `secs-py`도 다른 비격리 크레이트와 마찬가지로 루트에 `#![forbid(unsafe_code)]`를 두고 작업 공간 린트를 그대로 씁니다. 손으로 쓴 `unsafe`의 예산은 0입니다.
 - **Python API.** Rust API처럼 요청을 JSON 모양 그대로 주고받습니다.
-  - `secs2r.Engine(app_settings_path=None)`: `call(request: dict) -> dict`, `wait_job(job_id: int, timeout: float) -> dict`, `events()`(작업 이벤트 반복자).
+  - `secs2r.Engine(app_settings_path=None)`: `call(request: dict) -> dict`, `wait_job(job_id: int, timeout: float) -> dict`, `events()`(작업 이벤트 반복자). 반복자의 `dropped_events()`는 받는 쪽이 늦어 가득 찬 큐에서 버린 이벤트 수입니다(감사 #155 TD-127).
   - `secs2r.Client(port=4712, token=None, token_path=None)`: 실행 중인 앱의 로컬 API. `call`, `status`, `events`.
   - 오류는 `secs2r.SecsError`(코드, 메시지, 세부)로 올립니다. 오래 걸리는 호출은 GIL을 놓고 기다립니다.
   - 타입 힌트(`.pyi`, `py.typed`)를 함께 싣습니다.

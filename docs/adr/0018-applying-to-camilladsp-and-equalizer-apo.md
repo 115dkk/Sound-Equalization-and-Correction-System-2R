@@ -27,23 +27,33 @@
 ### CamillaDSP 적용
 
 - 주소는 설정에 두고 기본은 `127.0.0.1:1234`입니다. 루프백이 아닌 주소를 고르면 화면이 그 뜻을 한 줄로 알립니다.
-- 올리는 순서는 내보내기(설정 폴더에 yml 쓰기), `ValidateConfig`(내용), `SetConfigFilePath`, `Reload`입니다. `Reload`가 실패하면 앞서 `GetConfigFilePath`로 읽어 둔 경로로 되돌리고 실패를 보고합니다.
+- 올리는 순서는 내보내기(새 세대 폴더에 yml과 FIR 저장, 아래 '세대'), `ValidateConfig`(내용), `SetConfigFilePath`, `Reload`입니다. `Reload`가 실패하면 앞서 `GetConfigFilePath`로 읽어 둔 경로로 되돌리고 실패를 보고합니다.
 - 상태는 `GetVersion`, `GetState`, `GetStopReason`, `GetConfigTitle`, `GetConfigFilePath`, `GetCaptureRate`, `GetClippedSamples`, `GetProcessingLoad`, `GetSignalLevels`로 읽습니다. 올라간 설정이 이 프로젝트의 어느 설계인지는 설정의 title과 `secs-design.json`(B-2)으로 판단해 '이 설계', '다른 설계', '알 수 없음'으로 보여 줍니다.
 - 지원하는 CamillaDSP는 3.0 이상이고, CI의 재생 검사는 4.1.3입니다.
 
 ### Equalizer APO 적용
 
 - 설치는 레지스트리 `HKLM\SOFTWARE\EqualizerAPO`의 `ConfigPath`와 `InstallPath`로 감지합니다. XT도 같은 키와 값 이름을 씁니다. XT는 Velopack 패키지 ID를 `EqualizerAPO-XT-<아키텍처>`로 정하므로 `InstallPath`의 디렉터리 이름에 `EqualizerAPO-XT`가 들어가고, 공식판은 `EqualizerAPO` 디렉터리를 씁니다. 이 이름으로 XT와 공식판을 구별하고 어느 쪽도 아니면 판을 알 수 없음으로 둡니다. XT는 `Include`와 `Convolution`의 상대 경로를 각 줄이 들어 있는 설정 파일의 디렉터리에서 풉니다(`IncludeFilterFactory.cpp`, `ConfigFileReference.cpp`). 따라서 `SECS2R\SECS.txt`가 다시 포함하는 필터 본문과 그 본문이 가리키는 FIR은 묶음 안의 상대 경로를 그대로 씁니다.
-- 감지하면 `ConfigPath\SECS2R\`에 FIR WAV와 `SECS.txt`를 쓰고, `config.txt` 끝에 다음 두 줄을 더합니다. 표식 주석이 있는 줄만 SECS 2R의 것으로 봅니다. 표식은 Equalizer APO가 어느 판이든, 파일 인코딩이 무엇이든 그대로 다룰 수 있게 ASCII로 씁니다.
+- 감지하면 `ConfigPath\SECS2R\` 아래의 새 세대 폴더에 필터 본문(`config.txt`)과 FIR WAV를 저장하고, `SECS2R\SECS.txt`를 그 세대를 포함하는 한 줄(`Include: <세대>\config.txt`)로 바꿉니다(아래 '세대'). `config.txt` 끝에는 다음 두 줄을 추가합니다. 표식 주석이 있는 줄만 SECS 2R의 것으로 봅니다. 표식은 Equalizer APO가 어느 판이든, 파일 인코딩이 무엇이든 그대로 다룰 수 있게 ASCII로 씁니다.
 
   ```text
   # SECS2R: managed by SECS 2R (this line and the next)
   Include: SECS2R\SECS.txt
   ```
 
-- `config.txt`의 다른 줄은 바꾸지 않습니다. 처음 바꿀 때 원본을 `config.txt.secs2r-backup`으로 남기고, '되돌리기'는 표식 두 줄만 지웁니다. 같은 설계를 다시 적용하면 파일을 바꾸지 않습니다.
-- 쓰기는 임시 파일에 쓴 뒤 이름을 바꾸는 방식으로 하여, Equalizer APO가 다 쓰지 않은 파일을 읽는 일이 없게 합니다. Equalizer APO는 설정 폴더가 바뀌면 다시 읽으므로 재시작은 하지 않습니다.
+- `config.txt`의 다른 줄은 바꾸지 않습니다. 처음 바꿀 때 원본을 `config.txt.secs2r-backup`으로 남기고, '되돌리기'는 표식 두 줄만 지웁니다.
+- 세대 폴더는 다 만든 뒤에 이름을 바꿔 들여놓고, `SECS.txt`도 임시 파일을 만든 뒤 이름을 바꿔 교체합니다. 그래서 Equalizer APO가 반쯤 만들어진 파일을 읽는 일이 없습니다. Equalizer APO는 설정 폴더가 바뀌면 다시 읽으므로 재시작은 하지 않습니다.
 - 설정 폴더에 쓸 권한이 없으면 실패를 그대로 알리고, 권한을 올려 다시 시도하지 않습니다.
+
+### 세대 (2026-11-02에 추가함, 감사 #155 TD-22, TD-105, TD-106, TD-108, TD-117)
+
+같은 경로의 파일을 덮어쓰면 소비자가 읽는 도중에 내용이 바뀌거나, CamillaDSP처럼 경로가 같으면 다시 읽지 않는 소비자가 옛 FIR을 계속 씁니다(0.45.1). 그래서 두 대상 모두 적용할 때마다 세대 폴더를 새로 만들고, 소비자가 보는 진입점 하나만 바꿉니다.
+
+- **세대 폴더.** 이름은 `<설계 ID 앞 16자리>-<번호>`이고, 번호는 그 자리에 없는 가장 작은 수입니다. CamillaDSP는 `<앱 데이터>\applied\camilladsp\` 아래, Equalizer APO는 `ConfigPath\SECS2R\` 아래에 둡니다. 같은 설계를 다시 적용해도 새 세대를 만듭니다. 묶음은 대상 폴더 밖의 임시 폴더에서 다 만든 뒤 이름을 바꿔 세대 폴더로 들여놓고, 적용 결과의 `folder`는 그 세대 폴더입니다. 세대 폴더의 `secs-design.json`에는 들여놓은 파일마다 크기와 SHA-256이 들어 있습니다.
+- **진입점.** CamillaDSP는 `SetConfigFilePath`로 새 세대의 yml을 고르고 `Reload`합니다. Equalizer APO는 `SECS2R\SECS.txt` 한 파일을 `Include: <세대>\config.txt`(CRLF)로 원자 교체합니다. Equalizer APO는 `Include`의 상대 경로를 그 줄이 있는 파일의 폴더에서 풀기 때문에, 세대 안의 FIR 경로는 세대 폴더 기준의 상대 경로 그대로 둡니다.
+- **보존.** 적용에 성공하면 지금 세대와 바로 앞 세대를 남기고 나머지를 지웁니다. 실패했거나 결과가 불확실한 전환(되돌리기 실패, `config.txt` 복구 실패)에서 소비자가 참조했을 수 있는 세대는 그 대상의 세대 폴더 옆 `secs-retained-generations.txt`(UTF-8, 한 줄에 세대 이름 하나)에 기록하고, 다음 성공한 적용은 이 세대도 남긴 뒤 기록을 지웁니다. 기록을 읽거나 해석할 수 없으면 그 적용에서는 아무것도 지우지 않습니다. CamillaDSP가 지금 쓰는 세대는 서비스가 남긴 표식이 아니라 그 적용에서 CamillaDSP가 알려 준 이전 설정 경로로 정하고, 알 수 없으면 지우지 않습니다. 지우기에 실패해도 적용은 성공으로 끝납니다. 링크나 정션은 대상을 따라가지 않고 링크 자체만 지웁니다.
+- **한계.** 소비자가 두 번 넘게 이어진 성공한 적용 동안 옛 세대의 파일을 계속 읽고 있으면, 그 파일은 지워집니다. 실패한 전환 바로 뒤에 보존 기록마저 저장하지 못하면, 다음 성공한 적용이 남겨야 할 세대를 지우는 경우도 있습니다. 이 실패는 세대 이름과 함께 오류로 기록합니다. 두 경우 모두 받아들인 한계입니다(유지보수자 위임에 따른 Claude의 판정, 2026-11-02).
+- **이전 배치.** 0.46.0까지의 평면 배치(`SECS2R\SECS.txt`에 필터 본문을 둔 것)의 파일은 첫 세대 적용이 성공한 뒤 세대가 아닌 파일로 보고 지웁니다.
 
 ### 관리 서비스와 셸
 
@@ -60,6 +70,7 @@
 - **상태 저장.** 서비스는 관리 대상(CamillaDSP 실행 파일과 설정 경로, Equalizer APO 설정 폴더)을 `%ProgramData%\SECS2R\host.json`에 저장해, 컴퓨터를 다시 켜도 이어서 관리합니다. 최근 기록은 같은 폴더의 `host.log`에 크기 한도를 두고 씁니다.
 - **파이프.** 이름은 `\\.\pipe\secs2r-host`이고 보안 설명자는 `D:P(A;;GA;;;SY)(A;;GRGW;;;IU)`(SYSTEM과 대화형 사용자)입니다. 요청은 상태 읽기, 관리 대상 정하기, 관리 끄기, 최근 기록 읽기입니다.
 - **권한 경계.** 관리 대상을 정하거나 끄는 요청은 현재 콘솔 세션의 프로세스만 보낼 수 있으며, 서비스는 그 세션 사용자의 SID를 상태에 함께 저장하고, 콘솔 사용자가 같은 사람인지는 로그온할 때마다 달라지는 세션 번호가 아니라 SID로 확인합니다. 다른 사용자가 콘솔을 쓰면 CamillaDSP를 멈추고 `other_user`를 기록합니다. Equalizer APO 폴더는 HKLM의 `ConfigPath`와 일치해야 하며 `config.txt` 복구는 같은 사용자의 세션에서 실행한 보조 프로세스가 맡습니다. `%ProgramData%\SECS2R`은 SYSTEM이나 Administrators가 소유한 실제 디렉터리만 받아들이고, SYSTEM과 Administrators에는 모든 권한을, Users에는 읽기 권한만 주는 상속 차단 DACL을 적용합니다.
+- **관리 전환 (2026-11-02에 추가함, 감사 #155 TD-111, TD-113, TD-114).** 서비스가 상태와 요청과 세션 이벤트를 받아 할 일을 정하는 규칙은 `apps/secs2r-host/src/transitions.rs` 한 곳에 있고, 실제 실행은 그 결과를 따르기만 합니다. 관리 대상을 정하는 사용자의 SID가 저장된 SID와 다르면 이전 사용자의 대상은 모두 버리고 새 요청에 든 대상만 남깁니다. 같은 사용자가 대상 하나만 바꾸면 다른 대상은 그대로 둡니다. `config.txt` 복구가 실패하면 그 실패는 Equalizer APO 대상의 오류로만 남고, CamillaDSP와 드라이버는 멈추지 않습니다. 복구는 1초, 2초 뒤에 다시 시도해 모두 세 번까지 합니다. 로그오프 이벤트는 그 세션에서 띄운 자식만 멈추므로, 다른 사용자가 로그오프해도 관리하는 세션의 CamillaDSP는 그대로 돕니다. 서비스가 메모리에 두는 최근 기록은 1000줄까지이고, 기록 읽기 응답은 960 KiB를 넘지 않습니다.
 
 ### 크레이트와 의존성
 

@@ -24,6 +24,50 @@ beforeEach(async () => {
 afterEach(async () => { cleanup(); await session.monitor(false); session.dispose(); mock.dispose(); vi.restoreAllMocks(); });
 
 describe("useCalibrateScreen", () => {
+  it.each(["upper edge", "add", "remove", "two removals", "sorted row", "add then remove"] as const)("keeps queued extra-band edits against the latest array: %s", async (next) => {
+    installFakeCanvas();
+    await session.call({ method: "calibration_settings_edit", params: { edit: { kind: "rc_hi", hz: 500 } } });
+    await session.call({ method: "calibration_settings_edit", params: { edit: { kind: "rc_bands", bands: [{ lo_hz: 2000, hi_hz: 4000 }, { lo_hz: 15000, hi_hz: 20000 }] } } });
+    let release!: () => void;
+    let entered!: () => void;
+    const delay = new Promise<void>((resolve) => { release = resolve; });
+    const reached = new Promise<void>((resolve) => { entered = resolve; });
+    const original = mock.request;
+    let writes = 0;
+    vi.spyOn(mock, "request").mockImplementation(async (request) => {
+      const response = await original(request);
+      if (request.method === "calibration_settings_edit" && request.params.edit.kind === "rc_bands" && ++writes === 1) { entered(); await delay; }
+      return response;
+    });
+    function Live() {
+      const { view, actions } = useCalibrateScreen();
+      return view ? <CalibrateScreen view={view} actions={actions} /> : null;
+    }
+    const rendered = renderWith(<Live />, { session });
+    const input = (id: string) => document.querySelector<HTMLInputElement>(`[data-ui="${id}"]`)!;
+    const commit = (id: string, value: string) => { fireEvent.change(input(id), { target: { value } }); fireEvent.keyDown(input(id), { key: "Enter" }); };
+    try {
+      await act(async () => {
+        if (next === "two removals") fireEvent.click(input("calibrate.range.extra.1.remove"));
+        else if (next === "sorted row") commit("calibrate.range.extra.2.lower", "1000");
+        else if (next === "add then remove") fireEvent.click(input("calibrate.range.extra.add"));
+        else commit("calibrate.range.extra.1.lower", "2500");
+        await reached;
+      });
+      act(() => {
+        if (next === "upper edge") commit("calibrate.range.extra.1.upper", "4500");
+        else if (next === "sorted row") commit("calibrate.range.extra.2.upper", "19000");
+        else fireEvent.click(input(next === "add" ? "calibrate.range.extra.add" : "calibrate.range.extra.2.remove"));
+      });
+      await act(async () => { release(); await session.settled(); });
+      const expected = next === "two removals" ? [] : next === "remove" ? [{ lo_hz: 2500, hi_hz: 4000 }]
+        : next === "sorted row" ? [{ lo_hz: 1000, hi_hz: 19000 }, { lo_hz: 2000, hi_hz: 4000 }]
+        : next === "add then remove" ? [{ lo_hz: 2000, hi_hz: 4000 }, { lo_hz: 5000, hi_hz: 10000 }]
+        : next === "add" ? [{ lo_hz: 2500, hi_hz: 4000 }, { lo_hz: 5000, hi_hz: 10000 }, { lo_hz: 15000, hi_hz: 20000 }]
+        : [{ lo_hz: 2500, hi_hz: 4500 }, { lo_hz: 15000, hi_hz: 20000 }];
+      expect((await mock.request({ method: "calibration_settings_get" })).rc_bands).toEqual(expected);
+    } finally { release(); await session.settled(); rendered.unmount(); }
+  });
   it("reads the DSP's taps, budget and output rate, counting 자동 as 48 kHz", async () => {
     const { result } = renderHook(useCalibrateScreen, { wrapper });
     expect(result.current.view).toMatchObject({ firTaps: 65536, firBudget: 2097152, outputRate: 48000 });
@@ -131,6 +175,9 @@ describe("useCalibrateScreen", () => {
     await perform(() => result.current.actions.changeCompute("cpu"));
     expect(result.current.view?.compute).toMatchObject({ preference: "auto", saving: false });
     expect(session.errors.getSnapshot()?.error.code).toBe("project_io");
+    await perform(() => result.current.actions.changeSetting({ kind: "mimo_on", on: true }));
+    await perform(() => session.call({ method: "calibrate", params: { settings: null, subs_only: false } }));
+    await perform(mock.drain);
     await perform(result.current.actions.computeMimo);
     mock.calls.length = 0;
     await perform(() => result.current.actions.changeCompute("cpu"));
@@ -188,6 +235,8 @@ describe("useCalibrateScreen", () => {
     expect(mock.calls).toContainEqual({ method: "recommend_xo" });
     expect(result.current.view?.running).toBe("recommend_xo");
     await perform(mock.drain);
+    await perform(mock.drain);
+    await perform(() => a.changeSetting({ kind: "mimo_on", on: true }));
     mock.failJobs("mimo", "internal");
     await perform(a.computeMimo);
     expect(mock.calls).toContainEqual({ method: "mimo", params: { settings: null } });

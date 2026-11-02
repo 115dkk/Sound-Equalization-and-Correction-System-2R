@@ -11,8 +11,9 @@ import type { ExportKind } from "../ipc/bindings/ExportKind";
 import type { MdatScope } from "../ipc/bindings/MdatScope";
 import type { XoRecommendation } from "../ipc/bindings/XoRecommendation";
 import type { ConnectPath, MeterReading, MicCalibrationView, MonitorState, RewProblem } from "../screens/connect/types";
-import type { CalibrateView } from "../screens/calibrate/types";
-import { rangeRejection } from "../screens/calibrate/settingsView";
+import type { CalibrateActions, CalibrateView } from "../screens/calibrate/types";
+import { isRangeEdit, rangeRejection } from "../screens/calibrate/settingsView";
+import { createBandTargets, settingEdit } from "./settingsEdits";
 import type { ApplyRun, ApplyTarget, ExportRun, HostFailure } from "../screens/export/types";
 import type { MeasureView } from "../screens/measure/types";
 import { createResource as resource, createStore, type Failure } from "./store";
@@ -21,7 +22,7 @@ import { createJobLedger, type FinishedJob, type JobRequestContext, type LedgerJ
 import { effectsOf, projectEdits, refreshInputs, refreshMeasurements, type EffectContext } from "./effects";
 import { createAutoRefresh } from "./autoRefresh";
 import { calibrationMimo, startCalibration } from "./calibration";
-import { createWriter, type Patch, type Writer, type WriterDeps } from "./writers";
+import { createWriter, createWriterQueue, type Patch, type Writer, type WriterDeps } from "./writers";
 import type { AppSettings } from "../ipc/bindings/AppSettings";
 import type { ApplySettings } from "../ipc/bindings/ApplySettings";
 import type { DspFields } from "../ipc/bindings/DspFields";
@@ -163,6 +164,13 @@ export function createSession(ipc: Ipc) {
       return value;
     }, (error) => { report(error); appSettingsFailure = errors.getSnapshot()?.id ?? null; }),
   };
+  function clearProjectResources() {
+    projectFailures.clear();
+    invalidateProjectFollowUps();
+    for (const key of ["project", "config", "notices", "dsp", "layout", "estimate", "measurementSettings", "records", "curves", "levels", "settings", "micCalibration", "modeSpec", "target", "results", "lines", "subWarnings", "folder", "applyStatus"] as const) {
+      stores[key].set(null);
+    }
+  }
   function curveParams(): ResultCurvesParams {
     const h = host.getSnapshot();
     return { tab: h.tab, channel: h.channel, group: h.xoGroup, xo_hz: h.previewHz, corrected: null };
@@ -179,70 +187,119 @@ export function createSession(ipc: Ipc) {
     if (job.epoch === jobs.epoch && ["calibrate", "mimo", "recommend_xo"].includes(job.kind)) host.set({ failure: null });
   } });
   let pendingProjectEdits = 0;
-  const call: SessionCall = (request, context) => track(async () => {
-    let epoch = jobs.epoch;
-    const saveDialog = request.method === "dialog_save_project" || request.method === "dialog_save_file";
-    if (saveDialog) saveDialogs++;
-    const projectEdit = request.method !== "project_save" && projectEdits.includes(request.method);
-    if (projectEdit) pendingProjectEdits++;
-    const pendingStart = jobs.begin(request);
-    if (pendingStart?.context.method === "recommend_xo") {
-      pendingStart.context.mimo = calibrationMimo(stores);
-      if (context?.calibrateOnFailure) pendingStart.context.calibrateOnFailure = true;
-    }
-    if (pendingStart?.context.background && autoRefresh) pendingStart.context.autoRefreshRevision = autoRefresh.revision;
-    if (refreshInputs.includes(request.method)) autoRefresh?.changed();
-    const xoWasIncluded = stores.settings.getSnapshot()?.xo_rec_include !== false;
-    const edit = request.method === "target_set_points" ? "targetEdit" : request.method === "calibration_settings_edit" && (request as Extract<Request, { method: "calibration_settings_edit" }>).params.edit.kind === "xo" ? "xoEdit" : null;
-    if (edit) host.set({ [edit]: "saving" });
+  const projectWork = new Map<Promise<boolean>, number>();
+  const projectFailures = new Set<number>();
+  const projectReplacements = new Set<() => void>();
+  function trackProjectEdit<T>(work: Promise<T>, epoch: number): Promise<T> {
+    const done = work.then((value) => value !== false, () => false);
+    projectWork.set(done, epoch);
+    void done.then((ok) => {
+      projectWork.delete(done);
+      if (!ok && epoch === jobs.epoch) projectFailures.add(epoch);
+    });
+    return work;
+  }
+  let projectVersion = 0;
+  let pendingProjectReplacement = false;
+  function invalidateProjectFollowUps() {
+    projectVersion++;
+    for (const replaced of projectReplacements) replaced();
+  }
+  function projectGuard() {
+    const epoch = jobs.epoch;
+    const version = projectVersion;
+    const pending = pendingProjectReplacement;
+    return { alive: () => !pending && !pendingProjectReplacement && epoch === jobs.epoch && version === projectVersion };
+  }
+  async function projectEditsSettled(): Promise<boolean> {
+    const epoch = jobs.epoch;
+    const guard = projectGuard();
+    let replaced!: () => void;
+    const replacement = new Promise<null>((resolve) => { replaced = () => resolve(null); });
+    projectReplacements.add(replaced);
+    let succeeded = true;
     try {
-      // A monitor that cannot be stopped must not keep the next project from opening.
-      if (request.method === "project_new" || request.method === "project_open") await monitor(false).catch(() => {});
-      const data = await ipc.request(request);
-      if (pendingStart) {
-        jobs.reply(pendingStart, data as import("../ipc/bindings/JobStarted").JobStarted);
+      while (guard.alive()) {
+        const edits = [...projectWork].filter(([, owner]) => owner === epoch).map(([work]) => work);
+        if (!edits.length) {
+          const failed = projectFailures.delete(epoch);
+          return succeeded && !failed;
+        }
+        const results = await Promise.race([Promise.all(edits), replacement]);
+        if (results === null) return false;
+        succeeded = results.every(Boolean) && succeeded;
       }
-      if (epoch !== jobs.epoch) return data;
-      errors.set(null);
-      if (request.method === "calibration_settings_edit" || request.method === "calibration_settings_set") {
-        const settings = data as import("../ipc/bindings/CalibrationSettings").CalibrationSettings;
-        const includeEdit = request.method === "calibration_settings_edit" && (request as Extract<Request, { method: "calibration_settings_edit" }>).params.edit.kind === "xo_rec_include";
-        if (includeEdit || settings.xo_rec_include !== false) host.set({ xoRecTurnedOffByEdit: false });
-        else if (edit === "xoEdit" && xoWasIncluded) host.set({ xoRecTurnedOffByEdit: true });
+      return false;
+    } finally { projectReplacements.delete(replaced); }
+  }
+  const call: SessionCall = (request, context) => {
+    const owner = jobs.epoch;
+    const work = track(async () => {
+      let epoch = jobs.epoch;
+      const saveDialog = request.method === "dialog_save_project" || request.method === "dialog_save_file";
+      if (saveDialog) saveDialogs++;
+      const projectEdit = request.method !== "project_save" && projectEdits.includes(request.method);
+      if (projectEdit) pendingProjectEdits++;
+      const pendingStart = jobs.begin(request);
+      if (pendingStart?.context.method === "recommend_xo") {
+        pendingStart.context.mimo = calibrationMimo(stores);
+        if (context?.calibrateOnFailure) pendingStart.context.calibrateOnFailure = true;
       }
-      // Undo restores saved settings; the previous manual-edit notice is no longer current.
-      if (["undo", "redo"].includes(request.method)) host.set({ xoRecTurnedOffByEdit: false });
-      const effects = effectsOf({ request: request.method });
-      const ctx: EffectContext = { host, stores, jobs, call, configure, run, canContinueRefresh, source: { request, data },
-        replaceProject: () => { jobs.replaceProject(); autoRefresh?.changed(); epoch = jobs.epoch; curveVersion++; curveState.set(null); tutorialReady.set(false); },
-      };
-      for (const rule of effects.rules) rule.beforeReload?.(ctx);
-      await reload(effects.reload);
-      if (epoch !== jobs.epoch) return data;
-      for (const rule of effects.rules) if (rule.apply) await rule.apply(ctx);
-      if (edit && epoch === jobs.epoch) host.set({ [edit]: "idle" });
-      return data;
-    } catch (error) {
-      if (epoch === jobs.epoch) {
-        if (edit) host.set({ [edit]: "failed" });
-        // The mic calibration field owns typed action failures, including its
-        // file dialog. Do not publish a second copy as a global notice.
-        const micCalAction = request.method === "mic_calibration_set" || request.method === "mic_calibration_clear" || request.method === "mic_calibration_attach"
-          || (request.method === "dialog_open_file" && (request as Extract<Request, { method: "dialog_open_file" }>).params.kind === "mic_calibration");
-        // The export screen's service block owns the host actions' typed failures the same way.
-        const hostAction = request.method === "host_install" || request.method === "host_uninstall" || request.method === "host_stop_managing";
-        // The range card shows a refused edge or extra band at its input (ADR 0024).
-        const rangeEdit = request.method === "calibration_settings_edit" && error instanceof IpcFailure
-          && rangeRejection((request as Extract<Request, { method: "calibration_settings_edit" }>).params.edit, error.error) !== null;
-        if (!(micCalAction || hostAction || rangeEdit) || !(error instanceof IpcFailure)) report(error);
+      if (pendingStart?.context.background && autoRefresh) pendingStart.context.autoRefreshRevision = autoRefresh.revision;
+      if (refreshInputs.includes(request.method)) autoRefresh?.changed();
+      const xoWasIncluded = stores.settings.getSnapshot()?.xo_rec_include !== false;
+      const edit = request.method === "target_set_points" ? "targetEdit" : request.method === "calibration_settings_edit" && (request as Extract<Request, { method: "calibration_settings_edit" }>).params.edit.kind === "xo" ? "xoEdit" : null;
+      if (edit) host.set({ [edit]: "saving" });
+      try {
+        // A monitor that cannot be stopped must not keep the next project from opening.
+        if (request.method === "project_new" || request.method === "project_open") await monitor(false).catch(() => {});
+        const data = await ipc.request(request);
+        if (pendingStart) {
+          jobs.reply(pendingStart, data as import("../ipc/bindings/JobStarted").JobStarted);
+        }
+        if (epoch !== jobs.epoch) return data;
+        errors.set(null);
+        if (request.method === "calibration_settings_edit" || request.method === "calibration_settings_set") {
+          const settings = data as import("../ipc/bindings/CalibrationSettings").CalibrationSettings;
+          const includeEdit = request.method === "calibration_settings_edit" && (request as Extract<Request, { method: "calibration_settings_edit" }>).params.edit.kind === "xo_rec_include";
+          if (includeEdit || settings.xo_rec_include !== false) host.set({ xoRecTurnedOffByEdit: false });
+          else if (edit === "xoEdit" && xoWasIncluded) host.set({ xoRecTurnedOffByEdit: true });
+        }
+        // Undo restores saved settings; the previous manual-edit notice is no longer current.
+        if (["undo", "redo"].includes(request.method)) host.set({ xoRecTurnedOffByEdit: false });
+        const effects = effectsOf({ request: request.method });
+        const ctx: EffectContext = { host, stores, jobs, call, configure, run, canContinueRefresh, source: { request, data },
+          replaceProject: () => { jobs.replaceProject(); clearProjectResources(); autoRefresh?.changed(); epoch = jobs.epoch; curveVersion++; curveState.set(null); tutorialReady.set(false); },
+        };
+        for (const rule of effects.rules) rule.beforeReload?.(ctx);
+        await reload(effects.reload);
+        if (epoch !== jobs.epoch) return data;
+        for (const rule of effects.rules) if (rule.apply) await rule.apply(ctx);
+        if (edit && epoch === jobs.epoch) host.set({ [edit]: "idle" });
+        return data;
+      } catch (error) {
+        if (epoch === jobs.epoch) {
+          if (edit) host.set({ [edit]: "failed" });
+          // The mic calibration field owns typed action failures, including its
+          // file dialog. Do not publish a second copy as a global notice.
+          const micCalAction = request.method === "mic_calibration_set" || request.method === "mic_calibration_clear" || request.method === "mic_calibration_attach"
+            || (request.method === "dialog_open_file" && (request as Extract<Request, { method: "dialog_open_file" }>).params.kind === "mic_calibration");
+          // The export screen's service block owns the host actions' typed failures the same way.
+          const hostAction = request.method === "host_install" || request.method === "host_uninstall" || request.method === "host_stop_managing";
+          // The range card shows a refused edge or extra band at its input (ADR 0024).
+          const rangeEdit = request.method === "calibration_settings_edit" && error instanceof IpcFailure
+            && rangeRejection((request as Extract<Request, { method: "calibration_settings_edit" }>).params.edit, error.error) !== null;
+          if (!(micCalAction || hostAction || rangeEdit) || !(error instanceof IpcFailure)) report(error);
+        }
+        throw error;
+      } finally {
+        if (projectEdit) pendingProjectEdits--;
+        if (saveDialog) saveDialogs--;
+        jobs.settle(pendingStart);
       }
-      throw error;
-    } finally {
-      if (projectEdit) pendingProjectEdits--;
-      if (saveDialog) saveDialogs--;
-      jobs.settle(pendingStart);
-    }
-  });
+    });
+    return request.method !== "project_save" && projectEdits.includes(request.method) ? trackProjectEdit(work, owner) : work;
+  };
   const run = (work: () => Promise<unknown>) => { void track(work).catch(() => { /* call reports the typed cause once */ }); };
   autoRefresh = createAutoRefresh({
     enabled: () => stores.appSettings.getSnapshot()?.auto_refresh === true,
@@ -259,13 +316,13 @@ export function createSession(ipc: Ipc) {
   // project bundle's edit counts as a pending project edit from the moment it
   // is queued, and one queued for a project that has since been replaced is
   // dropped (it resolves false) instead of landing in the new project.
-  function writer<T>(deps: WriterDeps<T>, projectBundle: boolean): Writer<T> {
-    const ordered = createWriter(deps);
+  function writer<T>(deps: WriterDeps<T>, projectBundle: boolean, queue?: ReturnType<typeof createWriterQueue>): Writer<T> {
+    const ordered = createWriter(deps, queue);
     return {
       edit(patch) {
         const epoch = jobs.epoch;
         if (projectBundle) pendingProjectEdits++;
-        return track(async () => {
+        const work = track(async () => {
           try {
             return await ordered.edit((latest) => {
               if (projectBundle && epoch !== jobs.epoch) throw new Error("the project was replaced before this edit was sent");
@@ -273,6 +330,7 @@ export function createSession(ipc: Ipc) {
             });
           } finally { if (projectBundle) pendingProjectEdits--; }
         });
+        return projectBundle ? trackProjectEdit(work, epoch) : work;
       },
     };
   }
@@ -284,6 +342,8 @@ export function createSession(ipc: Ipc) {
     loopback_input_channel: null, timing_ref_output: null, share_mode: null,
   });
   const layoutParams = (): LayoutEdit => ({ start_delay: null, timing: null });
+  // AppSettings.apply and the whole AppSettings object share one read/write queue.
+  const appQueue = createWriterQueue();
   const writers = {
     /** app_settings_set replaces the whole object, which the compute choice, display settings and recent projects share. */
     app: writer<AppSettings>({
@@ -300,7 +360,7 @@ export function createSession(ipc: Ipc) {
         stores.appSettings.set(accepted);
         return accepted;
       },
-    }, false),
+    }, false, appQueue),
     /** apply_settings_set replaces AppSettings.apply as a whole: levels and the CamillaDSP address, built from the latest stored value. */
     apply: writer<ApplySettings>({
       latest: async () => {
@@ -315,7 +375,7 @@ export function createSession(ipc: Ipc) {
         if (current) stores.appSettings.set({ ...current, apply: accepted });
         return accepted;
       },
-    }, false),
+    }, false, appQueue),
     /** dsp_set takes a preset or the complete fields: `{ preset }` selects one, a field edit applies to the latest fields. */
     dsp: writer<DspEdit>({
       latest: () => {
@@ -345,6 +405,40 @@ export function createSession(ipc: Ipc) {
         return measurementParams();
       },
     }, true),
+  };
+  const settingsQueue = createWriterQueue();
+  const bandTargets = createBandTargets();
+  const editSetting: CalibrateActions["changeSetting"] = (change, accepted) => {
+    const epoch = jobs.epoch;
+    const guard = projectGuard();
+    const target = change.kind === "rc_band_edge" || change.kind === "rc_band_remove" ? bandTargets.get(change.band) : null;
+    pendingProjectEdits++;
+    const work = track(async () => {
+      try {
+        return await settingsQueue.enqueue(async () => {
+          const latest = stores.settings.getSnapshot();
+          if (!guard.alive() || !latest) return false;
+          const index = target ? bandTargets.index(latest.rc_bands, target) : -1;
+          const edit = settingEdit(change, latest, index);
+          if (!edit) return false;
+          const range = isRangeEdit(edit);
+          host.set({ previewHz: null, ...(range || edit.kind === "rc_hi_basis" ? { rangeRejection: null } : {}) });
+          try {
+            const settings = await call({ method: "calibration_settings_edit", params: { edit } });
+            if (!guard.alive()) return false;
+            bandTargets.commit(latest.rc_bands, edit, change, index, settings.rc_bands);
+            stores.settings.set(settings);
+            accepted?.(edit);
+            return true;
+          } catch (error) {
+            const rejected = range && error instanceof IpcFailure ? rangeRejection(edit, error.error) : null;
+            if (rejected && guard.alive()) host.set({ rangeRejection: rejected });
+            return false;
+          }
+        });
+      } finally { pendingProjectEdits--; }
+    });
+    return trackProjectEdit(work, epoch);
   };
   /** The measurement writer's edit, under the name its many callers use. */
   function configure(patch: Patch<MeasureConfigureParams>) { return writers.measurement.edit(patch); }
@@ -377,9 +471,10 @@ export function createSession(ipc: Ipc) {
     return tutorialStart;
   }
   function ensureSaved() { return track(async () => {
+    const guard = projectGuard();
     if (stores.project.getSnapshot()?.path) return true;
     const path = await call({ method: "dialog_save_project", params: { suggested: "" } });
-    if (!path) return false;
+    if (!path || !guard.alive()) return false;
     await call({ method: "project_save", params: { path } }); return true;
   }); }
   function refreshCurves(params: ResultCurvesParams) { return track(async () => {
@@ -537,18 +632,21 @@ export function createSession(ipc: Ipc) {
     clearTimeout(externalPoll);
     const plans = methods.map(externalRefresh);
     if (methods.some((method) => refreshInputs.includes(method as Request["method"]))) autoRefresh?.changed();
-    if (plans.some((plan) => plan.replaceProject)) {
-      jobs.replaceProject(); autoRefresh?.changed(); curveVersion++; curveState.set(null); tutorialReady.set(false);
+    const replacesProject = plans.some((plan) => plan.replaceProject);
+    if (replacesProject) {
+      jobs.replaceProject(); clearProjectResources(); autoRefresh?.changed(); curveVersion++; curveState.set(null); tutorialReady.set(false);
       for (const store of Object.values(stores)) if ("invalidate" in store) store.invalidate();
       stores.measurementSettings.set(null); stores.micCalibration.set(null);
       host.set({ micCalBusy: null, micCalError: null, path: null, selected: null, mdat: null, warnings: [], runs: {}, applyRuns: {}, mdatScope: "all", channel: null, xoGroup: null, xoRecommendation: null, xoRecTurnedOffByEdit: false, failure: null, rangeRejection: null, opened: host.getSnapshot().opened + 1 });
     }
+    const replacementVersion = projectVersion;
     const keys = [...new Set(plans.flatMap((plan) => plan.resources))];
     await Promise.all([
       reload(keys),
       call({ method: "measure_config_get" }).catch(() => {}),
       jobs.readSnapshots({ external: true }).catch(report),
     ]);
+    if (replacesProject && replacementVersion === projectVersion) pendingProjectReplacement = false;
     // The shell sends external mutations, but external jobs have no UI
     // Channel. Poll only while such jobs run, to recover their final results.
     if (externalBatch && hasExternalJobs()) {
@@ -567,7 +665,13 @@ export function createSession(ipc: Ipc) {
     startPromise = track(async () => {
       if (ipc.externalChanges) {
         externalBatch = coalesceExternalChanges((methods) => track(() => refreshExternal(methods)), report);
-        try { offExternal = await ipc.externalChanges.subscribe((method) => externalBatch?.push(method)); }
+        try { offExternal = await ipc.externalChanges.subscribe((method) => {
+          if (externalRefresh(method).replaceProject) {
+            pendingProjectReplacement = true;
+            invalidateProjectFollowUps();
+          }
+          externalBatch?.push(method);
+        }); }
         catch (error) { report(error); }
       }
       await Promise.all([stores.bootstrap.load(), stores.appSettings.load(), stores.computeStatus.load(), stores.methods.load(),
@@ -606,7 +710,7 @@ export function createSession(ipc: Ipc) {
     });
   }
   return { ipc, stores, host, jobs, errors, ready, tutorialReady, call, run, settled, writers, configure, startTutorial, refreshCurves, ensureSaved, monitor, start, dispose,
-    canContinueRefresh,
+    canContinueRefresh, projectEditsSettled, projectGuard, editSetting,
     setSavePromptOpen: (open: boolean) => { savePromptOpen = open; autoRefresh?.check(); },
     hasPendingProjectEdits: () => pendingProjectEdits > 0,
     navigate: (current: StepId) => host.set({ current }) };

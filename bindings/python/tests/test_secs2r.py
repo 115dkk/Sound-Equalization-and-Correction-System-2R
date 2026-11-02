@@ -33,6 +33,7 @@ def test_engine_bootstrap_is_a_real_request(tmp_path: Path) -> None:
 
     events = engine.events()
     assert iter(events) is events
+    assert events.dropped_events() == 0
 
 
 def test_engine_api_error_has_structured_fields() -> None:

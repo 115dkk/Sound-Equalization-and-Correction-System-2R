@@ -14,6 +14,11 @@ use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
 pub const LOG_LIMIT: u64 = 256 * 1024;
+const MEMORY_LOG_LIMIT: usize = 1_000;
+const LOG_FIELD_VALUE_LIMIT: usize = 4 * 1024;
+const LOG_TRUNCATION_SUFFIX: &str = " … [truncated]";
+// Leave 64 KiB for the pipe frame and future response fields below its 1 MiB cap.
+const LOG_RESPONSE_LIMIT: usize = 960 * 1024;
 pub const INSTALLED_HOST_DIRECTORY: &str = "SECS 2R Host";
 pub const INSTALLED_HOST_EXECUTABLE: &str = "secs2r-host.exe";
 pub const STAGED_HOST_EXECUTABLE: &str = ".secs2r-host.exe.tmp";
@@ -166,22 +171,59 @@ pub fn accept_update(
     Ok(())
 }
 
+fn metadata_is_link_or_reparse(metadata: &fs::Metadata) -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::fs::MetadataExt;
+
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+        metadata.file_type().is_symlink()
+            || metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        metadata.file_type().is_symlink()
+    }
+}
+
 /// Checks the folder a caller names for `update_self`: a local folder on a
-/// drive, never a UNC share or a device path, which the service (SYSTEM) would
-/// otherwise open on the caller's behalf.
-pub fn validate_update_source(from_dir: &str) -> Result<(), UpdateReject> {
-    let bytes = from_dir.as_bytes();
+/// drive, never a UNC share, device path, link, or junction which the service
+/// (SYSTEM) would otherwise open on the caller's behalf.
+pub fn validate_update_source(from_dir: &Path) -> Result<(), UpdateReject> {
+    let text = from_dir.to_string_lossy();
+    let bytes = text.as_bytes();
     let drive_absolute = bytes.len() >= 3
         && bytes[0].is_ascii_alphabetic()
         && bytes[1] == b':'
         && matches!(bytes[2], b'\\' | b'/');
-    if drive_absolute {
-        Ok(())
-    } else {
-        Err(UpdateReject::Io(format!(
-            "the update folder must be a local absolute path: {from_dir}"
-        )))
+    if !drive_absolute {
+        return Err(UpdateReject::Io(format!(
+            "the update folder must be a local absolute path: {text}"
+        )));
     }
+
+    for component in from_dir.ancestors().collect::<Vec<_>>().into_iter().rev() {
+        match fs::symlink_metadata(component) {
+            Ok(metadata) if metadata_is_link_or_reparse(&metadata) => {
+                return Err(UpdateReject::Io(format!(
+                    "the update folder must not contain a link or junction: {}",
+                    component.display()
+                )));
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(UpdateReject::Io(format!(
+                    "inspect update folder component {}: {error}",
+                    component.display()
+                )));
+            }
+        }
+    }
+    // This check and the later opens are not atomic. The active console user
+    // can replace a component between them, but every installed executable is
+    // still covered by the signed manifest and verified hash (audit #155 TD-135).
+    Ok(())
 }
 
 /// Reads a regular file of at most `limit` bytes. The service reads these for
@@ -448,6 +490,41 @@ pub struct Core {
     logs: Vec<HostLogLine>,
 }
 
+fn truncate_log_field_value(value: &mut String) {
+    if value.len() <= LOG_FIELD_VALUE_LIMIT {
+        return;
+    }
+    let mut keep = LOG_FIELD_VALUE_LIMIT - LOG_TRUNCATION_SUFFIX.len();
+    while !value.is_char_boundary(keep) {
+        keep -= 1;
+    }
+    value.truncate(keep);
+    value.push_str(LOG_TRUNCATION_SUFFIX);
+}
+
+fn bounded_log_response(mut lines: Vec<HostLogLine>) -> HostResponse {
+    let encoded_len = |start: usize| {
+        serde_json::to_vec(&HostResponse::Log(lines[start..].to_vec()))
+            .map_or(usize::MAX, |encoded| encoded.len())
+    };
+    if encoded_len(0) <= LOG_RESPONSE_LIMIT {
+        return HostResponse::Log(lines);
+    }
+
+    let mut low = 0;
+    let mut high = lines.len();
+    while low < high {
+        let middle = low + (high - low) / 2;
+        if encoded_len(middle) <= LOG_RESPONSE_LIMIT {
+            high = middle;
+        } else {
+            low = middle + 1;
+        }
+    }
+    lines.drain(..low);
+    HostResponse::Log(lines)
+}
+
 impl Core {
     pub fn new(version: impl Into<String>, managed: HostManaged) -> Self {
         Self {
@@ -497,7 +574,7 @@ impl Core {
             HostRequest::Log { lines } => {
                 let keep = usize::try_from(lines).unwrap_or(usize::MAX);
                 let start = self.logs.len().saturating_sub(keep);
-                HostResponse::Log(self.logs[start..].to_vec())
+                bounded_log_response(self.logs[start..].to_vec())
             }
             // Replacing the executable is the pipe handler's job (P133).
             HostRequest::UpdateSelf { .. } => HostResponse::Error(IpcError::new(
@@ -507,8 +584,14 @@ impl Core {
         }
     }
 
-    pub fn record(&mut self, line: HostLogLine) {
+    pub fn record(&mut self, mut line: HostLogLine) {
+        for value in line.fields.values_mut() {
+            truncate_log_field_value(value);
+        }
         self.logs.push(line);
+        if self.logs.len() > MEMORY_LOG_LIMIT {
+            self.logs.drain(..self.logs.len() - MEMORY_LOG_LIMIT);
+        }
     }
 }
 
@@ -924,7 +1007,11 @@ mod tests {
     #[test]
     fn update_source_must_be_a_local_drive_folder() {
         for accepted in [r"C:\Users\a\AppData\Local\SECS 2R", "D:/apps/SECS 2R"] {
-            assert_eq!(validate_update_source(accepted), Ok(()), "{accepted}");
+            assert_eq!(
+                validate_update_source(Path::new(accepted)),
+                Ok(()),
+                "{accepted}"
+            );
         }
         for refused in [
             r"\\server\share\SECS 2R",
@@ -935,10 +1022,64 @@ mod tests {
             "",
         ] {
             assert!(
-                matches!(validate_update_source(refused), Err(UpdateReject::Io(_))),
+                matches!(
+                    validate_update_source(Path::new(refused)),
+                    Err(UpdateReject::Io(_))
+                ),
                 "{refused}"
             );
         }
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn update_source_refuses_an_existing_system_junction() {
+        use std::os::windows::fs::MetadataExt;
+
+        let junction = Path::new(r"C:\Documents and Settings");
+        let Ok(metadata) = fs::symlink_metadata(junction) else {
+            eprintln!(
+                "skipping system junction test: {} is absent",
+                junction.display()
+            );
+            return;
+        };
+        if metadata.file_attributes() & 0x400 == 0 {
+            eprintln!(
+                "skipping system junction test: {} is not a reparse point",
+                junction.display()
+            );
+            return;
+        }
+        assert!(matches!(
+            validate_update_source(&junction.join("bundle")),
+            Err(UpdateReject::Io(_))
+        ));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn update_source_refuses_an_existing_directory_symlink() {
+        use std::os::windows::fs::symlink_dir;
+
+        let root = root("update-source-link");
+        let target = root.join("real");
+        let link = root.join("linked");
+        fs::create_dir(&target).unwrap();
+        if let Err(error) = symlink_dir(&target, &link) {
+            eprintln!("skipping directory symlink test: {error}");
+            fs::remove_dir_all(root).unwrap();
+            return;
+        }
+        let source = link.join("bundle");
+
+        assert!(matches!(
+            validate_update_source(&source),
+            Err(UpdateReject::Io(_))
+        ));
+
+        fs::remove_dir(&link).unwrap();
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -1170,6 +1311,55 @@ mod tests {
             line.fields.get("reason").map(String::as_str),
             Some("port_busy")
         );
+    }
+
+    #[test]
+    fn core_keeps_one_thousand_logs_and_bounds_the_serialized_response() {
+        let mut core = Core::new("1", HostManaged::default());
+        for index in 0..1_005 {
+            core.record(log_line(&index.to_string(), []));
+        }
+        let HostResponse::Log(lines) = core.handle(HostRequest::Log { lines: 2_000 }) else {
+            panic!("expected log response");
+        };
+        assert_eq!(lines.len(), 1_000);
+        assert_eq!(lines.first().map(|line| line.event.as_str()), Some("5"));
+        assert_eq!(lines.last().map(|line| line.event.as_str()), Some("1004"));
+
+        let large = "x".repeat(2_000);
+        for index in 0..1_000 {
+            core.record(log_line(
+                &index.to_string(),
+                [("detail".to_owned(), large.clone())],
+            ));
+        }
+        let response = core.handle(HostRequest::Log { lines: 2_000 });
+        let encoded = serde_json::to_vec(&response).unwrap();
+        assert!(encoded.len() <= 960 * 1024, "{} bytes", encoded.len());
+        let HostResponse::Log(lines) = response else {
+            panic!("expected log response");
+        };
+        assert_eq!(lines.last().map(|line| line.event.as_str()), Some("999"));
+    }
+
+    #[test]
+    fn oversized_latest_log_is_truncated_instead_of_omitted() {
+        let mut core = Core::new("1", HostManaged::default());
+        core.record(log_line(
+            "latest",
+            [("detail".to_owned(), "🙂".repeat(524_289))],
+        ));
+
+        let response = core.handle(HostRequest::Log { lines: 1 });
+        let encoded = serde_json::to_vec(&response).unwrap();
+        assert!(encoded.len() <= 960 * 1024, "{} bytes", encoded.len());
+        let HostResponse::Log(lines) = response else {
+            panic!("expected log response");
+        };
+        assert_eq!(lines.len(), 1);
+        let detail = &lines[0].fields["detail"];
+        assert!(detail.len() <= 4 * 1024, "{} bytes", detail.len());
+        assert!(detail.ends_with("[truncated]"));
     }
 
     #[test]

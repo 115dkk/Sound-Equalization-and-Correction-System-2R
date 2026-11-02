@@ -171,6 +171,11 @@ describe("P33 mock wiring", () => {
       expect(calibration.main_roles).toEqual(["L", "R"]);
       expect(calibration.late_energy.map(({ role, position }) => [role, position])).toEqual(positions.flatMap((position) => [["L", position], ["R", position]]));
       expect(calibration.late_energy.every((entry) => Number.isFinite(entry.before_db) && Number.isFinite(entry.after_db))).toBe(true);
+      await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "mimo_on", on: true } } });
+      if (positions.length < 3) {
+        await expect(mock.request({ method: "mimo", params: { settings: null } })).rejects.toMatchObject({ error: { code: "engine_input" } });
+        return;
+      }
       await mock.request({ method: "mimo", params: { settings: null } }); mock.drain();
       const mimo = (await mock.request({ method: "results" })).mimo!;
       expect(mimo.support_count).toBe(0);
@@ -182,6 +187,7 @@ describe("P33 mock wiring", () => {
   it("updates calibration, MIMO and export results, and preserves job failure injection", async () => {
     const mock = createMockService({ tickMs: 0 });
     const events: JobEvent[] = []; mock.events.subscribe((event) => events.push(event));
+    await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "mimo_on", on: true } } });
     await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "mode", mode: "linear" } } });
     await mock.request({ method: "calibrate", params: { settings: null, subs_only: false } }); mock.drain();
     expect((await mock.request({ method: "results" })).calibration).toMatchObject({ mode: "linear", stale: false });
@@ -299,6 +305,10 @@ describe("P33 mock wiring", () => {
     } satisfies { [K in Request["method"]]: Extract<Request, { method: K }> };
     for (const request of Object.values(requests)) {
       const mock = createMockService({ tickMs: 0, results: fx.resultsSummary });
+      if (request.method === "mimo") {
+        await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "mimo_on", on: true } } });
+        await mock.request({ method: "calibrate", params: { settings: null, subs_only: false } }); mock.drain();
+      }
       if (request.method === "update_download") mock.setUpdateStatus(updateStates.available);
       if (request.method === "update_restart") mock.setUpdateStatus(updateStates.readyOnExit);
       if (request.method === "mic_calibration_attach") await mock.request({ method: "mic_calibration_set", params: { path: "/mic.txt" } });

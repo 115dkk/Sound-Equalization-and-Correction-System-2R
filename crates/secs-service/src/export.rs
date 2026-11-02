@@ -199,17 +199,23 @@ impl Service {
         };
         let mut params = params;
         params.extra_rates = extra_rates_for(&params.extra_rates, output_rate, output_rate_auto)?;
+        let memory = self.deps.memory.available_bytes();
         if params.kind == ExportKind::BeforeAfterMdat
             && mdat_scope == secs_export::MdatScope::Measurements
         {
-            let originals = session::original_measurements(open).map_err(IpcError::from)?;
-            if originals.is_empty() {
+            if open
+                .store
+                .records()
+                .iter()
+                .all(|record| record.ir.values().all(String::is_empty))
+            {
                 return Err(IpcError::new(
                     ErrorCode::EngineInput,
                     "there are no measurements to export",
                 )
                 .with_param("reason", "no_measurements"));
             }
+            let originals = session::original_snapshot(open);
             let uuid = self.deps.uuid.clone();
             let now_ms = (self.deps.unix_ms)();
             let export_session = self.session.clone();
@@ -222,16 +228,22 @@ impl Service {
                 Path::new(&params.folder).to_path_buf()
             };
             return self.jobs.start(JobKind::Export, events, move |job| {
-                job.cancel()
-                    .check()
-                    .map_err(|_| IpcError::new(ErrorCode::Cancelled, "cancelled"))?;
+                let ctx = super::calibration::compute_context(&job, memory, false);
+                let originals = originals.load(&job, ctx.budget())?;
+                if originals.values.is_empty() {
+                    return Err(IpcError::new(
+                        ErrorCode::EngineInput,
+                        "there are no measurements to export",
+                    )
+                    .with_param("reason", "no_measurements"));
+                }
                 job.begin_commit()?;
                 let folder = destination.as_path();
                 let mut uuid = lock(&uuid);
                 let destination = secs_export::export_rew_mdat_using(
                     None,
                     mdat_scope,
-                    &originals,
+                    &originals.values,
                     folder,
                     None,
                     None,
@@ -278,25 +290,31 @@ impl Service {
             }
             calibration.is_some_and(crate::results::RunView::stale)
         };
-        let originals = if params.kind == ExportKind::BeforeAfterMdat
-            && mdat_scope == secs_export::MdatScope::All
-        {
-            session::original_measurements(open).map_err(IpcError::from)?
-        } else {
-            Vec::new()
-        };
+        let originals = (params.kind == ExportKind::BeforeAfterMdat
+            && mdat_scope == secs_export::MdatScope::All)
+            .then(|| session::original_snapshot(open));
         let project = open.store.project();
         let project_name =
             (!project.name.trim().is_empty()).then(|| project.name.trim().to_owned());
         let app_version = self.deps.app_version.to_string();
         let live = open.results.live_calibration();
         let cached = open.results.cached();
-        let cached_sample_rate_policy = cached.map(|cache| cache.labels.sample_rate_policy);
-        let description = crate::export_run::describe(&open.results, project, &compute_key, now)?;
         let mdat = matches!(
             params.kind,
             ExportKind::BeforeAfterMdat | ExportKind::StagedMdat
         );
+        let replay_snapshot = (mdat && live.is_none()).then(|| session::measurement_snapshot(open));
+        let cached_sample_rate_policy = cached.map(|cache| cache.labels.sample_rate_policy);
+        let expected_mdat_input_key = (mdat && live.is_none()).then(|| {
+            let settings = secs_project::calibration_from_project(project);
+            super::calibration::run_key(
+                &super::calibration::signature_key(project),
+                &super::calibration::target_key_string(project),
+                &settings.engine_key(),
+                &super::calibration::config_key(project),
+            )
+        });
+        let description = crate::export_run::describe(&open.results, project, &compute_key, now)?;
         let (live_mimo, cached_mimo) = match open.results.mimo(project, &compute_key).exported() {
             Some(MimoView::Live(result)) => (Some(result), None),
             Some(MimoView::Cached(cache)) => (None, cache.mimo_paths.as_ref()),
@@ -323,7 +341,6 @@ impl Service {
         let session_for_design = self.session.clone();
         let completion_clock = self.deps.clock.clone();
         let completion_offset = self.deps.clock_offset_seconds.clone();
-        let memory = self.deps.memory.available_bytes();
         let mode_name = description.mode();
         let mut mimo = live_mimo.filter(|_| mdat).map(|result| {
             description.mimo_responses(result.run.paths.clone(), result.run.applied.clone())
@@ -405,6 +422,7 @@ impl Service {
             .transpose()?;
         let camilla_devices = params.camilla_devices.clone();
         let explicit = (!params.folder.is_empty()).then(|| Path::new(&params.folder).to_path_buf());
+        let explicit_unnamed = explicit.is_some() && requested_design_name.is_none();
         drop(session);
         // An explicit folder is the base of a named bundle too, so the default
         // base (and the host's home directory behind it) is only read without one.
@@ -464,6 +482,7 @@ impl Service {
             job.cancel()
                 .check()
                 .map_err(|_| IpcError::new(ErrorCode::Cancelled, "cancelled"))?;
+            let ctx = super::calibration::compute_context(&job, memory, false);
             let folder = destination.as_path();
             let mut paths = match params.kind {
                 ExportKind::CamillaDsp => {
@@ -513,21 +532,28 @@ impl Service {
                         output_rate,
                         extra_rates: params.extra_rates.clone(),
                     };
-                    job.begin_commit()?;
                     match params.kind {
                         ExportKind::FilterText => {
+                            job.begin_commit()?;
                             secs_filters::export_filter_text_with_options(&run, folder, &options)
                         }
                         ExportKind::EqualizerApo => {
+                            job.begin_commit()?;
                             secs_filters::export_eqapo_with_options(&run, folder, &options)
                         }
                         ExportKind::Convolution => {
-                            secs_filters::export_convolution_named_with_options(
+                            let prepared = secs_filters::prepare_convolution_named_with_options(
                                 &run,
-                                folder,
                                 &options,
                                 requested_design_name.as_deref(),
+                                &|| job.cancel().is_cancelled(),
+                                &|done, total| {
+                                    job.report_progress("export.convolution", done, total);
+                                },
                             )
+                            .map_err(filter_error)?;
+                            job.begin_commit()?;
+                            prepared.install(folder)
                         }
                         _ => unreachable!(),
                     }
@@ -538,30 +564,46 @@ impl Service {
                         values
                     } else {
                         job.report_progress("design", 0, 1);
-                        // Reads the measurements of the project the export
-                        // started from; the job stays cancellable.
-                        let (project, settings, measurements) =
-                            session::apply(&session_for_design, ticket, |open| {
-                                let project = open.store.project().clone();
-                                let mut settings = secs_project::calibration_from_project(&project);
-                                if let Some(policy) = cached_sample_rate_policy {
-                                    settings.sample_rate_policy = policy;
-                                }
-                                let measurements =
-                                    super::calibration::load_measurements(&mut open.store)?;
-                                Ok(((project, settings, measurements), false))
-                            })?;
-                        let ctx = super::calibration::compute_context(&job, memory, false);
-                        let groups = super::calibration::project_groups(&project);
+                        let loaded = replay_snapshot
+                            .ok_or_else(|| {
+                                IpcError::new(ErrorCode::Internal, "replay snapshot disappeared")
+                            })?
+                            .load(&job, ctx.budget())?;
+                        job.report_progress("read_measurements", 1, 1);
+                        job.cancel()
+                            .check()
+                            .map_err(|_| IpcError::new(ErrorCode::Cancelled, "cancelled"))?;
+                        session::apply(&session_for_design, ticket, |open| {
+                            let project = open.store.project();
+                            let settings = secs_project::calibration_from_project(project);
+                            let current_input_key = super::calibration::run_key(
+                                &super::calibration::signature_key(project),
+                                &super::calibration::target_key_string(project),
+                                &settings.engine_key(),
+                                &super::calibration::config_key(project),
+                            );
+                            if expected_mdat_input_key.as_ref() != Some(&current_input_key) {
+                                return Err(IpcError::new(
+                                    ErrorCode::StaleInputs,
+                                    "project changed while computing",
+                                ));
+                            }
+                            Ok(((), false))
+                        })?;
+                        let mut settings = secs_project::calibration_from_project(&loaded.project);
+                        if let Some(policy) = cached_sample_rate_policy {
+                            settings.sample_rate_policy = policy;
+                        }
+                        let groups = super::calibration::project_groups(&loaded.project);
                         let view = secs_engine::ProjectView {
                             groups: &groups,
-                            project_xo: &project.xo,
-                            target: &project.target,
+                            project_xo: &loaded.project.xo,
+                            target: &loaded.project.target,
                         };
                         let calibration = secs_engine::calibrate(
                             &secs_engine::CalibrationRequest {
                                 view: &view,
-                                irs: &measurements,
+                                irs: &loaded.values,
                                 settings: &settings,
                                 subs_only: false,
                             },
@@ -569,6 +611,7 @@ impl Service {
                         )
                         .map_err(super::calibration::engine_error)?;
                         let design = calibration.design;
+                        drop(loaded);
                         job.report_progress("design", 1, 1);
                         if let Some(paths) = cached_mimo_paths.as_ref() {
                             mimo = Some(
@@ -583,6 +626,12 @@ impl Service {
                         }
                         (Arc::new(design), settings)
                     };
+                    let originals = originals
+                        .map(|snapshot| snapshot.load(&job, ctx.budget()))
+                        .transpose()?;
+                    let original_values = originals
+                        .as_ref()
+                        .map_or(&[][..], |loaded| loaded.values.as_slice());
                     job.begin_commit()?;
                     let run = ExportRun {
                         design: &design,
@@ -603,7 +652,7 @@ impl Service {
                         secs_export::export_rew_mdat_using(
                             Some(&run),
                             mdat_scope,
-                            &originals,
+                            original_values,
                             folder,
                             mimo.as_ref(),
                             Some(&sources),
@@ -651,7 +700,12 @@ impl Service {
                 }
             }
             if let Some(base) = &registry_base {
-                crate::design_export::rebuild_index(base).map_err(export_error)?;
+                if explicit_unnamed {
+                    crate::design_export::rebuild_index_selected(base, &final_destination)
+                        .map_err(export_error)?;
+                } else {
+                    crate::design_export::rebuild_index(base).map_err(export_error)?;
+                }
             }
             let result = ExportResult {
                 files: paths
@@ -755,7 +809,7 @@ fn write_compute_provenance(
         report.filter(|report| report.accelerated_systems > 0 || report.fallbacks > 0)
     {
         let bytes = serde_json::to_vec_pretty(report).map_err(export_error)?;
-        std::fs::write(&path, bytes).map_err(export_error)?;
+        secs_types::fs::write_atomic_bytes(&path, &bytes).map_err(export_error)?;
         Ok(Some(path))
     } else {
         // Reusing an export directory must not retain an earlier GPU run's metadata.
@@ -790,6 +844,7 @@ fn filter_error(error: FiltersError) -> IpcError {
     match error {
         FiltersError::Scope(block) => IpcError::new(ErrorCode::ExportScope, error.to_string())
             .with_param("reason", block.name()),
+        FiltersError::Cancelled => IpcError::new(ErrorCode::Cancelled, "cancelled"),
         _ => export_error(error),
     }
 }
