@@ -432,7 +432,10 @@ fn expect_applied(
     }
 }
 
-fn wait_for_running_frames(
+/// Waits until `frames` output frames exist while the pipeline is still up.
+/// With its input paused at a slot boundary CamillaDSP reports `Stalled`,
+/// which keeps the devices and filters as they are.
+fn wait_for_live_frames(
     client: &mut Camilla<WsTransport>,
     output: &Path,
     channels: usize,
@@ -443,56 +446,67 @@ fn wait_for_running_frames(
     loop {
         let enough_output =
             fs::metadata(output).is_ok_and(|metadata| metadata.len() >= required_bytes);
-        let running = client
+        let live = client
             .status()
-            .is_ok_and(|status| status.state == "Running");
-        if enough_output && running {
+            .is_ok_and(|status| matches!(status.state.as_str(), "Running" | "Stalled"));
+        if enough_output && live {
             return;
         }
         assert!(
             Instant::now() < deadline,
-            "CamillaDSP did not write {frames} running frames to {}",
+            "CamillaDSP did not write {frames} live frames to {}",
             output.display()
         );
         thread::sleep(Duration::from_millis(50));
     }
 }
 
-fn write_paced_impulse_train(
-    input: &Path,
+fn wait_for_title(client: &mut Camilla<WsTransport>, title: &str) {
+    let deadline = Instant::now() + RUN_TIMEOUT;
+    loop {
+        if client
+            .status()
+            .is_ok_and(|status| status.title.as_deref() == Some(title))
+        {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "CamillaDSP never made {title:?} its active config"
+        );
+        thread::sleep(Duration::from_millis(50));
+    }
+}
+
+/// Writes six slots of one impulse each and pauses after slots 1 and 3 until
+/// the test resumes it. Each slot goes out in one burst: CamillaDSP zero-fills
+/// a chunk whose read times out half full, which would shift every later slot,
+/// so the input may only pause at slot boundaries (whole chunks).
+fn write_impulse_slots(
+    input: impl Write,
     channels: usize,
     phase_ready: SyncSender<usize>,
     resume: Receiver<()>,
 ) -> Result<(), String> {
     const SLOTS: usize = 6;
-    const BLOCK_FRAMES: usize = 480;
 
-    let file = File::create(input).map_err(|error| error.to_string())?;
-    let mut writer = BufWriter::new(file);
+    let mut writer = BufWriter::new(input);
     let zero = 0.0_f32.to_le_bytes();
     let impulse = IMPULSE.to_le_bytes();
     for slot in 0..SLOTS {
-        let mut slot_frame = 0;
-        while slot_frame < FFT_LEN {
-            let block_frames = (FFT_LEN - slot_frame).min(BLOCK_FRAMES);
-            for frame in 0..block_frames {
-                for channel in 0..channels {
-                    let sample = if slot_frame == 0 && frame == 0 && channel == 0 {
-                        &impulse
-                    } else {
-                        &zero
-                    };
-                    writer
-                        .write_all(sample)
-                        .map_err(|error| error.to_string())?;
-                }
+        for frame in 0..FFT_LEN {
+            for channel in 0..channels {
+                let sample = if frame == 0 && channel == 0 {
+                    &impulse
+                } else {
+                    &zero
+                };
+                writer
+                    .write_all(sample)
+                    .map_err(|error| error.to_string())?;
             }
-            writer.flush().map_err(|error| error.to_string())?;
-            slot_frame += block_frames;
-            thread::sleep(Duration::from_secs_f64(
-                block_frames as f64 / f64::from(SAMPLE_RATE),
-            ));
         }
+        writer.flush().map_err(|error| error.to_string())?;
         if slot == 1 || slot == 3 {
             phase_ready
                 .send(slot + 1)
@@ -500,7 +514,20 @@ fn write_paced_impulse_train(
             resume.recv().map_err(|error| error.to_string())?;
         }
     }
+    // Dropping the writer closes stdin, which CamillaDSP reads as end of file.
     writer.flush().map_err(|error| error.to_string())
+}
+
+fn stdin_device(channels: usize) -> Device {
+    Device(vec![
+        ("type".into(), DeviceValue::Str("Stdin".into())),
+        ("format".into(), DeviceValue::Str("F32_LE".into())),
+        ("channels".into(), DeviceValue::Int(channels as i64)),
+        (
+            "extra_samples".into(),
+            DeviceValue::Int(EXTRA_SAMPLES as i64),
+        ),
+    ])
 }
 
 fn run_engine(engine: &Path, config: &Path, log: &Path) -> Result<(), String> {
@@ -1069,7 +1096,7 @@ fn camilla_exports_play_as_designed() {
 #[ignore = "CamillaDSP 4.1.3 binary is required; the camilla-playback CI job runs this test"]
 fn one_running_pipeline_switches_generation_firs_by_unique_paths() {
     if !cfg!(target_os = "linux") {
-        println!("skipped: the paced RawFile test uses a Linux FIFO");
+        println!("skipped: the camilla-playback CI job runs this test on Linux");
         return;
     }
     let Some(engine) = std::env::var_os("SECS_CAMILLADSP") else {
@@ -1096,17 +1123,13 @@ fn one_running_pipeline_switches_generation_firs_by_unique_paths() {
     assert_eq!(first_plan.inputs, second_plan.inputs);
     assert_eq!(first_plan.outputs, second_plan.outputs);
 
-    let input = root.0.join("paced-input.f32le");
+    // The input is CamillaDSP's stdin, not a FIFO: config validation opens a
+    // RawFile capture once and closes it, which breaks a FIFO's only writer.
     let output = root.0.join("continuous-output.f32le");
-    let status = Command::new("mkfifo")
-        .arg(&input)
-        .status()
-        .expect("run mkfifo for the paced RawFile input");
-    assert!(status.success(), "mkfifo exited with {status}");
     let write_generation =
         |chain: &SignalChain, folder: &Path, design_name: &str, id_digit: char| {
             let options = Options {
-                capture: Some(raw_device("RawFile", &input, first_plan.inputs.len(), true)),
+                capture: Some(stdin_device(first_plan.inputs.len())),
                 playback: Some(raw_device("File", &output, first_plan.outputs.len(), false)),
                 design: Some(DesignLabels {
                     project_name: Some("CamillaDSP generation check".into()),
@@ -1133,22 +1156,23 @@ fn one_running_pipeline_switches_generation_firs_by_unique_paths() {
     let engine_log = root.0.join("camilladsp.log");
     let log = File::create(&engine_log).unwrap();
     let stderr = log.try_clone().unwrap();
-    let child = Command::new(&engine)
+    let mut child = Command::new(&engine)
         .args(["--port", &port.to_string(), "--wait"])
+        .stdin(Stdio::piped())
         .stdout(Stdio::from(log))
         .stderr(Stdio::from(stderr))
         .spawn()
         .expect("start CamillaDSP in websocket wait mode");
+    let engine_input = child.stdin.take().expect("CamillaDSP stdin is piped");
     let mut process = RunningEngine(child);
     let address = format!("127.0.0.1:{port}");
     let mut client = connect_engine(&address);
 
     let (phase_ready_tx, phase_ready_rx) = std::sync::mpsc::sync_channel(0);
     let (resume_tx, resume_rx) = std::sync::mpsc::sync_channel(0);
-    let writer_input = input.clone();
     let input_channels = first_plan.inputs.len();
     let writer = thread::spawn(move || {
-        write_paced_impulse_train(&writer_input, input_channels, phase_ready_tx, resume_rx)
+        write_impulse_slots(engine_input, input_channels, phase_ready_tx, resume_rx)
     });
 
     let first_text = fs::read_to_string(&first_config).unwrap();
@@ -1164,8 +1188,10 @@ fn one_running_pipeline_switches_generation_firs_by_unique_paths() {
         2,
         "writer paused after the first two impulses"
     );
-    wait_for_running_frames(&mut client, &output, first_plan.outputs.len(), 2 * FFT_LEN);
+    wait_for_live_frames(&mut client, &output, first_plan.outputs.len(), 2 * FFT_LEN);
 
+    // An identical config is a no-op for CamillaDSP (config_diff finds no
+    // change), so its filters keep the coefficients they loaded first.
     copy_dir(&second_folder.join("coeffs"), &first_folder.join("coeffs"));
     expect_applied(
         &mut client,
@@ -1180,7 +1206,7 @@ fn one_running_pipeline_switches_generation_firs_by_unique_paths() {
         4,
         "writer paused after two same-path control impulses"
     );
-    wait_for_running_frames(&mut client, &output, first_plan.outputs.len(), 4 * FFT_LEN);
+    wait_for_live_frames(&mut client, &output, first_plan.outputs.len(), 4 * FFT_LEN);
 
     let second_text = fs::read_to_string(&second_config).unwrap();
     expect_applied(
@@ -1189,6 +1215,12 @@ fn one_running_pipeline_switches_generation_firs_by_unique_paths() {
         &second_text,
         "second generation apply",
         &engine_log,
+    );
+    // Reload answers once the config is queued; the controller hands it to
+    // the pipeline later and only then reports its title as active.
+    wait_for_title(
+        &mut client,
+        "SECS 2R · CamillaDSP generation check · generation-two",
     );
     resume_tx.send(()).unwrap();
     writer
