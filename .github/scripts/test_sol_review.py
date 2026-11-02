@@ -247,6 +247,47 @@ class ReviewTests(unittest.TestCase):
         self.assertTrue((self.directory / "prompt-diff.txt").exists())
         self.assertEqual(paths, [])
 
+    def test_file_list_bounds_incomplete_pages_and_pagination(self):
+        self.github.pr["changed_files"] = review.MAX_LISTED_FILES + 1
+        self.github.associated = [copy.deepcopy(self.github.pr)]
+        with self.assertRaises(ValueError):
+            review.prepare(workflow_event(), self.directory, self.github.request)
+
+        self.github = GitHub()
+        self.github.pr["changed_files"] = 2
+        self.github.associated = [copy.deepcopy(self.github.pr)]
+        with self.assertRaises(ValueError):
+            review.prepare(workflow_event(), self.directory, self.github.request)
+
+        self.github = GitHub()
+        names = [f"src/file{index}.rs" for index in range(150)]
+        self.github.files = [file_record(name) for name in names]
+        self.github.pr["changed_files"] = len(names)
+        self.github.associated = [copy.deepcopy(self.github.pr)]
+        pages = []
+        original = self.github.request
+        def request(path, data=None, method=None, accept=None):
+            if "/files?" in path:
+                page = int(path.rsplit("page=", 1)[1])
+                pages.append(page)
+                return copy.deepcopy(self.github.files[(page - 1) * 100:page * 100])
+            return original(path, data, method, accept)
+        with patch.object(review, "MAX_CONTENT_REQUESTS", 0):
+            review.prepare(workflow_event(), self.directory, request)
+        self.assertEqual(pages, [1, 2])
+        meta = json.loads((self.directory / "metadata.json").read_text())
+        self.assertEqual(meta["files"], names)
+
+    def test_dropped_full_prompt_removes_an_older_prompt(self):
+        review.prepare(workflow_event(), self.directory, self.github.request)
+        self.assertTrue((self.directory / "prompt.txt").exists())
+        self.github.contents[("file.rs", MERGE_BASE)] = b"x" * 3000
+        self.github.contents[("file.rs", HEAD)] = b"y" * 3000
+        with patch.object(review, "MAX_INPUT_BYTES", 2000):
+            review.prepare(workflow_event(), self.directory, self.github.request)
+        self.assertFalse((self.directory / "prompt.txt").exists())
+        self.assertTrue((self.directory / "prompt-diff.txt").exists())
+
     def test_manifests_come_from_tree_closest_first_and_changed_are_excluded(self):
         self.github.files = [file_record("a/b/file.rs")]
         self.github.pr["changed_files"] = 1
@@ -290,6 +331,18 @@ class ReviewTests(unittest.TestCase):
             self.assertEqual(review.api(f"/repos/{REPOSITORY}", sleeper=lambda _: None), {})
         self.assertEqual(calls, ["GET", "GET"])
         calls.clear()
+        replies = [http_error(403, headers={"Retry-After": "0"}), response]
+        def open_secondary_limit(request, timeout):
+            calls.append(request.method)
+            reply = replies.pop(0)
+            if isinstance(reply, Exception):
+                raise reply
+            return reply
+        with patch.dict("os.environ", {"GH_TOKEN": "token"}), \
+                patch.object(review.urllib.request, "urlopen", open_secondary_limit):
+            self.assertEqual(review.api(f"/repos/{REPOSITORY}", sleeper=lambda _: None), {})
+        self.assertEqual(calls, ["GET", "GET"])
+        calls.clear()
         with patch.dict("os.environ", {"GH_TOKEN": "token"}), \
                 patch.object(review.urllib.request, "urlopen", side_effect=http_error(503)):
             with self.assertRaises(urllib.error.HTTPError):
@@ -305,11 +358,60 @@ class ReviewTests(unittest.TestCase):
         self.assertEqual(review.verdict(processed, meta), "REQUEST_CHANGES")
         self.assertTrue(review.blocks(processed["findings"][0], meta))
 
+    def test_dry_run_makes_no_post_put_or_graphql_mutation(self):
+        value = result([finding(severity="blocking", category="security")])
+        self.assertEqual(self.publish(enabled=False, value=value), "dry-run: REQUEST_CHANGES")
+        self.assertEqual(self.github.writes, [])
+
+    def test_review_post_500_or_url_error_is_not_retried(self):
+        for error in (http_error(500), urllib.error.URLError("offline")):
+            with self.subTest(error=type(error).__name__):
+                self.github = GitHub()
+                self.write_artifacts()
+                attempts = []
+                original = self.github.request
+                def request(path, data=None, method=None, accept=None):
+                    if path.endswith("/reviews") and data is not None:
+                        attempts.append(data)
+                        raise error
+                    return original(path, data, method, accept)
+                with self.assertRaises(type(error)):
+                    review.publish(workflow_event(), self.directory, True, request)
+                self.assertEqual(len(attempts), 1)
+                self.assertEqual(self.github.writes, [])
+
     def test_publish_rechecks_file_list(self):
         self.write_artifacts()
         self.github.files[0]["filename"] = "other.rs"
         self.assertEqual(review.publish(workflow_event(), self.directory, True, self.github.request), "COMMENT")
         self.assertIn("Changed file list", self.posted_reviews()[0]["body"])
+
+    def test_failure_record_without_metadata_posts_one_comment(self):
+        (self.directory / "failure.json").write_text(json.dumps(
+            {"stage": "prepare", "reason": "Truncated patch"}))
+        self.assertEqual(review.publish(workflow_event(), self.directory, True, self.github.request), "COMMENT")
+        posted = self.posted_reviews()
+        self.assertEqual(len(posted), 1)
+        self.assertEqual(posted[0]["event"], "COMMENT")
+        self.assertIn("Truncated patch", posted[0]["body"])
+
+    def test_non_object_or_oversized_metadata_posts_only_a_notice(self):
+        for value in (None, [], 3, "invalid"):
+            with self.subTest(value=value):
+                self.github = GitHub()
+                (self.directory / "metadata.json").write_text(json.dumps(value))
+                (self.directory / "result.json").unlink(missing_ok=True)
+                self.assertEqual(review.publish(workflow_event(), self.directory, True,
+                                                self.github.request), "COMMENT")
+                posted = self.posted_reviews()
+                self.assertEqual(len(posted), 1)
+                self.assertEqual(posted[0]["event"], "COMMENT")
+        self.github = GitHub()
+        (self.directory / "metadata.json").write_bytes(b"123456")
+        with patch.object(review, "MAX_METADATA_BYTES", 5):
+            self.assertEqual(review.publish(workflow_event(), self.directory, True,
+                                            self.github.request), "COMMENT")
+        self.assertIn("Oversized metadata", self.posted_reviews()[0]["body"])
 
     def test_retargeted_base_posts_only_a_comment(self):
         self.write_artifacts()
@@ -322,6 +424,42 @@ class ReviewTests(unittest.TestCase):
         self.assertEqual(review.publish(workflow_event(), self.directory, True, request), "COMMENT")
         self.assertEqual(self.posted_reviews()[0]["event"], "COMMENT")
         self.assertIn("base 브랜치", self.posted_reviews()[0]["body"])
+
+    def test_payload_commit_id_and_completed_body_format(self):
+        cases = [
+            (result(), "APPROVE"),
+            (result([finding(severity="blocking", category="security")]), "REQUEST_CHANGES"),
+            (result([finding()], complete=False, reviewed=["file.rs"]), "COMMENT"),
+        ]
+        for value, expected in cases:
+            with self.subTest(event=expected):
+                self.github = GitHub()
+                self.assertEqual(self.publish(value=value), expected)
+                posted = self.posted_reviews()[0]
+                self.assertEqual(posted["event"], expected)
+                self.assertEqual(posted["commit_id"], HEAD)
+                self.assertIn(f"검토 대상: `{HEAD}`", posted["body"])
+                if expected == "APPROVE":
+                    self.assertIn("지적사항이 없습니다.", posted["body"])
+
+        self.github = GitHub()
+        meta = metadata()
+        meta["diff_lines"] = {"head": {"file.rs": []}, "base": {"file.rs": []}}
+        self.assertEqual(self.publish(meta=meta, value=result([finding()])), "APPROVE")
+        body = self.posted_reviews()[0]["body"]
+        anchor = review.hashlib.sha256(b"file.rs").hexdigest()
+        self.assertIn("**1. Concrete defect**", body)
+        self.assertIn("`minor` · `behavior`", body)
+        self.assertIn(f"https://github.com/{REPOSITORY}/pull/7/files#diff-{anchor}R2", body)
+
+    def test_wrong_result_identity_posts_comment(self):
+        for key in ("head_sha", "merge_base_sha"):
+            with self.subTest(key=key):
+                self.github = GitHub()
+                value = result() | {key: "d" * 40}
+                self.assertEqual(self.publish(value=value), "COMMENT")
+                self.assertEqual(self.posted_reviews()[0]["event"], "COMMENT")
+                self.assertIn("Wrong review identity", self.posted_reviews()[0]["body"])
 
     def test_forged_v2_and_v3_markers_do_not_suppress_review(self):
         self.github.review_history = [
@@ -452,6 +590,15 @@ class ReviewTests(unittest.TestCase):
         processed = review.validate_result(result([bad]), metadata())
         self.assertTrue(processed["dropped_blocking"])
         self.assertEqual(review.verdict(processed, metadata()), "COMMENT")
+
+    def test_invalid_result_keeps_valid_findings_in_body_only(self):
+        value = result([finding()]) | {"unexpected": "bad schema"}
+        self.assertEqual(self.publish(value=value), "COMMENT")
+        posted = self.posted_reviews()[0]
+        self.assertEqual(posted["event"], "COMMENT")
+        self.assertEqual(posted["comments"], [])
+        self.assertIn("Concrete defect", posted["body"])
+        self.assertIn("Invalid result keys", posted["body"])
 
     def test_complete_false_posts_valid_findings_as_comment(self):
         value = result([finding()], complete=False, reviewed=["file.rs"])

@@ -138,7 +138,9 @@ def post(path, body, timeout, retry=False, sleeper=time.sleep):
                 raise ValueError("API response exceeds limit")
             return strict_json(raw)
         except urllib.error.HTTPError as error:
-            rate_limited = error.code == 403 and _header(error.headers, "x-ratelimit-remaining") == "0"
+            rate_limited = (error.code == 403
+                            and (_header(error.headers, "x-ratelimit-remaining") == "0"
+                                 or _header(error.headers, "Retry-After") is not None))
             if not retry or attempt == 3 or (error.code not in RETRY_CODES and not rate_limited):
                 raise
             sleeper(_delay(error, attempt))

@@ -85,7 +85,9 @@ def _header(headers, name):
 def _retryable(error):
     if error.code in RETRY_CODES:
         return True
-    return error.code == 403 and _header(error.headers, "x-ratelimit-remaining") == "0"
+    return (error.code == 403
+            and (_header(error.headers, "x-ratelimit-remaining") == "0"
+                 or _header(error.headers, "Retry-After") is not None))
 
 
 def _retry_delay(error, attempt):
@@ -884,7 +886,8 @@ def publish(event, directory, enabled=False, request=api):
 
     findings = review["findings"] if review else []
     inline_findings = ([finding for finding in findings if _inline(finding, meta)]
-                       if review is not None and kind not in ("stale", "oversize") else [])
+                       if review is not None and review["valid"]
+                       and kind not in ("stale", "oversize") else [])
     body_findings = [finding for finding in findings if finding not in inline_findings]
     body, kept_body, oversize = _bounded_body(meta, review, kind, reason, body_findings)
     posted_complete = (review is not None and review["complete_review"] and not oversize
