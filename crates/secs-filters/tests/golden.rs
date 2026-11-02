@@ -1072,8 +1072,12 @@ fn output_rates_change_eqapo_text_and_convolution_bundles() {
     let guide = fs::read_to_string(convolution.join(CONVOLUTION_GUIDE)).unwrap();
     assert!(guide.contains("추가 샘플레이트 폴더: 44100Hz/"));
 
-    // Recorded at a48805dd. WAV and CSV are the DSP contract; generated
-    // REAPER scripts are excluded because their 48 kHz guidance changed later.
+    // Recorded at a48805dd on Windows. WAV and CSV are the DSP contract;
+    // generated REAPER scripts are excluded because their 48 kHz guidance
+    // changed later. The bytes depend on the platform's libm (Linux, macOS
+    // and Windows gave three different 44100Hz/L_to_L.csv hashes on PR #156),
+    // so only the platform that recorded them compares; the others keep the
+    // rate and length checks above.
     let baseline = [
         (
             "44100Hz/L_to_L.csv",
@@ -1108,12 +1112,14 @@ fn output_rates_change_eqapo_text_and_convolution_bundles() {
             "32b44c7589d585f851360940ac5fbe4dfa319763e91500e6b1e0000d4d99f895",
         ),
     ];
-    for (relative, expected) in baseline {
-        assert_eq!(
-            sha256_hex(&fs::read(convolution.join(relative)).unwrap()),
-            expected,
-            "a48805dd convolution baseline changed for {relative}"
-        );
+    if cfg!(windows) {
+        for (relative, expected) in baseline {
+            assert_eq!(
+                sha256_hex(&fs::read(convolution.join(relative)).unwrap()),
+                expected,
+                "a48805dd convolution baseline changed for {relative}"
+            );
+        }
     }
 
     for invalid in [
