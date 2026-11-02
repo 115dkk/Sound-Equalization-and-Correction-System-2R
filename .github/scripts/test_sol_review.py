@@ -4,7 +4,7 @@ from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
-import codex_review as review
+import sol_review as review
 
 
 def event():

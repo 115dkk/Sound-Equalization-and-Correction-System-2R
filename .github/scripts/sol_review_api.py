@@ -14,7 +14,7 @@ MAX_INPUT_BYTES = 10_000_000
 MAX_INPUT_TOKENS = 922_000
 MAX_RESPONSE_BYTES = 2_000_000
 MAX_OUTPUT_TOKENS = 128_000
-# Prompts codex_review.py prepares, tried in this order.
+# Prompts sol_review.py prepares, tried in this order.
 PROMPTS = (("full", "prompt.txt"), ("diff", "prompt-diff.txt"))
 # Request fields the input token count endpoint accepts; it takes no output
 # limit or storage flag.

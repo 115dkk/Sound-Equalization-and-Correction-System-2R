@@ -18,7 +18,7 @@ def counted(tokens):
 
 
 def prepared(directory, full="full prompt", diff="diff prompt"):
-    """What codex_review.py prepare leaves for this step."""
+    """What sol_review.py prepare leaves for this step."""
     (directory / "metadata.json").write_text("{}")
     if full is not None:
         (directory / "prompt.txt").write_text(full)
@@ -171,7 +171,7 @@ class ApiTests(unittest.TestCase):
             self.assertEqual(calls[0]["reasoning"], {"effort": "xhigh"})
 
     def test_policy_carries_the_korean_writing_rules(self):
-        policy = (Path(__file__).parents[1] / "codex/policy.txt").read_text(encoding="utf-8")
+        policy = (Path(__file__).parents[1] / "sol-review/policy.txt").read_text(encoding="utf-8")
         self.assertIn("한국어 답변은 존댓말로 작성하라.", policy)
         self.assertIn("em-dash를 사용하지 마라.", policy)
 
