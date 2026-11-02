@@ -1951,12 +1951,16 @@ fn apply_eqapo_prunes_a_link_without_touching_its_target() {
             level: ApplyLevel::Apply,
         },
     );
-    let events = Arc::new(Events::default());
-    let job = started(&service, Request::ApplyEqapo, events.clone());
-    succeeded(events.wait(job.job));
+    // Retirement starts once a previous generation exists (the second apply),
+    // as in `apply_eqapo_installs_reapplies_repairs_once_and_removes_stale_files`.
+    for _ in 0..2 {
+        let events = Arc::new(Events::default());
+        let job = started(&service, Request::ApplyEqapo, events.clone());
+        succeeded(events.wait(job.job));
+    }
 
     assert_eq!(fs::read(outside.join("sentinel.txt")).unwrap(), b"outside");
-    assert!(!link.exists());
+    assert!(fs::symlink_metadata(&link).is_err());
     fs::remove_dir_all(root).unwrap();
 }
 
