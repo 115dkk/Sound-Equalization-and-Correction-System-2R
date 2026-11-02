@@ -380,7 +380,9 @@ impl Drop for RunningEngine {
 fn connect_engine(address: &str) -> Camilla<WsTransport> {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
-        match WsTransport::connect(address, Duration::from_millis(500)) {
+        // The app's request timeout (secs-service apply.rs): since audit #155
+        // TD-132 it bounds a whole request, including FIR loading on Reload.
+        match WsTransport::connect(address, Duration::from_secs(2)) {
             Ok(transport) => return Camilla::new(transport),
             Err(error) if Instant::now() < deadline => {
                 eprintln!("waiting for CamillaDSP websocket: {error}");
@@ -408,6 +410,25 @@ fn wait_for_file_playback(client: &mut Camilla<WsTransport>, output: &Path) {
             output.display()
         );
         thread::sleep(Duration::from_millis(50));
+    }
+}
+
+/// Applies a config and, when CamillaDSP does not report `Applied`, fails with
+/// the outcome and the engine's own log so the CI run shows the reason.
+fn expect_applied(
+    client: &mut Camilla<WsTransport>,
+    config: &Path,
+    text: &str,
+    label: &str,
+    engine_log: &Path,
+) {
+    let outcome = client.apply(config.to_str().expect("UTF-8 test path"), text);
+    if !matches!(
+        outcome,
+        Ok(secs_apply::camilla::ApplyOutcome::Applied { .. })
+    ) {
+        let log = fs::read_to_string(engine_log).unwrap_or_default();
+        panic!("{label}: apply returned {outcome:?}\nCamillaDSP log:\n{log}");
     }
 }
 
@@ -1109,7 +1130,8 @@ fn one_running_pipeline_switches_generation_firs_by_unique_paths() {
     let probe = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = probe.local_addr().unwrap().port();
     drop(probe);
-    let log = File::create(root.0.join("camilladsp.log")).unwrap();
+    let engine_log = root.0.join("camilladsp.log");
+    let log = File::create(&engine_log).unwrap();
     let stderr = log.try_clone().unwrap();
     let child = Command::new(&engine)
         .args(["--port", &port.to_string(), "--wait"])
@@ -1130,10 +1152,13 @@ fn one_running_pipeline_switches_generation_firs_by_unique_paths() {
     });
 
     let first_text = fs::read_to_string(&first_config).unwrap();
-    assert!(matches!(
-        client.apply(first_config.to_str().expect("UTF-8 test path"), &first_text),
-        Ok(secs_apply::camilla::ApplyOutcome::Applied { .. })
-    ));
+    expect_applied(
+        &mut client,
+        &first_config,
+        &first_text,
+        "first apply",
+        &engine_log,
+    );
     assert_eq!(
         phase_ready_rx.recv_timeout(RUN_TIMEOUT).unwrap(),
         2,
@@ -1142,10 +1167,13 @@ fn one_running_pipeline_switches_generation_firs_by_unique_paths() {
     wait_for_running_frames(&mut client, &output, first_plan.outputs.len(), 2 * FFT_LEN);
 
     copy_dir(&second_folder.join("coeffs"), &first_folder.join("coeffs"));
-    assert!(matches!(
-        client.apply(first_config.to_str().expect("UTF-8 test path"), &first_text),
-        Ok(secs_apply::camilla::ApplyOutcome::Applied { .. })
-    ));
+    expect_applied(
+        &mut client,
+        &first_config,
+        &first_text,
+        "same-path reapply",
+        &engine_log,
+    );
     resume_tx.send(()).unwrap();
     assert_eq!(
         phase_ready_rx.recv_timeout(RUN_TIMEOUT).unwrap(),
@@ -1155,13 +1183,13 @@ fn one_running_pipeline_switches_generation_firs_by_unique_paths() {
     wait_for_running_frames(&mut client, &output, first_plan.outputs.len(), 4 * FFT_LEN);
 
     let second_text = fs::read_to_string(&second_config).unwrap();
-    assert!(matches!(
-        client.apply(
-            second_config.to_str().expect("UTF-8 test path"),
-            &second_text
-        ),
-        Ok(secs_apply::camilla::ApplyOutcome::Applied { .. })
-    ));
+    expect_applied(
+        &mut client,
+        &second_config,
+        &second_text,
+        "second generation apply",
+        &engine_log,
+    );
     resume_tx.send(()).unwrap();
     writer
         .join()
