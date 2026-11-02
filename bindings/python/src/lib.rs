@@ -8,7 +8,10 @@ use pyo3::create_exception;
 use pyo3::exceptions::{PyException, PyValueError};
 use pyo3::prelude::*;
 use secs::types::ipc::{Envelope, JobEvent, JobId};
-use secs::{Client as RustClient, Engine as RustEngine, EngineBuilder, Error as RustError};
+use secs::{
+    Client as RustClient, DroppedEventCount, Engine as RustEngine, EngineBuilder,
+    Error as RustError,
+};
 use serde_json::Value;
 
 macro_rules! rust_to_python {
@@ -58,8 +61,10 @@ impl Engine {
     }
 
     fn events(&self) -> EngineEvents {
+        let (receiver, dropped) = self.inner.subscribe_with_drop_count();
         EngineEvents {
-            receiver: Mutex::new(self.inner.subscribe()),
+            receiver: Mutex::new(receiver),
+            dropped,
         }
     }
 }
@@ -67,12 +72,17 @@ impl Engine {
 #[pyclass(name = "_EngineEvents", module = "secs2r._secs2r")]
 struct EngineEvents {
     receiver: Mutex<mpsc::Receiver<JobEvent>>,
+    dropped: DroppedEventCount,
 }
 
 #[pymethods]
 impl EngineEvents {
     fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
         slf
+    }
+
+    fn dropped_events(&self) -> u64 {
+        self.dropped.get()
     }
 
     fn __next__(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
@@ -212,4 +222,23 @@ fn _secs2r(py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<Client>()?;
     module.add_class::<ClientEvents>()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dropped_event_count_does_not_lock_the_blocking_receiver_td127() {
+        let (_sender, receiver) = mpsc::channel();
+        let events = EngineEvents {
+            receiver: Mutex::new(receiver),
+            dropped: DroppedEventCount::default(),
+        };
+        let _receiver = events
+            .receiver
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        assert_eq!(events.dropped_events(), 0);
+    }
 }

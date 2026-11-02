@@ -7,6 +7,9 @@
 // rules' unit tests use this module.
 #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 mod rules;
+#[cfg(any(target_os = "windows", test))]
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+mod transitions;
 
 #[cfg(target_os = "windows")]
 use std::path::{Path, PathBuf};
@@ -22,6 +25,11 @@ use rules::{Core, ProcessAction, ProcessEvent, ProcessRules};
 #[cfg(target_os = "windows")]
 use secs_types::ipc::{
     ErrorCode, HostManaged, HostRequest, HostResponse, IncludeState, IpcError, ManagedProcessState,
+};
+#[cfg(target_os = "windows")]
+use transitions::{
+    Input as TransitionInput, Platform as TransitionPlatform,
+    SessionEvent as TransitionSessionEvent, State as TransitionState,
 };
 
 #[derive(Debug, Parser)]
@@ -427,9 +435,29 @@ fn service_loop(
             session,
         )?;
     }
-    if let Some(session) = active_session {
-        repair_eqapo(&mut core, paths, session)?;
+    let mut transition_state =
+        TransitionState::new(core.managed.clone(), child.as_ref().and(active_session));
+    if active_session.is_some() {
+        let (next, effects) = transitions::decide(
+            &transition_state,
+            TransitionInput::ConfigChanged {
+                owner_session: active_session,
+            },
+        );
+        transition_state = next;
+        drive_transition(
+            &mut transition_state,
+            effects,
+            &mut core,
+            &mut child,
+            &mut process_rules,
+            &mut watcher,
+            &mut restart_at,
+            &config_sender,
+            paths,
+        )?;
     }
+    let mut repair_retry_at = None;
 
     let mut stop_after_response = false;
     loop {
@@ -442,64 +470,118 @@ fn service_loop(
                     return Ok(());
                 }
                 secs_sys::host::ServiceEvent::SessionLogon(session) => {
-                    record(
+                    let owner_matches = managing_session(&core)? == Some(session);
+                    let process_action = process_rules.apply(
+                        if owner_matches {
+                            ProcessEvent::Logon
+                        } else {
+                            ProcessEvent::Logoff
+                        },
+                        Instant::now(),
+                    );
+                    if process_action == ProcessAction::Launch {
+                        transition_state.running_child_session = None;
+                    }
+                    let (next, effects) = transitions::decide(
+                        &transition_state,
+                        TransitionInput::Session {
+                            event: TransitionSessionEvent::Logon,
+                            session_id: session,
+                            owner_matches,
+                        },
+                    );
+                    transition_state = next;
+                    drive_transition(
+                        &mut transition_state,
+                        effects,
                         &mut core,
+                        &mut child,
+                        &mut process_rules,
+                        &mut watcher,
+                        &mut restart_at,
+                        &config_sender,
                         paths,
-                        rules::log_line(
-                            "session_logon",
-                            [("session".to_owned(), session.to_string())],
-                        ),
                     )?;
-                    if managing_session(&core)? == Some(session) {
-                        if process_rules.apply(ProcessEvent::Logon, Instant::now())
-                            == ProcessAction::Launch
-                        {
-                            launch(
-                                &mut core,
-                                &mut child,
-                                &mut process_rules,
-                                &mut restart_at,
-                                paths,
-                                session,
-                            )?;
-                        }
-                        repair_eqapo(&mut core, paths, session)?;
-                    } else {
-                        if process_rules.apply(ProcessEvent::Logoff, Instant::now())
-                            == ProcessAction::Stop
-                            && let Some(running) = child.take()
-                        {
-                            running.stop()?;
-                        }
+                    if !owner_matches {
                         mark_other_user(&mut core, paths, session)?;
                     }
                 }
                 secs_sys::host::ServiceEvent::SessionLogoff(session) => {
-                    record(
-                        &mut core,
-                        paths,
-                        rules::log_line(
-                            "session_logoff",
-                            [("session".to_owned(), session.to_string())],
-                        ),
-                    )?;
-                    if process_rules.apply(ProcessEvent::Logoff, Instant::now())
-                        == ProcessAction::Stop
-                        && let Some(running) = child.take()
-                    {
-                        running.stop()?;
+                    let child_session_ended =
+                        transition_state.running_child_session == Some(session);
+                    let owner_session_ended =
+                        transition_state.managed.owner_session_id == Some(session);
+                    if child_session_ended || owner_session_ended {
+                        let _ = process_rules.apply(ProcessEvent::Logoff, Instant::now());
                     }
-                    core.camilla.state = ManagedProcessState::NoSession;
-                    core.camilla.pid = None;
-                    restart_at = None;
+                    let (next, effects) = transitions::decide(
+                        &transition_state,
+                        TransitionInput::Session {
+                            event: TransitionSessionEvent::Logoff,
+                            session_id: session,
+                            owner_matches: owner_session_ended,
+                        },
+                    );
+                    transition_state = next;
+                    drive_transition(
+                        &mut transition_state,
+                        effects,
+                        &mut core,
+                        &mut child,
+                        &mut process_rules,
+                        &mut watcher,
+                        &mut restart_at,
+                        &config_sender,
+                        paths,
+                    )?;
+                    if child_session_ended || owner_session_ended {
+                        core.camilla.state = ManagedProcessState::NoSession;
+                        core.camilla.pid = None;
+                    }
                 }
             }
         }
 
         while config_events.try_recv().is_ok() {
-            if let Some(session) = managing_session(&core)? {
-                repair_eqapo(&mut core, paths, session)?;
-            }
+            let owner_session = managing_session(&core)?;
+            let (next, effects) = transitions::decide(
+                &transition_state,
+                TransitionInput::ConfigChanged { owner_session },
+            );
+            transition_state = next;
+            drive_transition(
+                &mut transition_state,
+                effects,
+                &mut core,
+                &mut child,
+                &mut process_rules,
+                &mut watcher,
+                &mut restart_at,
+                &config_sender,
+                paths,
+            )?;
+        }
+
+        transition_state.sync_repair_retry_deadline(&mut repair_retry_at, Instant::now());
+        if repair_retry_at.is_some_and(|deadline| Instant::now() >= deadline) {
+            repair_retry_at = None;
+            let managing_session = managing_session(&core)?;
+            let (next, effects) = transitions::decide(
+                &transition_state,
+                TransitionInput::RepairRetry { managing_session },
+            );
+            transition_state = next;
+            drive_transition(
+                &mut transition_state,
+                effects,
+                &mut core,
+                &mut child,
+                &mut process_rules,
+                &mut watcher,
+                &mut restart_at,
+                &config_sender,
+                paths,
+            )?;
         }
 
         if let Some(running) = child.as_ref()
@@ -507,6 +589,7 @@ fn service_loop(
         {
             let pid = core.camilla.pid.take();
             child = None;
+            transition_state.running_child_session = None;
             record(
                 &mut core,
                 paths,
@@ -525,6 +608,7 @@ fn service_loop(
                 ProcessAction::RestartAfter(delay) => {
                     let deadline = Instant::now() + delay;
                     restart_at = Some(deadline);
+                    transition_state.restart_scheduled = true;
                     core.camilla.restarts_in_window += 1;
                     core.camilla.state = ManagedProcessState::BackingOff {
                         until: (chrono::Utc::now()
@@ -541,6 +625,7 @@ fn service_loop(
                     )?;
                 }
                 ProcessAction::GiveUp => {
+                    transition_state.restart_scheduled = false;
                     let reason = "five exits within five minutes";
                     core.camilla.state = ManagedProcessState::GivenUp {
                         reason: reason.into(),
@@ -553,16 +638,23 @@ fn service_loop(
 
         if restart_at.is_some_and(|deadline| Instant::now() >= deadline) {
             restart_at = None;
-            if let Some(session) = managing_session(&core)? {
-                launch(
-                    &mut core,
-                    &mut child,
-                    &mut process_rules,
-                    &mut restart_at,
-                    paths,
-                    session,
-                )?;
-            }
+            let owner_session = managing_session(&core)?;
+            let (next, effects) = transitions::decide(
+                &transition_state,
+                TransitionInput::RestartTick { owner_session },
+            );
+            transition_state = next;
+            drive_transition(
+                &mut transition_state,
+                effects,
+                &mut core,
+                &mut child,
+                &mut process_rules,
+                &mut watcher,
+                &mut restart_at,
+                &config_sender,
+                paths,
+            )?;
         }
 
         let served = secs_sys::host::pipe_server(
@@ -573,6 +665,7 @@ fn service_loop(
                     identity,
                     request,
                     &mut core,
+                    &mut transition_state,
                     &mut child,
                     &mut process_rules,
                     &mut watcher,
@@ -602,11 +695,109 @@ fn service_loop(
 }
 
 #[cfg(target_os = "windows")]
+struct RealTransitionPlatform<'a> {
+    core: &'a mut Core,
+    child: &'a mut Option<secs_sys::host::ManagedChild>,
+    process_rules: &'a mut ProcessRules,
+    watcher: &'a mut Option<secs_sys::host::ConfigWatcher>,
+    restart_at: &'a mut Option<Instant>,
+    config_sender: &'a mpsc::Sender<()>,
+    paths: &'a Paths,
+}
+
+#[cfg(target_os = "windows")]
+impl TransitionPlatform for RealTransitionPlatform<'_> {
+    fn save_state(&mut self, managed: &HostManaged) -> Result<(), IpcError> {
+        rules::save_state(&self.paths.state, managed)
+    }
+
+    fn replace_watcher(
+        &mut self,
+        _target: Option<&secs_types::ipc::ManagedEqApo>,
+    ) -> Result<(), IpcError> {
+        *self.watcher = configure_watcher(self.core, self.config_sender)?;
+        Ok(())
+    }
+
+    fn repair_eqapo(&mut self, session: u32) -> Result<(), IpcError> {
+        repair_eqapo(self.core, self.paths, session)
+    }
+
+    fn stop_child(&mut self) -> Result<(), IpcError> {
+        *self.restart_at = None;
+        if let Some(running) = self.child.take() {
+            running.stop()?;
+        }
+        Ok(())
+    }
+
+    fn clear_camilla_status(&mut self) {
+        self.core.camilla = Default::default();
+    }
+
+    fn clear_eqapo_status(&mut self) {
+        self.core.eqapo_include = IncludeState::Absent;
+    }
+
+    fn launch_child(
+        &mut self,
+        session: u32,
+        _target: &secs_types::ipc::ManagedCamilla,
+    ) -> Result<bool, IpcError> {
+        *self.restart_at = None;
+        launch(
+            self.core,
+            self.child,
+            self.process_rules,
+            self.restart_at,
+            self.paths,
+            session,
+        )?;
+        Ok(self.child.is_some())
+    }
+
+    fn log(&mut self, line: &secs_types::ipc::HostLogLine) -> Result<(), IpcError> {
+        record(self.core, self.paths, line.clone())
+    }
+}
+
+#[cfg(target_os = "windows")]
+#[allow(clippy::too_many_arguments)]
+fn drive_transition(
+    state: &mut TransitionState,
+    effects: Vec<transitions::Effect>,
+    core: &mut Core,
+    child: &mut Option<secs_sys::host::ManagedChild>,
+    process_rules: &mut ProcessRules,
+    watcher: &mut Option<secs_sys::host::ConfigWatcher>,
+    restart_at: &mut Option<Instant>,
+    config_sender: &mpsc::Sender<()>,
+    paths: &Paths,
+) -> Result<transitions::DriveOutcome, IpcError> {
+    core.managed = state.managed.clone();
+    let mut platform = RealTransitionPlatform {
+        core,
+        child,
+        process_rules,
+        watcher,
+        restart_at,
+        config_sender,
+        paths,
+    };
+    let outcome = transitions::drive(state, effects, &mut platform)?;
+    if state.eqapo_error.is_some() {
+        platform.core.eqapo_include = IncludeState::Damaged;
+    }
+    Ok(outcome)
+}
+
+#[cfg(target_os = "windows")]
 #[allow(clippy::too_many_arguments)]
 fn handle_request(
     identity: secs_sys::host::PipeClientIdentity,
     request: HostRequest,
     core: &mut Core,
+    transition_state: &mut TransitionState,
     child: &mut Option<secs_sys::host::ManagedChild>,
     process_rules: &mut ProcessRules,
     watcher: &mut Option<secs_sys::host::ConfigWatcher>,
@@ -616,46 +807,63 @@ fn handle_request(
     stop_after_response: &mut bool,
 ) -> Result<HostResponse, IpcError> {
     match request {
-        HostRequest::SetManaged(mut update) => {
+        HostRequest::SetManaged(update) => {
             authorize_mutation(identity)?;
             if let Some(eqapo) = &update.eqapo {
                 validate_eqapo_path(Path::new(&eqapo.config_path))?;
             }
-            update.owner_session_id = Some(identity.session_id);
-            update.owner_user_sid =
-                Some(secs_sys::host::session_user_identity(identity.session_id)?);
-            let previous_camilla = core.managed.camilla.clone();
-            let response = core.handle(HostRequest::SetManaged(update));
-            rules::save_state(&paths.state, &core.managed)?;
-            *watcher = configure_watcher(core, config_sender)?;
-            if let Some(session) = managing_session(core)? {
-                repair_eqapo(core, paths, session)?;
-            }
-            if previous_camilla != core.managed.camilla {
-                *restart_at = None;
-                if let Some(running) = child.take() {
-                    running.stop()?;
-                }
-            }
-            if child.is_none()
-                && core.managed.camilla.is_some()
-                && let Some(session) = managing_session(core)?
-            {
-                *restart_at = None;
-                launch(core, child, process_rules, restart_at, paths, session)?;
-            }
-            Ok(response)
+            let requester_sid = secs_sys::host::session_user_identity(identity.session_id)?;
+            let prospective = transitions::managed_after_update(
+                transition_state,
+                &update,
+                identity.session_id,
+                &requester_sid,
+            );
+            let managing_session = managing_session_for(&prospective)?;
+            let (next, effects) = transitions::decide(
+                transition_state,
+                TransitionInput::SetManaged {
+                    update,
+                    requester_session: identity.session_id,
+                    requester_sid,
+                    managing_session,
+                },
+            );
+            *transition_state = next;
+            let outcome = drive_transition(
+                transition_state,
+                effects,
+                core,
+                child,
+                process_rules,
+                watcher,
+                restart_at,
+                config_sender,
+                paths,
+            )?;
+            Ok(outcome
+                .repair_error
+                .map_or(HostResponse::Ok, HostResponse::Error))
         }
         HostRequest::StopManaging => {
             authorize_mutation(identity)?;
-            let response = core.handle(HostRequest::StopManaging);
-            rules::save_state(&paths.state, &core.managed)?;
-            *watcher = None;
-            *restart_at = None;
-            if let Some(running) = child.take() {
-                running.stop()?;
-            }
-            Ok(response)
+            let (next, effects) =
+                transitions::decide(transition_state, TransitionInput::StopManaging);
+            *transition_state = next;
+            core.camilla = Default::default();
+            core.eqapo_include = IncludeState::Absent;
+            drive_transition(
+                transition_state,
+                effects,
+                core,
+                child,
+                process_rules,
+                watcher,
+                restart_at,
+                config_sender,
+                paths,
+            )?;
+            Ok(HostResponse::Ok)
         }
         HostRequest::UpdateSelf { from_dir } => {
             authorize_mutation(identity)?;
@@ -693,7 +901,7 @@ fn stage_host_update(
     from_dir: &Path,
     staged_executable: &Path,
 ) -> Result<rules::HostManifest, rules::UpdateReject> {
-    rules::validate_update_source(&from_dir.to_string_lossy())?;
+    rules::validate_update_source(from_dir)?;
     let manifest_bytes = rules::read_bounded(
         &from_dir.join(rules::UPDATE_MANIFEST),
         rules::MANIFEST_LIMIT,
@@ -755,12 +963,17 @@ fn authorize_mutation(identity: secs_sys::host::PipeClientIdentity) -> Result<()
 }
 
 #[cfg(target_os = "windows")]
-fn managing_session(core: &Core) -> Result<Option<u32>, IpcError> {
+fn managing_session_for(managed: &HostManaged) -> Result<Option<u32>, IpcError> {
     let Some(active) = secs_sys::host::active_console_session() else {
         return Ok(None);
     };
     let sid = secs_sys::host::session_user_identity(active)?;
-    Ok(rules::managed_user_allowed(core.managed.owner_user_sid.as_deref(), &sid).then_some(active))
+    Ok(rules::managed_user_allowed(managed.owner_user_sid.as_deref(), &sid).then_some(active))
+}
+
+#[cfg(target_os = "windows")]
+fn managing_session(core: &Core) -> Result<Option<u32>, IpcError> {
+    managing_session_for(&core.managed)
 }
 
 #[cfg(target_os = "windows")]

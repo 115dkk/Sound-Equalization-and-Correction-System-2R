@@ -210,7 +210,7 @@ reaper.TrackList_AdjustWindows(false)
 reaper.UpdateArrange()
 reaper.Undo_EndBlock("SECS 2R convolution routing", -1)
 if ok then
-  local text = "Correction tracks are ready. The source track's master/parent send is now off. Route the SECS 2R Output bus to your outputs and use a 48000 Hz project and audio device. Run this script again with the same source selected to replace the correction."
+  local text = string.format("Correction tracks are ready. The source track's master/parent send is now off. Route the SECS 2R Output bus to your outputs and use a %d Hz project and audio device. Run this script again with the same source selected to replace the correction.", sample_rate)
   local master = reaper.GetMasterTrack(0)
   local master_channels = reaper.GetMediaTrackInfo_Value(master, "I_NCHAN")
   if master_channels < output_channels then

@@ -103,16 +103,30 @@ impl Biquad {
         )
     }
 
+    #[cfg(test)]
     fn apply(self, samples: &mut [f64]) {
+        self.apply_cancellable(samples, &|| false)
+            .expect("a non-cancelling callback cannot fail");
+    }
+
+    fn apply_cancellable(
+        self,
+        samples: &mut [f64],
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<(), FiltersError> {
         // Transposed direct form II, in sample order.
         let (mut z1, mut z2) = (0.0, 0.0);
-        for sample in samples {
+        for (index, sample) in samples.iter_mut().enumerate() {
+            if index.is_multiple_of(4096) && cancelled() {
+                return Err(FiltersError::Cancelled);
+            }
             let input = *sample;
             let output = self.b0 * input + z1;
             z1 = self.b1 * input - self.a1 * output + z2;
             z2 = self.b2 * input - self.a2 * output;
             *sample = output;
         }
+        Ok(())
     }
 }
 
@@ -126,6 +140,7 @@ struct Route {
 }
 
 impl Route {
+    #[cfg(test)]
     fn from_parts(
         parts: &[&[Op]],
         route_gain: f64,
@@ -133,6 +148,18 @@ impl Route {
         output: &str,
         max_len: usize,
         rate: u32,
+    ) -> Result<Self, FiltersError> {
+        Self::from_parts_cancellable(parts, route_gain, input, output, max_len, rate, &|| false)
+    }
+
+    fn from_parts_cancellable(
+        parts: &[&[Op]],
+        route_gain: f64,
+        input: &str,
+        output: &str,
+        max_len: usize,
+        rate: u32,
+        cancelled: &dyn Fn() -> bool,
     ) -> Result<Self, FiltersError> {
         let mut route = Self {
             fir: vec![1.0],
@@ -142,6 +169,9 @@ impl Route {
             biquads: Vec::new(),
         };
         for op in parts.iter().flat_map(|ops| ops.iter()) {
+            if cancelled() {
+                return Err(FiltersError::Cancelled);
+            }
             match op {
                 Op::Peq {
                     frequency,
@@ -154,7 +184,7 @@ impl Route {
                 Op::Fir { taps, .. } => {
                     let taps = fir_to_rate(taps, rate)
                         .map_err(|error| FiltersError::Invalid(error.to_string()))?;
-                    route.fir = convolve(&route.fir, &taps, max_len, input, output)?;
+                    route.fir = convolve(&route.fir, &taps, max_len, input, output, cancelled)?;
                 }
                 Op::FirLowRate {
                     taps_low, fs_low, ..
@@ -163,7 +193,7 @@ impl Route {
                     view.validate()?;
                     let taps = lowrate_to_rate(taps_low, *fs_low, rate)
                         .map_err(|error| FiltersError::Invalid(error.to_string()))?;
-                    route.fir = convolve(&route.fir, &taps, max_len, input, output)?;
+                    route.fir = convolve(&route.fir, &taps, max_len, input, output, cancelled)?;
                 }
                 Op::Gain { db, .. } => route.gain *= 10_f64.powf(db / 20.0),
                 Op::Invert { .. } => route.gain = -route.gain,
@@ -231,7 +261,14 @@ impl Route {
         Ok(route)
     }
 
-    fn render(&self, length: usize) -> Result<Vec<f64>, FiltersError> {
+    fn render_cancellable(
+        &self,
+        length: usize,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<Vec<f64>, FiltersError> {
+        if cancelled() {
+            return Err(FiltersError::Cancelled);
+        }
         let mut response = vec![0.0; length];
         let available = length
             .saturating_sub(self.delay_samples)
@@ -243,7 +280,7 @@ impl Route {
             *output = input * self.gain;
         }
         for biquad in &self.biquads {
-            biquad.apply(&mut response);
+            biquad.apply_cancellable(&mut response, cancelled)?;
         }
         if response.iter().any(|sample| !sample.is_finite()) {
             return Err(FiltersError::Invalid(
@@ -260,6 +297,7 @@ fn convolve(
     max_len: usize,
     input: &str,
     output: &str,
+    cancelled: &dyn Fn() -> bool,
 ) -> Result<Vec<f64>, FiltersError> {
     if left.is_empty() || right.is_empty() {
         return Ok(Vec::new());
@@ -280,6 +318,9 @@ fn convolve(
     }
     let mut result = vec![0.0; length];
     for (left_index, &left_value) in left.iter().enumerate() {
+        if cancelled() {
+            return Err(FiltersError::Cancelled);
+        }
         for (right_index, &right_value) in right.iter().enumerate() {
             result[left_index + right_index] += left_value * right_value;
         }
@@ -305,6 +346,7 @@ fn collect_routes(
     plan: &FilterPlan,
     max_len: usize,
     rate: u32,
+    cancelled: &dyn Fn() -> bool,
 ) -> Result<Vec<PairRoutes>, FiltersError> {
     let mut pairs = plan
         .inputs
@@ -329,18 +371,22 @@ fn collect_routes(
             .position(|candidate| candidate == output)
             .expect("plan output");
         let pair = &mut pairs[input_index * output_count + output_index];
-        pair.routes.push(Route::from_parts(
+        pair.routes.push(Route::from_parts_cancellable(
             parts,
             gain,
             &pair.input,
             &pair.output,
             max_len,
             rate,
+            cancelled,
         )?);
         Ok(())
     };
 
     for (input_index, input) in plan.inputs.iter().enumerate() {
+        if cancelled() {
+            return Err(FiltersError::Cancelled);
+        }
         if input == "LFE" {
             for (output, feed) in &plan.subs {
                 if feed.sources.iter().any(|source| source == input) {
@@ -402,6 +448,17 @@ pub fn render_paths_at(
     max_len_48k: usize,
     rate: u32,
 ) -> Result<RenderedPaths, FiltersError> {
+    render_paths_at_cancellable(plan, max_len_48k, rate, &|| false)
+}
+
+/// Render at an output rate while checking cooperative cancellation during
+/// route construction, convolution, and sample rendering.
+pub fn render_paths_at_cancellable(
+    plan: &FilterPlan,
+    max_len_48k: usize,
+    rate: u32,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<RenderedPaths, FiltersError> {
     if !is_output_rate(rate) {
         return Err(FiltersError::Invalid(
             "unsupported output sample rate".into(),
@@ -415,7 +472,7 @@ pub fn render_paths_at(
             "max_len {max_len} is below the minimum {MIN_LENGTH}"
         )));
     }
-    let pairs = collect_routes(plan, max_len, rate)?;
+    let pairs = collect_routes(plan, max_len, rate, cancelled)?;
     let finite_end = pairs
         .iter()
         .flat_map(|pair| &pair.routes)
@@ -428,9 +485,15 @@ pub fn render_paths_at(
         let mut rendered = Vec::with_capacity(pairs.len());
         let mut peak = 0.0_f64;
         for pair in &pairs {
+            if cancelled() {
+                return Err(FiltersError::Cancelled);
+            }
             let mut response = vec![0.0; candidate];
             for route in &pair.routes {
-                for (sum, value) in response.iter_mut().zip(route.render(candidate)?) {
+                for (sum, value) in response
+                    .iter_mut()
+                    .zip(route.render_cancellable(candidate, cancelled)?)
+                {
                     *sum += value;
                 }
             }
@@ -539,8 +602,8 @@ mod input_hp_tests {
         let off = crate::make_plan(&chain, Some(&mimo)).unwrap();
         chain.input_hp_hz = Some(27.0);
         let on = crate::make_plan(&chain, Some(&mimo)).unwrap();
-        let before = collect_routes(&off, 1 << 18, 48000).unwrap();
-        let after = collect_routes(&on, 1 << 18, 48000).unwrap();
+        let before = collect_routes(&off, 1 << 18, 48000, &|| false).unwrap();
+        let after = collect_routes(&on, 1 << 18, 48000, &|| false).unwrap();
         let hp = Route::from_parts(&[&on.pre_ops], 1.0, "L", "L", 1 << 18, 48000).unwrap();
         let f: Vec<_> = (0..=400)
             .map(|i| 10.0 * 2000.0_f64.powf(i as f64 / 400.0))

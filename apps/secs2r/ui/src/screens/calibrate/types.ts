@@ -134,6 +134,12 @@ export type { SettingEdit } from "../../ipc/bindings/SettingEdit";
 export type { SubLayout } from "../../ipc/bindings/SubLayout";
 export type { SubModeChoice } from "../../ipc/bindings/SubModeChoice";
 
+/** Local band operations are resolved against the latest settings before IPC. */
+export type SettingChange = SettingEdit
+  | { kind: "rc_band_edge"; band: import("../../ipc/bindings/RcBand").RcBand; edge: "lower" | "upper"; hz: number }
+  | { kind: "rc_band_remove"; band: import("../../ipc/bindings/RcBand").RcBand }
+  | { kind: "rc_band_add"; primaryHi: number };
+
 export type CalibrateActions = {
   /** Host: opens the measurement list to inspect a structured measurement error, or to measure again. */
   goToMeasurements: () => void;
@@ -159,7 +165,7 @@ export type CalibrateActions = {
   /** result_curves { tab: "xo", channel, group, xo_hz: hz } while the XO line is dragged; stores nothing */
   previewXo: (group: string, hz: number) => void;
   /** calibration_settings_edit { edit } */
-  changeSetting: (edit: SettingEdit) => Promise<boolean>;
+  changeSetting: (change: SettingChange, accepted?: (edit: SettingEdit) => void) => Promise<boolean>;
   /** sub_take_values */
   takeSubValues: () => void;
   /** target_set_points { points } */
