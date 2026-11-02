@@ -55,6 +55,13 @@ def strict_json(raw):
     return json.loads(raw, object_pairs_hook=pairs, parse_constant=invalid_constant)
 
 
+def code(text):
+    """`text` as one inline code span, fenced past any backtick run it holds."""
+    fence = "`" * (max((len(run) for run in re.findall(r"`+", text)), default=0) + 1)
+    pad = " " if text.startswith("`") or text.endswith("`") else ""
+    return f"{fence}{pad}{text}{pad}{fence}"
+
+
 def require(ok, message):
     if not ok:
         raise ValueError(message)
@@ -214,6 +221,9 @@ def prepare(event, output, policy, request=api):
         del prompts["full"]
     check_current(meta, request(root))
     output.mkdir(parents=True, exist_ok=True)
+    # A full prompt left from an earlier run must not stand in for the one dropped above.
+    for name in PROMPT_FILES.values():
+        (output / name).unlink(missing_ok=True)
     meta["files"] = [f["filename"] for f in files]
     meta["line_limits"] = line_limits
     meta["changed_lines"] = {f["filename"]: changed_ranges(f["patch"], f["status"] == "removed") for f in files}
@@ -346,9 +356,15 @@ def publish(event, directory, enabled=False, request=api):
         body += result["summary"]
         if not result["findings"]:
             body += "\n\n지적사항이 없습니다."
-        for f in result["findings"]:
+        else:
+            body += f'\n\n### 지적사항 ({len(result["findings"])})'
+        for index, f in enumerate(result["findings"], 1):
             note = " (병합 차단 범위 밖이라 의견으로 남깁니다)" if f["severity"] == "blocking" and not blocks(f, meta) else ""
-            body += f'\n\n[{f["severity"]}/{f["category"]}] {f["path"]}:{f["line"]}: {f["title"]}{note}\n{f["evidence"]}'
+            title = " ".join(f["title"].split())
+            location = code(f'{f["path"]}:{f["line"]}')
+            evidence = "\n".join("> " + line for line in f["evidence"].splitlines())
+            body += (f'\n\n**{index}. {title}**{note}\n'
+                     f'{code(f["severity"])} · {code(f["category"])} · {location}\n\n{evidence}')
     if len(body.encode()) > MAX_RESULT_BYTES:
         decision = "COMMENT"
         body = marker + "\n리뷰 결과가 게시 크기 한도를 초과하여 완료 결과를 적용하지 않았습니다. 수동 검토가 필요합니다. 코드 결함 판정이 아닙니다."

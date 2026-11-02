@@ -187,6 +187,34 @@ class ReviewTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 review.prepare(self.event, self.directory, "policy", request)
 
+    def test_findings_are_published_with_markdown_emphasis(self):
+        self.result["findings"] = [
+            finding("minor", "behavior") | {"title": "Stale\nprompt", "evidence": "first line\nsecond line"},
+            finding("blocking", "security", line=1),
+        ]
+        self.assertEqual(self.publish(enabled=True), "APPROVE")
+        body = self.writes[-1]["body"]
+        self.assertIn("### 지적사항 (2)", body)
+        self.assertIn("**1. Stale prompt**\n`minor` · `behavior` · `file.rs:2`\n\n> first line\n> second line", body)
+        self.assertIn("**2. Concrete defect** (병합 차단 범위 밖이라 의견으로 남깁니다)\n`blocking` · `security` · `file.rs:1`", body)
+        self.assertNotIn("[minor/behavior]", body)
+        self.assertEqual(review.code("a`b"), "``a`b``")
+        self.assertEqual(review.code("`x"), "`` `x ``")
+
+    def test_a_dropped_full_prompt_leaves_no_older_prompt_behind(self):
+        review.prepare(self.event, self.directory, "policy", self.request)
+        self.assertTrue((self.directory / "prompt.txt").exists())
+        size = 3000
+        big = review.base64.b64encode(b"x" * size).decode()
+        def request(path, data=None):
+            if "/contents/file.rs" in path:
+                return {"type": "file", "encoding": "base64", "content": big, "size": size}
+            return self.request(path, data)
+        with patch.object(review, "MAX_INPUT_BYTES", 4000):
+            review.prepare(self.event, self.directory, "policy", request)
+        self.assertFalse((self.directory / "prompt.txt").exists())
+        self.assertTrue((self.directory / "prompt-diff.txt").exists())
+
     def test_more_files_than_github_lists_fail(self):
         self.event["pull_request"]["changed_files"] = review.MAX_LISTED_FILES + 1
         with self.assertRaises(ValueError):
