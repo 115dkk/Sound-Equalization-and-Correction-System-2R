@@ -206,6 +206,9 @@ enum ProjectAction {
         /// Unwind the RC FIR's constant phase above the correction band.
         #[arg(long, value_enum)]
         hf_phase: Option<Switch>,
+        /// Limit how much one main fills a narrow response dip.
+        #[arg(long, value_enum)]
+        dip_limit: Option<Switch>,
         /// Low-end protection, manual: one high-pass on every input (ADR 0031), in Hz, or off.
         #[arg(long, value_name = "Hz|off")]
         input_hp: Option<InputHpArg>,
@@ -668,6 +671,7 @@ fn run(action: Action, runner: &mut Runner) {
                 lf_align,
                 mode_decay,
                 hf_phase,
+                dip_limit,
                 input_hp,
                 peq_derivatives,
                 mimo_iir_derivatives,
@@ -711,6 +715,11 @@ fn run(action: Action, runner: &mut Runner) {
                 }
                 if let Some(value) = hf_phase {
                     edits.push(SettingEdit::HfPhase {
+                        on: matches!(value, Switch::On),
+                    });
+                }
+                if let Some(value) = dip_limit {
+                    edits.push(SettingEdit::DipLimit {
                         on: matches!(value, Switch::On),
                     });
                 }

@@ -69,6 +69,7 @@ pub struct RcOutput {
     pub lf_align: Option<LfAlignOutcome>,
     pub mode_decay: Option<ModeDecayOutcome>,
     pub hf_phase: Option<HfPhaseOutcome>,
+    dip_limit: Option<Vec<(f64, f64, f64)>>,
     protection: crate::low_protect::LimitOutcome,
 }
 pub struct ChannelRc {
@@ -107,6 +108,47 @@ fn smoothed_db(power: &[f64]) -> Vec<f64> {
         .zip(sm3)
         .map(|(sm, sm3)| (10.0 * (sm + 1e-30).log10()).max(10.0 * (sm3 + 1e-30).log10() - 3.0))
         .collect()
+}
+
+pub(crate) fn limit_dip_fills(
+    power: &[f64],
+    sm: &[f64],
+    target: &[f64],
+    level_db: f64,
+    corr: &mut [f64],
+) -> Vec<(f64, f64, f64)> {
+    let frequencies = design_freqs();
+    let env: Vec<_> = smooth(power, 1.0)
+        .into_iter()
+        .map(|value| 10.0 * (value + 1e-30).log10())
+        .collect();
+    let mut dips = Vec::new();
+    let mut current = None;
+    for i in 0..BINS {
+        let depth = (env[i] - sm[i]).max(0.0);
+        let fill = if depth <= 2.0 {
+            depth
+        } else {
+            2.0 + (depth - 2.0) / 2.0
+        }
+        .min(6.0);
+        let before = corr[i];
+        corr[i] = corr[i].min(target[i] + level_db - env[i] + fill);
+        if depth >= 4.0 && before - corr[i] >= 0.5 {
+            let candidate = (frequencies[i], depth, fill);
+            if current.is_none_or(|(_, deepest, _)| depth > deepest) {
+                current = Some(candidate);
+            }
+        } else if let Some(dip) = current.take() {
+            dips.push(dip);
+        }
+    }
+    if let Some(dip) = current {
+        dips.push(dip);
+    }
+    dips.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.total_cmp(&b.0)));
+    dips.truncate(6);
+    dips
 }
 
 /// Evaluate the actual pass-1 RC response against each position's target error.
@@ -774,6 +816,7 @@ struct FirPreparation {
     cuts: Vec<Peq>,
     dr: Option<Vec<C>>,
     mode_decay: Option<ModeDecayOutcome>,
+    dip_limit: Option<Vec<(f64, f64, f64)>>,
 }
 
 struct LfPreparation {
@@ -874,6 +917,9 @@ fn prepare_correction(
             )
         })
         .collect();
+    let dip_limit = s
+        .dip_limit
+        .then(|| limit_dip_fills(&power, &sm, &target, input.level_db, &mut corr));
     let mut notes = Vec::new();
     let mut nb = no_boost_mask(input);
     let rolloff = protection_rolloff(input);
@@ -1016,6 +1062,7 @@ fn prepare_correction(
             lf_align: None,
             mode_decay,
             hf_phase: None,
+            dip_limit,
             protection,
         }));
     }
@@ -1124,6 +1171,7 @@ fn prepare_correction(
         cuts,
         dr,
         mode_decay,
+        dip_limit,
     }))
 }
 
@@ -1381,6 +1429,7 @@ fn finish_correction(
         lf_align,
         mode_decay: prepared.mode_decay.clone(),
         hf_phase,
+        dip_limit: prepared.dip_limit.clone(),
         protection,
     })
 }
@@ -1474,6 +1523,12 @@ pub(crate) fn channel_with_cuts(
             role: input.role.to_owned(),
             rotation_deg: hf.rotation_deg,
             limited: hf.limited,
+        });
+    }
+    if let Some(dips) = &out.dip_limit {
+        out.notes.push(Note::DipLimit {
+            role: input.role.to_owned(),
+            dips: dips.clone(),
         });
     }
     let gd_cuts = if input.tuning.gd_cuts {

@@ -188,6 +188,29 @@ fn project_set_persists_hf_phase_switch() {
 }
 
 #[test]
+fn project_set_persists_dip_limit_switch() {
+    let root = root("dip-limit");
+    let project = root.join("room.secs");
+    let path = project.to_string_lossy();
+    assert_success(&run(&["project", "new", &path, "--preset", "2.1"]).0);
+
+    for (value, expected) in [("on", true), ("off", false)] {
+        let result = assert_success(&run(&["project", "set", &path, "--dip-limit", value]).0);
+        let settings = result
+            .iter()
+            .find(|item| item["reply"]["data"]["method"] == "calibration_settings_get")
+            .unwrap();
+        assert_eq!(settings["reply"]["data"]["data"]["dip_limit"], expected);
+        let saved: Value = serde_json::from_slice(&fs::read(&project).unwrap()).unwrap();
+        assert_eq!(
+            saved["calibration"].get("dip_limit"),
+            expected.then_some(&Value::Bool(true))
+        );
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn project_set_persists_and_clears_rc_bands() {
     let root = root("rc-bands");
     let project = root.join("room.secs");

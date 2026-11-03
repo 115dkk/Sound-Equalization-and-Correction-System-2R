@@ -20,6 +20,10 @@ mode_decay: boolean,
  */
 hf_phase: boolean, 
 /**
+ * Limits how much one main fills a narrow response dip (ADR 0034).
+ */
+dip_limit: boolean, 
+/**
  * Common 8th-order Butterworth high-pass on every input before the MIMO
  * fork, in Hz; `None` is off (ADR 0031).
  */

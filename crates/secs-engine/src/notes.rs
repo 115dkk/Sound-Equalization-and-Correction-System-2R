@@ -67,6 +67,12 @@ pub enum Note {
         rotation_deg: Option<f64>,
         limited: bool,
     },
+    /// ADR 0034, one per main when `dip_limit` is on. Each entry is
+    /// `(centre Hz, depth dB, allowed fill dB)`, deepest first.
+    DipLimit {
+        role: String,
+        dips: Vec<(f64, f64, f64)>,
+    },
     /// ADR 0031, once when `input_hp_hz` is set: the common input high-pass,
     /// 8th-order Butterworth, at `hz`.
     InputHp {

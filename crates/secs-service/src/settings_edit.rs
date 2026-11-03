@@ -383,6 +383,7 @@ fn apply(s: &mut CalibrationSettings, edit: SettingEdit, project: &Project) {
         SettingEdit::LfAlign { on } => s.lf_align = on,
         SettingEdit::ModeDecay { on } => s.mode_decay = on,
         SettingEdit::HfPhase { on } => s.hf_phase = on,
+        SettingEdit::DipLimit { on } => s.dip_limit = on,
         SettingEdit::InputHp { hz } => s.input_hp_hz = hz,
         SettingEdit::RcLo { hz } => s.rc_lo = hz,
         SettingEdit::RcHi { hz } => s.rc_hi = hz,

@@ -221,6 +221,18 @@ export function noticeText(t: Translate, number: FormatNumber, notice: Notice, r
     case "hf_phase_none":
       params.role = code();
       break;
+    case "dip_limit": {
+      params.code = code();
+      if (num(p.count) === 0) key = "notice.dip_limit_none";
+      else {
+        const dips = (p.dips ?? "").split(",").map((dip) => dip.split(":").map(num));
+        const valid = dips.every((dip) => dip.length === 3 && dip.every(Number.isFinite));
+        params.dips = valid ? dips.map(([hz, depth, fill]) => t("notice.dip_limit.dip", {
+          hz: number(hz!), depth: number(depth!, 1), fill: number(fill!, 1),
+        })).join(", ") : "";
+      }
+      break;
+    }
     case "input_hp":
       // Once per result (ADR 0031): the common cut on every input; its order is fixed at 8 (48 dB/oct).
       params.hz = f("hz");

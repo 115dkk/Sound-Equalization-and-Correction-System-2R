@@ -9,6 +9,7 @@ pub(crate) use crate::test_support as cases;
 mod chain;
 mod decay;
 mod design;
+mod dip_limit;
 mod e2e;
 pub(crate) mod fit;
 mod hf_phase;

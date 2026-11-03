@@ -388,6 +388,30 @@ describe("useCalibrateScreen", () => {
     expect(result.current.view?.failure).toMatchObject({ job: "calibrate", error: { code: "engine_input", params: { reason: "rc_agreement_positions", measured: "2", required: "3" } } });
   });
 
+  it.each(["ko", "en"] as const)("sends dip_limit edits from the range switch and updates saved state without recalculating (%s)", async (locale) => {
+    installFakeCanvas();
+    await session.call({ method: "calibrate", params: { settings: null, subs_only: false } });
+    await perform(mock.drain);
+    function Live() {
+      const { view, actions } = useCalibrateScreen();
+      return view ? <CalibrateScreen view={view} actions={actions} /> : null;
+    }
+    renderWith(<Live />, { session, locale });
+    const toggle = () => document.querySelector<HTMLElement>('[data-ui="calibrate.range.dip_limit"]')!;
+    expect(toggle().textContent).toBe(locale === "ko" ? "딥 보정 제한" : "Limit dip correction");
+    expect(toggle().getAttribute("aria-checked")).toBe("false");
+    expect(toggle().closest('[data-ui="calibrate.range.advanced"]')).toBeNull();
+    mock.calls.length = 0;
+    for (const on of [true, false]) {
+      await perform(() => fireEvent.click(toggle()));
+      expect(mock.calls).toContainEqual({ method: "calibration_settings_edit", params: { edit: { kind: "dip_limit", on } } });
+      expect(toggle().getAttribute("aria-checked")).toBe(String(on));
+      expect(session.stores.settings.getSnapshot()?.dip_limit).toBe(on);
+      expect(session.stores.results.getSnapshot()?.calibration).toMatchObject({ stale: true, stale_reason: "settings" });
+    }
+    expect(mock.calls.some((call) => call.method === "calibrate")).toBe(false);
+  });
+
   it("turns 극저역 보호 on from the range card's switch, then shows each channel's roll-off and the bus warning after runs (ADR 0022)", async () => {
     installFakeCanvas();
     await session.call({ method: "calibration_settings_edit", params: { edit: { kind: "xo_rec_include", on: false } } });

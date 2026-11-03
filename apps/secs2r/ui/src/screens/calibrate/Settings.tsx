@@ -492,6 +492,14 @@ function RangeSection({ view, actions, advancedOpen = false }: Props & { advance
       )}
       <ExtraBands settings={s} primaryHi={shownHi} rejection={rejection} change={actions.changeSetting} />
       <LowEnd settings={s} change={actions.changeSetting} />
+      {/* Deep narrow dips are filled only partly (ADR 0034): beside the low-end group, not a protection. */}
+      <Toggle
+        id="calibrate.range.dip_limit"
+        label={t("calibrate.range.dip_limit")}
+        help={t("calibrate.range.dip_limit.help")}
+        checked={s.dip_limit}
+        onChange={(on) => void actions.changeSetting({ kind: "dip_limit", on })}
+      />
       {/* An experiment left on stays in view: the section opens with it. */}
       <Advanced id="calibrate.range.advanced" count={2} defaultOpen={advancedOpen || analytic !== "off"}>
         <div className="calibrate-fields">

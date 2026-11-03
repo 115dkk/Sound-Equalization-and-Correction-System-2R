@@ -927,6 +927,18 @@ pub(crate) fn scalar_notice(note: &secs_engine::Note) -> Notice {
             }
             "low_protect"
         }
+        Note::DipLimit { role, dips } => {
+            params.insert("role".into(), role.clone());
+            params.insert("count".into(), dips.len().to_string());
+            params.insert(
+                "dips".into(),
+                dips.iter()
+                    .map(|(hz, depth, fill)| format!("{hz:.2}:{depth:.2}:{fill:.2}"))
+                    .collect::<Vec<_>>()
+                    .join(","),
+            );
+            "dip_limit"
+        }
         Note::LfAlign {
             role,
             strength,
@@ -1646,6 +1658,30 @@ mod tests {
     }
 
     #[test]
+    fn dip_limit_notices_list_dips() {
+        let note = Note::DipLimit {
+            role: "R".into(),
+            dips: vec![(94.123, 7.456, 4.728), (136.0, 9.2, 5.6)],
+        };
+        assert_eq!(
+            serde_json::to_value(notices(&note)).unwrap(),
+            serde_json::json!([
+                {"code":"dip_limit","params":{"role":"R","count":"2","dips":"94.12:7.46:4.73,136.00:9.20:5.60"}}
+            ])
+        );
+        let empty = Note::DipLimit {
+            role: "L".into(),
+            dips: Vec::new(),
+        };
+        assert_eq!(
+            serde_json::to_value(notices(&empty)).unwrap(),
+            serde_json::json!([
+                {"code":"dip_limit","params":{"role":"L","count":"0","dips":""}}
+            ])
+        );
+    }
+
+    #[test]
     fn lf_align_notices_include_outcome_and_optional_arrival() {
         let note = Note::LfAlign {
             role: "L".into(),
@@ -1901,6 +1937,10 @@ mod tests {
                 rotation_deg: None,
                 limited: false,
             },
+            Note::DipLimit {
+                role: "R".into(),
+                dips: vec![(94.0, 7.5, 4.75)],
+            },
             Note::ModeDecay {
                 role: "L".into(),
                 target_t60_s: 0.25,
@@ -1938,6 +1978,7 @@ mod tests {
                 "lf_align",
                 "hf_phase",
                 "hf_phase_none",
+                "dip_limit",
                 "mode_decay",
                 "mimo_support_limit",
             ]
