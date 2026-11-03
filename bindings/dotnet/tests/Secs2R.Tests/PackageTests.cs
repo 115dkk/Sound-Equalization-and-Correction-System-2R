@@ -53,6 +53,21 @@ public sealed class PackageTests
     }
 
     [Fact]
+    public async Task DisposingAStreamEndsItsEnumeration()
+    {
+        using var temp = new TestDirectory();
+        using var engine = new Engine(temp.SettingsPath);
+        EventStream stream = engine.Events();
+        await using IAsyncEnumerator<JsonElement> events = stream.GetAsyncEnumerator();
+        Task<bool> pending = events.MoveNextAsync().AsTask();
+        await Task.Delay(300);
+
+        stream.Dispose();
+
+        Assert.False(await pending.WaitAsync(TimeSpan.FromSeconds(5)));
+    }
+
+    [Fact]
     public void FreshEngineResultsHaveStructuredErrorFields()
     {
         using var temp = new TestDirectory();

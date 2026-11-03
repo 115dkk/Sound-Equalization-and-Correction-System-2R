@@ -49,17 +49,18 @@ public sealed class EventStream : IAsyncEnumerable<JsonElement>, IAsyncDisposabl
         return Enumerate(cancellationToken);
     }
 
-    /// <summary>Frees the native subscription if no enumeration owns it.</summary>
+    /// <summary>
+    /// Frees the native subscription. An enumeration in progress ends at its next poll; one that was
+    /// never started (an enumerator whose <c>MoveNextAsync</c> was never called) would otherwise keep
+    /// the subscription forever.
+    /// </summary>
     public void Dispose()
     {
-        if (Volatile.Read(ref _enumerated) == 0)
-        {
-            Free();
-        }
+        Free();
         GC.SuppressFinalize(this);
     }
 
-    /// <summary>Frees the native subscription if no enumeration owns it.</summary>
+    /// <summary>Frees the native subscription, as <see cref="Dispose"/> does.</summary>
     /// <returns>A completed task.</returns>
     public ValueTask DisposeAsync()
     {
@@ -119,9 +120,23 @@ public sealed class EventStream : IAsyncEnumerable<JsonElement>, IAsyncDisposabl
             while (true)
             {
                 token.ThrowIfCancellationRequested();
-                JsonElement poll = await Task.Run(
-                    () => Native.EventsNext(subscription, PollMilliseconds),
-                    CancellationToken.None).ConfigureAwait(false);
+                JsonElement poll = default;
+                bool polled = false;
+                try
+                {
+                    poll = await Task.Run(
+                        () => Native.EventsNext(subscription, PollMilliseconds),
+                        CancellationToken.None).ConfigureAwait(false);
+                    polled = true;
+                }
+                catch (SecsException) when (Interlocked.Read(ref _subscription) == 0)
+                {
+                    // Dispose freed the subscription during the poll: the stream ends.
+                }
+                if (!polled)
+                {
+                    yield break;
+                }
                 Interlocked.Exchange(ref _droppedEvents, unchecked((long)poll.GetProperty("dropped").GetUInt64()));
                 token.ThrowIfCancellationRequested();
                 if (poll.GetProperty("closed").GetBoolean())
