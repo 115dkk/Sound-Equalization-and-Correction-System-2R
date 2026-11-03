@@ -6,7 +6,7 @@
 
 1. **업스트림의 모든 기능을 옮깁니다.** 기능 목록은 `features.toml`이고, 업스트림 출처는 각 항목의 `upstream`에 적습니다. 업스트림 파이썬 트리는 고치지 않고 오라클로 씁니다(0001).
 2. **먼저 그대로, 그다음 고칩니다.** 이식은 골든을 맞추고, 결함 수정은 번호 붙은 편차로 따로 넣습니다(0004).
-3. **unsafe는 격리 크레이트에만.** OS 경계 `secs-sys`와 선택적 GPU 경계 `secs-cuda-sys`의 예산을 정책으로 검사합니다(0002, 0008).
+3. **unsafe는 격리 크레이트에만.** OS 경계 `secs-sys`, 선택적 GPU 경계 `secs-cuda-sys`, NuGet 패키지의 C ABI `secs-dotnet-sys`의 예산을 정책으로 검사합니다(0002, 0008, 0032).
 4. **결정적인 계산.** 같은 입력이면 스레드 수와 무관하게 같은 바이트가 나옵니다. GPU 경로만 허용오차로 다루고 그 사실을 결과에 적습니다(0007).
 5. **기능마다 테스트.** `features.toml`에 없는 기능은 없는 것이고, '구현됨'에는 실제 테스트가 있어야 합니다.
 
@@ -16,7 +16,7 @@
 Cargo.toml                워크스페이스 루트 (lint, 공용 의존성)
 rust-toolchain.toml       1.99.0 고정
 features.toml             기능 등록부
-unsafe-budget.toml        크레이트별 unsafe 허용량 (secs-sys = 3, ADR 0011; secs-cuda-sys = 80)
+unsafe-budget.toml        크레이트별 unsafe 허용량 (secs-sys = 3, ADR 0011; secs-cuda-sys = 80; secs-dotnet-sys = 32, ADR 0032)
 deny.toml                 GPL 호환 라이선스, 권고, 출처
 UPSTREAM.toml             이식을 마친 업스트림 커밋
 crates/
@@ -51,6 +51,7 @@ apps/
   secs2r-host/            Windows 관리 서비스: 사용자 세션으로 CamillaDSP를 띄우고 Equalizer APO Include를 지킴 (ADR 0018)
   secs2r-host-shell/      관리 서비스의 트레이 셸 (Tauri 2)
 bindings/python/          PyPI 패키지 secs2r (pyo3로 공개 Rust API를 감쌈, ADR 0019)
+bindings/dotnet/          NuGet 패키지 Secs2R (C ABI 격리 크레이트 secs-dotnet-sys와 C# 래퍼, ADR 0032)
 src/, tests/, tools/      업스트림 SECS 2 (파이썬, 오라클, 고치지 않음)
 oracle/                   골든 내보내기 스크립트와 골든 (oracle/README.md)
 ```
@@ -88,6 +89,7 @@ secs-apply ─────────> tungstenite (서비스는 시험에서�
 secs2r-host ────────> secs-sys, secs-apply, secs-types
 secs2r-host-shell ──> secs-sys, secs-types, tauri
 bindings/python ────> secs-api (engine, client 기능), pyo3
+bindings/dotnet ────> secs-api (engine, client 기능); csbindgen은 빌드 때만
 secs-policy ────────> (파일 시스템만 읽음; 테스트가 IPC 메서드 목록 때문에 secs-types)
 secs-engine-testkit ─> secs-engine, secs-oracle (테스트와 예제만 의존; 출하하지 않음)
 ```

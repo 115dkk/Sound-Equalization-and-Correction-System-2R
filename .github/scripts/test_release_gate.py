@@ -31,6 +31,12 @@ class ShipsTest(unittest.TestCase):
             "bindings/python/pyproject.toml",
             "bindings/python/src/lib.rs",
             "bindings/python/secs2r/__init__.py",
+            "bindings/dotnet/native/Cargo.toml",
+            "bindings/dotnet/native/src/ffi.rs",
+            "bindings/dotnet/Secs2R/Secs2R.csproj",
+            "bindings/dotnet/Secs2R/Engine.cs",
+            "bindings/dotnet/Secs2R/NativeMethods.g.cs",
+            "bindings/dotnet/LICENSE",
             "Cargo.toml",
             "Cargo.lock",
             "rust-toolchain.toml",
@@ -57,6 +63,8 @@ class ShipsTest(unittest.TestCase):
             "apps/secs2r/icons/render_icons.py",
             "bindings/python/tests/test_secs2r.py",
             "bindings/python/README.md",
+            "bindings/dotnet/tests/Secs2R.Tests/EngineTests.cs",
+            "bindings/dotnet/README.md",
             "features.toml",
             "unsafe-budget.toml",
             "deny.toml",
@@ -291,6 +299,27 @@ class ApiTest(unittest.TestCase):
             [
                 "crates/secs-types/src/ipc.rs",
                 "crates/secs-types/README.md",
+                "bindings/python/src/lib.rs",
+            ],
+        )
+
+    def test_binding_packages_take_their_whole_directory(self):
+        # The NuGet package packs the C# library beside its crate, so a change
+        # there bumps the API version too; its test project does not.
+        for manifest, package_dir in g.BINDINGS:
+            self.assertTrue(manifest.as_posix().startswith(package_dir + "/"), manifest)
+        dirs = [package_dir for _, package_dir in g.BINDINGS]
+        changed = [
+            "bindings/dotnet/native/src/ffi.rs",
+            "bindings/dotnet/Secs2R/Engine.cs",
+            "bindings/dotnet/tests/Secs2R.Tests/EngineTests.cs",
+            "bindings/python/src/lib.rs",
+        ]
+        self.assertEqual(
+            g.api_files(changed, dirs),
+            [
+                "bindings/dotnet/native/src/ffi.rs",
+                "bindings/dotnet/Secs2R/Engine.cs",
                 "bindings/python/src/lib.rs",
             ],
         )

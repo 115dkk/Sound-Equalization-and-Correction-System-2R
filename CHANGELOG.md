@@ -2,6 +2,15 @@
 
 SECS 2R의 변경 기록입니다. 번호는 major.minor.patch이고, 0.x는 모두 사전 출시판이며 정식 출시는 1.0.0부터입니다(docs/adr/0006). 각 절의 내용이 그 버전의 릴리스 본문이 됩니다. 업스트림 SECS 2의 변경 기록은 [`docs/upstream/CHANGELOG.md`](docs/upstream/CHANGELOG.md)에 있습니다.
 
+## 0.47.0 - 2026-11-03
+
+### 추가한 것
+
+- C#과 .NET, Unity에서 엔진과 로컬 API 클라이언트를 쓸 수 있는 NuGet 패키지 `Secs2R`를 nuget.org에 냅니다(docs/adr/0032). PyPI 패키지 `secs2r`처럼 JSON 요청을 그대로 주고받고, 프로젝트 열기, 보정과 MIMO 계산, 내보내기를 할 수 있습니다. 장치 측정과 GPU는 빠집니다. 대상은 `netstandard2.1`(Unity 2021.2 이상)과 `net8.0`이고, Windows x64, Linux x64, macOS(Apple Silicon과 Intel)의 네이티브 라이브러리가 들어 있습니다. 패키지는 AGPL-3.0-only이므로, 이 패키지를 쓰는 프로그램도 AGPL과 호환되는 조건으로 배포해야 합니다.
+- 공개 Rust API의 `Events`에 `closer()`를 추가합니다. 다른 스레드에서 연결을 끊어, 이벤트를 기다리며 멈춰 있던 읽기를 바로 끝낼 수 있습니다. NuGet 패키지는 구독을 해제할 때 이것으로 연결을 끊습니다.
+- `Client::events()`는 연결과 핸드셰이크를 5초 안에 마치지 못하면 오류를 돌려줍니다. 연결은 받고 답하지 않는 서버를 끝없이 기다리지 않습니다.
+- 공개 크레이트와 `secs2r`, `Secs2R`의 판이 함께 0.16.0으로 오릅니다. 데스크톱 앱의 보정과 내보내기 결과는 0.46.4와 같습니다.
+
 ## 0.46.4 - 2026-11-03
 
 ### 고친 것

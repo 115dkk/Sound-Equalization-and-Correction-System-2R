@@ -25,7 +25,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import release_gate as gate  # noqa: E402
 
 SUFFIX = "dryrun"
-MEMBER_GLOBS = ("crates/*/Cargo.toml", "apps/*/Cargo.toml", "bindings/*/Cargo.toml")
+MEMBER_GLOBS = (
+    "crates/*/Cargo.toml",
+    "apps/*/Cargo.toml",
+    "bindings/*/Cargo.toml",
+    "bindings/*/*/Cargo.toml",
+)
 
 
 def dry_run_version(version: str) -> str:

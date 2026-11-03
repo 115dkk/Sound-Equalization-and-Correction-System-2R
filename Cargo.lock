@@ -908,6 +908,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "csbindgen"
+version = "1.9.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "950f59b281d7e20f050b4efd56d7c36c0deb853bf9ea1f20b985a75ae5b03b34"
+dependencies = [
+ "regex",
+ "syn 2.0.119",
+]
+
+[[package]]
 name = "cssparser"
 version = "0.37.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4361,6 +4371,15 @@ name = "secs-dirac"
 version = "0.15.3"
 dependencies = [
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "secs-dotnet-sys"
+version = "0.15.3"
+dependencies = [
+ "csbindgen",
+ "serde_json",
+ "sound-equalization-and-correction-system-rust-api",
 ]
 
 [[package]]

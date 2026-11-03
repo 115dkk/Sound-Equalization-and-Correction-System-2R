@@ -10,3 +10,6 @@
 secs-sys = 3
 # ADR 0008: optional CUDA/cuBLAS/cuSOLVER dynamic-loader and native-call leaf.
 secs-cuda-sys = 80
+# ADR 0032: the C ABI of the Secs2R NuGet package: the exported functions and
+# the borrows of the buffers C# owns.
+secs-dotnet-sys = 32
