@@ -36,7 +36,7 @@ describe("useCalibrateScreen", () => {
     }
     renderWith(<Live />, { session });
     const at = (id: string) => document.querySelector<HTMLElement>(`[data-ui="${id}"]`);
-    expect(at("calibrate.verdict.polarity_reversed")?.textContent).toContain("Rs의 직접음이 다른 스피커 3개와 반대 부호입니다(상관 0.94)");
+    expect(at("calibrate.verdict.polarity_reversed")?.textContent).toContain("Rs의 직접음이 비교한 스피커 3개 가운데 3개와 반대 부호입니다(상관 0.94)");
     expect(at("calibrate.verdict.notes")?.textContent ?? "").not.toContain("극성 반전");
     mock.calls.length = 0;
     await perform(() => fireEvent.click(at("calibrate.polarity.flip.Rs")!));

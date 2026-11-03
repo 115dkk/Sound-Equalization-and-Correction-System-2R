@@ -60,12 +60,12 @@ fn band_weight(frequency: f64) -> f64 {
     if !(lower_zero..=upper_zero).contains(&frequency) {
         0.0
     } else if frequency < BAND_HZ.0 {
-        let phase = (frequency / lower_zero).log2() * PI;
+        let phase = (frequency / lower_zero).log2() * 2.0 * PI;
         0.5 * (1.0 - phase.cos())
     } else if frequency <= BAND_HZ.1 {
         1.0
     } else {
-        let phase = (frequency / BAND_HZ.1).log2() * PI;
+        let phase = (frequency / BAND_HZ.1).log2() * 2.0 * PI;
         0.5 * (1.0 + phase.cos())
     }
 }
@@ -191,51 +191,54 @@ pub fn check(set: &MeasurementSet, mains: &[String], main_position: u32) -> Vec<
         return Vec::new();
     }
     let pairs = pair_results(set, mains, main_position);
-    let candidates = (0..mains.len())
-        .filter(|&left| {
-            let negative = pairs[left]
-                .iter()
-                .flatten()
-                .filter(|value| **value < 0.0)
-                .count();
-            let positive = pairs[left]
-                .iter()
-                .flatten()
-                .filter(|value| **value > 0.0)
-                .count();
+    // The majority is counted among the mains with at least one decided pair:
+    // a main nobody could correlate carries no vote on who is reversed.
+    let decided = (0..mains.len())
+        .filter(|&index| pairs[index].iter().any(Option::is_some))
+        .collect::<Vec<_>>();
+    let counts = |index: usize| {
+        let values = pairs[index].iter().flatten();
+        let negative = values.clone().filter(|value| **value < 0.0).count();
+        let positive = values.filter(|value| **value > 0.0).count();
+        (negative, positive)
+    };
+    let candidates = decided
+        .iter()
+        .copied()
+        .filter(|&index| {
+            let (negative, positive) = counts(index);
             negative > positive
         })
         .collect::<Vec<_>>();
     if candidates.is_empty() {
         return Vec::new();
     }
-    if candidates.len() * 2 < mains.len() {
+    if candidates.len() * 2 < decided.len() {
         return candidates
             .into_iter()
             .map(|index| {
-                let decided = pairs[index].iter().flatten().copied().collect::<Vec<_>>();
+                let values = pairs[index].iter().flatten().copied().collect::<Vec<_>>();
                 Note::PolarityReversed {
                     role: mains[index].clone(),
-                    confidence: levels::median(decided.iter().map(|value| value.abs()).collect()),
-                    compared: decided.len(),
+                    confidence: levels::median(values.iter().map(|value| value.abs()).collect()),
+                    compared: values.len(),
+                    opposite: values.iter().filter(|value| **value < 0.0).count(),
                 }
             })
             .collect();
     }
 
     let signs = signed_groups(&pairs);
-    let first_sign = signs[0];
-    let a = mains
+    let first_sign = signs[decided[0]];
+    let a = decided
         .iter()
-        .zip(&signs)
-        .filter(|(_, sign)| **sign == first_sign)
-        .map(|(role, _)| role.clone())
+        .filter(|&&index| signs[index] == first_sign)
+        .map(|&index| mains[index].clone())
         .collect::<Vec<_>>();
-    let b = mains
+    let b = decided
         .iter()
-        .zip(&signs)
-        .filter(|(_, sign)| **sign != first_sign)
-        .map(|(role, _)| role.clone())
+        .filter(|&&index| signs[index] != first_sign)
+        .map(|&index| mains[index].clone())
         .collect::<Vec<_>>();
     let confidence = (0..mains.len())
         .flat_map(|left| (left + 1..mains.len()).map(move |right| (left, right)))
@@ -318,7 +321,7 @@ mod tests {
         );
         assert!(matches!(
             notes.as_slice(),
-            [Note::PolarityReversed { role, compared: 3, .. }] if role == "Ls"
+            [Note::PolarityReversed { role, compared: 3, opposite: 3, .. }] if role == "Ls"
         ));
 
         let pair = ["L", "R"].map(String::from);
@@ -334,6 +337,55 @@ mod tests {
             matches!(notes.as_slice(), [Note::PolaritySplit { groups, .. }]
             if groups.0 == ["L", "R"] && groups.1 == ["C", "Ls"])
         );
+    }
+
+    #[test]
+    fn polarity_check_judges_the_majority_among_decided_mains() {
+        // Only L and R can be correlated: the three silent mains carry no vote,
+        // so the pair is a split, not two reversed mains.
+        let mains = ["L", "R", "C", "Ls", "Rs"].map(String::from);
+        let silent = || Samples::F64(vec![0.0; 1024].into());
+        let notes = check(
+            &MeasurementSet {
+                positions: vec![(
+                    1,
+                    vec![
+                        ("L".into(), measurement(pulse(1.0, 0))),
+                        ("R".into(), measurement(pulse(-1.0, 0))),
+                        ("C".into(), measurement(silent())),
+                        ("Ls".into(), measurement(silent())),
+                        ("Rs".into(), measurement(silent())),
+                    ],
+                )],
+            },
+            &mains,
+            1,
+        );
+        assert!(
+            matches!(notes.as_slice(), [Note::PolaritySplit { groups, .. }]
+            if groups.0 == ["L"] && groups.1 == ["R"])
+        );
+
+        // Two reversed mains among five: each is opposite to the three normal
+        // ones and agrees with the other reversed one.
+        let notes = check(
+            &set(&[
+                ("L", 1.0),
+                ("R", 1.0),
+                ("C", 1.0),
+                ("Ls", -1.0),
+                ("Rs", -1.0),
+            ]),
+            &mains,
+            1,
+        );
+        assert!(matches!(
+            notes.as_slice(),
+            [
+                Note::PolarityReversed { role: a, compared: 4, opposite: 3, .. },
+                Note::PolarityReversed { role: b, compared: 4, opposite: 3, .. },
+            ] if a == "Ls" && b == "Rs"
+        ));
     }
 
     #[test]

@@ -40,8 +40,9 @@ fn note_value(note: &crate::notes::Note) -> Value {
             role,
             confidence,
             compared,
+            opposite,
         } => {
-            json!({"PolarityReversed": {"role": role, "confidence": confidence, "compared": compared}})
+            json!({"PolarityReversed": {"role": role, "confidence": confidence, "compared": compared, "opposite": opposite}})
         }
         Note::PolaritySplit { groups, confidence } => {
             json!({"PolaritySplit": {"groups": groups, "confidence": confidence}})
