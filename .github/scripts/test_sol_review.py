@@ -69,11 +69,15 @@ class GitHub:
         self.root_reads = 0
         self.post_response = {"id": 99, "node_id": "NEW_REVIEW"}
         self.graphql_threads = []
+        self.resolve_errors = None
 
     def request(self, path, data=None, method=None, accept=None):
         if path == "/graphql":
             self.writes.append((path, data, method))
             if data["query"].lstrip().startswith("mutation"):
+                if self.resolve_errors:
+                    # GitHub refuses with HTTP 200 and an errors list.
+                    return {"data": {"resolveReviewThread": None}, "errors": self.resolve_errors}
                 return {"data": {"resolveReviewThread": {"thread": {"id": data["variables"]["threadId"],
                                                                         "isResolved": True}}}}
             return {"data": {"repository": {"pullRequest": {"reviewThreads": {
@@ -671,6 +675,17 @@ class ReviewTests(unittest.TestCase):
         lost = finding(severity="blocking", category="security") | {"path": "outside.rs"}
         self.assertEqual(self.publish(value=result([lost])), "COMMENT")
         self.assertFalse(any(path == "/graphql" for path, _, _ in self.github.writes))
+
+    def test_a_refused_thread_resolution_is_logged_with_its_reason(self):
+        self.github.graphql_threads = [{"id": "THREAD", "isResolved": False, "comments": {"nodes": [{
+            "author": {"login": "github-actions"}, "pullRequestReview": {"id": "OLD_REVIEW"},
+        }]}}]
+        self.github.resolve_errors = [{"type": "FORBIDDEN", "message": "Resource not accessible by integration"}]
+        with patch("builtins.print") as output:
+            self.assertEqual(self.publish(), "APPROVE")
+        printed = " ".join(str(call.args[0]) for call in output.call_args_list)
+        self.assertIn("review thread resolution failed", printed)
+        self.assertIn("Resource not accessible by integration", printed)
 
     def test_quota_notice_keeps_the_short_existing_format(self):
         (self.directory / "metadata.json").write_text(json.dumps(metadata()))

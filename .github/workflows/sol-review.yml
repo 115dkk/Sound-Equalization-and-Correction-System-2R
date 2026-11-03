@@ -79,8 +79,13 @@ jobs:
     if: ${{ always() && needs.review.result != 'skipped' && needs.review.result != 'cancelled' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    # contents: write only because GitHub refuses resolveReviewThread to an
+    # integration token without it (PR #164, 2026-11-03; maintainer approved
+    # the same day). This job runs main's code and never checks out or
+    # executes anything of the pull request; main itself stays behind the
+    # ruleset.
     permissions:
-      contents: read
+      contents: write
       actions: read
       pull-requests: write
     steps:
