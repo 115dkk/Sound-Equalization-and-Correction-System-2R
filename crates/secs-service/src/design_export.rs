@@ -631,6 +631,7 @@ mod tests {
                 input_peq: vec![(80.0, 1.0, -2.0)],
                 fir: vec![1.0, 0.25],
                 gain_db: 0.0,
+                polarity: None,
                 delay_ms: 1.0,
                 xo_hz: None,
                 top_peq: Vec::new(),

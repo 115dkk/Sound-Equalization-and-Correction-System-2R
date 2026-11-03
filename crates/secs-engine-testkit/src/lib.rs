@@ -123,6 +123,7 @@ pub fn load_fixture(fx: &Fixture) -> Case {
     let v = &i["config"];
     let config = EngineConfig {
         mains: strings(&v["mains"]),
+        inverted_mains: Vec::new(),
         subs: strings(&v["subs"]),
         groups: pairs(&v["groups"])
             .map(|(g, rs)| (g.to_owned(), strings(rs)))

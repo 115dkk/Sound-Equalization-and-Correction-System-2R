@@ -42,6 +42,8 @@ mod mimo;
 mod normalize;
 #[path = "../src/notes.rs"]
 mod notes;
+#[path = "../src/polarity.rs"]
+mod polarity;
 #[path = "../src/preview.rs"]
 mod preview;
 #[path = "../src/rc.rs"]
@@ -820,6 +822,7 @@ fn main() {
                 groups: &case.config.groups,
                 project_xo: &case.config.xo,
                 target: &case.config.target,
+                inverted: &[],
             };
             measure(op, name, threads, || {
                 xo::recommend_xo(

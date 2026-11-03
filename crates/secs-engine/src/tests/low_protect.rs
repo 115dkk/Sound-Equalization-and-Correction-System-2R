@@ -62,6 +62,7 @@ fn inputs(
             groups: &groups,
             project_xo: &[("front".into(), 80.0)],
             target: &TargetCurve::new(vec![(10.0, 0.0), (20000.0, 0.0)]),
+            inverted: &[],
         },
         &set,
         settings,
@@ -532,6 +533,7 @@ fn low_protect_room_bass_survives() {
         groups: &case.config.groups,
         project_xo: &case.config.xo,
         target: &case.config.target,
+        inverted: &[],
     };
     let mut failures = Vec::new();
     for rc_lo in [20.0, 40.0] {

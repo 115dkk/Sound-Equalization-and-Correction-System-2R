@@ -9,7 +9,7 @@ import { startCalibration } from "../../state/calibration";
 
 const withoutStage = ({ stage: _stage, ...params }: Record<string, string>): Record<string, string> => params;
 
-export function useCalibrateScreen(goToMeasurements?: () => void): { view: CalibrateView | null; actions: CalibrateActions } {
+export function useCalibrateScreen(goToMeasurements?: () => void, openPolarity?: (role: string) => void): { view: CalibrateView | null; actions: CalibrateActions } {
   const session = useSession();
   const host = useHost();
   const ledger = useJobLedger();
@@ -71,6 +71,16 @@ export function useCalibrateScreen(goToMeasurements?: () => void): { view: Calib
       previewXo: (xoGroup, previewHz) => { session.host.set({ tab: "xo", xoGroup, previewHz }); refresh(); },
       changeSetting: session.editSetting,
       takeSubValues: () => session.run(() => session.call({ method: "sub_take_values" })),
+      flipPolarity: (role) => session.run(async () => {
+        const guard = session.projectGuard();
+        const config = await session.call({ method: "config_get" });
+        const index = config.speakers.findIndex((speaker) => speaker.role === role);
+        if (index < 0 || !guard.alive()) return;
+        const band = config.speakers[index]?.bands[0];
+        if (!band) return;
+        await session.call({ method: "config_set_speaker", params: { index, role: null, size: null, band_index: null, out: null, pol: band.pol === "-" ? "+" : "-" } });
+      }),
+      openPolarity: openPolarity ?? (() => session.navigate("system")),
       setTargetPoints: async (points) => {
         try { await session.call({ method: "target_set_points", params: { points } }); return true; }
         catch { return false; }
@@ -87,7 +97,7 @@ export function useCalibrateScreen(goToMeasurements?: () => void): { view: Calib
         if (path !== null && guard.alive()) await session.call({ method: "target_load", params: { path } });
       }),
     };
-  }, [session, goToMeasurements]);
+  }, [session, goToMeasurements, openPolarity]);
   const jobs = ledger.jobs.filter((job) => job.status === "running" || job.status === "cancel_requested");
   const runningJob = jobs.find((job) => ["calibrate", "recommend_xo", "mimo"].includes(job.kind));
   const request = runningJob?.request;

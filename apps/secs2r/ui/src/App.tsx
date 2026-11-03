@@ -94,7 +94,8 @@ function Shell({ tutorialStart }: { tutorialStart?: string | undefined }) {
   }, [measureJob, measure.actions, navigateToSetting]);
   // The output-number warnings' action: 시스템 with the patch's first output focused.
   const openPatch = useCallback(() => navigateToSetting("system", '[data-ui^="system.patch."][data-ui*=".out"]', '[data-ui="system.patch.renumber"]'), [navigateToSetting]);
-  const calibrate = useCalibrateScreen(goToMeasurements);
+  const openPolarity = useCallback((role: string) => navigateToSetting("system", `[data-ui="system.patch.${role}.pol"]`, '[data-ui^="system.patch."][data-ui*=".pol"]'), [navigateToSetting]);
+  const calibrate = useCalibrateScreen(goToMeasurements, openPolarity);
   const exporting = useExportScreen();
   const { model, navigate } = useFrameModel({ system: system.view, connect: connect.view, measure: measure.view, calibrate: calibrate.view, export: exporting.view });
   const reason = model.steps[host.current].reason;

@@ -1513,6 +1513,7 @@ fn oracle_project_calibrates_recommends_xo_and_exports() {
         groups: &direct.config.groups,
         project_xo: &settings.xo,
         target: &direct.config.target,
+        inverted: &[],
     };
     let ctx = secs_compute::Context::new(
         1,
@@ -2431,6 +2432,57 @@ fn removing_a_speaker_marks_live_and_cached_calibration_stale() {
     assert!(cached.stale);
     assert_eq!(cached.stale_reason.as_deref(), Some("config"));
 
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn polarity_setting_marks_results_stale_and_flips_the_engine_input() {
+    let root = temp_root("speaker-polarity-stale");
+    fs::create_dir_all(&root).unwrap();
+    let (path, settings) = write_case(&root, "room");
+    let service = deterministic_service();
+    open(&service, &path);
+    let events = Arc::new(Events::default());
+    let calibration = start_calibration(&service, events.clone(), settings.clone());
+    finished_result(events.wait(calibration, Duration::from_secs(120)));
+
+    let Response::ConfigSetSpeaker(config) = call_ok(
+        &service,
+        Request::ConfigSetSpeaker(secs_types::ipc::ConfigSetSpeakerParams {
+            index: 0,
+            role: None,
+            size: None,
+            band_index: Some(0),
+            out: None,
+            pol: Some("-".into()),
+        }),
+        Arc::new(NoEvents),
+    ) else {
+        panic!("speaker polarity must change")
+    };
+    assert_eq!(config.speakers[0].bands[0].pol, "-");
+    let stale = read_results(&service).calibration.unwrap();
+    assert!(stale.stale);
+    assert_eq!(stale.stale_reason.as_deref(), Some("config"));
+
+    let events = Arc::new(Events::default());
+    let calibration = start_calibration(&service, events.clone(), settings);
+    finished_result(events.wait(calibration, Duration::from_secs(120)));
+    assert!(!read_results(&service).calibration.unwrap().stale);
+    let export = export_and_wait(
+        &service,
+        ExportKind::EqualizerApo,
+        &root.join("export"),
+        Arc::new(Events::default()),
+    );
+    let body = export
+        .files
+        .iter()
+        .map(fs::read_to_string)
+        .filter_map(Result::ok)
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(body.contains("Copy: VML=-1.0*VML"));
     fs::remove_dir_all(root).unwrap();
 }
 

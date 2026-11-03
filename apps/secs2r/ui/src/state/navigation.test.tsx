@@ -3,7 +3,7 @@ import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { App } from "../App";
 import { createMockService } from "../ipc/mock";
-import { measureMethods, projectInfo } from "../ipc/fixtures";
+import { measureMethods, projectInfo, resultsSummary } from "../ipc/fixtures";
 import { installFakeCanvas } from "../test/canvas";
 import * as sessions from "./session";
 
@@ -14,6 +14,25 @@ const setup = (mock: ReturnType<typeof createMockService>, method: string) => mo
   method: "measure_configure", params: { method, input_device: null, output_device: null,
     input_channel: null, output_channels: [], sweep_length: null, repetitions: null,
     sweep_level_dbfs: null, timing: null, loopback_input_channel: null, timing_ref_output: null, share_mode: null },
+});
+
+it.each(["Ls", "missing"])("opens the split warning's polarity setting with a first-control fallback: %s", async (role) => {
+  const mock = createMockService({ tickMs: 0, results: { ...resultsSummary, calibration: { ...resultsSummary.calibration!, notes: [{ code: "polarity_split", params: { a: `${role},Rs`, b: "L,R", confidence: "0.94" } }] } } });
+  await setup(mock, "native");
+  const rendered = render(<App ipc={mock} />);
+  try {
+    await waitFor(() => expect(ui("frame.rail.calibrate")).not.toBeNull());
+    fireEvent.click(ui("frame.rail.calibrate")!);
+    await waitFor(() => expect(ui("calibrate.polarity.open")).not.toBeNull());
+    mock.calls.length = 0;
+    fireEvent.click(ui("calibrate.polarity.open")!);
+    const selector = `[data-ui="system.patch.${role === "missing" ? "L" : role}.pol"]`;
+    await waitFor(() => {
+      expect(document.querySelector(selector)).not.toBeNull();
+      expect(document.activeElement).toBe(document.querySelector(selector));
+    });
+    expect(mock.calls.some((call) => ["config_set_speaker", "calibrate", "recommend_xo"].includes(call.method))).toBe(false);
+  } finally { rendered.unmount(); mock.dispose(); }
 });
 
 it("opens and focuses the measurement list from a structured calculation error without starting a measurement", async () => {

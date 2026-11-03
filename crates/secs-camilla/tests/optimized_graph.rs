@@ -113,6 +113,7 @@ fn sample() -> (SignalChain, MimoPaths) {
             input_peq: vec![(73.123456, 1.432198, -1.01347)],
             fir: vec![0.8, 0.11, -0.031, 0.008],
             gain_db: -0.37 * i as f64,
+            polarity: None,
             delay_ms: 3.010416666666667 + i as f64 / 48.0,
             xo_hz: Some(if i < 2 { 80.12345 } else { 95.0 }),
             top_peq: vec![(120.987654, 0.812345, 0.37)],
@@ -338,6 +339,52 @@ fn factored_graph_preserves_every_input_to_output_transfer_and_integer_delay() {
         max_expected >= 1e-3,
         "expected optimized graph responses are all silent ({max_expected})"
     );
+}
+
+#[test]
+fn inverted_main_inverts_the_physical_output_after_the_mimo_merge() {
+    let (mut chain, mimo) = sample();
+    chain.mains[1].polarity = Some(-1);
+    let out = std::env::temp_dir().join(format!("secs-camilla-polarity-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&out);
+    std::fs::create_dir_all(&out).unwrap();
+    let options = Options {
+        bypass: true,
+        ..Options::default()
+    };
+    let configured = make_config(
+        &chain,
+        &out,
+        &out.join("configs"),
+        "secs_",
+        &options,
+        Some(&mimo),
+    )
+    .unwrap();
+    let merge = configured.yaml.find("\"name\": \"mimo_merge\"").unwrap();
+    let polarity = configured
+        .yaml
+        .find("\"names\": [\"main_R_polarity\"]")
+        .unwrap();
+    assert!(merge < polarity);
+    assert!(configured.yaml.contains(
+        "main_R_gain: {\"type\": \"Gain\", \"parameters\": {\"gain\": -0.37, \"inverted\": false}}"
+    ));
+    assert!(configured.yaml.contains(
+        "main_R_polarity: {\"type\": \"Gain\", \"parameters\": {\"gain\": 0.0, \"inverted\": true}}"
+    ));
+
+    let written = write_config(&chain, &out, "polarity", &options, Some(&mimo)).unwrap();
+    let bypass = written
+        .iter()
+        .find(|path| path.file_name().unwrap() == "polarity_bypass.yml")
+        .unwrap();
+    assert!(
+        std::fs::read_to_string(bypass)
+            .unwrap()
+            .contains("main_R_polarity")
+    );
+    std::fs::remove_dir_all(out).unwrap();
 }
 
 #[test]

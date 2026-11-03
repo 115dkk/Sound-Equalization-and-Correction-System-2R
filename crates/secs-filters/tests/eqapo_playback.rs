@@ -121,6 +121,7 @@ fn chain_value(fixture: &Fixture, value: &Value) -> SignalChain {
                 input_peq: peqs(&main["input_peq"]),
                 fir: fixture.f64s(&main["fir"]),
                 gain_db: number(&main["gain_db"]),
+                polarity: None,
                 delay_ms: number(&main["delay_ms"]),
                 xo_hz: main["xo_hz"].as_f64(),
                 top_peq: peqs(&main["top_peq"]),

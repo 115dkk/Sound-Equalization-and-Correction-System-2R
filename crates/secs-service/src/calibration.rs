@@ -65,10 +65,12 @@ impl Service {
             let prepared = snapshot.load(&job)?;
             let ctx = compute_context(&job, memory, background);
             let groups = project_groups(&prepared.project);
+            let inverted = prepared.project.config.inverted_mains();
             let view = ProjectView {
                 groups: &groups,
                 project_xo: &prepared.project.xo,
                 target: &prepared.project.target,
+                inverted: &inverted,
             };
             let calibration = calibrate(
                 &CalibrationRequest {
@@ -163,10 +165,12 @@ impl Service {
             job.log(settings_notice(&snapshot.settings, background));
             let prepared = snapshot.load(&job)?;
             let groups = project_groups(&prepared.project);
+            let inverted = prepared.project.config.inverted_mains();
             let view = ProjectView {
                 groups: &groups,
                 project_xo: &prepared.project.xo,
                 target: &prepared.project.target,
+                inverted: &inverted,
             };
             let ctx = compute_context(&job, memory, background);
             let result = secs_engine::xo::recommend_xo(
@@ -889,6 +893,22 @@ pub(crate) fn scalar_notice(note: &secs_engine::Note) -> Notice {
 
     let mut params = std::collections::BTreeMap::new();
     let code = match note {
+        Note::PolarityReversed {
+            role,
+            confidence,
+            compared,
+        } => {
+            params.insert("role".into(), role.clone());
+            params.insert("confidence".into(), confidence.to_string());
+            params.insert("compared".into(), compared.to_string());
+            "polarity_reversed"
+        }
+        Note::PolaritySplit { groups, confidence } => {
+            params.insert("a".into(), groups.0.join(","));
+            params.insert("b".into(), groups.1.join(","));
+            params.insert("confidence".into(), confidence.to_string());
+            "polarity_split"
+        }
         Note::LowProtect {
             role,
             rolloff_hz,
@@ -1284,6 +1304,28 @@ mod tests {
     }
 
     #[test]
+    fn polarity_notes_map_to_notices_with_role_confidence_and_groups() {
+        let reversed = scalar_notice(&Note::PolarityReversed {
+            role: "SR".into(),
+            confidence: 0.94,
+            compared: 3,
+        });
+        assert_eq!(reversed.code, "polarity_reversed");
+        assert_eq!(reversed.params["role"], "SR");
+        assert_eq!(reversed.params["confidence"], "0.94");
+        assert_eq!(reversed.params["compared"], "3");
+
+        let split = scalar_notice(&Note::PolaritySplit {
+            groups: (vec!["L".into(), "R".into()], vec!["C".into(), "Ls".into()]),
+            confidence: 0.91,
+        });
+        assert_eq!(split.code, "polarity_split");
+        assert_eq!(split.params["a"], "L,R");
+        assert_eq!(split.params["b"], "C,Ls");
+        assert_eq!(split.params["confidence"], "0.91");
+    }
+
+    #[test]
     fn rc_limit_notices_keep_legacy_fields_and_add_basis_evidence() {
         use secs_types::calibration::RcHiBasis;
         let note = scalar_notice(&Note::RcLimit {
@@ -1522,10 +1564,12 @@ mod tests {
     fn xo_sample_rate_failure_reaches_ipc_with_the_affected_measurement() {
         let project = Project::from_preset("2.1").unwrap();
         let groups = project_groups(&project);
+        let inverted = project.config.inverted_mains();
         let view = ProjectView {
             groups: &groups,
             project_xo: &project.xo,
             target: &project.target,
+            inverted: &inverted,
         };
         let measurements = MeasurementSet {
             positions: vec![(

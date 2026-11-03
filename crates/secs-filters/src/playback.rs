@@ -234,6 +234,7 @@ pub struct MimoFirPlayback {
     groups: Vec<Group>,
     group_buffers: Vec<Vec<f64>>,
     fixed: Vec<Biquads>,
+    polarity: Vec<i8>,
     base_delays: Vec<Delay>,
 }
 
@@ -390,6 +391,12 @@ impl MimoFirPlayback {
             }
         }
         let input_buffers = vec![vec![0.0; block_size]; pre.len()];
+        let polarity = chain
+            .mains
+            .iter()
+            .map(|main| main.polarity.unwrap_or(1))
+            .chain(chain.subs.iter().map(|_| 1))
+            .collect();
         Ok(Self {
             pre,
             input_buffers,
@@ -399,6 +406,7 @@ impl MimoFirPlayback {
             groups,
             group_buffers,
             fixed,
+            polarity,
             base_delays,
         })
     }
@@ -491,12 +499,18 @@ impl MimoFirPlayback {
         outputs: &mut [&mut [f64]],
     ) -> Result<(), DspError> {
         self.validate(inputs, outputs)?;
-        self.render_support(inputs, outputs)
+        self.render_support(inputs, outputs)?;
+        for (polarity, output) in self.polarity.iter().zip(outputs) {
+            if *polarity < 0 {
+                output.iter_mut().for_each(|sample| *sample = -*sample);
+            }
+        }
+        Ok(())
     }
 
     /// Add to base outputs already rendered at 48 kHz, in `output_roles` order,
-    /// including the common input high-pass and ordinary fixed sub filters.
-    /// The base renderer must apply the cut itself, before input correction.
+    /// including the common input high-pass, fixed output polarity and ordinary
+    /// fixed sub filters. The base renderer must apply the cut itself, before input correction.
     /// Only the extra multirate
     /// delay is added to the base; its existing design latency is retained.
     pub fn process_with_base(
@@ -514,6 +528,11 @@ impl MimoFirPlayback {
             return Err(invalid("invalid playback base block"));
         }
         self.render_support(inputs, outputs)?;
+        for (polarity, output) in self.polarity.iter().zip(outputs.iter_mut()) {
+            if *polarity < 0 {
+                output.iter_mut().for_each(|sample| *sample = -*sample);
+            }
+        }
         for ((delay, input), output) in self.base_delays.iter_mut().zip(base).zip(outputs) {
             for (value, sample) in output.iter_mut().zip(*input) {
                 *value += delay.sample(*sample);
@@ -564,6 +583,7 @@ mod tests {
                     input_peq: vec![],
                     fir: vec![1.0],
                     gain_db: 0.0,
+                    polarity: None,
                     delay_ms: 0.0,
                     xo_hz: None,
                     top_peq: vec![],
@@ -589,6 +609,78 @@ mod tests {
             latency_ms: 0.0,
         }
     }
+    #[test]
+    fn playback_routes_into_an_inverted_output_are_negated() {
+        let normal_chain = chain();
+        let paths = MimoPaths {
+            fsiso: 150.0,
+            paths: vec![MimoPath {
+                input: "L".into(),
+                support: "R".into(),
+                low_hz: 30.0,
+                delay_ms: 0.0,
+                filter: MimoFilter::Fir {
+                    taps_48k: vec![1.0],
+                },
+            }],
+        };
+        let mut inverted_chain = normal_chain.clone();
+        inverted_chain.mains[1].polarity = Some(-1);
+        let mode = PlaybackMode::FullRate { block_size: 16 };
+        let mut normal = MimoFirPlayback::new(&normal_chain, &paths, mode).unwrap();
+        let mut inverted = MimoFirPlayback::new(&inverted_chain, &paths, mode).unwrap();
+        let mut left = vec![0.0; 16];
+        left[0] = 1.0;
+        let right = vec![0.0; 16];
+        let inputs = [left.as_slice(), right.as_slice()];
+        let mut normal_out = vec![vec![0.0; 16]; 3];
+        let mut inverted_out = vec![vec![0.0; 16]; 3];
+        normal
+            .process(
+                &inputs,
+                &mut normal_out
+                    .iter_mut()
+                    .map(Vec::as_mut_slice)
+                    .collect::<Vec<_>>(),
+            )
+            .unwrap();
+        inverted
+            .process(
+                &inputs,
+                &mut inverted_out
+                    .iter_mut()
+                    .map(Vec::as_mut_slice)
+                    .collect::<Vec<_>>(),
+            )
+            .unwrap();
+        assert!(
+            normal_out[1]
+                .iter()
+                .zip(&inverted_out[1])
+                .all(|(normal, inverted)| *inverted == -*normal)
+        );
+
+        let mut inverted = MimoFirPlayback::new(&inverted_chain, &paths, mode).unwrap();
+        let base = vec![vec![0.25; 16]; 3];
+        let mut combined = vec![vec![0.0; 16]; 3];
+        inverted
+            .process_with_base(
+                &inputs,
+                &base.iter().map(Vec::as_slice).collect::<Vec<_>>(),
+                &mut combined
+                    .iter_mut()
+                    .map(Vec::as_mut_slice)
+                    .collect::<Vec<_>>(),
+            )
+            .unwrap();
+        assert!(
+            combined[1]
+                .iter()
+                .zip(&normal_out[1])
+                .all(|(combined, support)| *combined == 0.25 - *support)
+        );
+    }
+
     fn direct(input: &[f64], taps: &[f64]) -> Vec<f64> {
         (0..input.len())
             .map(|n| {

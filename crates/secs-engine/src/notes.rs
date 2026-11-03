@@ -4,6 +4,15 @@ use crate::input::Peq;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Note {
+    PolarityReversed {
+        role: String,
+        confidence: f64,
+        compared: usize,
+    },
+    PolaritySplit {
+        groups: (Vec<String>, Vec<String>),
+        confidence: f64,
+    },
     LiftCapped {
         from_ms: f64,
         taps: usize,

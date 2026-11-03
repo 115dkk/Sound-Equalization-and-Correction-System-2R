@@ -20,6 +20,7 @@ pub(crate) fn sample() -> (SignalChain, MimoPaths) {
                 input_peq: vec![(70.123456, 1.234567, 0.812345)],
                 fir: vec![0.8, 0.13, -0.02],
                 gain_db: -0.345678 * index as f64,
+                polarity: None,
                 delay_ms: 3.0104166667,
                 xo_hz: Some(if index < 2 { 80.12345 } else { 90.0 }),
                 top_peq: vec![(130.654321, 0.876543, -0.765432)],
@@ -380,4 +381,60 @@ fn input_hp_eqapo_precedes_raw_copies_and_cuts_every_input() {
     );
     assert!(hp_line < text.find("== 메인").unwrap());
     assert!(!filter_text(&off, &names, "test", &[]).contains("극저역 보호(수동, 모든 입력"));
+}
+
+fn polarity_plans() -> (FilterPlan, FilterPlan) {
+    let (mut chain, mut mimo) = sample();
+    mimo.paths.push(MimoPath {
+        input: "L".into(),
+        support: "R".into(),
+        low_hz: 35.0,
+        delay_ms: 1.0,
+        filter: MimoFilter::Fir {
+            taps_48k: vec![0.2, -0.03],
+        },
+    });
+    let normal = make_plan(&chain, Some(&mimo)).unwrap();
+    chain.mains[1].polarity = Some(-1);
+    let inverted = make_plan(&chain, Some(&mimo)).unwrap();
+    (normal, inverted)
+}
+
+#[test]
+fn inverted_main_copies_negative_after_the_support_merge_and_lists_the_inversion() {
+    let (_, inverted) = polarity_plans();
+    let names = inverted
+        .firs()
+        .iter()
+        .map(|(name, _)| (name.to_string(), format!("{name}.wav")))
+        .collect::<Vec<_>>();
+    let eqapo = eqapo_filters(&inverted, &names, "");
+    let merge = eqapo.find("Copy: VMR=VMR+VG").unwrap();
+    let polarity = eqapo.find("Copy: VMR=-1.0*VMR").unwrap();
+    assert!(merge < polarity);
+    let text = filter_text(&inverted, &names, "test", &[]);
+    let section = text.split("== 메인 R").nth(1).unwrap();
+    assert!(section.contains("극성     반전"));
+}
+
+#[test]
+fn convolution_routes_into_an_inverted_output_are_negated() {
+    let (normal, inverted) = polarity_plans();
+    let normal = render_paths(&normal, 1 << 18).unwrap();
+    let inverted = render_paths(&inverted, 1 << 18).unwrap();
+    for expected in normal.paths.iter().filter(|path| path.output == "R") {
+        let actual = inverted
+            .paths
+            .iter()
+            .find(|path| path.input == expected.input && path.output == expected.output)
+            .unwrap();
+        assert_eq!(actual.response.len(), expected.response.len());
+        for (actual, expected) in actual.response.iter().zip(&expected.response) {
+            if *expected == 0.0 {
+                assert_eq!(*actual, 0.0);
+            } else {
+                assert_eq!(actual.to_bits(), (-expected).to_bits());
+            }
+        }
+    }
 }

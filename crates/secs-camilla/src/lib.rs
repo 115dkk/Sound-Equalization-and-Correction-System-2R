@@ -1258,8 +1258,21 @@ pub fn make_config_observed(
             options.design.as_ref().map(|_| "secs:mimo"),
         ));
     }
-    // The fixed speaker filter belongs after base + support summation. It is
-    // identical on both branches; apply it once to the physical output.
+    // Fixed output polarity and speaker filters belong after base + support
+    // summation, so every signal reaching the physical output receives them.
+    for (channel, main) in mains.iter().enumerate() {
+        if main.polarity.unwrap_or(1) < 0 {
+            let name = format!("main_{}_polarity", main.role);
+            filters.push((
+                name.clone(),
+                filter_spec(
+                    "Gain",
+                    object([("gain", Json::Float(0.0)), ("inverted", Json::Bool(true))]),
+                ),
+            ));
+            pipeline.push(pipeline_filter(channel, vec![name]));
+        }
+    }
     for (sub_index, sub) in subs.iter().enumerate() {
         let names = fixed_filters(&sub.role, sub, &mut filters);
         if !names.is_empty() {

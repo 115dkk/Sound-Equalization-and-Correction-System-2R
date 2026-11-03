@@ -14,6 +14,7 @@ fn calibration_resamples_44100_ir_without_changing_the_source() {
         groups: &groups,
         project_xo: &[],
         target: &target,
+        inverted: &[],
     };
     let irs = MeasurementSet {
         positions: vec![(
@@ -56,6 +57,7 @@ fn cancelled_calibration_returns_before_resolving_invalid_inputs() {
         groups: &[],
         project_xo: &[],
         target: &target,
+        inverted: &[],
     };
     let irs = secs_engine::MeasurementSet { positions: vec![] };
     let settings = CalibrationSettings::default();

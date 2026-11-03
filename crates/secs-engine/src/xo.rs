@@ -478,6 +478,7 @@ mod perf_tests {
                 groups: &case.config.groups,
                 project_xo: &case.config.xo,
                 target: &case.config.target,
+                inverted: &[],
             };
             let base = engine_inputs(&view, &case.measurements, &settings).unwrap();
             let prepared =

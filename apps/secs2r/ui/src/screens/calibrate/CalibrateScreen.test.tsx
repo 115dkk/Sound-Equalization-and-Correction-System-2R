@@ -74,6 +74,8 @@ function mockActions(): MockActions {
     previewXo: vi.fn(),
     changeSetting: vi.fn(async () => true),
     takeSubValues: vi.fn(),
+    flipPolarity: vi.fn(),
+    openPolarity: vi.fn(),
     setTargetPoints: vi.fn(async () => true),
     applyTargetPreset: vi.fn(),
     saveTarget: vi.fn(),

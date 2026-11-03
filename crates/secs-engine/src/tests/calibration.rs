@@ -31,6 +31,7 @@ fn engine_inputs_match_constructor_goldens() {
                 groups: &groups,
                 project_xo: &project_xo,
                 target: &target,
+                inverted: &[],
             },
             &case.measurements,
             &settings,
@@ -43,6 +44,10 @@ fn engine_inputs_match_constructor_goldens() {
 
 fn assert_config(actual: &crate::EngineConfig, expected: &crate::EngineConfig, case: &str) {
     assert_eq!(actual.mains, expected.mains, "{case} mains");
+    assert_eq!(
+        actual.inverted_mains, expected.inverted_mains,
+        "{case} polarity"
+    );
     assert_eq!(actual.subs, expected.subs, "{case} subs");
     assert_eq!(actual.groups, expected.groups, "{case} groups");
     assert_eq!(actual.target, expected.target, "{case} target");
@@ -72,6 +77,208 @@ fn assert_config(actual: &crate::EngineConfig, expected: &crate::EngineConfig, c
 }
 
 #[test]
+fn inverted_main_inputs_preserve_precision_and_match_flipped_measurements() {
+    use crate::{Measurement, MeasurementSet, Samples};
+
+    let groups = vec![("front".into(), vec!["L".into(), "R".into()])];
+    let target = secs_types::target::TargetCurve::default();
+    let measurements = MeasurementSet {
+        positions: vec![
+            (
+                1,
+                vec![
+                    (
+                        "L".into(),
+                        Measurement {
+                            samples: Samples::F32(vec![1.0, -0.25].into()),
+                            sample_rate: 48_000,
+                            t0: 0.0,
+                        },
+                    ),
+                    (
+                        "R".into(),
+                        Measurement {
+                            samples: Samples::F64(vec![0.5, -2.0].into()),
+                            sample_rate: 48_000,
+                            t0: 0.0,
+                        },
+                    ),
+                ],
+            ),
+            (
+                2,
+                vec![(
+                    "R".into(),
+                    Measurement {
+                        samples: Samples::F32(vec![0.75, -0.5].into()),
+                        sample_rate: 48_000,
+                        t0: 0.0,
+                    },
+                )],
+            ),
+        ],
+    };
+    let inverted = vec!["R".into()];
+    let inputs = engine_inputs(
+        &ProjectView {
+            groups: &groups,
+            project_xo: &[],
+            target: &target,
+            inverted: &inverted,
+        },
+        &measurements,
+        &CalibrationSettings::default(),
+    )
+    .unwrap();
+    assert_eq!(inputs.config.inverted_mains, ["R"]);
+    assert!(matches!(
+        &inputs.measurements.get(1, "L").unwrap().samples,
+        Samples::F32(values) if values.as_ref() == [1.0, -0.25]
+    ));
+    assert!(matches!(
+        &inputs.measurements.get(1, "R").unwrap().samples,
+        Samples::F64(values) if values.as_ref() == [-0.5, 2.0]
+    ));
+    assert!(matches!(
+        &inputs.measurements.get(2, "R").unwrap().samples,
+        Samples::F32(values) if values.as_ref() == [-0.75, 0.5]
+    ));
+}
+
+#[test]
+fn inverted_main_designs_on_the_flipped_response() {
+    use crate::{DesignRequest, Samples, Tuning, design};
+    use secs_compute::Context;
+
+    let case = cases::load("room");
+    let settings: CalibrationSettings = serde_json::from_value(case.settings.clone()).unwrap();
+    let inverted = vec!["C".into()];
+    let configured = engine_inputs(
+        &ProjectView {
+            groups: &case.config.groups,
+            project_xo: &case.config.xo,
+            target: &case.config.target,
+            inverted: &inverted,
+        },
+        &case.measurements,
+        &settings,
+    )
+    .unwrap();
+    let mut flipped = case.measurements.clone();
+    for (_, roles) in &mut flipped.positions {
+        if let Some((_, measurement)) = roles.iter_mut().find(|(role, _)| role == "C") {
+            measurement.samples = match &measurement.samples {
+                Samples::F32(values) => Samples::F32(
+                    values
+                        .iter()
+                        .map(|value| -*value)
+                        .collect::<Vec<_>>()
+                        .into(),
+                ),
+                Samples::F64(values) => Samples::F64(
+                    values
+                        .iter()
+                        .map(|value| -*value)
+                        .collect::<Vec<_>>()
+                        .into(),
+                ),
+            };
+        }
+    }
+    let manual = engine_inputs(
+        &ProjectView {
+            groups: &case.config.groups,
+            project_xo: &case.config.xo,
+            target: &case.config.target,
+            inverted: &[],
+        },
+        &flipped,
+        &settings,
+    )
+    .unwrap();
+    for ((configured_position, configured_roles), (manual_position, manual_roles)) in configured
+        .measurements
+        .positions
+        .iter()
+        .zip(&manual.measurements.positions)
+    {
+        assert_eq!(configured_position, manual_position);
+        for ((configured_role, configured), (manual_role, manual)) in
+            configured_roles.iter().zip(manual_roles)
+        {
+            assert_eq!(configured_role, manual_role);
+            assert_eq!(configured.samples.len(), manual.samples.len());
+            assert!(
+                (0..configured.samples.len()).all(|index| configured.samples.at(index).to_bits()
+                    == manual.samples.at(index).to_bits())
+            );
+        }
+    }
+
+    let context = Context::serial();
+    let configured_design = design(
+        &DesignRequest {
+            measurements: &configured.measurements,
+            config: &configured.config,
+            tuning: &Tuning::default(),
+            subs_only: false,
+            adapter_notes: &[],
+        },
+        &context,
+        &*crate::production_fitters(context.cancel()),
+    )
+    .unwrap();
+    let manual_design = design(
+        &DesignRequest {
+            measurements: &manual.measurements,
+            config: &manual.config,
+            tuning: &Tuning::default(),
+            subs_only: false,
+            adapter_notes: &[],
+        },
+        &context,
+        &*crate::production_fitters(context.cancel()),
+    )
+    .unwrap();
+    let mut configured_chain = configured_design.chain;
+    configured_chain
+        .mains
+        .iter_mut()
+        .for_each(|main| main.polarity = None);
+    assert_eq!(configured_chain, manual_design.chain);
+    let without_polarity = |notes: &[crate::Note]| {
+        notes
+            .iter()
+            .filter(|note| {
+                !matches!(
+                    note,
+                    crate::Note::PolarityReversed { .. } | crate::Note::PolaritySplit { .. }
+                )
+            })
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        without_polarity(&configured_design.notes),
+        without_polarity(&manual_design.notes)
+    );
+    assert_eq!(configured_design.mains.len(), manual_design.mains.len());
+    for (configured, manual) in configured_design.mains.iter().zip(&manual_design.mains) {
+        assert_eq!(configured.role, manual.role);
+        assert!(
+            configured
+                .after
+                .iter()
+                .zip(manual.after.iter())
+                .all(|(left, right)| {
+                    (left.re.to_bits(), left.im.to_bits())
+                        == (right.re.to_bits(), right.im.to_bits())
+                })
+        );
+    }
+}
+
+#[test]
 fn calibration_replay_matches_assembled_design_bit_for_bit() {
     use crate::{
         CalibrationRequest, DesignRequest, Tuning, calibrate_with, design, normalize_measurements,
@@ -89,6 +296,7 @@ fn calibration_replay_matches_assembled_design_bit_for_bit() {
         groups: &case.config.groups,
         project_xo: &case.config.xo,
         target: &case.config.target,
+        inverted: &[],
     };
     let ctx = Context::serial();
     let inputs = engine_inputs(&view, &case.measurements, &settings).unwrap();

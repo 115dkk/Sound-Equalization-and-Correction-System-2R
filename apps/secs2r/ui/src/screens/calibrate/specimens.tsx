@@ -18,6 +18,8 @@ const noop = () => {};
 export const noActions: CalibrateActions = {
   goToMeasurements: noop,
   goToExport: noop,
+  flipPolarity: noop,
+  openPolarity: noop,
   calibrate: noop,
   calibrateSubs: noop,
   recommendXo: noop,

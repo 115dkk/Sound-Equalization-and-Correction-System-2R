@@ -511,10 +511,23 @@ pub fn eqapo_filters(plan: &FilterPlan, firs: &[(String, String)], note: &str) -
         lines.push(format!("Channel: {channel}"));
         lines.extend(eqapo_ops(group.ops, &channel, firs));
     }
+    let main_fixed = plan
+        .main_ops
+        .iter()
+        .map(|(role, ops)| {
+            (
+                role.as_str(),
+                ops.iter()
+                    .filter(|op| op.is_fixed())
+                    .cloned()
+                    .collect::<Vec<_>>(),
+            )
+        })
+        .collect::<Vec<_>>();
     lines.extend([String::new(), "# 3) main output paths".into()]);
     for (role, ops) in &plan.main_ops {
         let channel = virtual_channel("main", role);
-        let body = eqapo_ops(ops, &channel, firs);
+        let body = eqapo_ops(ops.iter().filter(|op| !op.is_fixed()), &channel, firs);
         if !body.is_empty() {
             lines.push(format!("Channel: {channel}"));
             lines.extend(body);
@@ -694,11 +707,15 @@ pub fn eqapo_filters(plan: &FilterPlan, firs: &[(String, String)], note: &str) -
         for &index in &group.members {
             let path = &plan.mimo[index];
             let channel = path_channel(index);
-            let move_fixed = plan
-                .subs
+            let move_fixed = main_fixed
                 .iter()
-                .position(|(role, _)| *role == path.support)
-                .is_some_and(|sub_index| !fixed[sub_index].is_empty());
+                .find(|(role, _)| *role == path.support)
+                .is_some_and(|(_, ops)| !ops.is_empty())
+                || plan
+                    .subs
+                    .iter()
+                    .position(|(role, _)| *role == path.support)
+                    .is_some_and(|sub_index| !fixed[sub_index].is_empty());
             let private = path
                 .ops
                 .iter()
@@ -749,9 +766,19 @@ pub fn eqapo_filters(plan: &FilterPlan, firs: &[(String, String)], note: &str) -
         if !additions.is_empty() {
             lines.push(format!("Copy: {channel}={channel}+{}", additions.join("+")));
         }
-        if let Some(index) = sub_index.filter(|&index| !fixed[index].is_empty()) {
+        let output_fixed = if let Some(index) = sub_index.filter(|&index| !fixed[index].is_empty())
+        {
+            Some(fixed[index].as_slice())
+        } else {
+            main_fixed
+                .iter()
+                .find(|(name, _)| *name == role)
+                .map(|(_, ops)| ops.as_slice())
+                .filter(|ops| !ops.is_empty())
+        };
+        if let Some(ops) = output_fixed {
             lines.push(format!("Channel: {channel}"));
-            lines.extend(eqapo_ops(&fixed[index], &channel, firs));
+            lines.extend(eqapo_ops(ops, &channel, firs));
         }
     }
     lines.extend([String::new(), "Channel: all".into()]);

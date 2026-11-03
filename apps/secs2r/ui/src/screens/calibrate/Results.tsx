@@ -10,7 +10,7 @@ import { Stat } from "./controls";
 import { availableTabs } from "./ResultGraph";
 import { scorecardModel, type ChangeValues, type LatePositions, type ScoreRow } from "./scorecard";
 import { MIMO_MIN_POSITIONS, mimoIncluded, xoRecInclude } from "./settingsView";
-import { FAILED_TEXT, LOW_PROTECT_NEXT, groupOf, lowProtectFailures, modeName, noteLines, noticeText, subRoles } from "./text";
+import { FAILED_TEXT, LOW_PROTECT_NEXT, POLARITY_NEXT, type PolarityCode, groupOf, lowProtectFailures, modeName, noteLines, noticeText, polarityWarnings, subRoles } from "./text";
 import type { CalibrateActions, CalibrateView, StaleReason } from "./types";
 
 const STALE_TEXT: Record<StaleReason | "unknown", "calibrate.stale.settings" | "calibrate.stale.target" | "calibrate.stale.measurements" | "calibrate.stale.config" | "calibrate.stale.unknown"> = {
@@ -257,8 +257,10 @@ export function Verdict({
           : t("calibrate.verdict.mimo.done", { kind: mimo.kind.toUpperCase(), count: mimo.support_count });
   // 극저역 보호 that could not hold its boost is a warning with what to do (ADR 0022), not a note.
   const unprotected = lowProtectFailures(result.notes);
+  // A main whose direct sound is opposite to the others is a warning with a one-click fix (ADR 0033), not a note.
+  const polarity = polarityWarnings(result.notes);
   // The engine notes as sentences, for everyone, as upstream shows them; rc_limit is the RC card's line.
-  const notes = noteLines(t, number, result.notes.filter((note) => note.code !== "rc_limit" && !unprotected.includes(note)));
+  const notes = noteLines(t, number, result.notes.filter((note) => note.code !== "rc_limit" && !unprotected.includes(note) && !polarity.includes(note)));
 
   return (
     <Card
@@ -286,6 +288,31 @@ export function Verdict({
           next={t(LOW_PROTECT_NEXT)}
         />
       )}
+      {polarity.map((note) => {
+        const code = note.code as PolarityCode;
+        // The reversed main, or the first role of the first group when no side is known to be right.
+        const role = code === "polarity_reversed" ? (note.params.role ?? "") : ((note.params.a ?? "").split(",")[0] ?? "");
+        return (
+          <ErrorNotice
+            key={`${code}:${role}`}
+            id={`calibrate.verdict.${code}`}
+            tone="warning"
+            cause={noticeText(t, number, note)}
+            next={t(POLARITY_NEXT[code])}
+            action={
+              code === "polarity_reversed" ? (
+                <Button variant="secondary" data-ui={`calibrate.polarity.flip.${role}`} onClick={() => actions.flipPolarity(role)}>
+                  {t("calibrate.polarity.flip", { code: roleCode(role) })}
+                </Button>
+              ) : (
+                <Button variant="secondary" data-ui="calibrate.polarity.open" onClick={() => actions.openPolarity(role)}>
+                  {t("calibrate.polarity.open")}
+                </Button>
+              )
+            }
+          />
+        );
+      })}
       <div className="calibrate-figures">
         <div className="calibrate-run">
           <dl className="calibrate-stats">
