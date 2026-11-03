@@ -693,6 +693,38 @@ mod client {
         }
     }
 
+    impl Events {
+        /// Returns a handle that closes this stream's connection from another thread.
+        ///
+        /// [`Iterator::next`] blocks until the server sends something; after
+        /// [`EventsCloser::close`] a thread blocked there returns `None` or a
+        /// transport error instead of waiting for the next event.
+        pub fn closer(&self) -> Result<EventsCloser> {
+            match self.socket.get_ref() {
+                MaybeTlsStream::Plain(stream) => stream
+                    .try_clone()
+                    .map(|stream| EventsCloser { stream })
+                    .map_err(|error| Error::Transport(format!("event socket: {error}"))),
+                _ => Err(Error::Protocol(
+                    "event socket is not a plain TCP stream".into(),
+                )),
+            }
+        }
+    }
+
+    /// Closes the connection of an [`Events`] stream from another thread.
+    #[derive(Debug)]
+    pub struct EventsCloser {
+        stream: TcpStream,
+    }
+
+    impl EventsCloser {
+        /// Shuts the connection down; an [`Events`] iterator blocked on it returns.
+        pub fn close(&self) {
+            let _ = self.stream.shutdown(std::net::Shutdown::Both);
+        }
+    }
+
     impl Iterator for Events {
         type Item = Result<ServerEvent>;
 
@@ -796,4 +828,4 @@ mod client {
 }
 
 #[cfg(feature = "client")]
-pub use client::{Client, Events};
+pub use client::{Client, Events, EventsCloser};

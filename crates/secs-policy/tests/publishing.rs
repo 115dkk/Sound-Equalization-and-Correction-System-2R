@@ -165,13 +165,47 @@ fn python_package_follows_the_public_crate() {
     assert!(violations.is_empty(), "{}", violations.join("\n"));
 }
 
-/// The text of the first `<name>` element, for the few fields of the C#
-/// project the policy reads.
+/// The texts of every `<name>` element, attributes allowed (`<Version
+/// Condition="...">`), for the few fields of the C# project the policy reads.
+fn xml_elements<'a>(text: &'a str, name: &str) -> Vec<&'a str> {
+    let open = format!("<{name}");
+    let close = format!("</{name}>");
+    let mut found = Vec::new();
+    let mut rest = text;
+    while let Some(at) = rest.find(&open) {
+        let after = &rest[at + open.len()..];
+        // `<VersionPrefix` is another element than `<Version`.
+        if !after.starts_with(['>', ' ', '\t', '\r', '\n']) {
+            rest = after;
+            continue;
+        }
+        let Some(tag_end) = after.find('>') else {
+            break;
+        };
+        let body = &after[tag_end + 1..];
+        let Some(end) = body.find(&close) else {
+            break;
+        };
+        found.push(body[..end].trim());
+        rest = &body[end + close.len()..];
+    }
+    found
+}
+
+/// The text of the first `<name>` element.
 fn xml_element<'a>(text: &'a str, name: &str) -> Option<&'a str> {
-    let open = format!("<{name}>");
-    let start = text.find(&open)? + open.len();
-    let end = start + text[start..].find(&format!("</{name}>"))?;
-    Some(text[start..end].trim())
+    xml_elements(text, name).into_iter().next()
+}
+
+#[test]
+fn xml_elements_read_attributes_and_skip_longer_names() {
+    let project = "<Version Condition=\"'$(Version)' == ''\">1.0.0</Version>\n\
+                   <VersionPrefix>2.0.0</VersionPrefix><Version>$(Secs2RVersion)</Version>";
+    assert_eq!(
+        xml_elements(project, "Version"),
+        ["1.0.0", "$(Secs2RVersion)"]
+    );
+    assert_eq!(xml_elements(project, "VersionPrefix"), ["2.0.0"]);
 }
 
 /// ADR 0032: nuget.org ships `secs-dotnet-sys` and the C# library as `Secs2R`,
@@ -232,8 +266,9 @@ fn dotnet_package_follows_the_public_crate() {
         ));
     }
     for element in ["Version", "VersionPrefix", "PackageVersion"] {
-        if xml_element(&project, element)
-            .is_some_and(|text| text.starts_with(|c: char| c.is_ascii_digit()))
+        if xml_elements(&project, element)
+            .iter()
+            .any(|text| text.starts_with(|c: char| c.is_ascii_digit()))
         {
             violations.push(format!(
                 "Secs2R.csproj: <{element}> pins a version; it must come from native/Cargo.toml"

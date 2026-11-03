@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 use secs::types::ipc::{Envelope, JobEvent, JobId};
 use secs::types::local_api::ServerEvent;
-use secs::{Client, DroppedEventCount, Engine, EngineBuilder, Error};
+use secs::{Client, DroppedEventCount, Engine, EngineBuilder, Error, EventsCloser};
 use serde_json::{Value, json};
 
 static NEXT_HANDLE: AtomicU64 = AtomicU64::new(1);
@@ -35,7 +35,17 @@ struct Subscription {
 
 enum SubscriptionReceiver {
     Engine(mpsc::Receiver<JobEvent>),
-    Client(mpsc::Receiver<secs::Result<ServerEvent>>),
+    Client(mpsc::Receiver<secs::Result<ServerEvent>>, EventsCloser),
+}
+
+// A freed client subscription closes its WebSocket, so the pump thread blocked
+// reading it returns at once instead of at the next server event.
+impl Drop for Subscription {
+    fn drop(&mut self) {
+        if let SubscriptionReceiver::Client(_, closer) = &self.receiver {
+            closer.close();
+        }
+    }
 }
 
 enum Dropped {
@@ -237,14 +247,18 @@ pub(crate) fn client_events(handle: u64) -> u64 {
         Ok(events) => events,
         Err(error) => return api_error(error),
     };
+    let closer = match events.closer() {
+        Ok(closer) => closer,
+        Err(error) => return api_error(error),
+    };
     let (sender, receiver) = mpsc::sync_channel(CLIENT_EVENT_QUEUE);
     let dropped = Arc::new(AtomicU64::new(0));
     let pump_dropped = Arc::clone(&dropped);
-    // A freed subscription drops this receiver. Its pump thread can remain blocked until
-    // the next event arrives or the WebSocket closes, then it observes the failed send.
+    // Ends when the server closes the stream, or when the subscription is freed:
+    // its Drop closes the socket, and a closed queue stops the pump too.
     std::thread::spawn(move || pump(events, &sender, &pump_dropped));
     let subscription = Subscription {
-        receiver: SubscriptionReceiver::Client(receiver),
+        receiver: SubscriptionReceiver::Client(receiver, closer),
         dropped: Dropped::Client(dropped),
         closed: false,
     };
@@ -302,7 +316,7 @@ pub(crate) fn events_next(handle: u64, timeout_ms: u64) -> u64 {
                 success!(event_data(None, true, dropped))
             }
         },
-        SubscriptionReceiver::Client(receiver) => match receiver.recv_timeout(timeout) {
+        SubscriptionReceiver::Client(receiver, _) => match receiver.recv_timeout(timeout) {
             Ok(Ok(event)) => success!(event_data(
                 Some(serde_json::to_value(event).expect("server event serialization")),
                 false,
