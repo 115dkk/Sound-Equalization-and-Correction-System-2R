@@ -1,0 +1,48 @@
+# Close screen gallery review issues once their pull request closes.
+#
+# ui-gallery.yml opens one review issue per pull request and only comments on
+# it later, so the issues piled up after every merge. When a pull request is
+# merged or closed, this closes every open review issue whose pull request is
+# no longer open (.github/scripts/gallery_close.py), so issues left from
+# earlier pull requests close too.
+#
+# Pull requests from forks are skipped: their token cannot close issues.
+name: ui-gallery close
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: read
+
+jobs:
+  close:
+    name: close review issues
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Close review issues of pull requests that are no longer open
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh issue list --state open --label ui-gallery --limit 200 --json number,title > "$RUNNER_TEMP/issues.json"
+          gh pr list --state open --limit 1000 --json number > "$RUNNER_TEMP/prs.json"
+          python3 -I .github/scripts/gallery_close.py \
+            --issues "$RUNNER_TEMP/issues.json" --open-prs "$RUNNER_TEMP/prs.json" > "$RUNNER_TEMP/stale.txt"
+          while read -r issue pr; do
+            gh issue close "$issue" --reason completed \
+              --comment "PR #${pr}이 머지되거나 닫혀서 이 화면 갤러리 리뷰도 닫습니다."
+            echo "Closed #${issue} (PR #${pr})"
+          done < "$RUNNER_TEMP/stale.txt"
