@@ -42,11 +42,13 @@ public sealed class PackageTests
         Assert.Equal("bootstrap", bootstrap.GetProperty("method").GetString());
 
         using var cancellation = new CancellationTokenSource();
-        await using IAsyncEnumerator<JsonElement> events = engine.Events(cancellation.Token).GetAsyncEnumerator();
+        EventStream stream = engine.Events(cancellation.Token);
+        await using IAsyncEnumerator<JsonElement> events = stream.GetAsyncEnumerator();
         Task<bool> pending = events.MoveNextAsync().AsTask();
-        await Task.Delay(50);
+        await Task.Delay(300);
         cancellation.Cancel();
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pending);
+        Assert.Equal(0UL, stream.DroppedEvents);
     }
 
     [Fact]

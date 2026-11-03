@@ -27,11 +27,14 @@ Console.WriteLine(info.GetProperty("data").GetProperty("version"));
 Long-running requests return a job identifier. Call `WaitJob` for the terminal event, or consume `Events` to receive every later job event.
 
 ```csharp
-await foreach (JsonElement jobEvent in engine.Events(cancellationToken))
+EventStream events = engine.Events(cancellationToken);
+await foreach (JsonElement jobEvent in events)
 {
     Console.WriteLine(jobEvent.GetRawText());
 }
 ```
+
+Each subscription queues up to 1024 events. A reader that falls further behind loses the newest ones, and `EventStream.DroppedEvents` counts them; when it grows, ask for the job's state with `WaitJob`.
 
 ## Running application
 

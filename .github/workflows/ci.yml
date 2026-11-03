@@ -374,6 +374,10 @@ jobs:
   dotnet-changes:
     name: NuGet package changes
     runs-on: ubuntu-latest
+    # paths-filter lists the pull request's files, as the scope job does.
+    permissions:
+      contents: read
+      pull-requests: read
     outputs:
       changed: ${{ steps.filter.outputs.dotnet }}
     steps:

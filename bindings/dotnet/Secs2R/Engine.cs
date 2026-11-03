@@ -1,9 +1,6 @@
 using System;
-using System.Collections.Generic;
-using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Threading;
-using System.Threading.Tasks;
 
 namespace Secs2R;
 
@@ -12,7 +9,6 @@ namespace Secs2R;
 /// </summary>
 public sealed class Engine : IDisposable
 {
-    private const ulong EventPollMilliseconds = 200;
     private long _handle;
 
     /// <summary>Creates an engine, optionally storing application settings at a specified path.</summary>
@@ -56,49 +52,11 @@ public sealed class Engine : IDisposable
         }
     }
 
-    /// <summary>Streams job events emitted after the subscription starts.</summary>
+    /// <summary>Streams the job events emitted after each enumeration starts.</summary>
     /// <param name="cancellationToken">Stops polling and frees the native subscription.</param>
-    /// <returns>An asynchronous sequence of job-event JSON values.</returns>
-    public async IAsyncEnumerable<JsonElement> Events(
-        [EnumeratorCancellation] CancellationToken cancellationToken = default)
-    {
-        cancellationToken.ThrowIfCancellationRequested();
-        ulong handle = GetHandle();
-        ulong subscription;
-        try
-        {
-            subscription = Native.EngineSubscribe(handle);
-        }
-        finally
-        {
-            GC.KeepAlive(this);
-        }
-
-        try
-        {
-            while (true)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                JsonElement poll = await Task.Run(
-                    () => Native.EventsNext(subscription, EventPollMilliseconds),
-                    CancellationToken.None).ConfigureAwait(false);
-                cancellationToken.ThrowIfCancellationRequested();
-                if (poll.GetProperty("closed").GetBoolean())
-                {
-                    yield break;
-                }
-                JsonElement eventValue = poll.GetProperty("event");
-                if (eventValue.ValueKind != JsonValueKind.Null)
-                {
-                    yield return eventValue.Clone();
-                }
-            }
-        }
-        finally
-        {
-            Native.EventsFree(subscription);
-        }
-    }
+    /// <returns>A stream of job-event JSON values that also reports dropped events.</returns>
+    public EventStream Events(CancellationToken cancellationToken = default) =>
+        new EventStream(Subscribe, cancellationToken);
 
     /// <summary>Releases the embedded engine handle. Calling this method more than once is harmless.</summary>
     public void Dispose()
@@ -113,6 +71,19 @@ public sealed class Engine : IDisposable
         try
         {
             return Native.EngineCall(handle, requestJson);
+        }
+        finally
+        {
+            GC.KeepAlive(this);
+        }
+    }
+
+    private ulong Subscribe()
+    {
+        ulong handle = GetHandle();
+        try
+        {
+            return Native.EngineSubscribe(handle);
         }
         finally
         {

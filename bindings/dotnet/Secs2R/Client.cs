@@ -1,9 +1,6 @@
 using System;
-using System.Collections.Generic;
-using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Threading;
-using System.Threading.Tasks;
 
 namespace Secs2R;
 
@@ -13,7 +10,6 @@ namespace Secs2R;
 /// </summary>
 public sealed class Client : IDisposable
 {
-    private const ulong EventPollMilliseconds = 200;
     private long _handle;
 
     /// <summary>The local API's default loopback port.</summary>
@@ -64,49 +60,11 @@ public sealed class Client : IDisposable
         }
     }
 
-    /// <summary>Streams events from the running application's local API.</summary>
+    /// <summary>Streams the local-API events sent after each enumeration starts.</summary>
     /// <param name="cancellationToken">Stops polling and frees the native subscription.</param>
-    /// <returns>An asynchronous sequence of server-event JSON values.</returns>
-    public async IAsyncEnumerable<JsonElement> Events(
-        [EnumeratorCancellation] CancellationToken cancellationToken = default)
-    {
-        cancellationToken.ThrowIfCancellationRequested();
-        ulong handle = GetHandle();
-        ulong subscription;
-        try
-        {
-            subscription = Native.ClientEvents(handle);
-        }
-        finally
-        {
-            GC.KeepAlive(this);
-        }
-
-        try
-        {
-            while (true)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                JsonElement poll = await Task.Run(
-                    () => Native.EventsNext(subscription, EventPollMilliseconds),
-                    CancellationToken.None).ConfigureAwait(false);
-                cancellationToken.ThrowIfCancellationRequested();
-                if (poll.GetProperty("closed").GetBoolean())
-                {
-                    yield break;
-                }
-                JsonElement eventValue = poll.GetProperty("event");
-                if (eventValue.ValueKind != JsonValueKind.Null)
-                {
-                    yield return eventValue.Clone();
-                }
-            }
-        }
-        finally
-        {
-            Native.EventsFree(subscription);
-        }
-    }
+    /// <returns>A stream of server-event JSON values that also reports dropped events.</returns>
+    public EventStream Events(CancellationToken cancellationToken = default) =>
+        new EventStream(Subscribe, cancellationToken);
 
     /// <summary>Releases the client handle. Calling this method more than once is harmless.</summary>
     public void Dispose()
@@ -121,6 +79,19 @@ public sealed class Client : IDisposable
         try
         {
             return Native.ClientCall(handle, requestJson);
+        }
+        finally
+        {
+            GC.KeepAlive(this);
+        }
+    }
+
+    private ulong Subscribe()
+    {
+        ulong handle = GetHandle();
+        try
+        {
+            return Native.ClientEvents(handle);
         }
         finally
         {
