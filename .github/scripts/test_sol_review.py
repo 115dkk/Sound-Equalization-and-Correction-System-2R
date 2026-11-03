@@ -49,13 +49,14 @@ def http_error(code, value=None, headers=None):
 
 def review_comment(comment_id, login="github-actions[bot]", body="**[P1] Defect**\nEvidence",
                    created_at="2026-11-03T00:00:00Z", reply_to=None, thumbs_down=1,
-                   path="file.rs", pull=7):
+                   path="file.rs", pull=7, updated_at=None):
     value = {
         "id": comment_id, "user": {"login": login, "type": "Bot" if login.endswith("[bot]") else "User"},
         "author_association": "NONE", "path": path, "body": body,
         "reactions": {"-1": thumbs_down},
         "pull_request_url": f"https://api.github.com/repos/{REPOSITORY}/pulls/{pull}",
         "created_at": created_at,
+        "updated_at": updated_at or created_at,
     }
     if reply_to is not None:
         value["in_reply_to_id"] = reply_to
@@ -132,7 +133,9 @@ class GitHub:
             return copy.deepcopy(self.repository_comments[(page - 1) * 100:page * 100])
         if "/pulls/comments/" in path and path.endswith("/reactions?content=-1&per_page=100"):
             comment_id = int(path.split("/pulls/comments/", 1)[1].split("/", 1)[0])
-            return copy.deepcopy(self.reactions.get(comment_id, []))
+            # A reaction made after every fixture comment unless a test says when.
+            return [{"created_at": "2026-11-03T12:00:00Z"} | reaction
+                    for reaction in copy.deepcopy(self.reactions.get(comment_id, []))]
         permission_root = f"/repos/{REPOSITORY}/collaborators/"
         if path.startswith(permission_root) and path.endswith("/permission"):
             login = path[len(permission_root):-len("/permission")]
@@ -263,6 +266,20 @@ class ReviewTests(unittest.TestCase):
         verdicts = review.false_positives(REPOSITORY, 7, request)
         self.assertEqual(len(verdicts), 2)
         self.assertEqual(len(permission_reads), 1)
+
+    def test_false_positive_voided_when_the_bot_comment_changed_after_the_reaction(self):
+        # A same-repository PR workflow can edit a github-actions[bot] comment.
+        self.github.repository_comments = [
+            review_comment(1, updated_at="2026-11-03T13:00:00Z"),
+            review_comment(2, created_at="2026-11-03T00:01:00Z", updated_at="2026-11-03T11:00:00Z"),
+        ]
+        self.github.reactions = {
+            1: [{"user": {"login": "115dkk"}, "created_at": "2026-11-03T12:00:00Z"}],
+            2: [{"user": {"login": "115dkk"}, "created_at": "2026-11-03T12:00:00Z"}],
+        }
+        verdicts = review.false_positives(REPOSITORY, 7, self.github.request)
+        self.assertEqual([verdict["finding"] for verdict in verdicts], ["**[P1] Defect**\nEvidence"])
+        self.assertEqual(len(verdicts), 1)
 
     def test_false_positive_permission_checks_stop_at_the_budget(self):
         # Anyone can react; a crowd of strangers must not turn into thousands of requests.

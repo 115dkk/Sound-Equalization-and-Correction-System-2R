@@ -1,5 +1,6 @@
 """Prepare and publish a trusted review without executing pull request content."""
 import argparse
+from datetime import datetime
 import hashlib
 import http.client
 import json
@@ -372,7 +373,7 @@ def _feedback_comment(value):
         require(isinstance(user.get("login"), str) and isinstance(user.get("type"), str),
                 "Invalid review comment user")
         require(isinstance(value.get("author_association"), str), "Invalid review comment association")
-        for key in ("path", "body", "pull_request_url", "created_at"):
+        for key in ("path", "body", "pull_request_url", "created_at", "updated_at"):
             require(isinstance(value.get(key), str), f"Invalid review comment {key}")
         reactions = value.get("reactions")
         require(isinstance(reactions, dict) and type(reactions.get("-1")) is int,
@@ -387,18 +388,24 @@ def _thumbs_down_reactors(repository, comment_id, request):
         f"/repos/{repository}/pulls/comments/{comment_id}/reactions?content=-1&per_page=100"
     )
     require(isinstance(reactions, list), "Invalid reaction list")
-    logins = []
+    reacted = {}
     for reaction in reactions:
         try:
             require(isinstance(reaction, dict) and isinstance(reaction.get("user"), dict),
                     "Invalid reaction")
             login = reaction["user"].get("login")
             require(isinstance(login, str), "Invalid reaction user")
-            if login not in logins:
-                logins.append(login)
+            when = _timestamp(reaction.get("created_at"))
+            if login not in reacted or when < reacted[login]:
+                reacted[login] = when
         except (KeyError, TypeError, ValueError):
             continue
-    return logins
+    return reacted
+
+
+def _timestamp(value):
+    require(isinstance(value, str), "Invalid timestamp")
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
 def _trusted_reactor(repository, login, request, cache):
@@ -471,8 +478,15 @@ def false_positives(repository, pr_number, request=api):
     verdicts = []
     for finding in findings[:MAX_FEEDBACK_REACTIONS]:
         reactors = _thumbs_down_reactors(repository, finding["id"], request)
-        trusted = {login for login in reactors
-                   if _trusted_reactor(repository, login, request, permission_cache)}
+        try:
+            edited = _timestamp(finding["updated_at"])
+        except ValueError:
+            continue
+        # A same-repository PR workflow can edit a github-actions[bot] comment;
+        # a thumbs-down judged the text as it was, so a later edit voids it.
+        trusted = {login for login, reacted in reactors.items()
+                   if reacted >= edited
+                   and _trusted_reactor(repository, login, request, permission_cache)}
         if not trusted:
             continue
         reasons = [_without_claude_footer(reply["body"])
