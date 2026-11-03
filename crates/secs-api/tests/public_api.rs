@@ -292,6 +292,17 @@ fn client_status_call_authentication_and_changed_event() {
         .expect("a closed event stream must stop blocking its reader");
     reader.join().unwrap();
 
+    // A server that accepts the connection but never answers the upgrade.
+    let silent = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let silent_port = silent.local_addr().unwrap().port();
+    let started = std::time::Instant::now();
+    assert!(matches!(
+        Client::new(silent_port, TOKEN).events(),
+        Err(Error::Transport(_))
+    ));
+    assert!(started.elapsed() < std::time::Duration::from_secs(15));
+    drop(silent);
+
     server.stop();
     fs::remove_dir_all(root).unwrap();
 }

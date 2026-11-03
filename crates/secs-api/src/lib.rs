@@ -523,8 +523,9 @@ pub use engine::{DroppedEventCount, Engine, EngineBuilder};
 #[cfg(feature = "client")]
 mod client {
     use std::fs;
-    use std::net::TcpStream;
+    use std::net::{SocketAddr, TcpStream};
     use std::path::{Path, PathBuf};
+    use std::time::Duration;
 
     use secs_types::ipc::{IpcError, Request, Response};
     use secs_types::local_api::{self, ServerEvent, Status};
@@ -537,6 +538,8 @@ mod client {
 
     const APP_IDENTIFIER: &str = "io.github.115dkk.secs2r";
     const BODY_LIMIT: u64 = 16 * 1024 * 1024;
+    // The app answers on the loopback at once; this only bounds a server that hangs.
+    const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 
     #[derive(Deserialize)]
     struct WireEnvelope {
@@ -626,8 +629,36 @@ mod client {
                 .map_err(|error| Error::Protocol(format!("event URL: {error}")))?;
             let request = ClientRequestBuilder::new(uri)
                 .with_header("Authorization", format!("Bearer {}", self.token));
-            let (socket, _) = tungstenite::client::connect_with_config(request, None, 0)
-                .map_err(websocket_error)?;
+            // A server that accepts the connection but never answers the
+            // upgrade must not hold the caller forever, so connecting and the
+            // handshake have a time limit. The events themselves then wait as
+            // long as the server is quiet; EventsCloser ends that wait.
+            let socket_error =
+                |error: std::io::Error| Error::Transport(format!("event socket: {error}"));
+            let address = SocketAddr::from(([127, 0, 0, 1], self.port));
+            let stream =
+                TcpStream::connect_timeout(&address, HANDSHAKE_TIMEOUT).map_err(socket_error)?;
+            stream
+                .set_read_timeout(Some(HANDSHAKE_TIMEOUT))
+                .map_err(socket_error)?;
+            stream
+                .set_write_timeout(Some(HANDSHAKE_TIMEOUT))
+                .map_err(socket_error)?;
+            let (socket, _) = tungstenite::client::client_with_config(
+                request,
+                MaybeTlsStream::Plain(stream),
+                None,
+            )
+            .map_err(|error| match error {
+                tungstenite::HandshakeError::Failure(error) => websocket_error(error),
+                tungstenite::HandshakeError::Interrupted(_) => {
+                    Error::Transport("event socket handshake timed out".into())
+                }
+            })?;
+            if let MaybeTlsStream::Plain(stream) = socket.get_ref() {
+                stream.set_read_timeout(None).map_err(socket_error)?;
+                stream.set_write_timeout(None).map_err(socket_error)?;
+            }
             Ok(Events {
                 socket,
                 finished: false,
