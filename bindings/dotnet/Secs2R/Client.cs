@@ -1,6 +1,7 @@
 using System;
 using System.Text.Json;
 using System.Threading;
+using System.Threading.Tasks;
 
 namespace Secs2R;
 
@@ -60,11 +61,27 @@ public sealed class Client : IDisposable
         }
     }
 
-    /// <summary>Streams the local-API events sent after each enumeration starts.</summary>
+    /// <summary>
+    /// Connects to the local-API event socket on the calling thread and returns the stream: every
+    /// event sent after this call returns reaches it. Use <see cref="EventsAsync"/> on a thread
+    /// that must not wait for the connection, such as a UI thread.
+    /// </summary>
     /// <param name="cancellationToken">Stops polling and frees the native subscription.</param>
     /// <returns>A stream of server-event JSON values that also reports dropped events.</returns>
-    public EventStream Events(CancellationToken cancellationToken = default) =>
-        new EventStream(Subscribe, cancellationToken);
+    public EventStream Events(CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return new EventStream(Subscribe(), cancellationToken);
+    }
+
+    /// <summary>
+    /// Connects to the local-API event socket on the thread pool and returns the stream once it is
+    /// connected: every event sent after the task completes reaches it.
+    /// </summary>
+    /// <param name="cancellationToken">Stops waiting for the connection, and later stops polling.</param>
+    /// <returns>A task for a stream of server-event JSON values that also reports dropped events.</returns>
+    public Task<EventStream> EventsAsync(CancellationToken cancellationToken = default) =>
+        EventStream.OpenAsync(Subscribe, cancellationToken);
 
     /// <summary>Releases the client handle. Calling this method more than once is harmless.</summary>
     public void Dispose()

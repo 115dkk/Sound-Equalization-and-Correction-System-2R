@@ -24,17 +24,18 @@ JsonElement info = engine.Call(request.RootElement);
 Console.WriteLine(info.GetProperty("data").GetProperty("version"));
 ```
 
-Long-running requests return a job identifier. Call `WaitJob` for the terminal event, or consume `Events` to receive every later job event.
+Long-running requests return a job identifier. Call `WaitJob` for the terminal event, or open `Events` to receive every later job event. `Events` subscribes when it is called, so open it before starting the job it should watch.
 
 ```csharp
-EventStream events = engine.Events(cancellationToken);
+await using EventStream events = engine.Events(cancellationToken);
+JsonElement started = engine.Call(calibrateRequest);
 await foreach (JsonElement jobEvent in events)
 {
     Console.WriteLine(jobEvent.GetRawText());
 }
 ```
 
-Each subscription queues up to 1024 events. A reader that falls further behind loses the newest ones, and `EventStream.DroppedEvents` counts them; when it grows, ask for the job's state with `WaitJob`.
+An `EventStream` can be enumerated once; open another one for a second reader. Each stream queues up to 1024 events. A reader that falls further behind loses the newest ones, and `EventStream.DroppedEvents` counts them; when it grows, ask for the job's state with `WaitJob`.
 
 ## Running application
 
@@ -46,7 +47,7 @@ JsonElement status = client.Status();
 Console.WriteLine(status.GetProperty("app_name"));
 ```
 
-Pass `token` directly or use `tokenPath` for another token file. `Client.Events` streams the running application's WebSocket events.
+Pass `token` directly or use `tokenPath` for another token file. `Client.Events` connects to the running application's event socket on the calling thread; `Client.EventsAsync` connects on the thread pool and can be cancelled, for a UI thread.
 
 ## Errors
 

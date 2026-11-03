@@ -49,6 +49,7 @@ public sealed class PackageTests
         cancellation.Cancel();
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pending);
         Assert.Equal(0UL, stream.DroppedEvents);
+        Assert.Throws<InvalidOperationException>(() => stream.GetAsyncEnumerator());
     }
 
     [Fact]
@@ -82,15 +83,16 @@ public sealed class PackageTests
     {
         int port = ClosedPort();
         using var client = new Client(port, token: "test");
-        await using IAsyncEnumerator<JsonElement> events = client.Events().GetAsyncEnumerator();
 
-        SecsException error = await Assert.ThrowsAsync<SecsException>(async () => await events.MoveNextAsync());
+        SecsException connecting = Assert.Throws<SecsException>(() => client.Events());
+        SecsException connectingAsync = await Assert.ThrowsAsync<SecsException>(() => client.EventsAsync());
 
-        Assert.Equal("transport_error", error.Code);
+        Assert.Equal("transport_error", connecting.Code);
+        Assert.Equal("transport_error", connectingAsync.Code);
     }
 
     [Fact]
-    public void MockMeasurementCalibratesAndExportsEqualizerApoFiles()
+    public async Task MockMeasurementCalibratesAndExportsEqualizerApoFiles()
     {
         using var temp = new TestDirectory();
         string projectDirectory = Path.Combine(temp.Path, "project");
@@ -117,7 +119,25 @@ public sealed class PackageTests
             ["position"] = 1,
         }));
         Call(engine, "project_save", new Dictionary<string, object?>());
-        WaitForJob(engine, Call(engine, "calibrate", new Dictionary<string, object?>()));
+
+        // The stream subscribes before the job starts, so it sees the job's terminal event.
+        await using (EventStream events = engine.Events())
+        {
+            ulong job = Call(engine, "calibrate", new Dictionary<string, object?>())
+                .GetProperty("data").GetProperty("job").GetUInt64();
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(120));
+            string? status = null;
+            await foreach (JsonElement jobEvent in events.WithCancellation(timeout.Token))
+            {
+                if (jobEvent.GetProperty("event").GetString() == "finished"
+                    && jobEvent.GetProperty("job").GetUInt64() == job)
+                {
+                    status = jobEvent.GetProperty("status").GetString();
+                    break;
+                }
+            }
+            Assert.Equal("succeeded", status);
+        }
 
         JsonElement results = Call(engine, "results");
         Assert.NotEqual(JsonValueKind.Null, results.GetProperty("data").GetProperty("calibration").ValueKind);

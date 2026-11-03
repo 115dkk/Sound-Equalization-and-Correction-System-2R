@@ -52,11 +52,17 @@ public sealed class Engine : IDisposable
         }
     }
 
-    /// <summary>Streams the job events emitted after each enumeration starts.</summary>
+    /// <summary>
+    /// Subscribes to job events now and returns the stream: every event emitted after this call
+    /// returns reaches it, so call it before starting the job to watch.
+    /// </summary>
     /// <param name="cancellationToken">Stops polling and frees the native subscription.</param>
     /// <returns>A stream of job-event JSON values that also reports dropped events.</returns>
-    public EventStream Events(CancellationToken cancellationToken = default) =>
-        new EventStream(Subscribe, cancellationToken);
+    public EventStream Events(CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return new EventStream(Subscribe(), cancellationToken);
+    }
 
     /// <summary>Releases the embedded engine handle. Calling this method more than once is harmless.</summary>
     public void Dispose()
