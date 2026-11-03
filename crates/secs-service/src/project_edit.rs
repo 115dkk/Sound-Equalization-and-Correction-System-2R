@@ -285,13 +285,20 @@ fn set_extra(project: &mut Project, key: &str, value: PyJson) {
     }
 }
 
-fn target_preset(project: &Project) -> Option<String> {
-    project
-        .bc
-        .get("target_preset")
-        .and_then(PyJson::str)
-        .filter(|value| !value.is_empty())
-        .map(str::to_owned)
+/// The preset whose points the target has, `None` for 사용자 지정 (upstream
+/// `target_editor.preset_of`). Upstream's menu never reads the stored
+/// `bc.target_preset`: a new project keeps `"flat"` there beside non-flat
+/// default points.
+fn preset_of(target: &TargetCurve) -> Option<String> {
+    fn sorted(mut points: Vec<(f64, f64)>) -> Vec<(f64, f64)> {
+        points.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        points
+    }
+    let points = sorted(target.points.clone());
+    TargetCurve::presets()
+        .into_iter()
+        .find(|(_, preset)| sorted(preset.points.clone()) == points)
+        .map(|(key, _)| key.to_owned())
 }
 
 fn set_target_preset(project: &mut Project, preset: Option<&str>) {
@@ -312,7 +319,7 @@ fn set_target_preset(project: &mut Project, preset: Option<&str>) {
 fn target_result(project: &Project) -> TargetResult {
     TargetResult {
         points: project.target.points.clone(),
-        preset: target_preset(project),
+        preset: preset_of(&project.target),
         presets: TargetCurve::presets()
             .into_iter()
             .map(|(key, target)| (key.into(), target.points))
@@ -763,6 +770,17 @@ impl Service {
         lock(&self.app_settings).clone()
     }
 
+    /// Returns settings and the revision assigned to their successful save.
+    pub fn revised_app_settings(&self) -> crate::RevisedAppSettings {
+        let settings = lock(&self.app_settings);
+        crate::RevisedAppSettings {
+            revision: self
+                .app_settings_revision
+                .load(std::sync::atomic::Ordering::SeqCst),
+            settings: settings.clone(),
+        }
+    }
+
     pub(crate) fn app_settings_set(
         &self,
         mut params: AppSettingsParams,
@@ -791,13 +809,24 @@ impl Service {
         // One critical section for the file and memory, so what is read now
         // is what a restart restores even when requests run in parallel (TD-39).
         let mut current = lock(&self.app_settings);
+        let revision = self
+            .app_settings_revision
+            .try_update(
+                std::sync::atomic::Ordering::SeqCst,
+                std::sync::atomic::Ordering::SeqCst,
+                |revision| revision.checked_add(1),
+            )
+            .map(|revision| revision + 1)
+            .map_err(|_| IpcError::new(ErrorCode::Internal, "app settings revision exhausted"))?;
         if let Some(path) = self.deps.app_settings_path.as_deref() {
             atomic_write(path, &bytes)?;
         }
-        let policy_changed = current.updates != params.settings.updates;
         *current = params.settings.clone();
         drop(current);
-        if policy_changed {
+        let mut effects = lock(&self.app_effects);
+        if let Some(previous) = effects.accept(revision, &params.settings)
+            && previous.updates != params.settings.updates
+        {
             self.deps.updates.set_policy(params.settings.updates);
         }
         Ok(params.settings)

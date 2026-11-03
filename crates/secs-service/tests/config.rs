@@ -2,8 +2,8 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Condvar, Mutex};
 
 use secs_service::{Deps, NoEvents, Service};
 use secs_types::calibration::{CalibrationSettings, Mode};
@@ -35,6 +35,70 @@ fn error(service: &Service, request: Request) -> IpcError {
     }
 }
 
+#[derive(Debug, Default)]
+struct ReorderedUpdates {
+    state: Mutex<(bool, bool, Vec<UpdatePolicy>)>,
+    changed: Condvar,
+}
+
+impl ReorderedUpdates {
+    fn wait_for_first(&self) {
+        let mut state = self.state.lock().unwrap();
+        while !state.0 {
+            state = self.changed.wait(state).unwrap();
+        }
+    }
+
+    fn release_first(&self) {
+        self.state.lock().unwrap().1 = true;
+        self.changed.notify_all();
+    }
+
+    fn policies(&self) -> Vec<UpdatePolicy> {
+        self.state.lock().unwrap().2.clone()
+    }
+}
+
+impl secs_service::UpdateAdapter for ReorderedUpdates {
+    fn status(&self) -> UpdateStatus {
+        UpdateStatus {
+            current: String::new(),
+            policy: UpdatePolicy::Auto,
+            phase: UpdatePhase::Idle,
+            checked_at: None,
+            notice: None,
+        }
+    }
+
+    fn check(&self) -> Result<UpdateStatus, IpcError> {
+        Ok(self.status())
+    }
+
+    fn download(&self) -> Result<UpdateStatus, IpcError> {
+        Ok(self.status())
+    }
+
+    fn restart(&self) -> Result<(), IpcError> {
+        Ok(())
+    }
+
+    fn dismiss_notice(&self) -> UpdateStatus {
+        self.status()
+    }
+
+    fn set_policy(&self, policy: UpdatePolicy) {
+        let mut state = self.state.lock().unwrap();
+        if !state.0 {
+            state.0 = true;
+            self.changed.notify_all();
+            while !state.1 {
+                state = self.changed.wait(state).unwrap();
+            }
+        }
+        state.2.push(policy);
+    }
+}
+
 fn new_project(service: &Service, path: &Path, preset: &str) {
     assert!(matches!(
         call(
@@ -49,6 +113,33 @@ fn new_project(service: &Service, path: &Path, preset: &str) {
         ),
         Response::ProjectNew(_)
     ));
+}
+
+#[test]
+fn target_preset_follows_the_points_not_the_stored_label() {
+    let root = root("target-label");
+    let project = root.join("label.secs");
+    let service = Service::new(Deps::default());
+    new_project(&service, &project, "2.0");
+    // A new project stores upstream's `target_preset = "flat"` next to the
+    // non-flat default points; upstream's menu checks 사용자 지정 for it.
+    let Response::TargetGet(target) = call(&service, Request::TargetGet) else {
+        panic!()
+    };
+    assert_ne!(
+        target.points,
+        [(25.0, 0.0), (200.0, 0.0), (1000.0, 0.0), (16000.0, 0.0)]
+    );
+    assert_eq!(target.preset, None);
+    let Response::TargetSetPoints(edited) = call(
+        &service,
+        Request::TargetSetPoints(TargetPointsParams {
+            points: vec![(16000.0, 0.0), (25.0, 0.0), (1000.0, 0.0), (200.0, 0.0)],
+        }),
+    ) else {
+        panic!()
+    };
+    assert_eq!(edited.preset.as_deref(), Some("flat"));
 }
 
 #[test]
@@ -1038,6 +1129,61 @@ fn legacy_expert_preference_is_ignored_without_resetting_other_settings() {
         }
     }
     fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn newer_app_settings_win_when_older_effects_finish_late_td115() {
+    let updates = Arc::new(ReorderedUpdates::default());
+    let service = Arc::new(Service::new(Deps {
+        updates: updates.clone(),
+        ..Deps::default()
+    }));
+    let first_service = service.clone();
+    let first = std::thread::spawn(move || {
+        call(
+            &first_service,
+            Request::AppSettingsSet(AppSettingsParams {
+                settings: AppSettings {
+                    updates: UpdatePolicy::Notify,
+                    ..AppSettings::default()
+                },
+            }),
+        )
+    });
+    updates.wait_for_first();
+    let second_service = service.clone();
+    let second = std::thread::spawn(move || {
+        call(
+            &second_service,
+            Request::AppSettingsSet(AppSettingsParams {
+                settings: AppSettings {
+                    updates: UpdatePolicy::Off,
+                    ..AppSettings::default()
+                },
+            }),
+        )
+    });
+    loop {
+        let Response::AppSettingsGet(current) = call(&service, Request::AppSettingsGet) else {
+            panic!()
+        };
+        if current.updates == UpdatePolicy::Off {
+            break;
+        }
+        std::thread::yield_now();
+    }
+    updates.release_first();
+    first.join().unwrap();
+    second.join().unwrap();
+
+    assert_eq!(updates.policies().last(), Some(&UpdatePolicy::Off));
+    let Response::AppSettingsGet(current) = call(&service, Request::AppSettingsGet) else {
+        panic!()
+    };
+    assert_eq!(current.updates, UpdatePolicy::Off);
+    let revised = service.revised_app_settings();
+    assert_eq!(revised.revision, 3);
+    assert_eq!(revised.settings, current);
 }
 
 #[test]

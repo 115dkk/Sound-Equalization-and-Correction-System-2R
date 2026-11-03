@@ -821,7 +821,10 @@ pub struct RecommendXoParams {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS, Default)]
 #[ts(export)]
 pub struct MimoParams {
-    /// Settings override; absent uses the open project.
+    /// Settings for this run only; absent uses the open project. The override
+    /// is not stored: the result book still judges the result against the
+    /// project's stored settings, so a MIMO computed with other options than
+    /// the project's shows as stale (audit #155 Q4).
     pub settings: Option<CalibrationSettings>,
 }
 
@@ -1223,8 +1226,10 @@ pub enum ExportKind {
     /// and FIR WAV files (upstream `calibration.export_eqapo`). RC, BA and
     /// MIMO support paths, which upstream refuses (docs/DEVIATIONS.md F12).
     EqualizerApo,
-    /// One complete 48 kHz impulse response and response CSV per reachable
-    /// input-to-output path, including RC, BA, LFE and MIMO operations.
+    /// One complete impulse response and response CSV per reachable
+    /// input-to-output path, including RC, BA, LFE and MIMO operations. The
+    /// design runs at 48 kHz; the files are written at the project's output
+    /// rate and at each extra rate asked for (ADR 0017, audit #155 TD-143).
     Convolution,
 }
 

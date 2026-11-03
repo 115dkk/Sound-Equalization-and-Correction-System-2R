@@ -1199,6 +1199,7 @@ fn failed_reexport_keeps_the_previous_camilla_bundle_td22() {
                 Ok(())
             }
         },
+        &|_, _| Ok(()),
     )
     .unwrap_err();
     assert!(error.to_string().contains("injected second-file failure"));
@@ -1213,6 +1214,46 @@ fn failed_reexport_keeps_the_previous_camilla_bundle_td22() {
                 .to_string_lossy()
                 .starts_with(&stage_prefix))
     );
+}
+
+#[test]
+fn failed_install_restores_the_previous_camilla_bundle_td22() {
+    let fixture = Fixture::load("camilla", "direct_no_subs");
+    let temp = TempDir::new("failed_install");
+    let chain = chain(&fixture);
+    let written = write_config(&chain, &temp.0, "replace", &Options::default(), None).unwrap();
+    let before: Vec<_> = written
+        .iter()
+        .map(|path| (path.clone(), fs::read(path).unwrap()))
+        .collect();
+
+    let mut changed = chain.clone();
+    changed.mains[0].fir[0] += 0.5;
+    let error = write_config_observed(
+        &changed,
+        &temp.0,
+        "replace",
+        &Options::default(),
+        None,
+        &|_, _| Ok(()),
+        &|index, _| {
+            if index == 1 {
+                Err(std::io::Error::other("injected second install failure"))
+            } else {
+                Ok(())
+            }
+        },
+    )
+    .unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("injected second install failure")
+    );
+    for (path, bytes) in before {
+        assert_eq!(fs::read(path).unwrap(), bytes);
+    }
 }
 
 #[test]

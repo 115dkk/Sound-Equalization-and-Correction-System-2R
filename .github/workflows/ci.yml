@@ -48,6 +48,17 @@ name: CI
 #   manage-e2e  installed Windows app and shell driven through WebDriver:
 #             real service takeover, restart, Equalizer APO repair and removal
 #
+#   scope     whether the heavy jobs run: test, integrity, the three
+#             playbacks, bundle (and the end-to-end jobs after it), gallery,
+#             miri and fuzz. They are skipped when every commit of the pull
+#             request's own is a ci: or docs: commit and every changed file
+#             is under docs/ or .github/ or ends in .md, but is neither this
+#             file nor one a heavy job runs or reads
+#             (.github/scripts/ci_scope.py). lint, frontend, docs and deny
+#             always run. A matrix job skipped by its `if` reports under its
+#             unexpanded name while the ruleset names every matrix entry, so
+#             the *-light jobs at the end report those names instead.
+#
 # Pin macOS 15 ARM64 after repeated macOS 26 runner allocation failures.
 
 on:
@@ -74,6 +85,51 @@ env:
     librsvg2-dev libsoup-3.0-dev libasound2-dev patchelf
 
 jobs:
+  # Not a required check: when it fails, the gated jobs and their light
+  # stand-ins are all skipped and the required matrix names never report, so
+  # the pull request waits for a rerun instead of merging untested.
+  scope:
+    name: change scope
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      heavy: ${{ steps.scope.outputs.heavy }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Anything that goes wrong here runs the heavy jobs; only a clean
+      # "false" from ci_scope.py skips them.
+      - name: Decide whether the heavy jobs run
+        id: scope
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          EVENT: ${{ github.event_name }}
+          PR: ${{ github.event.pull_request.number }}
+          COMMITS: ${{ github.event.pull_request.commits }}
+          FILES: ${{ github.event.pull_request.changed_files }}
+        run: |
+          set -uo pipefail
+          heavy=true
+          if [ "$EVENT" = pull_request ] &&
+            gh api "repos/$REPO/pulls/$PR/commits?per_page=100" --paginate \
+              --jq '.[] | {parents: (.parents | length), subject: (.commit.message | split("\n")[0])} | tojson' > "$RUNNER_TEMP/commits.jsonl" &&
+            gh api "repos/$REPO/pulls/$PR/files?per_page=100" --paginate \
+              --jq '.[] | {filename, previous_filename} | tojson' > "$RUNNER_TEMP/files.jsonl"; then
+            heavy=$(python3 -I .github/scripts/ci_scope.py --commits "$RUNNER_TEMP/commits.jsonl" --files "$RUNNER_TEMP/files.jsonl" \
+              --expected-commits "$COMMITS" --expected-files "$FILES" --summary "$GITHUB_STEP_SUMMARY") || heavy=true
+          else
+            echo "Heavy jobs run: not a pull request, or its commits or files could not be read." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          case "$heavy" in true|false) ;; *) heavy=true ;; esac
+          echo "heavy jobs run: $heavy"
+          echo "heavy=$heavy" >> "$GITHUB_OUTPUT"
+
   lint:
     name: fmt + clippy + policy gates
     runs-on: ubuntu-latest
@@ -133,9 +189,10 @@ jobs:
           cargo publish --workspace --dry-run --locked --allow-dirty
 
   test:
-    name: cargo test (${{ matrix.os }})
-    needs: lint
-    strategy:
+    name: &test-name cargo test (${{ matrix.os }})
+    needs: [lint, scope]
+    if: needs.scope.outputs.heavy == 'true'
+    strategy: &test-strategy
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-15]
@@ -309,9 +366,10 @@ jobs:
           esac
 
   integrity:
-    name: integrity (${{ matrix.os }}, 1 / default / 7 threads)
-    needs: lint
-    strategy:
+    name: &integrity-name integrity (${{ matrix.os }}, 1 / default / 7 threads)
+    needs: [lint, scope]
+    if: needs.scope.outputs.heavy == 'true'
+    strategy: &integrity-strategy
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-15]
@@ -379,9 +437,10 @@ jobs:
           python .github/scripts/integrity.py compare integrity/case-default integrity/case-1 integrity/case-7
 
   eqapo-playback:
-    name: Equalizer APO playback (${{ matrix.engine }})
-    needs: lint
-    strategy:
+    name: &eqapo-name Equalizer APO playback (${{ matrix.engine }})
+    needs: [lint, scope]
+    if: needs.scope.outputs.heavy == 'true'
+    strategy: &eqapo-strategy
       fail-fast: false
       matrix:
         engine: [xt, original]
@@ -415,7 +474,9 @@ jobs:
         env:
           SECS_EQAPO_REPORT: ${{ runner.temp }}\eqapo-report.md
           SECS_EQAPO_ARTIFACTS: ${{ runner.temp }}\eqapo-artifacts
-        run: cargo test -p secs-filters --test eqapo_playback --locked -- --ignored --nocapture
+        # One test at a time: with --register the original engine reads one
+        # registered config folder, which every test clears and fills.
+        run: cargo test -p secs-filters --test eqapo_playback --locked -- --ignored --nocapture --test-threads=1
 
       # The exported folders and every engine log, to read a failure from.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -434,7 +495,8 @@ jobs:
 
   camilla-playback:
     name: CamillaDSP playback
-    needs: lint
+    needs: [lint, scope]
+    if: needs.scope.outputs.heavy == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -455,7 +517,9 @@ jobs:
         env:
           SECS_CAMILLA_REPORT: ${{ runner.temp }}/camilla-report.md
           SECS_CAMILLA_ARTIFACTS: ${{ runner.temp }}/camilla-artifacts
-        run: cargo test -p secs-camilla --test camilla_playback --locked -- --ignored --nocapture
+        # One test at a time: each test feeds CamillaDSP in real time, and two
+        # pipelines at once compete for the runner's CPU.
+        run: cargo test -p secs-camilla --test camilla_playback --locked -- --ignored --nocapture --test-threads=1
 
       # The configs, excitation, output and CamillaDSP log of every case.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -473,7 +537,8 @@ jobs:
 
   reaper-playback:
     name: REAPER convolution playback
-    needs: lint
+    needs: [lint, scope]
+    if: needs.scope.outputs.heavy == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -673,7 +738,7 @@ jobs:
       - name: Install the old build and let it update itself
         run: |
           $version = python -c "import tomllib; print(tomllib.load(open('Cargo.toml', 'rb'))['workspace']['package']['version'])"
-          python -I .github/scripts/update_e2e.py run --old "$env:RUNNER_TEMP\update-old" --new "$env:RUNNER_TEMP\update-new" --version "$version" --asset-version "0.0.0-ci.${{ github.run_number }}" --tauri-driver "$env:USERPROFILE\.cargo\bin\tauri-driver.exe" --msedgedriver "$env:SECS_MSEDGEDRIVER" --artifacts "$env:RUNNER_TEMP\update-e2e" --report "$env:RUNNER_TEMP\update-e2e-report.md"
+          python -I .github/scripts/update_e2e.py run --old "$env:RUNNER_TEMP\update-old" --new "$env:RUNNER_TEMP\update-new" --version "$version" --asset-version "0.0.0-ci.${{ github.run_number }}" --tls --tauri-driver "$env:USERPROFILE\.cargo\bin\tauri-driver.exe" --msedgedriver "$env:SECS_MSEDGEDRIVER" --artifacts "$env:RUNNER_TEMP\update-e2e" --report "$env:RUNNER_TEMP\update-e2e-report.md"
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
@@ -750,6 +815,8 @@ jobs:
 
   gallery:
     name: screen gallery (Chromium screenshots)
+    needs: scope
+    if: needs.scope.outputs.heavy == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -785,9 +852,10 @@ jobs:
           retention-days: 14
 
   bundle:
-    name: installers (${{ matrix.name }})
-    needs: lint
-    strategy:
+    name: &bundle-name installers (${{ matrix.name }})
+    needs: [lint, scope]
+    if: needs.scope.outputs.heavy == 'true'
+    strategy: &bundle-strategy
       fail-fast: false
       matrix:
         include:
@@ -1011,6 +1079,8 @@ jobs:
   # knows it; the job also runs secs-project's parsers (audit #92 TD-60).
   miri:
     name: Miri (secs-jos, secs-mdat, secs-dirac)
+    needs: scope
+    if: needs.scope.outputs.heavy == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1040,6 +1110,8 @@ jobs:
 
   fuzz:
     name: fuzz (parsers, 60 s per target)
+    needs: scope
+    if: needs.scope.outputs.heavy == 'true'
     runs-on: ubuntu-latest
     env:
       FUZZ_TARGET: x86_64-unknown-linux-gnu
@@ -1102,3 +1174,43 @@ jobs:
           path: fuzz/artifacts
           if-no-files-found: ignore
           retention-days: 14
+
+  # Light stand-ins for the gated matrix jobs. The required checks name every
+  # matrix entry, and a matrix job skipped by its `if` reports only under its
+  # unexpanded name, so when scope skips the heavy jobs these report success
+  # under the same names and the same matrices (YAML aliases of the jobs
+  # above). The gated jobs without a matrix need none: skipped by their `if`,
+  # they report under their own names and count as passed.
+  test-light:
+    name: *test-name
+    needs: scope
+    if: needs.scope.outputs.heavy == 'false'
+    strategy: *test-strategy
+    runs-on: ubuntu-latest
+    steps: &light-steps
+      - name: Skipped for a ci or docs pull request
+        run: echo "Every commit is a ci or docs commit and no heavy job reads a changed file; see the change scope job."
+
+  integrity-light:
+    name: *integrity-name
+    needs: scope
+    if: needs.scope.outputs.heavy == 'false'
+    strategy: *integrity-strategy
+    runs-on: ubuntu-latest
+    steps: *light-steps
+
+  eqapo-light:
+    name: *eqapo-name
+    needs: scope
+    if: needs.scope.outputs.heavy == 'false'
+    strategy: *eqapo-strategy
+    runs-on: ubuntu-latest
+    steps: *light-steps
+
+  bundle-light:
+    name: *bundle-name
+    needs: scope
+    if: needs.scope.outputs.heavy == 'false'
+    strategy: *bundle-strategy
+    runs-on: ubuntu-latest
+    steps: *light-steps

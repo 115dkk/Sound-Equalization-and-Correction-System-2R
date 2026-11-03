@@ -38,7 +38,7 @@ fn is_marker(line: &Line<'_>) -> bool {
 }
 
 fn is_include(line: &Line<'_>) -> bool {
-    line.content == INCLUDE
+    line.content.trim_end() == INCLUDE
 }
 
 fn without_managed_lines(text: &str) -> Option<String> {
@@ -177,10 +177,45 @@ mod tests {
     }
 
     #[test]
+    fn trailing_spaces_are_managed_and_repair_revert_count_real_includes() {
+        let user = "Include: user.txt\n";
+        let spaced = format!("{user}{MARKER}\n{INCLUDE}  \t\n");
+        assert_eq!(include_state(&spaced), IncludeState::Present);
+        assert_eq!(with_include(&spaced), None);
+        assert_eq!(
+            without_include(&spaced),
+            Some(user.to_owned()),
+            "revert removes the managed include and preserves user includes"
+        );
+
+        let damaged = format!("{user}{MARKER}\n{INCLUDE}  \n{MARKER}\n{INCLUDE}\n");
+        assert_eq!(include_state(&damaged), IncludeState::Damaged);
+        let repaired = with_include(&damaged).expect("duplicate pairs must be repaired");
+        assert_eq!(include_state(&repaired), IncludeState::Present);
+        assert_eq!(
+            repaired
+                .lines()
+                .filter(|line| line.trim_end() == INCLUDE)
+                .count(),
+            1
+        );
+        assert!(repaired.contains(user));
+        let reverted = without_include(&repaired).expect("managed pair must be removed");
+        assert_eq!(
+            reverted
+                .lines()
+                .filter(|line| line.trim_end() == INCLUDE)
+                .count(),
+            0
+        );
+        assert_eq!(reverted, user);
+    }
+
+    #[test]
     fn damaged_pairs_are_repaired_once() {
         for damaged in [
             format!("alpha\n{MARKER}\nomega\n"),
-            format!("alpha\n{MARKER}\n{INCLUDE} \n"),
+            format!("alpha\n{MARKER}\nInclude: other.txt \n"),
             format!("{MARKER}\n{INCLUDE}\n{MARKER}\n{INCLUDE}\n"),
         ] {
             assert_eq!(include_state(&damaged), IncludeState::Damaged);

@@ -25,6 +25,21 @@ beforeEach(async () => {
 afterEach(async () => { cleanup(); await session.monitor(false); session.dispose(); mock.dispose(); vi.restoreAllMocks(); });
 
 describe("useExportScreen", () => {
+  it.each(["address", "executable", "camilla level", "eqapo level"] as const)("does not apply when saving the %s failed", async (field) => {
+    const { result } = renderHook(useExportScreen, { wrapper });
+    mock.failNext("apply_settings_set", "project_io");
+    await perform(() => {
+      const actions = result.current.actions;
+      if (field === "address") actions.setCamillaAddress("127.0.0.1:4321");
+      else if (field === "executable") actions.setCamillaExe("C:/new/camilladsp.exe");
+      else actions.setApplyLevel(field === "eqapo level" ? "eqapo" : "camilla", "apply");
+      if (field === "eqapo level") actions.applyEqapo();
+      else actions.applyCamilla();
+    });
+    expect(mock.calls.filter((r) => r.method === "apply_camilla" || r.method === "apply_eqapo")).toEqual([]);
+    if (field === "address") expect(session.host.getSnapshot().applyAddressDraft).toBe("127.0.0.1:4321");
+    if (field === "executable") expect(session.host.getSnapshot().applyExeDraft).toBe("C:/new/camilladsp.exe");
+  });
   it("waits for settings and does no I/O for tutorial exports", async () => {
     const { result } = renderHook(useExportScreen, { wrapper });
     await perform(() => session.stores.project.set({ ...session.stores.project.getSnapshot()!, tutorial: true }));
@@ -253,6 +268,17 @@ describe("useExportScreen", () => {
     expect(result.current.view?.runs).toEqual({});
   });
 
+  it.each([[false, false], [false, true], [true, false], [true, true]])("mdat recalibration follows XO include=%s and MIMO=%s", async (include, mimo) => {
+    await perform(() => session.call({ method: "calibration_settings_edit", params: { edit: { kind: "xo_rec_include", on: include } } }));
+    await perform(() => session.call({ method: "calibration_settings_edit", params: { edit: { kind: "mimo_on", on: mimo } } }));
+    const { result } = renderHook(useExportScreen, { wrapper });
+    mock.calls.length = 0;
+    await perform(result.current.actions.recalibrate);
+    expect(mock.calls.filter((r) => r.method === "recommend_xo")).toHaveLength(include ? 1 : 0);
+    if (include) await perform(mock.drain);
+    expect(mock.calls.filter((r) => r.method === "calibrate")).toEqual([{ method: "calibrate", params: { settings: null, subs_only: false, mimo } }]);
+  });
+
   it("recalibrates a reopened stale cache and unblocks both mdat formats", async () => {
     await perform(() => session.call({ method: "calibrate", params: { settings: null, subs_only: false } }));
     await perform(mock.drain);
@@ -272,7 +298,9 @@ describe("useExportScreen", () => {
 
     mock.calls.length = 0;
     await perform(result.current.actions.recalibrate);
-    expect(mock.calls).toContainEqual({ method: "calibrate", params: { settings: null, subs_only: false } });
+    expect(mock.calls).toContainEqual({ method: "recommend_xo" });
+    await perform(mock.drain);
+    expect(mock.calls).toContainEqual({ method: "calibrate", params: { settings: null, subs_only: false, mimo: false } });
     expect(result.current.view?.recalibrating).toBe(true);
     expect(result.current.view?.computing).toBe(true);
     for (const kind of mdatKinds) expect(exportBlock(result.current.view!, kind)).toBe("stale_cache");
@@ -296,6 +324,7 @@ describe("useExportScreen", () => {
     await perform(() => session.call({ method: "project_open", params: { path: "/projects/cached.secs" } }));
     await perform(() => session.call({ method: "calibration_settings_edit", params: { edit: { kind: "mode", mode: "linear" } } }));
     const { result } = renderHook(useExportScreen, { wrapper });
+    await perform(() => session.call({ method: "calibration_settings_edit", params: { edit: { kind: "xo_rec_include", on: false } } }));
     if (status === "failed") mock.failJobs("calibrate", "engine_input");
     await perform(result.current.actions.recalibrate);
     expect(result.current.view?.recalibrating).toBe(true);

@@ -29,10 +29,11 @@ export function useMeasureScreen(): { view: MeasureView | null; actions: Measure
     setSweepLength: (sweep_length) => session.run(() => session.writers.measurement.edit({ sweep_length })),
     setRepetitions: (repetitions) => session.run(() => session.writers.measurement.edit({ repetitions })),
     pickMdat: (position) => session.run(async () => {
+      const guard = session.projectGuard();
       const path = await session.call({ method: "dialog_pick_mdat" });
-      if (path === null) return;
+      if (path === null || !guard.alive()) return;
       const scan = await session.call({ method: "mdat_scan", params: { path } });
-      session.host.set({ mdat: { path, scan, position } });
+      if (guard.alive()) session.host.set({ mdat: { path, scan, position } });
     }),
     importMdat: (params) => session.run(async () => {
       await session.monitor(false);

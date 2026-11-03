@@ -66,6 +66,95 @@ fn room(low: f64, high: f64, count: u32) -> MeasurementSet {
 }
 
 #[test]
+fn schroeder_reserves_the_actual_ir_length_before_analysis() {
+    use secs_compute::{CancelToken, MemoryBudget, NoProgress};
+    let ctx = Context::new(
+        1,
+        MemoryBudget::new(131_072),
+        Arc::new(NoProgress),
+        CancelToken::new(),
+    );
+    for basis in [RcHiBasis::Strict, RcHiBasis::Lenient] {
+        let mut set = room(0.8, 0.12, 2);
+        let mut config = config(&set);
+        config.rc_hi_basis = basis;
+        let result = levels::Schroeder::analyze(&set, &config, &ctx);
+        assert!(
+            matches!(result, Err(EngineError::Input(ref message)) if message.contains("3072000") && message.contains("131072")),
+            "{basis:?}: long IR must exceed the analysis budget, got {:?}",
+            result.err()
+        );
+        for (_, roles) in &mut set.positions {
+            for (_, m) in roles {
+                m.samples = Samples::F64(
+                    (0..4096)
+                        .map(|i| m.samples.at(i))
+                        .collect::<Vec<_>>()
+                        .into(),
+                );
+            }
+        }
+        let result = levels::Schroeder::analyze(&set, &config, &ctx).unwrap();
+        assert!(
+            result.strict.is_some(),
+            "short IR must complete the analysis"
+        );
+    }
+}
+
+#[test]
+fn schroeder_cancels_during_sample_processing() {
+    use std::cell::Cell;
+    let set = room(0.8, 0.12, 2);
+    let ctx = Context::serial();
+    for basis in [RcHiBasis::Strict, RcHiBasis::Lenient] {
+        let mut config = config(&set);
+        config.rc_hi_basis = basis;
+        let polls = Cell::new(0);
+        let result = levels::Schroeder::analyze_until(&set, &config, &ctx, &|| {
+            let n = polls.get();
+            polls.set(n + 1);
+            n >= 10
+        });
+        assert!(
+            matches!(result, Err(EngineError::Cancelled)),
+            "{basis:?}: analysis finished instead of cancelling during samples ({} polls)",
+            polls.get()
+        );
+        assert_eq!(polls.get(), 11, "must return at the first cancelled poll");
+        super::cancel::assert_cancels("Schroeder", 1, |cancelled| {
+            levels::Schroeder::analyze_until(&set, &config, &ctx, cancelled)
+        });
+    }
+}
+
+#[test]
+fn schroeder_chunked_filter_preserves_sosfilt_bits() {
+    use secs_dsp::iir::{BType, butter, sosfilt};
+    let measurement = decay_ir(0.8, 0.12);
+    let samples: Vec<_> = (0..measurement.samples.len())
+        .map(|i| measurement.samples.at(i))
+        .collect();
+    let bands = [(500.0, 2.0_f64.sqrt()), (1000.0, 2.0_f64.sqrt())]
+        .into_iter()
+        .chain(
+            levels::RC_BAND_CENTRES
+                .into_iter()
+                .take(8)
+                .map(|fc| (fc, 2.0_f64.powf(1.0 / 6.0))),
+        );
+    for (fc, width) in bands {
+        let sos = butter(4, &[fc / width, fc * width], BType::Bandpass, SR_F).unwrap();
+        let original = sosfilt(&sos, &samples).unwrap();
+        let chunked = levels::filter_band(&samples, &sos, &|| false).unwrap();
+        assert_eq!(original.len(), chunked.len());
+        for (i, (original, chunked)) in original.iter().zip(chunked).enumerate() {
+            assert_eq!(original.to_bits(), chunked.to_bits(), "{fc} Hz sample {i}");
+        }
+    }
+}
+
+#[test]
 fn rc_lenient_synthetic_decay_bands_follow_room_treatment() {
     for (low, high, expected_band, increases) in [
         (0.64, 0.64, 200.0, false),

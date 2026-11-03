@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+use secs_apply::camilla::{Camilla, WsTransport};
 use secs_camilla::pyfmt::round_ndigits;
 use secs_camilla::{DesignLabels, Device, DeviceValue, Options, round_ties_even_i64, write_config};
 use secs_dsp::Complex64;
@@ -12,9 +13,11 @@ use secs_types::chain::{
 use serde_json::Value;
 use std::fs::{self, File};
 use std::io::{BufWriter, Write};
+use std::net::TcpListener;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc::{Receiver, SyncSender};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -365,6 +368,168 @@ fn read_raw(path: &Path) -> Result<Vec<f32>, String> {
         .collect())
 }
 
+struct RunningEngine(Child);
+
+impl Drop for RunningEngine {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+fn connect_engine(address: &str) -> Camilla<WsTransport> {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        // The app's request timeout (secs-service apply.rs): since audit #155
+        // TD-132 it bounds a whole request, including FIR loading on Reload.
+        match WsTransport::connect(address, Duration::from_secs(2)) {
+            Ok(transport) => return Camilla::new(transport),
+            Err(error) if Instant::now() < deadline => {
+                eprintln!("waiting for CamillaDSP websocket: {error}");
+                thread::sleep(Duration::from_millis(50));
+            }
+            Err(error) => panic!("CamillaDSP websocket did not start: {error}"),
+        }
+    }
+}
+
+fn wait_for_file_playback(client: &mut Camilla<WsTransport>, output: &Path) {
+    let deadline = Instant::now() + RUN_TIMEOUT;
+    loop {
+        if output.is_file()
+            && fs::metadata(output).is_ok_and(|metadata| metadata.len() > 0)
+            && client.status().is_ok_and(|status| {
+                status.state == "Inactive" && status.stop_reason.as_deref() == Some("Done")
+            })
+        {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "CamillaDSP did not finish writing {}",
+            output.display()
+        );
+        thread::sleep(Duration::from_millis(50));
+    }
+}
+
+/// Applies a config and, when CamillaDSP does not report `Applied`, fails with
+/// the outcome and the engine's own log so the CI run shows the reason.
+fn expect_applied(
+    client: &mut Camilla<WsTransport>,
+    config: &Path,
+    text: &str,
+    label: &str,
+    engine_log: &Path,
+) {
+    let outcome = client.apply(config.to_str().expect("UTF-8 test path"), text);
+    if !matches!(
+        outcome,
+        Ok(secs_apply::camilla::ApplyOutcome::Applied { .. })
+    ) {
+        let log = fs::read_to_string(engine_log).unwrap_or_default();
+        panic!("{label}: apply returned {outcome:?}\nCamillaDSP log:\n{log}");
+    }
+}
+
+/// Waits until `frames` output frames exist while the pipeline is still up.
+/// With its input paused at a slot boundary CamillaDSP reports `Stalled`,
+/// which keeps the devices and filters as they are.
+fn wait_for_live_frames(
+    client: &mut Camilla<WsTransport>,
+    output: &Path,
+    channels: usize,
+    frames: usize,
+) {
+    let required_bytes = (frames * channels * size_of::<f32>()) as u64;
+    let deadline = Instant::now() + RUN_TIMEOUT;
+    loop {
+        let enough_output =
+            fs::metadata(output).is_ok_and(|metadata| metadata.len() >= required_bytes);
+        let live = client
+            .status()
+            .is_ok_and(|status| matches!(status.state.as_str(), "Running" | "Stalled"));
+        if enough_output && live {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "CamillaDSP did not write {frames} live frames to {}",
+            output.display()
+        );
+        thread::sleep(Duration::from_millis(50));
+    }
+}
+
+fn wait_for_title(client: &mut Camilla<WsTransport>, title: &str) {
+    let deadline = Instant::now() + RUN_TIMEOUT;
+    loop {
+        if client
+            .status()
+            .is_ok_and(|status| status.title.as_deref() == Some(title))
+        {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "CamillaDSP never made {title:?} its active config"
+        );
+        thread::sleep(Duration::from_millis(50));
+    }
+}
+
+/// Writes six slots of one impulse each and pauses after slots 1 and 3 until
+/// the test resumes it. Each slot goes out in one burst: CamillaDSP zero-fills
+/// a chunk whose read times out half full, which would shift every later slot,
+/// so the input may only pause at slot boundaries (whole chunks).
+fn write_impulse_slots(
+    input: impl Write,
+    channels: usize,
+    phase_ready: SyncSender<usize>,
+    resume: Receiver<()>,
+) -> Result<(), String> {
+    const SLOTS: usize = 6;
+
+    let mut writer = BufWriter::new(input);
+    let zero = 0.0_f32.to_le_bytes();
+    let impulse = IMPULSE.to_le_bytes();
+    for slot in 0..SLOTS {
+        for frame in 0..FFT_LEN {
+            for channel in 0..channels {
+                let sample = if frame == 0 && channel == 0 {
+                    &impulse
+                } else {
+                    &zero
+                };
+                writer
+                    .write_all(sample)
+                    .map_err(|error| error.to_string())?;
+            }
+        }
+        writer.flush().map_err(|error| error.to_string())?;
+        if slot == 1 || slot == 3 {
+            phase_ready
+                .send(slot + 1)
+                .map_err(|error| error.to_string())?;
+            resume.recv().map_err(|error| error.to_string())?;
+        }
+    }
+    // Dropping the writer closes stdin, which CamillaDSP reads as end of file.
+    writer.flush().map_err(|error| error.to_string())
+}
+
+fn stdin_device(channels: usize) -> Device {
+    Device(vec![
+        ("type".into(), DeviceValue::Str("Stdin".into())),
+        ("format".into(), DeviceValue::Str("F32_LE".into())),
+        ("channels".into(), DeviceValue::Int(channels as i64)),
+        (
+            "extra_samples".into(),
+            DeviceValue::Int(EXTRA_SAMPLES as i64),
+        ),
+    ])
+}
+
 fn run_engine(engine: &Path, config: &Path, log: &Path) -> Result<(), String> {
     let stdout = File::create(log).map_err(|error| error.to_string())?;
     let stderr = stdout.try_clone().map_err(|error| error.to_string())?;
@@ -482,6 +647,95 @@ impl Default for Worst {
             frequency: 0.0,
         }
     }
+}
+
+struct LiveExpectation<'a> {
+    label: &'a str,
+    slot: usize,
+    plan: &'a FilterPlan,
+    gain: f64,
+}
+
+fn assert_live_slot_matches(samples: &[f32], expected: LiveExpectation<'_>) {
+    let frequencies = (0..=FFT_LEN / 2)
+        .map(|index| index as f64 * SAMPLE_RATE as f64 / FFT_LEN as f64)
+        .collect::<Vec<_>>();
+    let input = &expected.plan.inputs[0];
+    let responses = plan_responses(expected.plan, &frequencies, input, false).unwrap();
+    let analog_peak = responses
+        .iter()
+        .flat_map(|(_, response)| response)
+        .map(|value| value.norm() * expected.gain)
+        .fold(0.0_f64, f64::max);
+    let frame_start = expected.slot * FFT_LEN;
+    let required_frames = frame_start + FFT_LEN;
+    let frames = samples.len() / expected.plan.outputs.len();
+    assert_eq!(
+        samples.len() % expected.plan.outputs.len(),
+        0,
+        "{}: partial output frame",
+        expected.label
+    );
+    assert!(
+        frames >= required_frames,
+        "{}: output has {frames} frames, expected at least {required_frames}",
+        expected.label
+    );
+
+    let mut worst = Worst::default();
+    for (output_index, output) in expected.plan.outputs.iter().enumerate() {
+        let measured_time = (0..FFT_LEN)
+            .map(|offset| {
+                let frame = frame_start + offset;
+                f64::from(samples[frame * expected.plan.outputs.len() + output_index])
+                    / f64::from(IMPULSE)
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            measured_time.iter().all(|sample| sample.is_finite()),
+            "{}/{input}->{output}: non-finite output",
+            expected.label
+        );
+        let measured = rfft(&measured_time);
+        let reference = response_for(&responses, output, measured.len());
+        for (index, (got, reference)) in measured.iter().zip(reference).enumerate() {
+            let frequency = frequencies[index];
+            if !(10.0..=20_000.0).contains(&frequency) {
+                continue;
+            }
+            let reference = reference * expected.gain;
+            let error = (*got - reference).norm();
+            let bound = REL * reference.norm() + ABS * analog_peak;
+            let ratio = if bound > 0.0 {
+                error / bound
+            } else if error == 0.0 {
+                0.0
+            } else {
+                f64::INFINITY
+            };
+            if ratio > worst.value {
+                worst = Worst {
+                    value: ratio,
+                    error,
+                    bound,
+                    input: input.clone(),
+                    output: output.clone(),
+                    frequency,
+                };
+            }
+        }
+    }
+    assert!(
+        worst.value <= 1.0,
+        "{} / {} -> {}: response error {:.6e} exceeds bound {:.6e} ({:.6}x) at {:.3} Hz",
+        expected.label,
+        worst.input,
+        worst.output,
+        worst.error,
+        worst.bound,
+        worst.value,
+        worst.frequency
+    );
 }
 
 struct ReportRow {
@@ -836,6 +1090,177 @@ fn camilla_exports_play_as_designed() {
         failures.len(),
         failures.join("\n")
     );
+}
+
+#[test]
+#[ignore = "CamillaDSP 4.1.3 binary is required; the camilla-playback CI job runs this test"]
+fn one_running_pipeline_switches_generation_firs_by_unique_paths() {
+    if !cfg!(target_os = "linux") {
+        println!("skipped: the camilla-playback CI job runs this test on Linux");
+        return;
+    }
+    let Some(engine) = std::env::var_os("SECS_CAMILLADSP") else {
+        println!("skipped: SECS_CAMILLADSP is unset; set it to the CamillaDSP 4.1.3 binary");
+        return;
+    };
+    let engine = PathBuf::from(engine)
+        .canonicalize()
+        .expect("SECS_CAMILLADSP must name an existing CamillaDSP binary");
+    let root = TempDir::new("generation_reload");
+    let fixture = Fixture::load("filters", "computed_dolby");
+    let first_chain = chain(&fixture);
+    let first_plan = make_plan(&first_chain, None).unwrap();
+    let first_written = as_written(&first_plan);
+    let first_gain = headroom_gain(&first_plan);
+    let mut second_chain = first_chain.clone();
+    second_chain.mains[0]
+        .fir
+        .iter_mut()
+        .for_each(|tap| *tap *= 0.5);
+    let second_plan = make_plan(&second_chain, None).unwrap();
+    let second_written = as_written(&second_plan);
+    let second_gain = headroom_gain(&second_plan);
+    assert_eq!(first_plan.inputs, second_plan.inputs);
+    assert_eq!(first_plan.outputs, second_plan.outputs);
+
+    // The input is CamillaDSP's stdin, not a FIFO: config validation opens a
+    // RawFile capture once and closes it, which breaks a FIFO's only writer.
+    let output = root.0.join("continuous-output.f32le");
+    let write_generation =
+        |chain: &SignalChain, folder: &Path, design_name: &str, id_digit: char| {
+            let options = Options {
+                capture: Some(stdin_device(first_plan.inputs.len())),
+                playback: Some(raw_device("File", &output, first_plan.outputs.len(), false)),
+                design: Some(DesignLabels {
+                    project_name: Some("CamillaDSP generation check".into()),
+                    design_name: design_name.into(),
+                    design_id: id_digit.to_string().repeat(64),
+                    bypass: false,
+                }),
+                headroom: true,
+                labels: true,
+                bypass: false,
+                ..Options::default()
+            };
+            write_config(chain, folder, "playback", &options, None).unwrap();
+            folder.join("configs/playback.yml")
+        };
+    let first_folder = root.0.join("generation-1");
+    let first_config = write_generation(&first_chain, &first_folder, "generation-one", '1');
+    let second_folder = root.0.join("generation-2");
+    let second_config = write_generation(&second_chain, &second_folder, "generation-two", '2');
+
+    let probe = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = probe.local_addr().unwrap().port();
+    drop(probe);
+    let engine_log = root.0.join("camilladsp.log");
+    let log = File::create(&engine_log).unwrap();
+    let stderr = log.try_clone().unwrap();
+    let mut child = Command::new(&engine)
+        .args(["--port", &port.to_string(), "--wait"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::from(log))
+        .stderr(Stdio::from(stderr))
+        .spawn()
+        .expect("start CamillaDSP in websocket wait mode");
+    let engine_input = child.stdin.take().expect("CamillaDSP stdin is piped");
+    let mut process = RunningEngine(child);
+    let address = format!("127.0.0.1:{port}");
+    let mut client = connect_engine(&address);
+
+    let (phase_ready_tx, phase_ready_rx) = std::sync::mpsc::sync_channel(0);
+    let (resume_tx, resume_rx) = std::sync::mpsc::sync_channel(0);
+    let input_channels = first_plan.inputs.len();
+    let writer = thread::spawn(move || {
+        write_impulse_slots(engine_input, input_channels, phase_ready_tx, resume_rx)
+    });
+
+    let first_text = fs::read_to_string(&first_config).unwrap();
+    expect_applied(
+        &mut client,
+        &first_config,
+        &first_text,
+        "first apply",
+        &engine_log,
+    );
+    assert_eq!(
+        phase_ready_rx.recv_timeout(RUN_TIMEOUT).unwrap(),
+        2,
+        "writer paused after the first two impulses"
+    );
+    wait_for_live_frames(&mut client, &output, first_plan.outputs.len(), 2 * FFT_LEN);
+
+    // An identical config is a no-op for CamillaDSP (config_diff finds no
+    // change), so its filters keep the coefficients they loaded first.
+    copy_dir(&second_folder.join("coeffs"), &first_folder.join("coeffs"));
+    expect_applied(
+        &mut client,
+        &first_config,
+        &first_text,
+        "same-path reapply",
+        &engine_log,
+    );
+    resume_tx.send(()).unwrap();
+    assert_eq!(
+        phase_ready_rx.recv_timeout(RUN_TIMEOUT).unwrap(),
+        4,
+        "writer paused after two same-path control impulses"
+    );
+    wait_for_live_frames(&mut client, &output, first_plan.outputs.len(), 4 * FFT_LEN);
+
+    let second_text = fs::read_to_string(&second_config).unwrap();
+    expect_applied(
+        &mut client,
+        &second_config,
+        &second_text,
+        "second generation apply",
+        &engine_log,
+    );
+    // Reload answers once the config is queued; the controller hands it to
+    // the pipeline later and only then reports its title as active.
+    wait_for_title(
+        &mut client,
+        "SECS 2R · CamillaDSP generation check · generation-two",
+    );
+    resume_tx.send(()).unwrap();
+    writer
+        .join()
+        .expect("paced input writer panicked")
+        .expect("paced input writer failed");
+    wait_for_file_playback(&mut client, &output);
+
+    let samples = read_raw(&output).unwrap();
+    assert_live_slot_matches(
+        &samples,
+        LiveExpectation {
+            label: "generation 1 before reload",
+            slot: 1,
+            plan: &first_written,
+            gain: first_gain,
+        },
+    );
+    assert_live_slot_matches(
+        &samples,
+        LiveExpectation {
+            label: "same Conv paths after coefficient replacement",
+            slot: 3,
+            plan: &first_written,
+            gain: first_gain,
+        },
+    );
+    assert_live_slot_matches(
+        &samples,
+        LiveExpectation {
+            label: "generation 2 at unique Conv paths",
+            slot: 5,
+            plan: &second_written,
+            gain: second_gain,
+        },
+    );
+
+    client.exit().unwrap();
+    let status = process.0.wait().unwrap();
+    assert!(status.success());
 }
 
 #[test]

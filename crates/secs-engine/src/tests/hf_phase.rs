@@ -40,6 +40,16 @@ fn phase_range(out: &RcOutput, lift: f64, lo: f64, hi: f64) -> (f64, f64) {
     )
 }
 
+fn max_error(errors: impl Iterator<Item = f64>) -> f64 {
+    let errors: Vec<_> = errors.collect();
+    super::max_abs_diff(&errors, &vec![0.0; errors.len()])
+}
+
+#[test]
+fn hf_phase_error_does_not_swallow_nan_between_finite_values() {
+    assert_eq!(max_error([0.1, f64::NAN, 0.2].into_iter()), f64::INFINITY);
+}
+
 fn angular_difference(a: f64, b: f64) -> f64 {
     ((a - b + 180.0).rem_euclid(360.0) - 180.0).abs()
 }
@@ -148,23 +158,25 @@ fn check_case(index: usize, mode: Mode, rc_hi: f64, extra: bool) -> Vec<String> 
     let pre_off = pre_arrival_energy(&off, lift);
     let pre_on = pre_arrival_energy(&on, lift);
     let pre_difference_db = 10.0 * (pre_on / pre_off).log10();
-    let magnitude_difference = design_freqs()
-        .iter()
-        .enumerate()
-        .filter(|(_, f)| **f >= f1 && **f <= f2)
-        .map(|(i, _)| (20.0 * (on.response[i].norm() / off.response[i].norm()).log10()).abs())
-        .fold(0.0, f64::max);
+    let magnitude_difference = max_error(
+        design_freqs()
+            .iter()
+            .enumerate()
+            .filter(|(_, f)| **f >= f1 && **f <= f2)
+            .map(|(i, _)| (20.0 * (on.response[i].norm() / off.response[i].norm()).log10()).abs()),
+    );
     let off_energy = pre_peak_energy(&off);
     let on_energy = pre_peak_energy(&on);
     let outcome = on.hf_phase.as_ref().unwrap();
     let rotation = outcome.rotation_deg.unwrap();
     let extra_delay = max_extra_delay_ms(rotation, lift, f1, f2);
-    let note_error = design_freqs()
-        .iter()
-        .enumerate()
-        .filter(|(_, f)| **f >= 1.06 * f2 && **f <= high)
-        .map(|(i, _)| angular_difference(rotation, phase(&off, lift, i)))
-        .fold(0.0, f64::max);
+    let note_error = max_error(
+        design_freqs()
+            .iter()
+            .enumerate()
+            .filter(|(_, f)| **f >= 1.06 * f2 && **f <= high)
+            .map(|(i, _)| angular_difference(rotation, phase(&off, lift, i))),
+    );
     let notes: Vec<_> = on
         .notes
         .iter()
@@ -235,12 +247,13 @@ fn check_case(index: usize, mode: Mode, rc_hi: f64, extra: bool) -> Vec<String> 
     );
     check(!outcome.limited, "unwind unexpectedly limited");
     if extra {
-        let gap_difference = design_freqs()
-            .iter()
-            .enumerate()
-            .filter(|(_, f)| **f >= 1000.0 && **f <= 1600.0)
-            .map(|(i, _)| angular_difference(phase(&on, lift, i), phase(&off, lift, i)))
-            .fold(0.0, f64::max);
+        let gap_difference = max_error(
+            design_freqs()
+                .iter()
+                .enumerate()
+                .filter(|(_, f)| **f >= 1000.0 && **f <= 1600.0)
+                .map(|(i, _)| angular_difference(phase(&on, lift, i), phase(&off, lift, i))),
+        );
         eprintln!("HF {label}: 1000..1600 Hz phase delta={gap_difference:.6} deg");
         check(
             gap_difference <= 0.5,

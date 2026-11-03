@@ -3,6 +3,9 @@
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 use std::fmt;
+use std::mem::size_of;
+
+const DEFAULT_BUDGET_EXTRA: usize = 16 * 1024 * 1024;
 
 /// A JSON value exactly as Python's `json` module reads and writes it.
 #[derive(Clone, Debug, PartialEq)]
@@ -181,10 +184,20 @@ impl std::error::Error for PyJsonError {}
 
 /// Parses the same value language as CPython's `json.loads`.
 pub fn loads(text: &str) -> Result<PyJson, PyJsonError> {
+    let budget = text
+        .len()
+        .saturating_mul(4)
+        .saturating_add(DEFAULT_BUDGET_EXTRA);
+    loads_with_budget(text, budget)
+}
+
+/// Parses with an explicit allocation budget in bytes.
+pub fn loads_with_budget(text: &str, budget: usize) -> Result<PyJson, PyJsonError> {
     let mut parser = Parser {
         text,
         bytes: text.as_bytes(),
         pos: 0,
+        remaining: budget,
     };
     parser.whitespace();
     let value = parser.value(0)?;
@@ -199,11 +212,40 @@ struct Parser<'a> {
     text: &'a str,
     bytes: &'a [u8],
     pos: usize,
+    remaining: usize,
 }
 
 impl Parser<'_> {
     fn error(&self, message: impl Into<String>) -> PyJsonError {
         PyJsonError::new(self.pos, message)
+    }
+
+    fn charge(&mut self, bytes: usize) -> Result<(), PyJsonError> {
+        self.remaining = self
+            .remaining
+            .checked_sub(bytes)
+            .ok_or_else(|| self.error("JSON allocation budget exceeded"))?;
+        Ok(())
+    }
+
+    fn node(&mut self, value: PyJson, string_bytes: usize) -> Result<PyJson, PyJsonError> {
+        self.charge(size_of::<PyJson>().saturating_add(string_bytes))?;
+        Ok(value)
+    }
+
+    fn reserve_for_push<T>(&mut self, values: &mut Vec<T>) -> Result<(), PyJsonError> {
+        if values.len() < values.capacity() {
+            return Ok(());
+        }
+        let old_capacity = values.capacity();
+        let new_capacity = old_capacity.saturating_mul(2).max(4);
+        let additional = new_capacity.saturating_sub(old_capacity);
+        self.charge(additional.saturating_mul(size_of::<T>()))?;
+        values
+            .try_reserve_exact(additional)
+            .map_err(|_| self.error("JSON allocation failed"))?;
+        let extra = values.capacity().saturating_sub(new_capacity);
+        self.charge(extra.saturating_mul(size_of::<T>()))
     }
 
     fn whitespace(&mut self) {
@@ -227,7 +269,10 @@ impl Parser<'_> {
             {
                 self.keyword(b"-Infinity", PyJson::Float(f64::NEG_INFINITY))
             }
-            Some(b'"') => self.string().map(PyJson::Str),
+            Some(b'"') => {
+                let string = self.string()?;
+                self.node(PyJson::Str(string), 0)
+            }
             Some(b'[') => self.array_value(depth),
             Some(b'{') => self.object_value(depth),
             Some(b'-' | b'0'..=b'9') => self.number(),
@@ -242,7 +287,7 @@ impl Parser<'_> {
             .is_some_and(|rest| rest.starts_with(word))
         {
             self.pos += word.len();
-            Ok(value)
+            self.node(value, 0)
         } else {
             Err(self.error("expecting value"))
         }
@@ -264,10 +309,12 @@ impl Parser<'_> {
         let mut values = Vec::new();
         if self.bytes.get(self.pos) == Some(&b']') {
             self.pos += 1;
-            return Ok(PyJson::Array(values));
+            return self.node(PyJson::Array(values), 0);
         }
         loop {
-            values.push(self.value(depth)?);
+            let value = self.value(depth)?;
+            self.reserve_for_push(&mut values)?;
+            values.push(value);
             self.whitespace();
             match self.bytes.get(self.pos) {
                 Some(b',') => {
@@ -276,7 +323,7 @@ impl Parser<'_> {
                 }
                 Some(b']') => {
                     self.pos += 1;
-                    return Ok(PyJson::Array(values));
+                    return self.node(PyJson::Array(values), 0);
                 }
                 _ => return Err(self.error("expecting ',' or ']'")),
             }
@@ -290,7 +337,7 @@ impl Parser<'_> {
         let mut values: Vec<(String, PyJson)> = Vec::new();
         if self.bytes.get(self.pos) == Some(&b'}') {
             self.pos += 1;
-            return Ok(PyJson::Object(values));
+            return self.node(PyJson::Object(values), 0);
         }
         // Key -> position in `values`, only while this object is parsed.
         let mut index: HashMap<String, usize> = HashMap::new();
@@ -311,7 +358,15 @@ impl Parser<'_> {
             match index.entry(key) {
                 Entry::Occupied(slot) => values[*slot.get()].1 = value,
                 Entry::Vacant(slot) => {
-                    values.push((slot.key().clone(), value));
+                    self.charge(
+                        slot.key()
+                            .len()
+                            .saturating_add(size_of::<(String, usize)>()),
+                    )?;
+                    let cloned_key = slot.key().clone();
+                    self.charge(cloned_key.capacity().saturating_sub(slot.key().len()))?;
+                    self.reserve_for_push(&mut values)?;
+                    values.push((cloned_key, value));
                     slot.insert(values.len() - 1);
                 }
             }
@@ -323,16 +378,43 @@ impl Parser<'_> {
                 }
                 Some(b'}') => {
                     self.pos += 1;
-                    return Ok(PyJson::Object(values));
+                    return self.node(PyJson::Object(values), 0);
                 }
                 _ => return Err(self.error("expecting ',' or '}'")),
             }
         }
     }
 
+    fn string_capacity(&self) -> Result<usize, PyJsonError> {
+        let start = self.pos.saturating_add(1);
+        let mut cursor = start;
+        while let Some(&byte) = self.bytes.get(cursor) {
+            match byte {
+                b'"' => return Ok(cursor - start),
+                b'\\' => {
+                    cursor += 1;
+                    if self.bytes.get(cursor).is_none() {
+                        return Err(PyJsonError::new(cursor, "unterminated string"));
+                    }
+                    cursor += 1;
+                }
+                0..=0x1f => {
+                    return Err(PyJsonError::new(cursor, "invalid control character"));
+                }
+                _ => cursor += 1,
+            }
+        }
+        Err(PyJsonError::new(cursor, "unterminated string"))
+    }
+
     fn string(&mut self) -> Result<String, PyJsonError> {
-        self.pos += 1;
+        let requested = self.string_capacity()?;
+        self.charge(requested)?;
         let mut out = String::new();
+        out.try_reserve_exact(requested)
+            .map_err(|_| self.error("JSON allocation failed"))?;
+        self.charge(out.capacity().saturating_sub(requested))?;
+        self.pos += 1;
         let mut raw_start = self.pos;
         while let Some(&byte) = self.bytes.get(self.pos) {
             match byte {
@@ -463,11 +545,20 @@ impl Parser<'_> {
             let value = raw
                 .parse::<f64>()
                 .map_err(|_| self.error("invalid number"))?;
-            Ok(PyJson::Float(value))
-        } else if raw == "-0" {
-            Ok(PyJson::Int("0".into()))
+            self.node(PyJson::Float(value), 0)
         } else {
-            Ok(PyJson::Int(raw.into()))
+            let (text_start, bytes) = if raw == "-0" {
+                (None, 1)
+            } else {
+                (Some(start), raw.len())
+            };
+            self.charge(bytes)?;
+            let value = text_start.map_or_else(
+                || "0".to_owned(),
+                |start| self.text[start..self.pos].to_owned(),
+            );
+            self.charge(value.capacity().saturating_sub(bytes))?;
+            self.node(PyJson::Int(value), 0)
         }
     }
 }
@@ -660,5 +751,22 @@ mod tests {
         assert!(loads(r#""\ud800""#).is_err());
         assert!(loads(&format!("{}0{}", "[".repeat(1000), "]".repeat(1000))).is_ok());
         assert!(loads(&format!("{}0{}", "[".repeat(1001), "]".repeat(1001))).is_err());
+    }
+
+    #[test]
+    fn allocation_budget_rejects_a_wide_array_td19() {
+        let document = format!("[{}]", vec!["null"; 64].join(","));
+        let budget = std::mem::size_of::<PyJson>() * 8;
+        let error = loads_with_budget(&document, budget).unwrap_err();
+        assert!(error.to_string().contains("allocation budget"));
+        assert!(loads(&document).is_ok());
+    }
+
+    #[test]
+    fn allocation_budget_rejects_a_large_string_before_allocating_td19() {
+        let document = format!("\"{}\"", "x".repeat(2 * 1024 * 1024));
+        let error = loads_with_budget(&document, 64).unwrap_err();
+        assert_eq!(error.offset, 0);
+        assert!(error.to_string().contains("allocation budget"));
     }
 }

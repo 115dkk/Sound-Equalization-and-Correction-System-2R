@@ -1497,7 +1497,9 @@ pub fn write_config(
     options: &Options,
     mimo: Option<&MimoPaths>,
 ) -> Result<Vec<PathBuf>, CamillaError> {
-    write_config_observed(chain, out, name, options, mimo, &|_, _| Ok(()))
+    write_config_observed(chain, out, name, options, mimo, &|_, _| Ok(()), &|_, _| {
+        Ok(())
+    })
 }
 
 /// Audit-only staging seam invoked after each complete staged file.
@@ -1509,6 +1511,7 @@ pub fn write_config_observed(
     options: &Options,
     mimo: Option<&MimoPaths>,
     after_stage_write: &dyn Fn(usize, &Path) -> std::io::Result<()>,
+    before_install: &dyn Fn(usize, &Path) -> std::io::Result<()>,
 ) -> Result<Vec<PathBuf>, CamillaError> {
     let safe = safe_name(name);
     if safe == "." || safe == ".." {
@@ -1564,7 +1567,13 @@ pub fn write_config_observed(
         bundle.push((bypass_relative.clone(), bypass.yaml.as_bytes().to_vec()));
     }
     bundle.push((config_relative.clone(), config.yaml.into_bytes()));
-    write_bundle_observed(out, &bundle, &config_relative, after_stage_write)?;
+    write_bundle_observed(
+        out,
+        &bundle,
+        &config_relative,
+        after_stage_write,
+        before_install,
+    )?;
 
     let config_path = out.join(&config_relative);
     let mut written = vec![config_path];
