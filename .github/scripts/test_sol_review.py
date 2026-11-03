@@ -331,6 +331,15 @@ class ReviewTests(unittest.TestCase):
             self.assertEqual(review.api(f"/repos/{REPOSITORY}", sleeper=lambda _: None), {})
         self.assertEqual(calls, ["GET", "GET"])
         calls.clear()
+        def drop_once(request, timeout):
+            calls.append(request.method)
+            if len(calls) == 1:
+                raise review.http.client.RemoteDisconnected("closed")
+            return response
+        with patch.dict("os.environ", {"GH_TOKEN": "token"}), patch.object(review.urllib.request, "urlopen", drop_once):
+            self.assertEqual(review.api(f"/repos/{REPOSITORY}", sleeper=lambda _: None), {})
+        self.assertEqual(calls, ["GET", "GET"])
+        calls.clear()
         replies = [http_error(403, headers={"Retry-After": "0"}), response]
         def open_secondary_limit(request, timeout):
             calls.append(request.method)

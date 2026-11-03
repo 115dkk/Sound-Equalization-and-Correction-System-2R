@@ -1,8 +1,10 @@
 """Make one bounded Responses API request without tools or an agent loop."""
 import argparse
+import http.client
 import json
 import os
 from pathlib import Path
+import socket
 import time
 import urllib.error
 import urllib.request
@@ -23,6 +25,32 @@ COUNTED_FIELDS = ("model", "instructions", "input", "reasoning", "text")
 QUOTA_CODES = {"insufficient_quota", "billing_hard_limit_reached", "billing_not_active"}
 # Answers worth waiting out; only the side-effect-free token count is retried.
 RETRY_CODES = {429, 500, 502, 503, 504}
+# A dropped connection: urllib raises these from reading the response, not as
+# URLError (RemoteDisconnected is both).
+DROPPED = (urllib.error.URLError, TimeoutError, http.client.HTTPException, ConnectionError)
+# TCP keepalive while the model thinks. GitHub-hosted runners run on Azure,
+# which drops an outbound connection idle for about four minutes, and a review
+# at xhigh effort sends nothing back until it answers: PR #163's review
+# (2026-11-03) died with RemoteDisconnected after five minutes.
+KEEPALIVE = (("TCP_KEEPIDLE", 60), ("TCP_KEEPINTVL", 30), ("TCP_KEEPCNT", 8))
+
+
+class KeepAliveHTTPSConnection(http.client.HTTPSConnection):
+    def connect(self):
+        super().connect()
+        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+        for name, value in KEEPALIVE:
+            # Linux names; a platform without one keeps its own default.
+            if hasattr(socket, name):
+                self.sock.setsockopt(socket.IPPROTO_TCP, getattr(socket, name), value)
+
+
+class KeepAliveHTTPSHandler(urllib.request.HTTPSHandler):
+    def https_open(self, req):
+        return self.do_open(KeepAliveHTTPSConnection, req, context=self._context)
+
+
+OPENER = urllib.request.build_opener(KeepAliveHTTPSHandler())
 
 
 def strict_json(raw):
@@ -132,7 +160,7 @@ def post(path, body, timeout, retry=False, sleeper=time.sleep):
     )
     for attempt in range(4):
         try:
-            with urllib.request.urlopen(request, timeout=timeout) as response:
+            with OPENER.open(request, timeout=timeout) as response:
                 raw = response.read(MAX_RESPONSE_BYTES + 1)
             if len(raw) > MAX_RESPONSE_BYTES:
                 raise ValueError("API response exceeds limit")
@@ -144,7 +172,7 @@ def post(path, body, timeout, retry=False, sleeper=time.sleep):
             if not retry or attempt == 3 or (error.code not in RETRY_CODES and not rate_limited):
                 raise
             sleeper(_delay(error, attempt))
-        except (urllib.error.URLError, TimeoutError):
+        except DROPPED:
             if not retry or attempt == 3:
                 raise
             sleeper(float(2 ** attempt))

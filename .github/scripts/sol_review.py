@@ -1,6 +1,7 @@
 """Prepare and publish a trusted review without executing pull request content."""
 import argparse
 import hashlib
+import http.client
 import json
 import os
 from pathlib import Path, PurePosixPath
@@ -142,7 +143,9 @@ def api(path, data=None, method=None, accept=None, sleeper=time.sleep):
             if not retry or attempt == 3 or not _retryable(error):
                 raise
             sleeper(_retry_delay(error, attempt))
-        except (urllib.error.URLError, TimeoutError):
+        # A dropped connection is raised from reading the response, not as
+        # URLError (RemoteDisconnected is both an HTTPException and a ConnectionError).
+        except (urllib.error.URLError, TimeoutError, http.client.HTTPException, ConnectionError):
             if not retry or attempt == 3:
                 raise
             sleeper(float(2 ** attempt))

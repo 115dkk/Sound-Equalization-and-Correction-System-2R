@@ -1,3 +1,4 @@
+import http.client
 import io
 import json
 import os
@@ -102,7 +103,7 @@ class ApiTests(unittest.TestCase):
             return reply
         body = api.build_request("diff", "trusted", {}, "gpt-6.1-sol", "high", 16000)
         with patch.dict(os.environ, {"OPENAI_API_KEY": "secret"}), \
-                patch.object(api.urllib.request, "urlopen", urlopen), \
+                patch.object(api.OPENER, "open", urlopen), \
                 patch.object(api.time, "sleep", lambda _: None):
             self.assertEqual(api.input_tokens(body), 12)
         self.assertEqual(len(calls), 2)
@@ -119,7 +120,7 @@ class ApiTests(unittest.TestCase):
             return reply
         body = api.build_request("diff", "trusted", {}, "gpt-6.1-sol", "high", 16000)
         with patch.dict(os.environ, {"OPENAI_API_KEY": "secret"}), \
-                patch.object(api.urllib.request, "urlopen", urlopen), \
+                patch.object(api.OPENER, "open", urlopen), \
                 patch.object(api.time, "sleep", lambda _: None):
             self.assertEqual(api.input_tokens(body), 12)
         self.assertEqual(len(calls), 2)
@@ -130,10 +131,45 @@ class ApiTests(unittest.TestCase):
             calls.append(request.full_url)
             raise http_error(503)
         with patch.dict(os.environ, {"OPENAI_API_KEY": "secret"}), \
-                patch.object(api.urllib.request, "urlopen", urlopen), \
+                patch.object(api.OPENER, "open", urlopen), \
                 self.assertRaises(urllib.error.HTTPError):
             api.post("responses", {}, 30, retry=False, sleeper=lambda _: self.fail("slept"))
         self.assertEqual(len(calls), 1)
+
+    def test_a_dropped_connection_retries_only_the_count(self):
+        for retry, expected_calls in ((True, 2), (False, 1)):
+            calls = []
+            replies = [http.client.RemoteDisconnected("closed"), Response(json.dumps(counted(12)).encode())]
+            def urlopen(request, timeout):
+                calls.append(request.full_url)
+                reply = replies.pop(0)
+                if isinstance(reply, Exception):
+                    raise reply
+                return reply
+            with self.subTest(retry=retry), patch.dict(os.environ, {"OPENAI_API_KEY": "secret"}), \
+                    patch.object(api.OPENER, "open", urlopen):
+                if retry:
+                    self.assertEqual(api.post("responses/input_tokens", {}, 30, retry=True, sleeper=lambda _: None),
+                                     counted(12))
+                else:
+                    with self.assertRaises(http.client.RemoteDisconnected):
+                        api.post("responses", {}, 30, retry=False, sleeper=lambda _: self.fail("slept"))
+            self.assertEqual(len(calls), expected_calls)
+
+    def test_connections_keep_alive_while_the_model_thinks(self):
+        self.assertTrue(any(isinstance(handler, api.KeepAliveHTTPSHandler) for handler in api.OPENER.handlers))
+        self.assertFalse(any(type(handler) is api.urllib.request.HTTPSHandler for handler in api.OPENER.handlers))
+        options = []
+        sock = type("Socket", (), {"setsockopt": lambda self, *args: options.append(args)})()
+        connection = api.KeepAliveHTTPSConnection("api.openai.com")
+        def connect(self):
+            self.sock = sock
+        with patch.object(api.http.client.HTTPSConnection, "connect", connect):
+            connection.connect()
+        self.assertIn((api.socket.SOL_SOCKET, api.socket.SO_KEEPALIVE, 1), options)
+        if hasattr(api.socket, "TCP_KEEPIDLE"):
+            # Below the four minutes Azure lets an outbound connection sit idle.
+            self.assertIn((api.socket.IPPROTO_TCP, api.socket.TCP_KEEPIDLE, 60), options)
 
     def test_choose_uses_full_then_diff_by_token_count(self):
         for full_tokens, mode, sent in ((api.MAX_INPUT_TOKENS, "full", "full prompt"),
