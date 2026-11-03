@@ -61,11 +61,11 @@ class HeavyInputsTest(unittest.TestCase):
             ".github/scripts/upstream.py",
             ".github/scripts/api_dry_run.py",
             ".github/scripts/release_gate.py",
-            ".github/scripts/codex_review.py",
+            ".github/scripts/sol_review_api.py",
             ".github/scripts/gallery_close.py",
             ".github/scripts/ci_scope.py",
             ".github/workflows/sol-review.yml",
-            ".github/codex/policy.txt",
+            ".github/sol-review/policy.txt",
         ):
             self.assertNotIn(path, HEAVY)
 
@@ -90,7 +90,7 @@ class DecideTest(unittest.TestCase):
     def test_ci_and_docs_commits_on_light_files_skip_the_heavy_jobs(self):
         heavy, why = decide(
             [commit("ci: Sol 리뷰"), commit("Merge branch 'main' into claude/x", parents=2), commit("docs: 적어 둡니다")],
-            [changed(".github/scripts/codex_review.py"), changed("docs/adr/0032-nuget-package.md"),
+            [changed(".github/scripts/sol_review.py"), changed("docs/adr/0032-nuget-package.md"),
              changed("CLAUDE.md"), changed("crates/secs-api/README.md")])
         self.assertFalse(heavy, why)
 
