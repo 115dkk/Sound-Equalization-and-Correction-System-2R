@@ -288,6 +288,8 @@ mod tests {
         let base = pulse(1.0, 0);
         let same = pulse(1.0, 24);
         let opposite = pulse(-1.0, 24);
+        // The normalization is exact: a response against itself is +1.
+        assert!((pair_correlation(&base, &base, 48_000).unwrap() - 1.0).abs() < 1e-9);
         assert!(pair_correlation(&base, &same, 48_000).unwrap() >= 0.9);
         assert!(pair_correlation(&base, &opposite, 48_000).unwrap() <= -0.9);
 
