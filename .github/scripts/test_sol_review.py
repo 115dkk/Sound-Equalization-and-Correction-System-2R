@@ -227,6 +227,25 @@ class ReviewTests(unittest.TestCase):
                 self.assertIsNone(payload["files"][0]["patch"])
                 self.assertEqual({item["side"] for item in payload["context"] if item["path"] == "file.rs"},
                                  {"head", "base"})
+                # Without a patch every line may block, never none of them.
+                meta = json.loads((self.directory / "metadata.json").read_text())
+                self.assertEqual(meta["changed_lines"]["head"]["file.rs"], [[1, 2]])
+                self.assertEqual(meta["changed_lines"]["base"]["file.rs"], [[1, 2]])
+                blocking = finding(line=1, severity="blocking", category="security")
+                processed = review.validate_result(result([blocking]), meta)
+                self.assertEqual(review.verdict(processed, meta), "REQUEST_CHANGES")
+
+    def test_renamed_file_links_its_base_side_under_the_old_name(self):
+        self.github.files = [file_record("new.rs", "renamed") | {"previous_filename": "old.rs"}]
+        self.github.associated = [copy.deepcopy(self.github.pr)]
+        self.github.contents.update({("old.rs", MERGE_BASE): b"old\nbad\n", ("new.rs", HEAD): b"old\ngood\n"})
+        review.prepare(workflow_event(), self.directory, self.github.request)
+        meta = json.loads((self.directory / "metadata.json").read_text())
+        self.assertEqual(meta["previous_names"], {"new.rs": "old.rs"})
+        _, base_link = review.locations(meta, "new.rs", "base", 2)
+        self.assertIn(f"/blob/{MERGE_BASE}/old.rs#L2", base_link)
+        _, head_link = review.locations(meta, "new.rs", "head", 2)
+        self.assertIn(f"/blob/{HEAD}/new.rs#L2", head_link)
 
     def test_u2028_stays_inside_one_source_line(self):
         self.github.contents[("file.rs", HEAD)] = "one two\nthree\n".encode()
@@ -470,6 +489,14 @@ class ReviewTests(unittest.TestCase):
                 self.assertEqual(self.posted_reviews()[0]["event"], "COMMENT")
                 self.assertIn("Wrong review identity", self.posted_reviews()[0]["body"])
 
+    def test_a_moved_merge_base_gives_no_verdict(self):
+        stale = metadata() | {"merge_base_sha": "e" * 40}
+        value = result() | {"merge_base_sha": "e" * 40}
+        self.assertEqual(self.publish(meta=stale, value=value), "COMMENT")
+        posted = self.posted_reviews()[0]
+        self.assertEqual(posted["comments"], [])
+        self.assertIn("merge base가 바뀌었습니다", posted["body"])
+
     def test_forged_v2_and_v3_markers_do_not_suppress_review(self):
         self.github.review_history = [
             {"id": 1, "state": "COMMENTED", "commit_id": HEAD,
@@ -637,6 +664,12 @@ class ReviewTests(unittest.TestCase):
         self.github = GitHub()
         self.github.graphql_threads = [thread]
         self.publish(value=result(complete=False, reviewed=[]))
+        self.assertFalse(any(path == "/graphql" for path, _, _ in self.github.writes))
+        # A complete result that lost a blocking finding keeps the old threads.
+        self.github = GitHub()
+        self.github.graphql_threads = [thread]
+        lost = finding(severity="blocking", category="security") | {"path": "outside.rs"}
+        self.assertEqual(self.publish(value=result([lost])), "COMMENT")
         self.assertFalse(any(path == "/graphql" for path, _, _ in self.github.writes))
 
     def test_quota_notice_keeps_the_short_existing_format(self):

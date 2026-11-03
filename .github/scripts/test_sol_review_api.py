@@ -295,6 +295,9 @@ class ApiTests(unittest.TestCase):
         self.assertNotIn("pull-requests: write", review_job)
         self.assertNotIn("OPENAI_API_KEY", publish_job)
         self.assertNotRegex(workflow, r"ref:\s*\$\{\{[^\n]*(pull_request|head_sha)")
+        # A fork's run with the same branch name must not cancel a real review.
+        self.assertIn("group: sol-review-${{ github.event.workflow_run.head_repository.full_name }}-"
+                      "${{ github.event.workflow_run.head_branch }}", workflow)
         self.assertIn("--guide trusted/.github/sol-review/guide.md", workflow)
         self.assertIn("--rules trusted/CLAUDE.md --rules trusted/CONTEXT.md", workflow)
 

@@ -346,6 +346,7 @@ def prepare(event, output, request=api):
     files = _file_list(repository, pr, request)
     normalized = []
     analyses = {}
+    patchless = set()
     for item in files:
         info = patch_info(item.get("patch"))
         valid_patch = (isinstance(item.get("patch"), str)
@@ -355,6 +356,8 @@ def prepare(event, output, request=api):
         copy["patch"] = item.get("patch") if valid_patch else None
         normalized.append(copy)
         analyses[item["filename"]] = info if valid_patch else patch_info(None)
+        if not valid_patch:
+            patchless.add(item["filename"])
 
     reads = sum(1 for item in files for side in ("base", "head")
                 if not (side == "base" and item.get("status") == "added")
@@ -388,6 +391,11 @@ def prepare(event, output, request=api):
             for side, path, text in versions:
                 line_limits[side][item["filename"]] = len(text_lines(text))
                 changed_context.append({"side": side, "path": path, "content": text})
+                # Without a patch nothing says which lines changed, so every
+                # line may carry a blocking finding; an empty range would turn
+                # a real one into an approval.
+                if item["filename"] in patchless and line_limits[side][item["filename"]] > 0:
+                    analyses[item["filename"]]["changed"][side] = [[1, line_limits[side][item["filename"]]]]
     else:
         for item in files:
             info = analyses[item["filename"]]
@@ -427,6 +435,9 @@ def prepare(event, output, request=api):
         "unreadable_files": unreadable,
         "removed_files": [item["filename"] for item in files if item.get("status") == "removed"],
         "added_files": [item["filename"] for item in files if item.get("status") == "added"],
+        # A renamed file's base side lives under its old name at the merge base.
+        "previous_names": {item["filename"]: item["previous_filename"] for item in files
+                           if isinstance(item.get("previous_filename"), str)},
         "line_limits": line_limits,
         "changed_lines": {side: {item["filename"]: analyses[item["filename"]]["changed"][side]
                                   for item in files} for side in ("head", "base")},
@@ -502,6 +513,9 @@ def _metadata(meta, expected):
                 for paths in (meta["reviewable"], meta["removed_files"], meta["added_files"])),
             "Invalid metadata file groups")
     require(set(meta["removed_files"]).isdisjoint(meta["added_files"]), "Invalid added/removed files")
+    previous = meta.get("previous_names", {})
+    require(isinstance(previous, dict) and all(isinstance(old, str) and new in meta["files"]
+                                               for new, old in previous.items()), "Invalid previous names")
     unreadable = meta.get("unreadable_files")
     require(isinstance(unreadable, list)
             and all(isinstance(item, dict) and set(item) == {"path", "reason"}
@@ -598,7 +612,10 @@ def validate_result(value, meta):
     findings = findings[:30]
     valid = not errors
     return {
-        "valid": valid, "complete": complete, "complete_review": valid and complete and coverage_ok,
+        # A review that lost a blocking finding to a bad location is not one to
+        # clear the earlier review's threads with.
+        "valid": valid, "complete": complete,
+        "complete_review": valid and complete and coverage_ok and not dropped_blocking,
         "summary": summary, "findings": findings, "dropped": dropped, "omitted": omitted,
         "dropped_blocking": dropped_blocking,
         "reason": "; ".join(errors),
@@ -622,9 +639,12 @@ def locations(meta, path, side, line, end_line=None):
     letter = "R" if side == "head" else "L"
     sha = meta["head_sha"] if side == "head" else meta["merge_base_sha"]
     repo = f"https://github.com/{meta['repository']}"
+    # The diff anchor names the file as the pull request does; the base-side
+    # permalink needs the name the file had at the merge base.
     diff = f"{repo}/pull/{meta['pr']}/files#diff-{hashlib.sha256(path.encode()).hexdigest()}{letter}{line}"
+    blob_path = meta.get("previous_names", {}).get(path, path) if side == "base" else path
     anchor = f"#L{line}" if end_line == line else f"#L{line}-L{end_line}"
-    return diff, f"{repo}/blob/{sha}/{quote(path, safe='/')}{anchor}"
+    return diff, f"{repo}/blob/{sha}/{quote(blob_path, safe='/')}{anchor}"
 
 
 def _inline(finding, meta):
@@ -850,6 +870,10 @@ def publish(event, directory, enabled=False, request=api):
         require(len(raw_meta) <= MAX_METADATA_BYTES, "Oversized metadata")
         loaded_meta = strict_json(raw_meta)
         _metadata(loaded_meta, expected)
+        # main taking in part of the branch moves the merge base, and with it
+        # the diff and every base-side line the result points at.
+        require(loaded_meta["merge_base_sha"] == current_merge_base,
+                "검토 중 PR의 merge base가 바뀌었습니다. 이전 결과는 적용하지 않으며 다시 검토해야 합니다.")
         current_files = [item["filename"] for item in _file_list(repository, pr, request)]
         require(current_files == loaded_meta["files"], "Changed file list does not match metadata")
         meta = loaded_meta

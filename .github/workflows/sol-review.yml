@@ -17,8 +17,10 @@ on:
 
 permissions: {}
 concurrency:
-  # A newer push to the same branch makes an older review stale.
-  group: sol-review-${{ github.event.workflow_run.head_branch }}
+  # A newer push to the same branch makes an older review stale. The group is
+  # decided before any job's `if`, so it names the head repository too: a
+  # fork's run with the same branch name must not cancel a real review.
+  group: sol-review-${{ github.event.workflow_run.head_repository.full_name }}-${{ github.event.workflow_run.head_branch }}
   cancel-in-progress: true
 
 jobs:
