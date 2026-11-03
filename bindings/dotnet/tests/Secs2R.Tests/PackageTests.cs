@@ -78,6 +78,18 @@ public sealed class PackageTests
     }
 
     [Fact]
+    public async Task ClientEventsOnAClosedPortFailWithTransportError()
+    {
+        int port = ClosedPort();
+        using var client = new Client(port, token: "test");
+        await using IAsyncEnumerator<JsonElement> events = client.Events().GetAsyncEnumerator();
+
+        SecsException error = await Assert.ThrowsAsync<SecsException>(async () => await events.MoveNextAsync());
+
+        Assert.Equal("transport_error", error.Code);
+    }
+
+    [Fact]
     public void MockMeasurementCalibratesAndExportsEqualizerApoFiles()
     {
         using var temp = new TestDirectory();

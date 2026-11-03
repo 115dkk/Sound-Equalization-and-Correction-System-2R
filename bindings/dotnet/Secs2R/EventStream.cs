@@ -41,7 +41,7 @@ public sealed class EventStream : IAsyncEnumerable<JsonElement>
             CancellationTokenSource.CreateLinkedTokenSource(_cancellationToken, cancellationToken);
         CancellationToken token = linked.Token;
         token.ThrowIfCancellationRequested();
-        ulong subscription = _subscribe();
+        ulong subscription = await OpenAsync(_subscribe, token).ConfigureAwait(false);
         try
         {
             while (true)
@@ -67,5 +67,44 @@ public sealed class EventStream : IAsyncEnumerable<JsonElement>
         {
             Native.EventsFree(subscription);
         }
+    }
+
+    // Opening a client subscription connects a WebSocket, which can take a while; it runs on
+    // the thread pool so the caller's thread (a UI thread, say) does not wait for it. The native
+    // call cannot be interrupted, so a cancellation stops waiting for it and frees whatever it
+    // opens once it returns.
+    private static async Task<ulong> OpenAsync(Func<ulong> subscribe, CancellationToken token)
+    {
+        Task<ulong> opening = Task.Run(subscribe, CancellationToken.None);
+        if (!token.CanBeCanceled)
+        {
+            return await opening.ConfigureAwait(false);
+        }
+
+        var cancelled = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        using (token.Register(() => cancelled.TrySetResult(true)))
+        {
+            if (await Task.WhenAny(opening, cancelled.Task).ConfigureAwait(false) == opening)
+            {
+                return await opening.ConfigureAwait(false);
+            }
+        }
+
+        _ = opening.ContinueWith(
+            finished =>
+            {
+                if (finished.Status == TaskStatus.RanToCompletion)
+                {
+                    Native.EventsFree(finished.Result);
+                }
+                else
+                {
+                    _ = finished.Exception;
+                }
+            },
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+        throw new OperationCanceledException(token);
     }
 }
