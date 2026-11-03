@@ -265,7 +265,9 @@ jobs:
             python:
               - 'bindings/python/**'
               - 'crates/**'
+              - 'Cargo.toml'
               - 'Cargo.lock'
+              - 'rust-toolchain.toml'
               - '.github/workflows/ci.yml'
 
   python-wheels:
@@ -387,10 +389,14 @@ jobs:
         id: filter
         with:
           filters: |
+            # The root manifest gives the crates their edition, lints,
+            # shared dependencies and release profile.
             dotnet:
               - 'bindings/dotnet/**'
               - 'crates/**'
+              - 'Cargo.toml'
               - 'Cargo.lock'
+              - 'rust-toolchain.toml'
               - '.github/workflows/ci.yml'
 
   # Built as release.yml builds the libraries it packs, but one OS at a time:
