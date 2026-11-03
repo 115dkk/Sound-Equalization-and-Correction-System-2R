@@ -783,7 +783,7 @@ def _dismiss_stale_approvals(repository, pr_number, current_head, request):
                     _dismiss(repository, pr_number, review["id"],
                              "최신 커밋과 다른 커밋에 남은 승인을 해제합니다.", request)
                 except Exception as error:
-                    print(f"stale approval dismissal failed: {type(error).__name__}")
+                    print(f"stale approval dismissal failed: {type(error).__name__}: {str(error)[:300]}")
         if len(reviews) < 100:
             return
         page += 1
@@ -805,12 +805,24 @@ RESOLVE_THREAD = """mutation ResolveReviewThread($threadId: ID!) {
 }"""
 
 
+def _graphql(request, query, variables):
+    """A GraphQL call whose refusal raises. GitHub answers a refused query or
+    mutation with HTTP 200 and an `errors` list; resolveReviewThread, for one,
+    is refused to a token without contents: write (PR #164, 2026-11-03)."""
+    value = request("/graphql", {"query": query, "variables": variables})
+    errors = value.get("errors") if isinstance(value, dict) else None
+    if errors:
+        messages = "; ".join(str(item.get("message")) if isinstance(item, dict) else str(item) for item in errors)
+        raise ValueError("GraphQL: " + messages[:300])
+    return value
+
+
 def _resolve_old_threads(repository, pr_number, posted_review_node, request):
     owner, name = repository.split("/", 1)
     after = None
     while True:
         variables = {"owner": owner, "name": name, "number": pr_number, "after": after}
-        value = request("/graphql", {"query": THREADS_QUERY, "variables": variables})
+        value = _graphql(request, THREADS_QUERY, variables)
         threads = value["data"]["repository"]["pullRequest"]["reviewThreads"]
         for thread in threads.get("nodes") or []:
             if not isinstance(thread, dict):
@@ -822,9 +834,9 @@ def _resolve_old_threads(repository, pr_number, posted_review_node, request):
             if (not thread.get("isResolved") and author.get("login") == "github-actions"
                     and first_review.get("id") != posted_review_node):
                 try:
-                    request("/graphql", {"query": RESOLVE_THREAD, "variables": {"threadId": thread["id"]}})
+                    _graphql(request, RESOLVE_THREAD, {"threadId": thread["id"]})
                 except Exception as error:
-                    print(f"review thread resolution failed: {type(error).__name__}")
+                    print(f"review thread resolution failed: {type(error).__name__}: {str(error)[:300]}")
         page = threads["pageInfo"]
         if not page.get("hasNextPage"):
             return
@@ -964,7 +976,7 @@ def publish(event, directory, enabled=False, request=api):
             _dismiss(repository, pr_number, posted["id"],
                      "게시 뒤 새 커밋이 올라와 이전 승인을 해제합니다.", request)
     except Exception as error:
-        print(f"post-review head check failed: {type(error).__name__}")
+        print(f"post-review head check failed: {type(error).__name__}: {str(error)[:300]}")
     try:
         if latest is None:
             latest = request(root)
@@ -972,7 +984,7 @@ def publish(event, directory, enabled=False, request=api):
         require(isinstance(current_head, str) and SHA.fullmatch(current_head), "Invalid current head")
         _dismiss_stale_approvals(repository, pr_number, current_head, request)
     except Exception as error:
-        print(f"stale approval cleanup failed: {type(error).__name__}")
+        print(f"stale approval cleanup failed: {type(error).__name__}: {str(error)[:300]}")
     try:
         posted_node = posted.get("node_id") if isinstance(posted, dict) else None
         if (posted_complete and latest is not None
@@ -980,7 +992,7 @@ def publish(event, directory, enabled=False, request=api):
                 and latest.get("head", {}).get("sha") == head_sha and isinstance(posted_node, str)):
             _resolve_old_threads(repository, pr_number, posted_node, request)
     except Exception as error:
-        print(f"review thread cleanup failed: {type(error).__name__}")
+        print(f"review thread cleanup failed: {type(error).__name__}: {str(error)[:300]}")
     return posted_event
 
 
