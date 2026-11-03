@@ -58,6 +58,6 @@ cargo +nightly-2026-10-01 miri test --locked -p secs-project --test golden -- wa
 - push한 뒤에는 PR의 CI를 끝까지 따라가고, 실패하면 같은 PR에 수정 커밋을 올립니다.
 - PR의 커밋이 병합 커밋을 빼고 모두 `ci:`나 `docs:`이고, 바뀐 파일이 모두 `docs/`·`.github/` 아래이거나 `.md`이면서 무거운 잡이 읽지 않는 파일이면, CI는 `cargo test`, 설치본, 재생 검사, 화면 갤러리, Miri, fuzz를 돌리지 않습니다(`ci.yml`의 `scope`, `.github/scripts/ci_scope.py`). lint, 화면 검사, rustdoc, cargo-deny는 늘 돌고, `ci.yml`을 고친 PR은 모든 잡을 돌립니다.
 - 유지보수자의 상시 승인에 따라, 에이전트가 연 PR은 CI가 모두 통과하고 충돌과 열린 리뷰 스레드가 없으면 사람의 리뷰를 기다리지 않고 머지 커밋으로 머지합니다. 머지한 뒤에는 `release.yml`의 실행(게이트의 판정, bump 커밋, 세 운영체제 설치본, 릴리스 자산)까지 확인합니다.
-- 화면이나 카탈로그를 바꾼 PR에서는 `ui-gallery.yml`이 리뷰 이슈(`화면 갤러리 리뷰: PR #N`)를 열어 화면 전체와 견본을 보여 줍니다. 머지를 막지 않지만, 그 링크를 사용자에게 알려 화면을 따로 볼 수 있게 합니다.
+- 화면이나 카탈로그를 바꾼 PR에서는 `ui-gallery.yml`이 리뷰 이슈(`화면 갤러리 리뷰: PR #N`)를 열어 화면 전체와 견본을 보여 줍니다. 머지를 막지 않지만, 그 링크를 사용자에게 알려 화면을 따로 볼 수 있게 합니다. PR이 머지되거나 닫히면 `ui-gallery-close.yml`이 그 이슈를 닫습니다.
 - 업스트림에 새 커밋이 생기면 `upstream-watch.yml`이 이슈를 엽니다. 병합할 때 `README.md`·`CHANGELOG.md` 충돌은 우리 쪽을 남기고 업스트림 판을 `docs/upstream/`에 옮깁니다.
 - 매월 5일 `monthly-audit.yml`이 main을 아키텍처와 기술 부채 두 가지로 감사해 `Monthly Audit: <날짜>` 이슈(라벨 `audit`)를 엽니다. Claude API 크레딧은 워크로드 아이덴티티 페더레이션으로 받으며, 필요한 Console 규칙과 저장소 변수는 워크플로 머리말에 있습니다. 감사가 끝나면 `TECH_DEBT_AUDIT.md`를 다음 감사의 기준 결과로 main에 커밋하므로 손으로 고치지 마십시오. 감사 이슈의 항목은 `resolve-audit` 스킬로 처리하십시오.
