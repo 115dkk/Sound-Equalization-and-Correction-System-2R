@@ -1,7 +1,28 @@
 """Unit tests for api_dry_run.py (python -m unittest, no dependencies)."""
+import fnmatch
 import unittest
 
 import api_dry_run as d
+import release_gate as g
+
+
+def glob_matches(path: str, glob: str) -> bool:
+    """Path.glob's rule for these patterns: one ``*`` per path component."""
+    parts, globs = path.split("/"), glob.split("/")
+    return len(parts) == len(globs) and all(map(fnmatch.fnmatchcase, parts, globs))
+
+
+class MemberGlobTest(unittest.TestCase):
+    def test_every_binding_crate_is_rewritten(self):
+        # A binding crate the dry run misses keeps "=<version>" on the API
+        # while the API moves to "<version>-dryrun", and Cargo cannot resolve.
+        for manifest, _ in g.BINDINGS:
+            path = manifest.as_posix()
+            self.assertTrue(any(glob_matches(path, glob) for glob in d.MEMBER_GLOBS), manifest)
+
+    def test_glob_rule(self):
+        self.assertFalse(glob_matches("bindings/dotnet/native/Cargo.toml", "bindings/*/Cargo.toml"))
+        self.assertTrue(glob_matches("bindings/dotnet/native/Cargo.toml", "bindings/*/*/Cargo.toml"))
 
 
 class VersionTest(unittest.TestCase):

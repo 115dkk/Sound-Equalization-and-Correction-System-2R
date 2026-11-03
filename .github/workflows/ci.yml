@@ -18,6 +18,12 @@ name: CI
 #             bindings regenerated from secs-types must match the committed copy
 #   python-wheels  when the Python package or its Rust dependencies change,
 #             build and test its wheel on Linux, Windows and macOS
+#   dotnet-package  when the NuGet package or its Rust dependencies change,
+#             build its native library on Linux, Windows and macOS (macOS also
+#             for Intel), check the generated C# declarations, pack it, and
+#             run a test project that installs the package (docs/adr/0032);
+#             then pack and test the package with all four libraries, as
+#             release.yml publishes it
 #   gallery   every gallery specimen in Chromium, light and dark, Korean and
 #             English and the tutorial accent: no page error, no text under
 #             the 13 px floor, one PNG per data-gallery-id kept as an artifact
@@ -364,6 +370,186 @@ jobs:
             success|skipped) ;;
             *) echo "::error::Python wheel jobs ended with $WHEELS"; exit 1 ;;
           esac
+
+  dotnet-changes:
+    name: NuGet package changes
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.filter.outputs.dotnet }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        id: filter
+        with:
+          filters: |
+            dotnet:
+              - 'bindings/dotnet/**'
+              - 'crates/**'
+              - 'Cargo.lock'
+              - '.github/workflows/ci.yml'
+
+  # Built as release.yml builds the libraries it packs, but one OS at a time:
+  # the package here carries only the runner's own library, which is the one
+  # its test can load.
+  dotnet-package:
+    name: NuGet package (${{ matrix.name }})
+    needs: dotnet-changes
+    if: github.event_name == 'workflow_dispatch' || needs.dotnet-changes.outputs.changed == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: windows
+            os: windows-latest
+            rid: win-x64
+            library: secs2r_native.dll
+          - name: macos
+            os: macos-15
+            rid: osx-arm64
+            library: libsecs2r_native.dylib
+          # 22.04 as in release.yml, for the older glibc.
+          - name: linux
+            os: ubuntu-22.04
+            rid: linux-x64
+            library: libsecs2r_native.so
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install the pinned toolchain (rust-toolchain.toml)
+        run: rustup toolchain install
+
+      # The SDK builds; the 8.0 runtime runs the net8.0 test project.
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+
+      - name: Build the native library
+        run: cargo build --release --locked -p secs-dotnet-sys
+
+      # release.yml packs an Intel library built on this Apple Silicon runner;
+      # building it here keeps that cross build from failing first on release day.
+      - name: Build the Intel macOS library
+        if: matrix.name == 'macos'
+        run: |
+          rustup target add x86_64-apple-darwin
+          cargo build --release --locked -p secs-dotnet-sys --target x86_64-apple-darwin
+
+      # build.rs regenerates the declarations from src/ffi.rs on every build.
+      - name: The generated C# declarations match the committed copy
+        shell: bash
+        run: |
+          set -euo pipefail
+          generated=bindings/dotnet/Secs2R/NativeMethods.g.cs
+          git diff --exit-code -- "$generated"
+          count=$(grep -c 'EntryPoint = "secs_' "$generated" || true)
+          if [ "$count" != 15 ]; then
+            echo "::error::$generated declares $count native functions, expected 15 (docs/adr/0032)"
+            exit 1
+          fi
+
+      - name: Pack the package and test it installed
+        shell: bash
+        run: |
+          set -euo pipefail
+          native=bindings/dotnet/artifacts/native/${{ matrix.rid }}
+          mkdir -p "$native"
+          cp "target/release/${{ matrix.library }}" "$native/"
+          dotnet pack bindings/dotnet/Secs2R -c Release -o bindings/dotnet/artifacts/packages
+          # Windows checks out with CRLF, so the line may end in \r.
+          version=$(sed -n 's/^version = "\([^"]*\)".*/\1/p' bindings/dotnet/native/Cargo.toml | head -n 1)
+          ls "bindings/dotnet/artifacts/packages/Secs2R.$version.nupkg"
+          dotnet test bindings/dotnet/tests/Secs2R.Tests -c Release
+
+      - name: Keep the native libraries for the four-platform package
+        shell: bash
+        env:
+          NAME: ${{ matrix.name }}
+          RID: ${{ matrix.rid }}
+          LIBRARY: ${{ matrix.library }}
+        run: |
+          set -euo pipefail
+          mkdir -p "native/$RID"
+          cp "target/release/$LIBRARY" "native/$RID/"
+          if [ "$NAME" = macos ]; then
+            mkdir -p native/osx-x64
+            cp target/x86_64-apple-darwin/release/libsecs2r_native.dylib native/osx-x64/
+          fi
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: secs2r-nuget-native-${{ matrix.name }}
+          path: native/
+          if-no-files-found: error
+          retention-days: 7
+
+  # release.yml's nuget-pack on the libraries built above, so the package with
+  # all four libraries is packed and tested before release day: a failure
+  # there would come after crates.io and PyPI got the version.
+  dotnet-package-all:
+    name: NuGet package (all platforms)
+    needs: dotnet-package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: secs2r-nuget-native-*
+          path: bindings/dotnet/artifacts/native
+          merge-multiple: true
+
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+
+      # The same commands as release.yml's nuget-pack.
+      - name: Pack with all four native libraries and test the package
+        shell: bash
+        run: |
+          set -euo pipefail
+          packages=bindings/dotnet/artifacts/packages
+          dotnet pack bindings/dotnet/Secs2R -c Release -p:Secs2RRequireAllNatives=true -o "$packages"
+          version=$(sed -n 's/^version = "\([^"]*\)".*/\1/p' bindings/dotnet/native/Cargo.toml | head -n 1)
+          package="$packages/Secs2R.$version.nupkg"
+          entries=$(unzip -Z1 "$package")
+          printf '%s\n' "$entries"
+          for entry in runtimes/win-x64/native/secs2r_native.dll \
+            runtimes/linux-x64/native/libsecs2r_native.so \
+            runtimes/osx-arm64/native/libsecs2r_native.dylib \
+            runtimes/osx-x64/native/libsecs2r_native.dylib \
+            LICENSE README.md; do
+            printf '%s\n' "$entries" | grep -qxF "$entry" || { echo "::error::$package lacks $entry"; exit 1; }
+          done
+          dotnet test bindings/dotnet/tests/Secs2R.Tests -c Release
+
+  # The required check for the package, for the reason python-wheels-result
+  # gives.
+  dotnet-package-result:
+    name: NuGet package
+    needs: [dotnet-changes, dotnet-package, dotnet-package-all]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check the change detection and the package jobs
+        env:
+          CHANGES: ${{ needs.dotnet-changes.result }}
+          PACKAGE: ${{ needs.dotnet-package.result }}
+          ALL: ${{ needs.dotnet-package-all.result }}
+        run: |
+          echo "change detection: $CHANGES, package: $PACKAGE, all platforms: $ALL"
+          [ "$CHANGES" = success ] || { echo "::error::change detection ended with $CHANGES"; exit 1; }
+          for result in "$PACKAGE" "$ALL"; do
+            case "$result" in
+              success|skipped) ;;
+              *) echo "::error::NuGet package jobs ended with $result"; exit 1 ;;
+            esac
+          done
 
   integrity:
     name: &integrity-name integrity (${{ matrix.os }}, 1 / default / 7 threads)
