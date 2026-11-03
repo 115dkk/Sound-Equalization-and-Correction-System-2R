@@ -5,7 +5,7 @@
     "head_sha": {
       "type": "string"
     },
-    "base_sha": {
+    "merge_base_sha": {
       "type": "string"
     },
     "complete": {
@@ -20,6 +20,15 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
+          "priority": {
+            "type": "integer",
+            "enum": [
+              0,
+              1,
+              2,
+              3
+            ]
+          },
           "severity": {
             "type": "string",
             "enum": [
@@ -41,7 +50,17 @@
           "path": {
             "type": "string"
           },
+          "side": {
+            "type": "string",
+            "enum": [
+              "head",
+              "base"
+            ]
+          },
           "line": {
+            "type": "integer"
+          },
+          "end_line": {
             "type": "integer"
           },
           "title": {
@@ -52,10 +71,13 @@
           }
         },
         "required": [
+          "priority",
           "severity",
           "category",
           "path",
+          "side",
           "line",
+          "end_line",
           "title",
           "evidence"
         ]
@@ -70,7 +92,7 @@
   },
   "required": [
     "head_sha",
-    "base_sha",
+    "merge_base_sha",
     "complete",
     "summary",
     "findings",

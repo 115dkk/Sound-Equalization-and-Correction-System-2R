@@ -1,0 +1,31 @@
+name: Sol review request
+
+# The pull_request half of Sol review: it runs the pull request's own copy of
+# this file and only finishes. Its completion starts sol-review.yml through
+# workflow_run, which always runs main's workflow and scripts, so a pull
+# request can never change the reviewer that reviews (and may approve) it.
+# pull_request_target used to do both and is blocked by default in public
+# repositories from 2026-12-02.
+#
+# Nothing this run produces is trusted: sol-review.yml takes only the head
+# commit GitHub records for the run and finds the pull request from it.
+# sol-review.yml names this workflow by its `name`; test_sol_review.py keeps
+# the two equal.
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions: {}
+
+jobs:
+  signal:
+    name: request a Sol review
+    # A fork's or a draft's run is skipped, so its conclusion is not success
+    # and sol-review.yml does nothing.
+    if: github.event.pull_request.head.repo.full_name == github.repository && !github.event.pull_request.draft
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Hand the review to sol-review.yml
+        run: echo "sol-review.yml reviews this head with main's reviewer."
