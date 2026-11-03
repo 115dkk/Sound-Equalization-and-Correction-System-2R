@@ -47,6 +47,22 @@ def http_error(code, value=None, headers=None):
     return urllib.error.HTTPError("https://api.github.com", code, "refused", headers or {}, io.BytesIO(body))
 
 
+def review_comment(comment_id, login="github-actions[bot]", body="**[P1] Defect**\nEvidence",
+                   created_at="2026-11-03T00:00:00Z", reply_to=None, thumbs_down=1,
+                   path="file.rs", pull=7, updated_at=None):
+    value = {
+        "id": comment_id, "user": {"login": login, "type": "Bot" if login.endswith("[bot]") else "User"},
+        "author_association": "NONE", "path": path, "body": body,
+        "reactions": {"-1": thumbs_down},
+        "pull_request_url": f"https://api.github.com/repos/{REPOSITORY}/pulls/{pull}",
+        "created_at": created_at,
+        "updated_at": updated_at or created_at,
+    }
+    if reply_to is not None:
+        value["in_reply_to_id"] = reply_to
+    return value
+
+
 class GitHub:
     def __init__(self):
         repo = {"full_name": REPOSITORY}
@@ -70,6 +86,12 @@ class GitHub:
         self.post_response = {"id": 99, "node_id": "NEW_REVIEW"}
         self.graphql_threads = []
         self.resolve_errors = None
+        self.current_comments = []
+        self.repository_comments = []
+        self.reactions = {}
+        self.permissions = {}
+        self.refetched = {}
+        self.feedback_error = None
 
     def request(self, path, data=None, method=None, accept=None):
         if path == "/graphql":
@@ -98,6 +120,39 @@ class GitHub:
                 raise http_error(404)
             return self.contents[key]
         root = f"/repos/{REPOSITORY}/pulls/7"
+        if path.startswith(root + "/comments?per_page=100&page="):
+            if self.feedback_error is not None:
+                raise self.feedback_error
+            page = int(path.rsplit("page=", 1)[1])
+            return copy.deepcopy(self.current_comments[(page - 1) * 100:page * 100])
+        feedback_root = (f"/repos/{REPOSITORY}/pulls/comments?sort=created&direction=desc"
+                         "&per_page=100&page=")
+        if path.startswith(feedback_root):
+            if self.feedback_error is not None:
+                raise self.feedback_error
+            page = int(path.rsplit("page=", 1)[1])
+            return copy.deepcopy(self.repository_comments[(page - 1) * 100:page * 100])
+        if "/pulls/comments/" in path and path.endswith("/reactions?content=-1&per_page=100"):
+            comment_id = int(path.split("/pulls/comments/", 1)[1].split("/", 1)[0])
+            # A reaction made after every fixture comment unless a test says when.
+            return [{"created_at": "2026-11-03T12:00:00Z"} | reaction
+                    for reaction in copy.deepcopy(self.reactions.get(comment_id, []))]
+        single_root = f"/repos/{REPOSITORY}/pulls/comments/"
+        if path.startswith(single_root) and path[len(single_root):].isdecimal():
+            comment_id = int(path[len(single_root):])
+            if comment_id in self.refetched:
+                return copy.deepcopy(self.refetched[comment_id])
+            for comment in self.current_comments + self.repository_comments:
+                if comment.get("id") == comment_id:
+                    return copy.deepcopy(comment)
+            raise http_error(404)
+        permission_root = f"/repos/{REPOSITORY}/collaborators/"
+        if path.startswith(permission_root) and path.endswith("/permission"):
+            login = path[len(permission_root):-len("/permission")]
+            value = self.permissions.get(login, {"permission": "none"})
+            if isinstance(value, Exception):
+                raise value
+            return copy.deepcopy(value)
         if path == root and data is None:
             self.root_reads += 1
             return copy.deepcopy(self.pr)
@@ -182,6 +237,188 @@ class ReviewTests(unittest.TestCase):
                 self.github.associated = candidates
                 with self.assertRaises(review.NoPullRequest):
                     review.find_pr(REPOSITORY, HEAD, self.github.request)
+
+    def test_false_positive_owner_reaction_and_reply_make_verdict(self):
+        footer = "_🤖 Addressed by [Claude Code](https://claude.com/claude-code)_"
+        finding_comment = review_comment(1, path="src/lib.rs", pull=12)
+        reply = review_comment(2, login="115dkk", body=f"The API permits this.\n\n{footer}",
+                               created_at="2026-11-03T00:01:00Z", reply_to=1,
+                               thumbs_down=0, path="src/lib.rs", pull=12)
+        self.github.repository_comments = [finding_comment, reply]
+        self.github.reactions[1] = [{"user": {"login": "115dkk"}, "content": "-1"}]
+        self.assertEqual(review.false_positives(REPOSITORY, 7, self.github.request), [{
+            "pull_request": 12,
+            "path": "src/lib.rs",
+            "finding": finding_comment["body"],
+            "reason": "The API permits this.",
+        }])
+
+    def test_false_positive_owner_reaction_needs_no_reason(self):
+        finding_comment = review_comment(1)
+        self.github.current_comments = [finding_comment]
+        self.github.reactions[1] = [{"user": {"login": "115dkk"}}]
+        self.assertEqual(review.false_positives(REPOSITORY, 7, self.github.request)[0]["reason"], "")
+
+    def test_false_positive_write_collaborator_is_trusted_and_permission_is_cached(self):
+        comments = [review_comment(1), review_comment(2, created_at="2026-11-03T00:01:00Z")]
+        self.github.repository_comments = comments
+        self.github.reactions = {
+            1: [{"user": {"login": "agent"}}],
+            2: [{"user": {"login": "agent"}}],
+        }
+        self.github.permissions["agent"] = {"permission": "write"}
+        permission_reads = []
+        original = self.github.request
+        def request(path, data=None, method=None, accept=None):
+            if "/collaborators/agent/permission" in path:
+                permission_reads.append(path)
+            return original(path, data, method, accept)
+        verdicts = review.false_positives(REPOSITORY, 7, request)
+        self.assertEqual(len(verdicts), 2)
+        self.assertEqual(len(permission_reads), 1)
+
+    def test_false_positive_voided_when_the_bot_comment_changed_after_the_reaction(self):
+        # A same-repository PR workflow can edit a github-actions[bot] comment.
+        self.github.repository_comments = [
+            review_comment(1, updated_at="2026-11-03T13:00:00Z"),
+            review_comment(2, created_at="2026-11-03T00:01:00Z", updated_at="2026-11-03T11:00:00Z"),
+        ]
+        self.github.reactions = {
+            1: [{"user": {"login": "115dkk"}, "created_at": "2026-11-03T12:00:00Z"}],
+            2: [{"user": {"login": "115dkk"}, "created_at": "2026-11-03T12:00:00Z"}],
+        }
+        verdicts = review.false_positives(REPOSITORY, 7, self.github.request)
+        self.assertEqual([verdict["finding"] for verdict in verdicts], ["**[P1] Defect**\nEvidence"])
+        self.assertEqual(len(verdicts), 1)
+
+    def test_false_positive_voided_by_an_edit_in_the_reaction_second(self):
+        # Timestamps have whole seconds; an edit in the same second may follow the reaction.
+        self.github.repository_comments = [review_comment(1, updated_at="2026-11-03T12:00:00Z")]
+        self.github.reactions = {1: [{"user": {"login": "115dkk"}, "created_at": "2026-11-03T12:00:00Z"}]}
+        self.assertEqual(review.false_positives(REPOSITORY, 7, self.github.request), [])
+
+    def test_false_positive_voided_when_the_comment_changed_while_collecting(self):
+        # The listing showed body A; by the time the reactions were read it was B.
+        self.github.repository_comments = [review_comment(1)]
+        self.github.reactions = {1: [{"user": {"login": "115dkk"}}]}
+        self.github.refetched = {1: review_comment(1, body="**[P1] Another defect**\nEvidence",
+                                                   updated_at="2026-11-03T11:00:00Z")}
+        self.assertEqual(review.false_positives(REPOSITORY, 7, self.github.request), [])
+
+    def test_false_positive_permission_checks_stop_at_the_budget(self):
+        # Anyone can react; a crowd of strangers must not turn into thousands of requests.
+        self.github.repository_comments = [review_comment(1)]
+        strangers = [f"stranger-{index}" for index in range(review.MAX_PERMISSION_CHECKS + 5)]
+        self.github.reactions = {1: [{"user": {"login": login}} for login in strangers]
+                                    + [{"user": {"login": "115dkk"}}]}
+        permission_reads = []
+        original = self.github.request
+        def request(path, data=None, method=None, accept=None):
+            if path.endswith("/permission"):
+                permission_reads.append(path)
+            return original(path, data, method, accept)
+        verdicts = review.false_positives(REPOSITORY, 7, request)
+        self.assertEqual(len(permission_reads), review.MAX_PERMISSION_CHECKS)
+        self.assertEqual(len(verdicts), 1)
+
+    def test_false_positive_rejects_untrusted_reactors_and_nonreactor_replies(self):
+        comments = [
+            review_comment(1),
+            review_comment(2, created_at="2026-11-03T00:01:00Z"),
+            review_comment(3, created_at="2026-11-03T00:02:00Z"),
+            review_comment(4, login="other-owner", body="Unrelated reply", reply_to=3,
+                           created_at="2026-11-03T00:03:00Z", thumbs_down=0),
+        ]
+        self.github.repository_comments = comments
+        self.github.reactions = {
+            1: [{"user": {"login": "reader"}}],
+            2: [{"user": {"login": "failed"}}],
+            3: [{"user": {"login": "115dkk"}}],
+        }
+        self.github.permissions = {
+            "reader": {"permission": "read"},
+            "failed": http_error(403),
+        }
+        verdicts = review.false_positives(REPOSITORY, 7, self.github.request)
+        self.assertEqual(len(verdicts), 1)
+        self.assertEqual(verdicts[0]["finding"], comments[2]["body"])
+        self.assertEqual(verdicts[0]["reason"], "")
+
+    def test_false_positive_candidate_filters_and_deduplicates_comment_lists(self):
+        accepted = review_comment(1)
+        no_reaction = review_comment(2, thumbs_down=0)
+        reply = review_comment(3, reply_to=1)
+        human = review_comment(4, login="115dkk")
+        self.github.current_comments = [accepted, no_reaction, reply, human]
+        self.github.repository_comments = [copy.deepcopy(accepted)]
+        self.github.reactions[1] = [{"user": {"login": "115dkk"}}]
+        reaction_reads = []
+        original = self.github.request
+        def request(path, data=None, method=None, accept=None):
+            if "/reactions?" in path:
+                reaction_reads.append(path)
+            return original(path, data, method, accept)
+        verdicts = review.false_positives(REPOSITORY, 7, request)
+        self.assertEqual(len(verdicts), 1)
+        self.assertEqual(reaction_reads, [
+            f"/repos/{REPOSITORY}/pulls/comments/1/reactions?content=-1&per_page=100"
+        ])
+
+    def test_false_positive_limit_order_and_text_cuts(self):
+        comments = []
+        for index in range(35):
+            finding_comment = review_comment(
+                index + 1, body="**[P1] " + "f" * 1600,
+                created_at=f"2026-11-03T00:00:{index:02d}Z",
+            )
+            reply = review_comment(
+                index + 101, login="115dkk", body="r" * 1600,
+                created_at=f"2026-11-03T00:01:{index:02d}Z", reply_to=index + 1,
+                thumbs_down=0,
+            )
+            comments.extend((finding_comment, reply))
+            self.github.reactions[index + 1] = [{"user": {"login": "115dkk"}}]
+        self.github.repository_comments = comments
+        verdicts = review.false_positives(REPOSITORY, 7, self.github.request)
+        self.assertEqual(len(verdicts), review.MAX_FALSE_POSITIVES)
+        self.assertEqual([item["finding"] for item in verdicts[:2]], [
+            review._cut(comments[68]["body"], 1500),
+            review._cut(comments[66]["body"], 1500),
+        ])
+        self.assertTrue(all(len(item["finding"]) == 1500 and item["finding"].endswith("…")
+                            for item in verdicts))
+        self.assertTrue(all(len(item["reason"]) == 1500 and item["reason"].endswith("…")
+                            for item in verdicts))
+
+    def test_prepare_feedback_error_keeps_original_prompts(self):
+        review.prepare(workflow_event(), self.directory, self.github.request)
+        before = {(self.directory / name).read_bytes() for name in review.PROMPT_FILES.values()}
+        self.github.feedback_error = http_error(500)
+        with patch("sys.stderr", new_callable=io.StringIO) as stderr:
+            review.prepare(workflow_event(), self.directory, self.github.request)
+        after = {(self.directory / name).read_bytes() for name in review.PROMPT_FILES.values()}
+        self.assertEqual(after, before)
+        self.assertIn("false-positive verdicts unavailable: HTTP Error 500", stderr.getvalue())
+        meta = json.loads((self.directory / "metadata.json").read_text())
+        self.assertEqual(meta["false_positive_count"], 0)
+        self.assertNotIn("MAINTAINER FALSE-POSITIVE VERDICTS", (self.directory / "prompt.txt").read_text())
+
+    def test_prepare_appends_false_positives_to_both_prompts_and_hashes(self):
+        finding_comment = review_comment(1)
+        self.github.repository_comments = [finding_comment]
+        self.github.reactions[1] = [{"user": {"login": "115dkk"}}]
+        review.prepare(workflow_event(), self.directory, self.github.request)
+        verdict = {"pull_request": 7, "path": "file.rs",
+                   "finding": finding_comment["body"], "reason": ""}
+        suffix = ("\n\nMAINTAINER FALSE-POSITIVE VERDICTS "
+                  "(collected by the reviewer from the repository, not from this pull request):\n"
+                  + json.dumps({"maintainer_false_positives": [verdict]}, ensure_ascii=False))
+        meta = json.loads((self.directory / "metadata.json").read_text())
+        self.assertEqual(meta["false_positive_count"], 1)
+        for mode, name in review.PROMPT_FILES.items():
+            text = (self.directory / name).read_text()
+            self.assertTrue(text.endswith(suffix))
+            self.assertEqual(meta["prompt_sha256"][mode], review.hashlib.sha256(text.encode()).hexdigest())
 
     def test_prepare_reads_base_from_merge_base_and_adds_pr_text(self):
         seen = []
