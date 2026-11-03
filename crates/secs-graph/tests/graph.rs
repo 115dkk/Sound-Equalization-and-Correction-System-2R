@@ -2,10 +2,31 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 //! The export graph's one validation, at its interface.
 
-use secs_graph::{ExportGraph, GraphError, LfeChoice, is_negative_delay};
+use secs_graph::{ExportGraph, GraphError, LfeChoice, Op, is_negative_delay};
 use secs_types::chain::{
     BandType, MainChannel, MimoFilter, MimoPath, MimoPaths, SignalChain, SubChannel,
 };
+
+#[test]
+fn inverted_main_ends_its_output_path_with_a_fixed_invert() {
+    let mut chain = chain();
+    chain.mains[1].polarity = Some(-1);
+    let graph = ExportGraph::build(&chain, Some(&mimo()), LfeChoice::Omit).unwrap();
+    let main = graph
+        .plan()
+        .main_ops
+        .iter()
+        .find(|(role, _)| role == "R")
+        .unwrap();
+    assert_eq!(main.1.last(), Some(&Op::Invert { fixed: true }));
+    let support = graph
+        .plan()
+        .mimo
+        .iter()
+        .find(|path| path.support == "R")
+        .unwrap();
+    assert_eq!(support.ops.last(), Some(&Op::Invert { fixed: true }));
+}
 
 fn chain() -> SignalChain {
     let main = |role: &str| MainChannel {
@@ -13,6 +34,7 @@ fn chain() -> SignalChain {
         input_peq: vec![(70.0, 1.2, -1.5)],
         fir: vec![0.8, 0.13, -0.02],
         gain_db: -0.5,
+        polarity: None,
         delay_ms: 3.0,
         xo_hz: Some(80.0),
         top_peq: vec![(130.0, 0.9, 0.7)],

@@ -145,6 +145,10 @@ export type CalibrateActions = {
   goToMeasurements: () => void;
   /** Host: opens the 내보내기 step once the result is current. */
   goToExport: () => void;
+  /** config_set_speaker { index, band_index: null, pol }: flips the first band's polarity of the speaker with this role (ADR 0033). */
+  flipPolarity: (role: string) => void;
+  /** Host: opens the 시스템 patch sheet at this role's polarity button. */
+  openPolarity: (role: string) => void;
   changeCompute: (preference: ComputePreference) => void;
   refreshCompute: () => void;
   openGpuHelp: () => void;

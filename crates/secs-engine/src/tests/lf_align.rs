@@ -36,6 +36,7 @@ pub(super) fn config(h: &[C], mode: Mode) -> EngineConfig {
             groups: &[("front".into(), vec!["L".into()])],
             project_xo: &[],
             target: &TargetCurve::new(vec![(10.0, 0.0), (20000.0, 0.0)]),
+            inverted: &[],
         },
         &set,
         &CalibrationSettings {

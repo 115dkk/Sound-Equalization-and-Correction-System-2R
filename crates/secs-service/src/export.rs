@@ -595,10 +595,12 @@ impl Service {
                             settings.sample_rate_policy = policy;
                         }
                         let groups = super::calibration::project_groups(&loaded.project);
+                        let inverted = loaded.project.config.inverted_mains();
                         let view = secs_engine::ProjectView {
                             groups: &groups,
                             project_xo: &loaded.project.xo,
                             target: &loaded.project.target,
+                            inverted: &inverted,
                         };
                         let calibration = secs_engine::calibrate(
                             &secs_engine::CalibrationRequest {

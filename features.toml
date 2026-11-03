@@ -97,6 +97,49 @@ tests = ["secs-engine::design_matches_recorded_stages", "secs-engine::design_can
 note = "Replayed design matches the recorded stages (room after BA reported, its DE diverges); cancellation returns within 1 s at five points of the dolby design (the fitter stops at its next gradient test)."
 
 [[feature]]
+id = "engine.polarity_check"
+kind = "engine"
+milestone = "M2"
+status = "implemented"
+upstream = "new; ADR 0033"
+tests = [
+  "secs-engine::polarity_pair_correlation_finds_sign_and_confidence",
+  "secs-engine::polarity_check_flags_a_minority_and_splits_a_pair",
+  "secs-engine::polarity_check_averages_positions_and_skips_undecided_pairs",
+  "secs-engine::polarity_check_runs_once_on_the_final_pass",
+  "secs-engine::golden_rooms_have_no_polarity_notes",
+  "secs-service::polarity_notes_map_to_notices_with_role_confidence_and_groups",
+]
+
+[[feature]]
+id = "engine.main_polarity"
+kind = "engine"
+milestone = "M2"
+status = "implemented"
+upstream = "config.speakers[].bands[].pol; ADR 0033"
+tests = [
+  "secs-project::inverted_mains_read_the_first_band_of_mains_only",
+  "secs-types::main_polarity_serializes_only_when_inverted",
+  "secs-engine::inverted_main_inputs_preserve_precision_and_match_flipped_measurements",
+  "secs-engine::inverted_main_designs_on_the_flipped_response",
+  "secs-service::polarity_setting_marks_results_stale_and_flips_the_engine_input",
+]
+
+[[feature]]
+id = "export.main_polarity"
+kind = "export"
+milestone = "M4"
+status = "implemented"
+upstream = "config.speakers[].bands[].pol; ADR 0033"
+tests = [
+  "secs-graph::inverted_main_ends_its_output_path_with_a_fixed_invert",
+  "secs-camilla::inverted_main_inverts_the_physical_output_after_the_mimo_merge",
+  "secs-filters::inverted_main_copies_negative_after_the_support_merge_and_lists_the_inversion",
+  "secs-filters::convolution_routes_into_an_inverted_output_are_negated",
+  "secs-filters::playback_routes_into_an_inverted_output_are_negated",
+]
+
+[[feature]]
 id = "engine.simulator"
 kind = "engine"
 milestone = "M2"

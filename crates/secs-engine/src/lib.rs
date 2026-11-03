@@ -64,6 +64,7 @@ pub mod mimo;
 mod normalize;
 #[allow(dead_code)]
 mod notes;
+pub mod polarity;
 pub mod preview;
 #[allow(dead_code)]
 mod rc;

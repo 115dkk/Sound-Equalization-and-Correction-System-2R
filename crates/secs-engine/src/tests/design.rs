@@ -36,6 +36,17 @@ fn note_value(note: &crate::notes::Note) -> Value {
     use crate::notes::Note;
     use serde_json::json;
     match note {
+        Note::PolarityReversed {
+            role,
+            confidence,
+            compared,
+            opposite,
+        } => {
+            json!({"PolarityReversed": {"role": role, "confidence": confidence, "compared": compared, "opposite": opposite}})
+        }
+        Note::PolaritySplit { groups, confidence } => {
+            json!({"PolaritySplit": {"groups": groups, "confidence": confidence}})
+        }
         Note::LowProtect {
             role,
             rolloff_hz,
@@ -215,6 +226,73 @@ fn replay_case_linear_matches_checked_engine_replay() {
                     .all(|((_, a), (_, b))| a.to_bits() == b.to_bits())
             );
         }
+    }
+}
+
+#[test]
+fn polarity_check_runs_once_on_the_final_pass() {
+    let mut case = cases::load("room");
+    case.config.rc_range.1 = None;
+    case.config.rc_hi_basis = secs_types::calibration::RcHiBasis::Agreement;
+    for (_, roles) in &mut case.measurements.positions {
+        if let Some((_, measurement)) = roles.iter_mut().find(|(role, _)| role == "C") {
+            measurement.samples = match &measurement.samples {
+                crate::Samples::F32(values) => crate::Samples::F32(
+                    values
+                        .iter()
+                        .map(|value| -*value)
+                        .collect::<Vec<_>>()
+                        .into(),
+                ),
+                crate::Samples::F64(values) => crate::Samples::F64(
+                    values
+                        .iter()
+                        .map(|value| -*value)
+                        .collect::<Vec<_>>()
+                        .into(),
+                ),
+            };
+        }
+    }
+    let context = Context::serial();
+    let fitters = design::production_fitters(context.cancel());
+    let result = design::design(
+        &DesignRequest {
+            measurements: &case.measurements,
+            config: &case.config,
+            tuning: &case.tuning,
+            subs_only: false,
+            adapter_notes: &[],
+        },
+        &context,
+        &*fitters,
+    )
+    .unwrap();
+    let polarity = result
+        .notes
+        .iter()
+        .filter(|note| {
+            matches!(
+                note,
+                crate::Note::PolarityReversed { .. } | crate::Note::PolaritySplit { .. }
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(polarity.len(), 1, "{polarity:?}");
+}
+
+#[test]
+fn golden_rooms_have_no_polarity_notes() {
+    for name in ["dolby", "room", "room_dba"] {
+        let design = replay(name);
+        assert!(
+            design.notes.iter().all(|note| !matches!(
+                note,
+                crate::Note::PolarityReversed { .. } | crate::Note::PolaritySplit { .. }
+            )),
+            "{name}: {:?}",
+            design.notes
+        );
     }
 }
 
@@ -637,6 +715,8 @@ fn design_matches_recorded_stages() {
             .notes
             .iter()
             .map(|n| match n {
+                crate::notes::Note::PolarityReversed { .. } => "PolarityReversed",
+                crate::notes::Note::PolaritySplit { .. } => "PolaritySplit",
                 crate::notes::Note::LowProtect { .. } => "LowProtect",
                 crate::notes::Note::LiftCapped { .. } => "LiftCapped",
                 crate::notes::Note::SubFilters(_) => "SubFilters",

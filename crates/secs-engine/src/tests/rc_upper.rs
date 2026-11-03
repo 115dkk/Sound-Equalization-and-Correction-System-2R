@@ -21,6 +21,7 @@ fn config(set: &MeasurementSet) -> EngineConfig {
             groups: &[("front".into(), vec!["L".into(), "R".into()])],
             project_xo: &[],
             target: &TargetCurve::new(vec![(10.0, 0.0), (20000.0, 0.0)]),
+            inverted: &[],
         },
         set,
         &CalibrationSettings {

@@ -19,6 +19,7 @@ pub struct ProjectView<'a> {
     pub groups: &'a [(String, Vec<String>)],
     pub project_xo: &'a [(String, f64)],
     pub target: &'a TargetCurve,
+    pub inverted: &'a [String],
 }
 
 #[derive(Debug)]
@@ -123,7 +124,26 @@ pub fn engine_inputs(
                     skipped.insert(role.clone());
                     None
                 } else {
-                    Some((role.clone(), measurement.clone()))
+                    let mut measurement = measurement.clone();
+                    if view.inverted.contains(role) {
+                        measurement.samples = match &measurement.samples {
+                            crate::Samples::F32(samples) => crate::Samples::F32(
+                                samples
+                                    .iter()
+                                    .map(|sample| -*sample)
+                                    .collect::<Vec<_>>()
+                                    .into(),
+                            ),
+                            crate::Samples::F64(samples) => crate::Samples::F64(
+                                samples
+                                    .iter()
+                                    .map(|sample| -*sample)
+                                    .collect::<Vec<_>>()
+                                    .into(),
+                            ),
+                        };
+                    }
+                    Some((role.clone(), measurement))
                 }
             })
             .collect();
@@ -211,6 +231,12 @@ pub fn engine_inputs(
     Ok(EngineInputs {
         measurements: MeasurementSet { positions },
         config: EngineConfig {
+            inverted_mains: view
+                .inverted
+                .iter()
+                .filter(|role| mains.contains(role))
+                .cloned()
+                .collect(),
             mains,
             subs,
             groups,
@@ -377,6 +403,7 @@ mod direct_tests {
                     groups: &groups,
                     project_xo: &[],
                     target: &target,
+                    inverted: &[],
                 },
                 &MeasurementSet { positions },
                 &CalibrationSettings::default(),

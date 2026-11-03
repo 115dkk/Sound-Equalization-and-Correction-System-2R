@@ -132,6 +132,7 @@ fn xo_parallel_order_progress_and_cancellation() {
         groups: &case.config.groups,
         project_xo: &case.config.xo,
         target: &case.config.target,
+        inverted: &[],
     };
     let sink = Arc::new(Sink::default());
     let cancel = CancelToken::new();
@@ -240,6 +241,7 @@ fn xo_recommendation_reports_a_position_missing_a_sub() {
         groups: &case.config.groups,
         project_xo: &case.config.xo,
         target: &case.config.target,
+        inverted: &[],
     };
     let result = recommend_xo(
         &view,
@@ -267,6 +269,7 @@ fn xo_candidates_share_the_job_budget() {
         groups: &case.config.groups,
         project_xo: &case.config.xo,
         target: &case.config.target,
+        inverted: &[],
     };
     let inputs = crate::engine_inputs(&view, &case.measurements, &settings).unwrap();
     let (shared, candidate) = crate::xo::xo_bytes(&inputs.measurements, &inputs.config);
@@ -300,6 +303,7 @@ fn xo_candidates_share_the_job_budget() {
                 groups: &case.config.groups,
                 project_xo: &case.config.xo,
                 target: &case.config.target,
+                inverted: &[],
             };
             let result = recommend_xo(
                 &view,
@@ -369,6 +373,7 @@ fn xo_recommendation_production_envelope() {
             groups: &case.config.groups,
             project_xo: &case.config.xo,
             target: &case.config.target,
+            inverted: &[],
         };
         let got = recommend_xo(
             &view,

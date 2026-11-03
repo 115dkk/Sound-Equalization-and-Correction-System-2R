@@ -22,6 +22,10 @@ fir: Array<number>,
  */
 gain_db: number, 
 /**
+ * Physical output polarity. An absent value means `1`; an inverted output is `-1`.
+ */
+polarity?: number, 
+/**
  * Main output delay in ms, output axis.
  */
 delay_ms: number, 

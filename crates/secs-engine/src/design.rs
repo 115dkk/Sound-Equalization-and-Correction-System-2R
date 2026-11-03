@@ -552,6 +552,13 @@ fn design_pass(
     let positions = prepared.h.positions().to_vec();
     let progress = ctx.stage("engine.design", 1 + config.mains.len() as u64);
     let mut notes = Vec::new();
+    if !req.subs_only && !matches!(pass, RcPass::Probe) {
+        notes.extend(crate::polarity::check(
+            req.measurements,
+            &config.mains,
+            config.main_position,
+        ));
+    }
     if let Some(from_ms) = setup.lift_capped_from_ms {
         notes.push(Note::LiftCapped {
             from_ms,
@@ -859,6 +866,7 @@ fn design_pass(
                 input_peq: peq,
                 fir: result.out.fir,
                 gain_db,
+                polarity: config.inverted_mains.contains(role).then_some(-1),
                 delay_ms: align_delay_ms + shift,
                 xo_hz,
                 align_delay_ms,

@@ -156,6 +156,8 @@ pub struct BundleLayout {
 pub struct EngineConfig {
     /// Main roles, in configuration group order.
     pub mains: Vec<String>,
+    /// Main roles whose physical outputs are polarity-inverted.
+    pub inverted_mains: Vec<String>,
     /// Sub roles, in configuration order.
     pub subs: Vec<String>,
     /// Configuration groups and their roles, in order (`SpeakerConfig.groups()`).

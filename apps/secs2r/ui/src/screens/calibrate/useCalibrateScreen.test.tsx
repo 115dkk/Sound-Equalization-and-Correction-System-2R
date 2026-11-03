@@ -24,6 +24,83 @@ beforeEach(async () => {
 afterEach(async () => { cleanup(); await session.monitor(false); session.dispose(); mock.dispose(); vi.restoreAllMocks(); });
 
 describe("useCalibrateScreen", () => {
+  it("shows the reversed polarity warning and flips its speaker through IPC, leaving a stale result", async () => {
+    installFakeCanvas();
+    const config = await session.call({ method: "config_get" });
+    const index = config.speakers.findIndex((speaker) => speaker.role === "Rs");
+    await session.call({ method: "calibrate", params: { settings: null, subs_only: false } });
+    await perform(mock.drain);
+    function Live() {
+      const { view, actions } = useCalibrateScreen();
+      return view ? <CalibrateScreen view={view} actions={actions} /> : null;
+    }
+    renderWith(<Live />, { session });
+    const at = (id: string) => document.querySelector<HTMLElement>(`[data-ui="${id}"]`);
+    expect(at("calibrate.verdict.polarity_reversed")?.textContent).toContain("Rs의 직접음이 비교한 스피커 3개 가운데 3개와 반대 부호입니다(상관 0.94)");
+    expect(at("calibrate.verdict.notes")?.textContent ?? "").not.toContain("극성 반전");
+    mock.calls.length = 0;
+    await perform(() => fireEvent.click(at("calibrate.polarity.flip.Rs")!));
+    expect(mock.calls).toContainEqual({ method: "config_get" });
+    expect(mock.calls).toContainEqual({ method: "config_set_speaker", params: { index, role: null, size: null, band_index: null, out: null, pol: "-" } });
+    expect(at("calibrate.verdict.stale")?.textContent).toContain("스피커");
+    expect(session.stores.results.getSnapshot()?.calibration).toMatchObject({ stale: true, stale_reason: "config" });
+    expect(mock.calls.some((call) => call.method === "calibrate")).toBe(false);
+    // The second click reads the saved value rather than the original render's polarity.
+    await perform(() => fireEvent.click(at("calibrate.polarity.flip.Rs")!));
+    expect(mock.calls.filter((call) => call.method === "config_set_speaker").at(-1)?.params.pol).toBe("+");
+  });
+
+  it("ignores an absent polarity role and reports read or write failures without recalculating", async () => {
+    const { result } = renderHook(useCalibrateScreen, { wrapper });
+    await perform(() => result.current.actions.flipPolarity("missing"));
+    expect(mock.calls.some((call) => call.method === "config_set_speaker")).toBe(false);
+    mock.failNext("config_get", "project_io");
+    await perform(() => result.current.actions.flipPolarity("L"));
+    expect(session.errors.getSnapshot()?.error.code).toBe("project_io");
+    expect(mock.calls.some((call) => call.method === "config_set_speaker")).toBe(false);
+    mock.failNext("config_set_speaker", "project_io");
+    await perform(() => result.current.actions.flipPolarity("L"));
+    expect(session.errors.getSnapshot()?.error.code).toBe("project_io");
+    expect(session.stores.config.getSnapshot()?.speakers[0]?.bands[0]?.pol).toBe("+");
+    expect(mock.calls.some((call) => call.method === "calibrate")).toBe(false);
+  });
+
+  it("does not apply a delayed polarity read to a replacement project", async () => {
+    const { result } = renderHook(useCalibrateScreen, { wrapper });
+    const request = mock.request;
+    let release!: () => void;
+    let reached!: () => void;
+    const entered = new Promise<void>((resolve) => { reached = resolve; });
+    const delay = new Promise<void>((resolve) => { release = resolve; });
+    let delayed = false;
+    vi.spyOn(mock, "request").mockImplementation(async (message) => {
+      const response = await request(message);
+      if (message.method === "config_get" && !delayed) { delayed = true; reached(); await delay; }
+      return response;
+    });
+    try {
+      await act(async () => { result.current.actions.flipPolarity("L"); await entered; });
+      await act(async () => { await session.call({ method: "project_open", params: { path: "/replacement.secs" } }); });
+      await perform(release);
+      expect(mock.calls.some((call) => call.method === "config_set_speaker")).toBe(false);
+    } finally { release(); await session.settled(); }
+  });
+
+  it("opens polarity settings for the first role of a split warning without flipping either group", async () => {
+    installFakeCanvas();
+    session.stores.results.set({ ...resultsSummary, calibration: { ...resultsSummary.calibration!, notes: [{ code: "polarity_split", params: { a: "Ls,Rs", b: "L,R", confidence: "0.9" } }] } });
+    const openPolarity = vi.fn();
+    function Live() {
+      const { view, actions } = useCalibrateScreen(undefined, openPolarity);
+      return view ? <CalibrateScreen view={view} actions={actions} /> : null;
+    }
+    renderWith(<Live />, { session });
+    expect(document.querySelector('[data-ui="calibrate.verdict.polarity_split"]')?.textContent).toContain("Ls·Rs와 L·R");
+    await perform(() => fireEvent.click(document.querySelector('[data-ui="calibrate.polarity.open"]')!));
+    expect(openPolarity).toHaveBeenCalledExactlyOnceWith("Ls");
+    expect(mock.calls.some((call) => call.method === "config_set_speaker")).toBe(false);
+  });
+
   it.each(["upper edge", "add", "remove", "two removals", "sorted row", "add then remove"] as const)("keeps queued extra-band edits against the latest array: %s", async (next) => {
     installFakeCanvas();
     await session.call({ method: "calibration_settings_edit", params: { edit: { kind: "rc_hi", hz: 500 } } });

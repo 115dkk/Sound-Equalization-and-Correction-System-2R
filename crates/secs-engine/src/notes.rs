@@ -4,6 +4,20 @@ use crate::input::Peq;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Note {
+    /// ADR 0033, one per main whose direct sound is opposite to the majority
+    /// of the mains it could be correlated with. `compared` is the number of
+    /// decided pairs, `opposite` how many of them were negative, `confidence`
+    /// the median |r| over the decided pairs.
+    PolarityReversed {
+        role: String,
+        confidence: f64,
+        compared: usize,
+        opposite: usize,
+    },
+    PolaritySplit {
+        groups: (Vec<String>, Vec<String>),
+        confidence: f64,
+    },
     LiftCapped {
         from_ms: f64,
         taps: usize,

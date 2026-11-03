@@ -394,6 +394,14 @@ impl SpeakerConfig {
         }
         self.preset = "custom".into();
     }
+    pub fn inverted_mains(&self) -> Vec<String> {
+        self.speakers
+            .iter()
+            .filter(|speaker| role_kind(&speaker.role) != RoleKind::Sub)
+            .filter(|speaker| speaker.bands.first().is_some_and(|band| band.pol == "-"))
+            .map(|speaker| speaker.role.clone())
+            .collect()
+    }
     pub fn set_speaker(
         &mut self,
         index: usize,

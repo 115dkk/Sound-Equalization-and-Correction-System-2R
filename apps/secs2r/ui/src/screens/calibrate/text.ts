@@ -225,6 +225,16 @@ export function noticeText(t: Translate, number: FormatNumber, notice: Notice, r
       // Once per result (ADR 0031): the common cut on every input; its order is fixed at 8 (48 dB/oct).
       params.hz = f("hz");
       break;
+    case "polarity_reversed":
+      Object.assign(params, { code: code(), compared: f("compared"), opposite: f("opposite"), confidence: f("confidence", 2) });
+      break;
+    case "polarity_split":
+      Object.assign(params, {
+        a: (p.a ?? "").split(",").map(roleCode).join("·"),
+        b: (p.b ?? "").split(",").map(roleCode).join("·"),
+        confidence: f("confidence", 2),
+      });
+      break;
     case "sub_narrow_band":
       Object.assign(params, { code: code(), hp_hz: f("hp_hz"), lp_hz: f("lp_hz") });
       break;
@@ -326,6 +336,23 @@ export function lowProtectFailures(notices: readonly Notice[]): Notice[] {
 
 /** The warning's next step for `lowProtectFailures`. */
 export const LOW_PROTECT_NEXT: MessageKey = "notice.low_protect.limited.next";
+
+/** The polarity notice codes (ADR 0033): one main against the majority, or two groups with no majority. */
+export type PolarityCode = "polarity_reversed" | "polarity_split";
+
+/**
+ * Polarity verdicts (ADR 0033): a warning with a fix, never a calculation
+ * note. `polarity_reversed` names one main; `polarity_split` names two groups.
+ */
+export function polarityWarnings(notices: readonly Notice[]): Notice[] {
+  return notices.filter((n) => n.code === "polarity_reversed" || n.code === "polarity_split");
+}
+
+/** The warning's next step for each polarity code. */
+export const POLARITY_NEXT: Record<PolarityCode, MessageKey> = {
+  polarity_reversed: "notice.polarity_reversed.next",
+  polarity_split: "notice.polarity_split.next",
+};
 
 /** The RC lines about the room volume that follow an automatic upper limit (secs-service `result_lines().rc`). */
 const VOLUME_LINES: ReadonlySet<string> = new Set(["rc_room_volume", "rc_no_room_volume", "rc_auto_cap"]);

@@ -487,7 +487,7 @@ export function createMockService(options: MockOptions = {}): MockService {
     config = next;
     project = { ...needProject(), preset: config.preset, sub_count: config.summary.sub_count };
     syncMeasure();
-    dirty();
+    dirty("config");
     return config;
   };
   const recordPosition = (position: number, roles = measureConfig.roles, source?: string, calibrated = false) => {
@@ -990,6 +990,7 @@ export function createMockService(options: MockOptions = {}): MockService {
           summary.latency_ms = spec.max_latency_ms;
           summary.verdict.added_delay_ms = spec.max_latency_ms;
           summary.notes = [rcLimitNote(captured, positions), ...mockRcBandsNotes(captured, positions), ...mockLowProtectNotes(captured, config.speakers.map((s) => s.role)), ...mockInputHpNotes(captured)];
+          summary.notes.push({ code: "polarity_reversed", params: { role: "Rs", confidence: "0.94", compared: "3", opposite: "3" } });
           summary.scorecard = roles.map((role) => ({ ...clone(fx.scorecard.find((score) => score.role === role) ?? fx.scorecard[0]!), role }));
           summary.late_energy = fx.lateEnergy(roles, needProject().positions);
           summary.main_roles = roles;

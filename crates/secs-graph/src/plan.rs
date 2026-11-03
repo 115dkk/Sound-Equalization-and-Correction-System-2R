@@ -12,7 +12,7 @@ use secs_types::chain::{BandType, MimoFilter, MimoPaths, SignalChain};
 use std::borrow::Cow;
 use std::f64::consts::PI;
 
-/// One filter-plan operation. `fixed` marks a fixed subwoofer filter.
+/// One filter-plan operation. `fixed` marks a physical-output filter.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Op {
     /// RBJ peaking EQ.
@@ -23,7 +23,7 @@ pub enum Op {
         q: f64,
         /// Gain in dB.
         gain_db: f64,
-        /// Whether the band is a fixed subwoofer filter.
+        /// Whether the band is a physical-output filter.
         fixed: bool,
     },
     /// 48 kHz FIR and its plan-local stem.
@@ -95,7 +95,7 @@ pub enum Op {
 }
 
 impl Op {
-    /// Whether the operation is a fixed subwoofer filter.
+    /// Whether the operation belongs at the physical output.
     pub fn is_fixed(&self) -> bool {
         match self {
             Self::Peq { fixed, .. }
@@ -249,6 +249,13 @@ fn find_ops<'a>(items: &'a [(String, Vec<Op>)], role: &str) -> Option<&'a [Op]> 
 }
 
 fn fixed_ops(chain: &SignalChain, role: &str) -> Vec<Op> {
+    if let Some(main) = chain.mains.iter().find(|main| main.role == role) {
+        return if main.polarity.unwrap_or(1) < 0 {
+            vec![Op::Invert { fixed: true }]
+        } else {
+            Vec::new()
+        };
+    }
     let Some(sub) = chain.subs.iter().find(|sub| sub.role == role) else {
         return Vec::new();
     };
@@ -362,6 +369,7 @@ pub(crate) fn make(
             ms: main.delay_ms,
             fixed: false,
         });
+        path.extend(fixed_ops(chain, &main.role));
         plan.main_ops.push((main.role.clone(), path));
     }
     if lfe {
@@ -647,7 +655,7 @@ fn plan_responses_prepared(
             response_chain(
                 find_ops(&plan.main_ops, source).expect("plan main"),
                 f,
-                false,
+                skip_fixed,
             )?,
         );
         add_response(&mut out, source, main);

@@ -3,7 +3,7 @@
 //! Speaker presets SECS 2R adds to upstream's `model.PRESETS` (docs/DEVIATIONS.md U13).
 //! Upstream has no golden for them; they follow its 5.1 and 7.1.4 presets and `default_bands`.
 
-use secs_project::{Project, SpeakerConfig, loads};
+use secs_project::{Band, Project, Speaker, SpeakerConfig, loads};
 
 /// A speaker as (role, size, [(band, output)]).
 type Row = (String, String, Vec<(String, i64)>);
@@ -35,6 +35,35 @@ fn row(role: &str, size: &str, bands: &[(&str, i64)]) -> Row {
             .map(|(band, out)| ((*band).into(), *out))
             .collect(),
     )
+}
+
+#[test]
+fn inverted_mains_read_the_first_band_of_mains_only() {
+    let mut config = SpeakerConfig::from_preset("2.1", "", false).unwrap();
+    config.speakers[0].bands = vec![
+        Band {
+            band: "LF".into(),
+            out: 1,
+            pol: "-".into(),
+        },
+        Band {
+            band: "HF".into(),
+            out: 2,
+            pol: "+".into(),
+        },
+    ];
+    config.speakers[1].bands.push(Band {
+        band: "HF".into(),
+        out: 4,
+        pol: "-".into(),
+    });
+    config.speakers.push(Speaker {
+        role: "C".into(),
+        size: "small".into(),
+        bands: Vec::new(),
+    });
+    config.speakers[2].bands[0].pol = "-".into();
+    assert_eq!(config.inverted_mains(), ["L"]);
 }
 
 #[test]

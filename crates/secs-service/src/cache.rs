@@ -520,6 +520,7 @@ mod tests {
             input_peq: vec![],
             fir: coefficients.clone(),
             gain_db: -0.5,
+            polarity: None,
             delay_ms: 2.0,
             xo_hz: Some(80.0),
             top_peq: vec![],

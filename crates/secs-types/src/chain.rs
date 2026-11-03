@@ -67,6 +67,10 @@ impl BandType {
     }
 }
 
+fn is_normal_polarity(value: &Option<i8>) -> bool {
+    value.unwrap_or(1) == 1
+}
+
 /// A main channel: input correction before bass management, then the main
 /// output path.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
@@ -80,6 +84,10 @@ pub struct MainChannel {
     pub fir: Vec<f64>,
     /// Main output gain in dB.
     pub gain_db: f64,
+    /// Physical output polarity. An absent value means `1`; an inverted output is `-1`.
+    #[serde(default, skip_serializing_if = "is_normal_polarity")]
+    #[ts(optional)]
+    pub polarity: Option<i8>,
     /// Main output delay in ms, output axis.
     pub delay_ms: f64,
     /// Bass-management crossover in Hz (HP on the main, LP on its sub send).
@@ -236,6 +244,34 @@ pub struct MimoPaths {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn main(role: &str, polarity: Option<i8>) -> MainChannel {
+        MainChannel {
+            role: role.into(),
+            input_peq: Vec::new(),
+            fir: vec![1.0],
+            gain_db: 0.0,
+            polarity,
+            delay_ms: 0.0,
+            xo_hz: None,
+            top_peq: Vec::new(),
+            align_delay_ms: 0.0,
+        }
+    }
+
+    #[test]
+    fn main_polarity_serializes_only_when_inverted() {
+        let normal = serde_json::to_string(&main("L", None)).unwrap();
+        assert_eq!(
+            normal,
+            r#"{"role":"L","input_peq":[],"fir":[1.0],"gain_db":0.0,"delay_ms":0.0,"xo_hz":null,"top_peq":[],"align_delay_ms":0.0}"#
+        );
+        assert_eq!(serde_json::to_string(&main("L", Some(1))).unwrap(), normal);
+        let inverted = serde_json::to_value(main("L", Some(-1))).unwrap();
+        assert_eq!(inverted["polarity"], -1);
+        let legacy: MainChannel = serde_json::from_str(&normal).unwrap();
+        assert_eq!(legacy.polarity.unwrap_or(1), 1);
+    }
 
     #[test]
     fn input_hp_is_absent_from_an_off_chain_and_round_trips_when_set() {

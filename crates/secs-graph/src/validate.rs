@@ -112,6 +112,7 @@ pub(crate) fn graph(
             input_peq,
             fir,
             gain_db,
+            polarity: sign,
             delay_ms,
             xo_hz,
             top_peq,
@@ -123,6 +124,7 @@ pub(crate) fn graph(
         peqs(&format!("main.{role}.input_peq"), input_peq)?;
         peqs(&format!("main.{role}.top_peq"), top_peq)?;
         finite(&format!("main.{role}.gain_db"), *gain_db)?;
+        polarity(&format!("main.{role}.polarity"), sign.unwrap_or(1))?;
         non_negative_delay(&format!("main.{role}.delay_ms"), role, *delay_ms)?;
         finite(&format!("main.{role}.align_delay_ms"), *align_delay_ms)?;
         if let Some(value) = xo_hz {

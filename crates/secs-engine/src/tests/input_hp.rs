@@ -201,6 +201,7 @@ fn input_hp_setting_reaches_engine_without_changing_other_fields() {
         groups: &case.config.groups,
         project_xo: &case.config.xo,
         target: &case.config.target,
+        inverted: &[],
     };
     let settings: secs_types::calibration::CalibrationSettings =
         serde_json::from_value(case.settings).unwrap();

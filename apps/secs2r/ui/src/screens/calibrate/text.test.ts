@@ -5,7 +5,7 @@ import type { Notice } from "../../ipc/bindings/Notice";
 import { ipcError } from "../../ipc/mock";
 import { baseSettings, lfNoteCases, lowProtectNotes, rcBandsNotes, rcLimitNotes, refusedBandEdit } from "./fixtures";
 import { rejectionPlace, type RangeRejection } from "./settingsView";
-import { LOW_PROTECT_NEXT, lowProtectFailures, noteLines, noticeText, rangeNotices, rangeRejectionText, type FormatNumber } from "./text";
+import { LOW_PROTECT_NEXT, POLARITY_NEXT, lowProtectFailures, polarityWarnings, noteLines, noticeText, rangeNotices, rangeRejectionText, type FormatNumber } from "./text";
 
 // The calculation notes as secs-service sends them (calibration.rs `notices`:
 // one record per role, filter or mode, scalar string params), turned into the
@@ -24,6 +24,34 @@ const lines = (locale: Locale, notices: Notice[]) => {
 const n = (code: string, params: Record<string, string>): Notice => ({ code, params });
 
 describe("calculation notes", () => {
+  it("formats reversed polarity with display roles, integer counts and two-decimal correlation in both locales", () => {
+    const note = n("polarity_reversed", { role: "Rb", compared: "4.0", opposite: "3.0", confidence: "0.946" });
+    expect(lines("ko", [note])).toEqual(["극성 반전이 의심됩니다. Rrs의 직접음이 비교한 스피커 4개 가운데 3개와 반대 부호입니다(상관 0.95)."]);
+    expect(lines("en", [note])).toEqual(["Possible reversed polarity: Rrs's direct sound has the opposite sign to 3 of the 4 speakers it was compared with (correlation 0.95)."]);
+  });
+
+  it("formats split polarity as dot-joined display roles without choosing a correct group", () => {
+    const note = n("polarity_split", { a: "L,R", b: "Tfl,Tfr", confidence: "0.9" });
+    expect(lines("ko", [note])).toEqual(["L·R와 Ltf·Rtf의 직접음 부호가 서로 반대입니다(상관 0.90). 어느 쪽의 극성이 맞는지는 알 수 없습니다."]);
+    expect(lines("en", [note])).toEqual(["The direct sound from L·R and Ltf·Rtf has opposite signs (correlation 0.90). It is not possible to tell which group has the correct polarity."]);
+  });
+
+  it("selects only polarity warnings and supplies a next step in both locales", () => {
+    const reversed = n("polarity_reversed", { role: "SR", confidence: "0.94", compared: "3", opposite: "3" });
+    const split = n("polarity_split", { a: "L,R", b: "SL,SR", confidence: "0.9" });
+    expect(polarityWarnings([n("ba_cost", { value: "1" }), reversed, ...lowProtectNotes, split])).toEqual([reversed, split]);
+    for (const locale of ["ko", "en"] as const) {
+      for (const key of Object.values(POLARITY_NEXT)) expect(words(locale).t(key)).toContain("+/−");
+    }
+  });
+
+  it("has a sentence for every calibration notice code in both locales", () => {
+    const codes = ["measurement_resampled", "rc_limit", "rc_room_volume", "rc_no_room_volume", "rc_auto_cap", "rc_bands", "lf_align", "mode_decay", "mode_decay_none", "hf_phase", "hf_phase_none", "input_hp", "polarity_reversed", "polarity_split", "sub_narrow_band", "sub_high_gain", "lift_capped", "latency", "phase_strength", "phase_band", "long_mode_boost", "gd_cuts", "two_way", "sub_filters", "sub_filter_peq", "ba_cost", "ba_bus_pass", "bus_gain_anchored", "layout_fallback", "layout", "ba_manual", "low_protect"];
+    for (const locale of ["ko", "en"] as const) {
+      const { t, number } = words(locale);
+      for (const code of codes) expect(noticeText(t, number, n(code, {})), `${locale}: ${code}`).not.toBeNull();
+    }
+  });
   it("formats the reported resampling count and target rate in both locales", () => {
     expect(lines("ko", [n("measurement_resampled", { count: "1500", target_hz: "48000" })])).toEqual(["측정 1,500개를 계산용 48,000 Hz 데이터로 변환했습니다."]);
     expect(lines("en", [n("measurement_resampled", { count: "1", target_hz: "48000" })])).toEqual(["Converted 1 measurement to 48,000 Hz for calculation."]);
