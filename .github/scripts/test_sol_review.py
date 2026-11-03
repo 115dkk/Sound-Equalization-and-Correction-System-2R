@@ -90,6 +90,7 @@ class GitHub:
         self.repository_comments = []
         self.reactions = {}
         self.permissions = {}
+        self.refetched = {}
         self.feedback_error = None
 
     def request(self, path, data=None, method=None, accept=None):
@@ -136,6 +137,15 @@ class GitHub:
             # A reaction made after every fixture comment unless a test says when.
             return [{"created_at": "2026-11-03T12:00:00Z"} | reaction
                     for reaction in copy.deepcopy(self.reactions.get(comment_id, []))]
+        single_root = f"/repos/{REPOSITORY}/pulls/comments/"
+        if path.startswith(single_root) and path[len(single_root):].isdecimal():
+            comment_id = int(path[len(single_root):])
+            if comment_id in self.refetched:
+                return copy.deepcopy(self.refetched[comment_id])
+            for comment in self.current_comments + self.repository_comments:
+                if comment.get("id") == comment_id:
+                    return copy.deepcopy(comment)
+            raise http_error(404)
         permission_root = f"/repos/{REPOSITORY}/collaborators/"
         if path.startswith(permission_root) and path.endswith("/permission"):
             login = path[len(permission_root):-len("/permission")]
@@ -280,6 +290,20 @@ class ReviewTests(unittest.TestCase):
         verdicts = review.false_positives(REPOSITORY, 7, self.github.request)
         self.assertEqual([verdict["finding"] for verdict in verdicts], ["**[P1] Defect**\nEvidence"])
         self.assertEqual(len(verdicts), 1)
+
+    def test_false_positive_voided_by_an_edit_in_the_reaction_second(self):
+        # Timestamps have whole seconds; an edit in the same second may follow the reaction.
+        self.github.repository_comments = [review_comment(1, updated_at="2026-11-03T12:00:00Z")]
+        self.github.reactions = {1: [{"user": {"login": "115dkk"}, "created_at": "2026-11-03T12:00:00Z"}]}
+        self.assertEqual(review.false_positives(REPOSITORY, 7, self.github.request), [])
+
+    def test_false_positive_voided_when_the_comment_changed_while_collecting(self):
+        # The listing showed body A; by the time the reactions were read it was B.
+        self.github.repository_comments = [review_comment(1)]
+        self.github.reactions = {1: [{"user": {"login": "115dkk"}}]}
+        self.github.refetched = {1: review_comment(1, body="**[P1] Another defect**\nEvidence",
+                                                   updated_at="2026-11-03T11:00:00Z")}
+        self.assertEqual(review.false_positives(REPOSITORY, 7, self.github.request), [])
 
     def test_false_positive_permission_checks_stop_at_the_budget(self):
         # Anyone can react; a crowd of strangers must not turn into thousands of requests.

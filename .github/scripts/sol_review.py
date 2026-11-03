@@ -32,8 +32,8 @@ MAX_MANIFESTS = 60
 MAX_PROBED_MANIFESTS = 40
 # The false-positive verdicts (thumbs-down on a finding) cost at most this
 # many more requests: comment pages of this PR and of the repository, one
-# reaction list per checked finding, one permission check per reactor who is
-# not the owner.
+# reaction list and one re-read per checked finding, one permission check per
+# reactor who is not the owner.
 MAX_FEEDBACK_PAGES = 3
 MAX_FEEDBACK_REACTIONS = 40
 MAX_PERMISSION_CHECKS = 10
@@ -478,14 +478,22 @@ def false_positives(repository, pr_number, request=api):
     verdicts = []
     for finding in findings[:MAX_FEEDBACK_REACTIONS]:
         reactors = _thumbs_down_reactors(repository, finding["id"], request)
+        # A same-repository PR workflow can edit a github-actions[bot] comment,
+        # and a thumbs-down judged the text it saw. So the comment is read
+        # again after its reactions and must be the version listed, and only
+        # a reaction strictly after that version's last edit counts: GitHub's
+        # timestamps have whole seconds, and an edit in the reaction's second
+        # may have come after it.
+        again = _feedback_comment(request(f"/repos/{repository}/pulls/comments/{finding['id']}"))
+        if (again is None or again["body"] != finding["body"]
+                or again["updated_at"] != finding["updated_at"]):
+            continue
         try:
             edited = _timestamp(finding["updated_at"])
         except ValueError:
             continue
-        # A same-repository PR workflow can edit a github-actions[bot] comment;
-        # a thumbs-down judged the text as it was, so a later edit voids it.
         trusted = {login for login, reacted in reactors.items()
-                   if reacted >= edited
+                   if reacted > edited
                    and _trusted_reactor(repository, login, request, permission_cache)}
         if not trusted:
             continue
