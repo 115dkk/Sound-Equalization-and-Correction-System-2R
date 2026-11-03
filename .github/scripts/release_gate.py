@@ -28,11 +28,12 @@ second version for the same change). A failed release is retried with
 gate pushes its bump, the push is rejected and the gate releases nothing for
 the same reason, instead of rebasing later commits into this release.
 
-The crates.io crates (docs/adr/0016) and the ``secs2r`` Python package
-(docs/adr/0019) carry a shared version, read from ``crates/secs-api/Cargo.toml``
-and tagged ``api-v<version>`` once published. When the app releases, the same
-rules apply to them: an untagged version is published as is, and packaged files
-changed since the tag bump every published Rust crate and ``secs-py`` together
+The crates.io crates (docs/adr/0016), the ``secs2r`` Python package
+(docs/adr/0019) and the ``Secs2R`` NuGet package (docs/adr/0032) carry a shared
+version, read from ``crates/secs-api/Cargo.toml`` and tagged ``api-v<version>``
+once published. When the app releases, the same rules apply to them: an
+untagged version is published as is, and packaged files changed since the tag
+bump every published Rust crate and the binding crates (``BINDINGS``) together
 (and their exact ``=`` requirements and lock entries) in the same bump commit.
 release.yml publishes them after the installers built.
 
@@ -62,6 +63,7 @@ SHIP = (
     "crates/*",
     "apps/*",
     "bindings/python/*",
+    "bindings/dotnet/*",
     "Cargo.toml",
     "Cargo.lock",
     "rust-toolchain.toml",
@@ -102,7 +104,14 @@ FUZZ_LOCK = Path("fuzz/Cargo.lock")
 # public crate's manifest and tagged api-vX.Y.Z when published. Files under
 # these directories of a published crate are not in its package.
 API_MANIFEST = Path("crates/secs-api/Cargo.toml")
-PYTHON_MANIFEST = Path("bindings/python/Cargo.toml")
+# The packages that wrap the public crate outside crates.io: each binding
+# crate's manifest, which carries the API version, and the directory whose
+# files go into that package (the NuGet package also packs the C# library
+# beside its crate).
+BINDINGS = (
+    (Path("bindings/python/Cargo.toml"), "bindings/python"),
+    (Path("bindings/dotnet/native/Cargo.toml"), "bindings/dotnet"),
+)
 API_NOT_PACKAGED_DIRS = ("tests", "examples", "benches")
 
 
@@ -513,15 +522,17 @@ def main(argv=None) -> int:
         }
         version_manifests = dict(api_manifests)
         package_dirs = [manifest.parent.as_posix() for manifest in api_manifests.values()]
-        if PYTHON_MANIFEST.exists():
-            python_manifest = _read(PYTHON_MANIFEST)
-            python_version = package_field(python_manifest, "version")
-            if python_version != api_version:
+        for binding, package_dir in BINDINGS:
+            if not binding.exists():
+                continue
+            binding_manifest = _read(binding)
+            binding_version = package_field(binding_manifest, "version")
+            if binding_version != api_version:
                 raise SystemExit(
-                    f"{PYTHON_MANIFEST} version {python_version} does not match API {api_version}"
+                    f"{binding} version {binding_version} does not match API {api_version}"
                 )
-            version_manifests[package_field(python_manifest, "name")] = PYTHON_MANIFEST
-            package_dirs.append(PYTHON_MANIFEST.parent.as_posix())
+            version_manifests[package_field(binding_manifest, "name")] = binding
+            package_dirs.append(package_dir)
         if action != "none":
             api_tags = set(_git("tag", "-l", "api-v*").splitlines())
             api_changed, api_messages = [], []

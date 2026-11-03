@@ -165,6 +165,119 @@ fn python_package_follows_the_public_crate() {
     assert!(violations.is_empty(), "{}", violations.join("\n"));
 }
 
+/// The texts of every `<name>` element, attributes allowed (`<Version
+/// Condition="...">`), for the few fields of the C# project the policy reads.
+fn xml_elements<'a>(text: &'a str, name: &str) -> Vec<&'a str> {
+    let open = format!("<{name}");
+    let close = format!("</{name}>");
+    let mut found = Vec::new();
+    let mut rest = text;
+    while let Some(at) = rest.find(&open) {
+        let after = &rest[at + open.len()..];
+        // `<VersionPrefix` is another element than `<Version`.
+        if !after.starts_with(['>', ' ', '\t', '\r', '\n']) {
+            rest = after;
+            continue;
+        }
+        let Some(tag_end) = after.find('>') else {
+            break;
+        };
+        let body = &after[tag_end + 1..];
+        let Some(end) = body.find(&close) else {
+            break;
+        };
+        found.push(body[..end].trim());
+        rest = &body[end + close.len()..];
+    }
+    found
+}
+
+/// The text of the first `<name>` element.
+fn xml_element<'a>(text: &'a str, name: &str) -> Option<&'a str> {
+    xml_elements(text, name).into_iter().next()
+}
+
+#[test]
+fn xml_elements_read_attributes_and_skip_longer_names() {
+    let project = "<Version Condition=\"'$(Version)' == ''\">1.0.0</Version>\n\
+                   <VersionPrefix>2.0.0</VersionPrefix><Version>$(Secs2RVersion)</Version>";
+    assert_eq!(
+        xml_elements(project, "Version"),
+        ["1.0.0", "$(Secs2RVersion)"]
+    );
+    assert_eq!(xml_elements(project, "VersionPrefix"), ["2.0.0"]);
+}
+
+/// ADR 0032: nuget.org ships `secs-dotnet-sys` and the C# library as `Secs2R`,
+/// under the published crates' licence and version. The package takes its
+/// version from the crate's manifest, which the release gate moves with the
+/// API, so the C# project must not pin one of its own.
+#[test]
+fn dotnet_package_follows_the_public_crate() {
+    let root = root();
+    let dotnet = root.join("bindings/dotnet");
+    let cargo = manifest(&dotnet.join("native/Cargo.toml"));
+    let project_path = dotnet.join("Secs2R/Secs2R.csproj");
+    let project = fs::read_to_string(&project_path)
+        .unwrap_or_else(|error| panic!("{}: {error}", project_path.display()));
+    let api = manifest(&root.join("crates/secs-api/Cargo.toml"));
+    let api_version = api["package"]["version"].as_str().expect("API version");
+    let mut violations = Vec::new();
+
+    if cargo["package"]["license"].as_str() != Some("AGPL-3.0-only") {
+        violations
+            .push("bindings/dotnet/native/Cargo.toml: license must be AGPL-3.0-only".to_owned());
+    }
+    if cargo["package"]
+        .get("publish")
+        .and_then(toml::Value::as_bool)
+        != Some(false)
+    {
+        violations.push("bindings/dotnet/native/Cargo.toml: publish must be false".to_owned());
+    }
+    if cargo["package"]["version"].as_str() != Some(api_version) {
+        violations.push(format!(
+            "bindings/dotnet/native/Cargo.toml: version must equal the API crate's {api_version}"
+        ));
+    }
+    let requirement = cargo["dependencies"]["secs"]["version"].as_str();
+    if requirement != Some(format!("={api_version}").as_str()) {
+        violations.push(format!(
+            "bindings/dotnet/native/Cargo.toml: the API requirement must be ={api_version}, found {requirement:?}"
+        ));
+    }
+    let root_license = fs::read(root.join("LICENSE-AGPL")).expect("root LICENSE-AGPL");
+    if fs::read(dotnet.join("LICENSE")).ok().as_deref() != Some(root_license.as_slice()) {
+        violations.push("bindings/dotnet/LICENSE must equal the root LICENSE-AGPL".to_owned());
+    }
+
+    // nuget.org's trusted-publishing policy names the package Secs2R.
+    if xml_element(&project, "PackageId") != Some("Secs2R") {
+        violations.push("Secs2R.csproj: PackageId must be Secs2R".to_owned());
+    }
+    if xml_element(&project, "PackageLicenseExpression") != Some("AGPL-3.0-only") {
+        violations.push("Secs2R.csproj: PackageLicenseExpression must be AGPL-3.0-only".to_owned());
+    }
+    // A Unity developer selling a game must read the licence terms first.
+    let warning = "Programs that use this package must be distributed under terms compatible with the GNU AGPL-3.0.";
+    if !xml_element(&project, "Description").is_some_and(|text| text.starts_with(warning)) {
+        violations.push(format!(
+            "Secs2R.csproj: Description must start with {warning:?}"
+        ));
+    }
+    for element in ["Version", "VersionPrefix", "PackageVersion"] {
+        if xml_elements(&project, element)
+            .iter()
+            .any(|text| text.starts_with(|c: char| c.is_ascii_digit()))
+        {
+            violations.push(format!(
+                "Secs2R.csproj: <{element}> pins a version; it must come from native/Cargo.toml"
+            ));
+        }
+    }
+    assert!(violations.is_empty(), "{}", violations.join("\n"));
+}
+
 /// ADR 0023: the app and the unpublished crates keep the workspace licence
 /// (GPL-3.0-only); only the published crates are AGPL-3.0-only.
 #[test]

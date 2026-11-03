@@ -1,0 +1,57 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFrameworks>netstandard2.1;net8.0</TargetFrameworks>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+
+    <NativeManifest>$([System.IO.File]::ReadAllText('$(MSBuildThisFileDirectory)../native/Cargo.toml'))</NativeManifest>
+    <Secs2RVersion>$([System.Text.RegularExpressions.Regex]::Match('$(NativeManifest)', '(?m)^version = &quot;([^&quot;\r\n]+)&quot;').Groups[1].Value)</Secs2RVersion>
+    <Version Condition="'$(Version)' == ''">$(Secs2RVersion)</Version>
+
+    <PackageId>Secs2R</PackageId>
+    <Authors>115dkk</Authors>
+    <PackageLicenseExpression>AGPL-3.0-only</PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <RepositoryUrl>https://github.com/115dkk/Sound-Equalization-and-Correction-System-2R</RepositoryUrl>
+    <PackageProjectUrl>https://github.com/115dkk/Sound-Equalization-and-Correction-System-2R</PackageProjectUrl>
+    <PackageTags>room correction;audio;dsp;secs</PackageTags>
+    <Description>Programs that use this package must be distributed under terms compatible with the GNU AGPL-3.0. Secs2R embeds the SECS 2R room-correction engine and controls a running application through its authenticated local API.</Description>
+
+    <Secs2RNativeDir Condition="'$(Secs2RNativeDir)' == ''">$(MSBuildThisFileDirectory)../artifacts/native</Secs2RNativeDir>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(TargetFramework)' == 'netstandard2.1'">
+    <PackageReference Include="System.Text.Json" Version="10.0.14" />
+    <PackageReference Include="Microsoft.Bcl.AsyncInterfaces" Version="10.0.14" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="../README.md" Pack="true" PackagePath="README.md" />
+    <None Include="../LICENSE" Pack="true" PackagePath="" />
+
+    <Secs2RExpectedNative Include="$(Secs2RNativeDir)/win-x64/secs2r_native.dll" />
+    <Secs2RExpectedNative Include="$(Secs2RNativeDir)/linux-x64/libsecs2r_native.so" />
+    <Secs2RExpectedNative Include="$(Secs2RNativeDir)/osx-x64/libsecs2r_native.dylib" />
+    <Secs2RExpectedNative Include="$(Secs2RNativeDir)/osx-arm64/libsecs2r_native.dylib" />
+
+    <None Include="$(Secs2RNativeDir)/win-x64/secs2r_native.dll" Pack="true" PackagePath="runtimes/win-x64/native/" Visible="false" Condition="Exists('$(Secs2RNativeDir)/win-x64/secs2r_native.dll')" />
+    <None Include="$(Secs2RNativeDir)/linux-x64/libsecs2r_native.so" Pack="true" PackagePath="runtimes/linux-x64/native/" Visible="false" Condition="Exists('$(Secs2RNativeDir)/linux-x64/libsecs2r_native.so')" />
+    <None Include="$(Secs2RNativeDir)/osx-x64/libsecs2r_native.dylib" Pack="true" PackagePath="runtimes/osx-x64/native/" Visible="false" Condition="Exists('$(Secs2RNativeDir)/osx-x64/libsecs2r_native.dylib')" />
+    <None Include="$(Secs2RNativeDir)/osx-arm64/libsecs2r_native.dylib" Pack="true" PackagePath="runtimes/osx-arm64/native/" Visible="false" Condition="Exists('$(Secs2RNativeDir)/osx-arm64/libsecs2r_native.dylib')" />
+  </ItemGroup>
+
+  <!-- The test project unpacks this package into its own cache folder
+       (tests/nuget.config). A new pack keeps the version until the release
+       gate bumps it, so it removes the unpacked copy; otherwise the tests
+       would run the previous pack. -->
+  <Target Name="ForgetUnpackedSecs2R" AfterTargets="Pack">
+    <RemoveDir Directories="$(MSBuildThisFileDirectory)../artifacts/nuget-cache/secs2r/$(Version.ToLowerInvariant())" />
+  </Target>
+
+  <Target Name="ValidateSecs2RNativeAssets" BeforeTargets="GenerateNuspec" Condition="'$(Secs2RRequireAllNatives)' == 'true'">
+    <Error Condition="!Exists('%(Secs2RExpectedNative.Identity)')" Text="Required Secs2R native asset is missing: %(Secs2RExpectedNative.Identity)" />
+  </Target>
+</Project>
