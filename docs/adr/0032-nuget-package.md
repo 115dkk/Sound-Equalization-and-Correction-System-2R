@@ -36,7 +36,7 @@ unsafe가 드는 자리를 포인터에서 바이트를 빌리는 일 하나로 
 - 패키지 ID와 네임스페이스는 `Secs2R`입니다. PyPI 이름 `secs2r`에 맞췄습니다.
 - 첫 판은 Python처럼 JSON을 그대로 주고받습니다. `Engine`과 `Client`는 `IDisposable`이고, `Call(JsonElement) -> JsonElement`와 문자열판 `Call(string) -> string`, `WaitJob(ulong, TimeSpan)`, `Events(CancellationToken) -> IAsyncEnumerable<JsonElement>`를 가집니다. 오류는 `SecsException`(`Code`, `Message`, `Detail`)으로 던집니다.
 - 타입이 있는 C# API는 다음 일입니다. 요청의 `method`와 `params` 모양이 System.Text.Json의 다형성 직렬화에 맞는지 확인하지 않았고, `secs-types`는 TypeScript 바인딩(ts-rs)만 만들고 JSON Schema는 만들지 않습니다.
-- 대상 프레임워크는 `netstandard2.1`(Unity 2021 이상)과 `net8.0`입니다. `netstandard2.1` 쪽에는 System.Text.Json과 Microsoft.Bcl.AsyncInterfaces 패키지 의존이 붙습니다.
+- 대상 프레임워크는 `netstandard2.1`(Unity 2021.2 이상. 2021.1까지는 .NET Standard 2.0만 지원합니다)과 `net8.0`입니다. `netstandard2.1` 쪽에는 System.Text.Json과 Microsoft.Bcl.AsyncInterfaces 패키지 의존이 붙습니다.
 
 ### 빌드, 시험, 게시
 
