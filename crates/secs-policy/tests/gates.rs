@@ -152,12 +152,15 @@ fn workspace_members_are_all_covered_by_policy_gates() {
         covered, declared,
         "a workspace member is outside policy gates"
     );
-    assert!(
-        first_party_crates()
-            .iter()
-            .any(|krate| krate.name == "secs-py"),
-        "bindings/python must be covered by policy gates"
-    );
+    for (name, dir) in [
+        ("secs-py", "bindings/python"),
+        ("secs-dotnet-sys", "bindings/dotnet/native"),
+    ] {
+        assert!(
+            first_party_crates().iter().any(|krate| krate.name == name),
+            "{dir} must be covered by policy gates"
+        );
+    }
 }
 
 fn rust_files(dir: &Path) -> Vec<PathBuf> {

@@ -1756,6 +1756,14 @@ tests = ["sound-equalization-and-correction-system-rust-api::engine_bootstrap_an
 note = "ADR 0019: PyPI package secs2r exposes the embedded engine and authenticated local API client. bindings/python/tests/test_secs2r.py verifies the installed wheel, structured errors, closed-port failure and an optional oracle-project round trip."
 
 [[feature]]
+id = "api.dotnet"
+kind = "api"
+milestone = "M6"
+status = "implemented"
+tests = ["secs-dotnet-sys::bootstrap_reports_the_native_crate_version", "secs-dotnet-sys::fresh_engine_results_preserve_structured_api_error", "secs-dotnet-sys::unknown_engine_handle_is_an_error_and_free_is_a_no_op", "secs-dotnet-sys::pointer_validation_accepts_only_representable_buffers", "secs-dotnet-sys::short_result_buffer_keeps_the_result", "secs-dotnet-sys::guard_turns_a_panic_into_an_internal_error"]
+note = "ADR 0032: NuGet package Secs2R exposes the embedded engine and authenticated local API client to C#, .NET and Unity through the C ABI isolation crate secs-dotnet-sys. bindings/dotnet/tests/Secs2R.Tests installs the packed package and verifies versions, structured errors, closed-port failure, event cancellation and a mock-measurement calibration with an Equalizer APO export."
+
+[[feature]]
 id = "app.local_api"
 kind = "app"
 milestone = "M6"
