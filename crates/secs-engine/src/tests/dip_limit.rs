@@ -73,6 +73,18 @@ fn dip_limit_fills_narrow_dips_partly_and_broad_loss_fully() {
 }
 
 #[test]
+fn dip_limit_keeps_the_cut_floor_on_peaks() {
+    // A broad +30 dB peak has no dip: the target correction already sits on
+    // the -25 dB cut floor and the dip cap must not lower it further.
+    let target = vec![0.0; BINS];
+    let power = vec![10_f64.powf(30.0 / 10.0); BINS];
+    let sm = vec![30.0; BINS];
+    let mut corr = vec![rc::CUT_FLOOR_DB; BINS];
+    assert!(rc::limit_dip_fills(&power, &sm, &target, 0.0, &mut corr).is_empty());
+    assert!(corr.iter().all(|value| *value == rc::CUT_FLOOR_DB));
+}
+
+#[test]
 fn dip_limit_off_and_golden_rooms_are_bit_identical() {
     for (hz, q) in [(45.0, 3.0), (60.0, 2.0), (80.0, 1.0)] {
         let h = synthetic(hz, q);

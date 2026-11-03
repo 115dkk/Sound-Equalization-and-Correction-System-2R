@@ -110,6 +110,10 @@ fn smoothed_db(power: &[f64]) -> Vec<f64> {
         .collect()
 }
 
+/// The lowest target correction, upstream's `-25` cut clamp; the dip cap
+/// (ADR 0034) never lowers a cut below it.
+pub(crate) const CUT_FLOOR_DB: f64 = -25.0;
+
 pub(crate) fn limit_dip_fills(
     power: &[f64],
     sm: &[f64],
@@ -133,7 +137,7 @@ pub(crate) fn limit_dip_fills(
         }
         .min(6.0);
         let before = corr[i];
-        corr[i] = corr[i].min(target[i] + level_db - env[i] + fill);
+        corr[i] = corr[i].min((target[i] + level_db - env[i] + fill).max(CUT_FLOOR_DB));
         if depth >= 4.0 && before - corr[i] >= 0.5 {
             let candidate = (frequencies[i], depth, fill);
             if current.is_none_or(|(_, deepest, _)| depth > deepest) {
@@ -908,7 +912,7 @@ fn prepare_correction(
         .map(|i| {
             let sm = sm[i];
             (target[i] + input.level_db - sm).clamp(
-                -25.0,
+                CUT_FLOOR_DB,
                 if f[i] > 16000.0 {
                     c.max_boost_db.min(2.0)
                 } else {
