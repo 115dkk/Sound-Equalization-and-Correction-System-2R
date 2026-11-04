@@ -4,7 +4,7 @@
 
 ## 배경
 
-유지보수자의 OpenAI 사용량이 11월에 11M 토큰, 54달러입니다. 리뷰 하나가 full 모드에서 36만~66만 토큰이고(PR #172 두 번 66만, #178 36만), 같은 PR이 지적을 고친 뒤 두세 번 다시 리뷰됩니다. 지금 요청은 `instructions`(정책·지침·규칙 약 38 KB)와 `input`(문자열 하나에 PR 전체)을 보내고 캐시 설정이 없습니다.
+유지보수자의 OpenAI 사용량이 눈에 띄게 늘었습니다. 리뷰 하나가 full 모드에서 36만~66만 토큰이고(PR #172 두 번 66만, #178 36만), 같은 PR이 지적을 고친 뒤 두세 번 다시 리뷰됩니다. 지금 요청은 `instructions`(정책·지침·규칙 약 38 KB)와 `input`(문자열 하나에 PR 전체)을 보내고 캐시 설정이 없습니다.
 
 OpenAI 문서(https://developers.openai.com/api/docs/guides/prompt-caching 과 https://developers.openai.com/api/reference/resources/responses/methods/create)에서 확인한 사실입니다. 구현 전에 두 페이지를 WebFetch로 다시 읽고, 아래와 다른 점이 있으면 문서를 따르고 보고에 적으십시오.
 
