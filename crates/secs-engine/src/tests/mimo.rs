@@ -44,6 +44,12 @@ fn request(fx: &Fixture) -> MimoRequest {
     }
 }
 
+/// The default 60 ms is the pre-change constant `EARLY = 36`: the configured
+/// normal equations must equal the constant-36 path bit for bit. The default
+/// request's results against the recorded goldens (candidates, ranking,
+/// supports of every case and role) are asserted by
+/// `mimo_stage_boundary_goldens` and `mimo_whole_path_goldens`, which run with
+/// `MimoRequest::default()`'s early window.
 #[test]
 fn mimo_early_sixty_keeps_goldens_bit_identical() {
     use secs_types::calibration::CalibrationSettings;
@@ -63,7 +69,6 @@ fn mimo_early_sixty_keeps_goldens_bit_identical() {
         .iter()
         .map(|v| fx.f64s(v))
         .collect();
-    let candidates = vec!["R".to_owned()];
     let paths: Vec<Vec<Vec<f64>>> = (0..xs.len())
         .map(|p| vec![fx.f64s(&fx.inputs()["stage"]["paths"]["R"][p])])
         .collect();
@@ -77,25 +82,6 @@ fn mimo_early_sixty_keeps_goldens_bit_identical() {
     );
     assert_eq!(legacy.0, configured.0, "FIR normal matrix bits");
     assert_eq!(legacy.1, configured.1, "FIR right-hand-side bits");
-    let direct = fx.f64s(&stage["direct"]);
-    let legacy = design_input(
-        &xs,
-        &paths,
-        &direct,
-        &candidates,
-        &MimoRequest::default(),
-        &Context::serial(),
-    )
-    .unwrap();
-    let configured =
-        design_input(&xs, &paths, &direct, &candidates, &req, &Context::serial()).unwrap();
-    assert_eq!(legacy.supports, configured.supports, "60 ms support bits");
-    assert_eq!(
-        legacy.level_db.to_bits(),
-        configured.level_db.to_bits(),
-        "60 ms level bits"
-    );
-    assert_eq!(legacy.trace, configured.trace, "60 ms trace bits");
 }
 
 #[test]
