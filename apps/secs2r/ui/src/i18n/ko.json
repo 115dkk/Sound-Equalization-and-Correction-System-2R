@@ -1207,6 +1207,8 @@
   "calibrate.mimo.max": "입력당 최대 서포트",
   "calibrate.mimo.max.zero": "0 = 제한 없음",
   "calibrate.mimo.max.hint": "한 입력을 도울 서포트 경로 수를 제한합니다. DSP의 경로별 딜레이 자원이 부족하면 낮추십시오.",
+  "calibrate.mimo.early": "초기 구간",
+  "calibrate.mimo.early.hint": "온셋 뒤 서포트가 작용하기 시작하는 시점(ms)입니다. 줄이면 초기 울림이 짧아지기도 하지만 서포트 구동이 늘어납니다. 응답이 나빠지는 것을 막기 위해 서포트를 줄이거나 끄는 일도 잦아집니다. 기본값은 60 ms입니다.",
   "calibrate.mimo.seat_guard": "위치별 가드",
   "calibrate.mimo.seat_guard.hint": "서포트를 줄일지 정할 때 모든 위치의 합 대신 가장 나빠지는 위치를 봅니다. 한 자리가 나빠지는 설계를 막지만 서포트가 더 자주 줄어듭니다.",
   "calibrate.mimo.fir": "서포트를 FIR로 계산",

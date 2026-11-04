@@ -35,6 +35,7 @@ pub(crate) static CALIBRATION_SHAPE: Shape = Shape::Record {
         "peq_analytic_derivatives",
         "mimo_iir_analytic_derivatives",
         "mimo_seat_guard",
+        "mimo_early_ms",
         "xo_rec_key",
         "xo_rec_include",
     ],
@@ -112,6 +113,12 @@ pub fn calibration_from_project(project: &Project) -> CalibrationSettings {
     // Upstream 1.3.0: a stored calibration without the key predates FIR
     // supports (1.2.0) and stays IIR; an empty one keeps the FIR default.
     out.mimo_fir = get("mimo_fir").map_or(raw.is_empty(), PyJson::is_truthy);
+    out.mimo_early_ms = num(
+        get("mimo_early_ms"),
+        CALIBRATION_LIMITS.mimo_early_ms.0,
+        CALIBRATION_LIMITS.mimo_early_ms.1,
+    )
+    .unwrap_or(60.0);
     out.mimo_seat_guard = get("mimo_seat_guard").is_some_and(PyJson::is_truthy);
     out.peq_analytic_derivatives = get("peq_analytic_derivatives").is_some_and(PyJson::is_truthy);
     out.mimo_iir_analytic_derivatives =
@@ -292,6 +299,12 @@ fn calibration_json(settings: &CalibrationSettings) -> PyJson {
     }
     if settings.mimo_seat_guard {
         values.push(("mimo_seat_guard".into(), PyJson::Bool(true)));
+    }
+    if settings.mimo_early_ms != 60.0 {
+        values.push((
+            "mimo_early_ms".into(),
+            PyJson::Float(settings.mimo_early_ms),
+        ));
     }
     if !settings.xo_rec_key.is_empty() {
         values.push((

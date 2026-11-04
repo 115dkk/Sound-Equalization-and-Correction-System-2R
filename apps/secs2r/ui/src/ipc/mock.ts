@@ -207,7 +207,8 @@ export function mockRcBandsNotes(settings: CalibrationSettings, positions: numbe
  * limits, the lower edge at or above a manual upper one (or the reverse), more
  * than four extra bands, or a band outside 20–20000 Hz or not rising (its
  * 1-based place in the list sent); also an input cut outside 10–50 Hz
- * (ADR 0031). Nothing is clamped.
+ * (ADR 0031) or a MIMO early interval outside its limits (ADR 0037).
+ * Nothing is clamped.
  */
 export function rcEditRefusal(settings: CalibrationSettings, edit: SettingEdit): IpcError | undefined {
   const refuse = (field: string, reason: string, params: Record<string, string>) =>
@@ -226,6 +227,9 @@ export function rcEditRefusal(settings: CalibrationSettings, edit: SettingEdit):
     case "input_hp":
       // ADR 0031: off is null; a cut outside 10–50 Hz is refused like an RC edge.
       if (edit.hz !== null && outside(edit.hz, LIMITS.input_hp)) return refuse("input_hp", "input_hp_range", { min: String(LIMITS.input_hp[0]), max: String(LIMITS.input_hp[1]) });
+      return undefined;
+    case "mimo_early":
+      if (outside(edit.ms, LIMITS.mimo_early_ms)) return refuse("mimo_early_ms", "mimo_early_range", { min: String(LIMITS.mimo_early_ms[0]), max: String(LIMITS.mimo_early_ms[1]) });
       return undefined;
     case "rc_bands": {
       if (edit.bands.length > LIMITS.rc_bands_max[1]) return refuse("rc_bands", "rc_band_count", { max: String(LIMITS.rc_bands_max[1]) });
@@ -327,7 +331,7 @@ export function mockInputHpNotes(settings: CalibrationSettings): Notice[] {
 }
 
 /** Settings edits that change only the MIMO result (secs-types `mimo_key`). */
-const MIMO_ONLY_EDITS: ReadonlySet<SettingEdit["kind"]> = new Set(["fsiso", "mimo_low", "mimo_max", "mimo_fir", "mimo_seat_guard"]);
+const MIMO_ONLY_EDITS: ReadonlySet<SettingEdit["kind"]> = new Set(["fsiso", "mimo_low", "mimo_max", "mimo_fir", "mimo_early", "mimo_seat_guard"]);
 
 /** The service fails a calibration on the agreement basis below three measured positions (secs-service `check_rc_agreement`). */
 const rcAgreementError = (settings: CalibrationSettings, positions: number): IpcError | undefined =>
@@ -722,6 +726,7 @@ export function createMockService(options: MockOptions = {}): MockService {
       case "mimo_low": settings.mimo_low = edit.hz === null ? null : clamp(edit.hz, LIMITS.mimo_low); break;
       case "mimo_max": settings.mimo_max_supports = Math.round(clamp(edit.count, LIMITS.mimo_max)); break;
       case "mimo_fir": settings.mimo_fir = edit.on; break;
+      case "mimo_early": settings.mimo_early_ms = edit.ms; break;
       case "mimo_seat_guard": settings.mimo_seat_guard = edit.on; break;
       case "analytic_derivatives":
         if (edit.peq !== undefined) settings.peq_analytic_derivatives = edit.peq;

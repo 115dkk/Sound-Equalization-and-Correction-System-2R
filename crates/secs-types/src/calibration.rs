@@ -18,6 +18,10 @@ fn default_true() -> bool {
     true
 }
 
+fn default_mimo_early_ms() -> f64 {
+    60.0
+}
+
 fn is_true(value: &bool) -> bool {
     *value
 }
@@ -200,6 +204,9 @@ pub struct CalibrationSettings {
     #[ts(type = "number")]
     pub mimo_max_supports: i64,
     pub mimo_fir: bool,
+    /// Interval after onset protected from MIMO support action (ms, ADR 0037).
+    #[serde(default = "default_mimo_early_ms")]
+    pub mimo_early_ms: f64,
     /// Evaluates MIMO guards at each measured position (ADR 0036).
     #[serde(default)]
     pub mimo_seat_guard: bool,
@@ -262,6 +269,7 @@ impl Default for CalibrationSettings {
             mimo_max_supports: 0,
             // Beta 1.3.0: MIMO supports start as FIR in a new project.
             mimo_fir: true,
+            mimo_early_ms: default_mimo_early_ms(),
             mimo_seat_guard: false,
             peq_analytic_derivatives: false,
             mimo_iir_analytic_derivatives: false,
@@ -464,6 +472,9 @@ impl CalibrationSettings {
         }
         if self.mimo_seat_guard {
             out.push_str("|seat_guard");
+        }
+        if self.mimo_early_ms != default_mimo_early_ms() {
+            write!(&mut out, "|early={}", number(self.mimo_early_ms)).unwrap();
         }
         out
     }
@@ -999,6 +1010,35 @@ mod tests {
         assert_eq!(
             edit,
             crate::settings_edit::SettingEdit::MimoSeatGuard { on: true }
+        );
+    }
+
+    #[test]
+    fn mimo_early_defaults_sixty_and_preserves_legacy_mimo_key() {
+        let baseline = CalibrationSettings::default();
+        let engine_key = baseline.engine_key();
+        let mimo_key = baseline.mimo_key();
+        assert_eq!(baseline.mimo_early_ms, 60.0);
+        assert!(!mimo_key.contains("|early="));
+
+        let mut json = serde_json::to_value(&baseline).unwrap();
+        json.as_object_mut().unwrap().remove("mimo_early_ms");
+        let mut legacy: CalibrationSettings = serde_json::from_value(json).unwrap();
+        assert_eq!(legacy.mimo_early_ms, 60.0);
+        assert_eq!(legacy.engine_key(), engine_key);
+        assert_eq!(legacy.mimo_key(), mimo_key);
+
+        legacy.mimo_early_ms = 20.0;
+        assert_eq!(legacy.engine_key(), engine_key);
+        assert_eq!(
+            legacy.mimo_key(),
+            format!("{mimo_key}|early={}", number(20.0))
+        );
+        let edit: crate::settings_edit::SettingEdit =
+            serde_json::from_value(serde_json::json!({"kind": "mimo_early", "ms": 20.0})).unwrap();
+        assert_eq!(
+            edit,
+            crate::settings_edit::SettingEdit::MimoEarly { ms: 20.0 }
         );
     }
 

@@ -219,6 +219,9 @@ pub enum SettingEdit {
     MimoFir {
         on: bool,
     },
+    MimoEarly {
+        ms: f64,
+    },
     MimoSeatGuard {
         on: bool,
     },

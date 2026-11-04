@@ -63,6 +63,20 @@ fn validate_edit(edit: SettingEdit) -> Result<SettingEdit, IpcError> {
                 ],
             ))
         }
+        SettingEdit::MimoEarly { ms }
+            if !ms.is_finite()
+                || !(LIMITS.mimo_early_ms.0..=LIMITS.mimo_early_ms.1).contains(&ms) =>
+        {
+            Err(invalid(
+                "MIMO early interval is outside its range",
+                [
+                    ("field", "mimo_early_ms".into()),
+                    ("reason", "mimo_early_range".into()),
+                    ("min", LIMITS.mimo_early_ms.0.to_string()),
+                    ("max", LIMITS.mimo_early_ms.1.to_string()),
+                ],
+            ))
+        }
         SettingEdit::RcBands { bands } if bands.len() > LIMITS.rc_bands_max.1 as usize => {
             Err(invalid(
                 "too many extra RC bands",
@@ -512,6 +526,7 @@ fn apply(s: &mut CalibrationSettings, edit: SettingEdit, project: &Project) {
                 .round_ties_even() as i64
         }
         SettingEdit::MimoFir { on } => s.mimo_fir = on,
+        SettingEdit::MimoEarly { ms } => s.mimo_early_ms = ms,
         SettingEdit::MimoSeatGuard { on } => s.mimo_seat_guard = on,
         SettingEdit::AnalyticDerivatives { peq, mimo_iir } => {
             if let Some(on) = peq {

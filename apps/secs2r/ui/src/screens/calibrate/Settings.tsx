@@ -1200,7 +1200,7 @@ function MimoSection({ view, actions, onSampleRateSettings }: FailureProps) {
             checked={s.mimo_seat_guard}
             onChange={(value) => actions.changeSetting({ kind: "mimo_seat_guard", on: value })}
           />
-          <Advanced id="calibrate.mimo.advanced" count={3}>
+          <Advanced id="calibrate.mimo.advanced" count={4}>
             <Toggle
               id="calibrate.mimo.low_auto"
               label={t("calibrate.mimo.low_auto")}
@@ -1241,6 +1241,21 @@ function MimoSection({ view, actions, onSampleRateSettings }: FailureProps) {
               checked={s.mimo_fir}
               onChange={(value) => actions.changeSetting({ kind: "mimo_fir", on: value })}
             />
+            {/* When the supports start to act after the onset (ADR 0037); 60 ms is the long-standing protection. */}
+            <div className="calibrate-fields">
+              <NumberField
+                id="calibrate.mimo.early"
+                label={t("calibrate.mimo.early")}
+                value={s.mimo_early_ms}
+                min={LIMITS.mimo_early_ms[0]}
+                max={LIMITS.mimo_early_ms[1]}
+                step={1}
+                unit="ms"
+                showRange
+                help={t("calibrate.mimo.early.hint")}
+                onChange={(ms) => actions.changeSetting({ kind: "mimo_early", ms })}
+              />
+            </div>
           </Advanced>
         </>
       )}

@@ -26,11 +26,13 @@ pub struct MimoKey {
     pub exclude: Vec<String>,
     pub max_supports: usize,
     pub fir: bool,
+    pub mimo_early_ms: f64,
     pub seat_guard: bool,
 }
 
 impl MimoKey {
-    /// Normalize the typed settings using `CalibrationSettings.from_project`'s bounds.
+    /// Normalize legacy fields using project bounds; preserve the early interval
+    /// so the engine rejects invalid direct settings instead of hiding them.
     pub fn from_settings(settings: &CalibrationSettings) -> Self {
         let mut exclude: Vec<_> = settings
             .subs_manual
@@ -52,6 +54,7 @@ impl MimoKey {
             exclude,
             max_supports: settings.mimo_max_supports.clamp(0, 12) as usize,
             fir: settings.mimo_fir,
+            mimo_early_ms: settings.mimo_early_ms,
             seat_guard: settings.mimo_seat_guard,
         }
     }
@@ -63,6 +66,7 @@ impl MimoKey {
             exclude: self.exclude.clone(),
             max_supports: (self.max_supports != 0).then_some(self.max_supports),
             seat_guard: self.seat_guard,
+            mimo_early_ms: self.mimo_early_ms,
             taps_low: if self.fir {
                 FIR_TAPS_LOW
             } else {

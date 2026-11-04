@@ -2,6 +2,17 @@
 
 SECS 2R의 변경 기록입니다. 번호는 major.minor.patch이고, 0.x는 모두 사전 출시판이며 정식 출시는 1.0.0부터입니다(docs/adr/0006). 각 절의 내용이 그 버전의 릴리스 본문이 됩니다. 업스트림 SECS 2의 변경 기록은 [`docs/upstream/CHANGELOG.md`](docs/upstream/CHANGELOG.md)에 있습니다.
 
+## 0.52.0 - 2026-11-04
+
+MIMO 설정에 '초기 구간'을 추가한 판입니다. 기본값(60 ms)의 계산 결과와 내보낸 파일은 0.51.0과 같습니다.
+
+### 추가한 것
+
+- MIMO 카드의 '고급'에 '초기 구간'(5~60 ms, 기본 60)을 추가했습니다. 서포트가 온셋 뒤 작용하기 시작하는 시점이고, 줄이면 초기 울림(EDT)이 짧아질 수 있는 대신 서포트 구동이 늘고 가드에 더 자주 걸립니다. P1 측정에서 Dirac ART와 SECS의 EDT 차이가 바로 이 구간에 있었습니다. 대역 가드와 T60 가드의 늦은 에너지 정의는 그대로이고, ART 실측이 모이기 전까지 기본값은 60으로 둡니다. CLI는 `project set --mimo-early <ms>`로 바꿉니다(docs/adr/0037).
+- 이 설정은 MIMO 결과에만 들어가므로 바꿔도 보정 결과는 낡지 않습니다. 프로젝트 파일에는 60이 아닐 때만 `mimo_early_ms`를 저장하고, 업스트림 SECS 2는 이 키를 무시합니다(docs/DEVIATIONS.md D59).
+- 공개 크레이트와 `secs2r`, `Secs2R`의 판이 함께 0.21.0으로 오릅니다.
+- 라이브러리: `CalibrationSettings.mimo_early_ms`, `CalibrationLimits.mimo_early_ms`, `SettingEdit::MimoEarly`, `MimoRequest`의 초기 구간을 추가했습니다. 이 타입을 직접 만드는 코드는 고쳐야 합니다.
+
 ## 0.51.0 - 2026-11-04
 
 MIMO 설정에 '위치별 가드'를 추가한 판입니다. 이 설정을 끈 계산 결과와 내보낸 파일은 0.50.0과 같습니다.
