@@ -25,9 +25,9 @@ const n = (code: string, params: Record<string, string>): Notice => ({ code, par
 
 describe("calculation notes", () => {
   it("formats reversed polarity with display roles, integer counts and two-decimal correlation in both locales", () => {
-    const note = n("polarity_reversed", { role: "Rb", compared: "3.0", confidence: "0.946" });
-    expect(lines("ko", [note])).toEqual(["극성 반전이 의심됩니다. Rrs의 직접음이 다른 스피커 3개와 반대 부호입니다(상관 0.95)."]);
-    expect(lines("en", [note])).toEqual(["Possible reversed polarity: Rrs's direct sound has the opposite sign to 3 other speakers (correlation 0.95)."]);
+    const note = n("polarity_reversed", { role: "Rb", compared: "4.0", opposite: "3.0", confidence: "0.946" });
+    expect(lines("ko", [note])).toEqual(["극성 반전이 의심됩니다. Rrs의 직접음이 비교한 스피커 4개 가운데 3개와 반대 부호입니다(상관 0.95)."]);
+    expect(lines("en", [note])).toEqual(["Possible reversed polarity: Rrs's direct sound has the opposite sign to 3 of the 4 speakers it was compared with (correlation 0.95)."]);
   });
 
   it("formats split polarity as dot-joined display roles without choosing a correct group", () => {
@@ -37,7 +37,7 @@ describe("calculation notes", () => {
   });
 
   it("selects only polarity warnings and supplies a next step in both locales", () => {
-    const reversed = n("polarity_reversed", { role: "SR", confidence: "0.94", compared: "3" });
+    const reversed = n("polarity_reversed", { role: "SR", confidence: "0.94", compared: "3", opposite: "3" });
     const split = n("polarity_split", { a: "L,R", b: "SL,SR", confidence: "0.9" });
     expect(polarityWarnings([n("ba_cost", { value: "1" }), reversed, ...lowProtectNotes, split])).toEqual([reversed, split]);
     for (const locale of ["ko", "en"] as const) {

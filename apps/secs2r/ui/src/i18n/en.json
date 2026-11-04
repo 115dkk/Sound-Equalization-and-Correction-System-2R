@@ -1271,7 +1271,7 @@
   "notice.low_protect.cuts": "Protective cuts added: {count}",
   "notice.low_protect.limited": "Low-end protection ({code}): boost still exceeds the limit at some frequencies below {rolloff_hz} Hz.",
   "notice.low_protect.limited.next": "Lower the boost limit or raise the RC lower limit, then press 'Correct again'.",
-  "notice.polarity_reversed": "Possible reversed polarity: {code}'s direct sound has the opposite sign to {compared} other speakers (correlation {confidence}).",
+  "notice.polarity_reversed": "Possible reversed polarity: {code}'s direct sound has the opposite sign to {opposite} of the {compared} speakers it was compared with (correlation {confidence}).",
   "notice.polarity_reversed.next": "Check the +/− speaker wiring or flip the polarity setting, then press 'Correct again'.",
   "notice.polarity_split": "The direct sound from {a} and {b} has opposite signs (correlation {confidence}). It is not possible to tell which group has the correct polarity.",
   "notice.polarity_split.next": "Check the +/− speaker wiring.",

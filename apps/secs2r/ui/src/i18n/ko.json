@@ -1271,7 +1271,7 @@
   "notice.low_protect.cuts": "추가한 보호 컷 {count}개",
   "notice.low_protect.limited": "극저역 보호: {code} 채널의 {rolloff_hz} Hz 아래 일부 주파수가 부스트 한도를 넘습니다.",
   "notice.low_protect.limited.next": "부스트 상한을 낮추거나 RC 하한을 올린 뒤 '다시 보정하기'를 누르십시오.",
-  "notice.polarity_reversed": "극성 반전이 의심됩니다. {code}의 직접음이 다른 스피커 {compared}개와 반대 부호입니다(상관 {confidence}).",
+  "notice.polarity_reversed": "극성 반전이 의심됩니다. {code}의 직접음이 비교한 스피커 {compared}개 가운데 {opposite}개와 반대 부호입니다(상관 {confidence}).",
   "notice.polarity_reversed.next": "스피커 선의 +/− 연결을 확인하거나 극성 설정을 뒤집은 뒤 '다시 보정하기'를 누르십시오.",
   "notice.polarity_split": "{a}와 {b}의 직접음 부호가 서로 반대입니다(상관 {confidence}). 어느 쪽의 극성이 맞는지는 알 수 없습니다.",
   "notice.polarity_split.next": "스피커 선의 +/− 연결을 확인하십시오.",
