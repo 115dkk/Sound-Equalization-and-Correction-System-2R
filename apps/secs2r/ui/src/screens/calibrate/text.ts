@@ -132,7 +132,7 @@ function runKey(notice: Notice): string | null {
 }
 
 /** Calculation notes as lines: runs of one collection note joined (`runKey`), every line a catalog sentence. */
-export function noteLines(t: Translate, number: FormatNumber, notices: readonly Notice[]): string[] {
+export function noteLines(t: Translate, number: FormatNumber, notices: readonly Notice[], lfAlign: boolean, lfAlignAvailable = true): string[] {
   const lines: string[] = [];
   for (let i = 0; i < notices.length; ) {
     const first = notices[i]!;
@@ -142,6 +142,8 @@ export function noteLines(t: Translate, number: FormatNumber, notices: readonly 
     lines.push(noticeText(t, number, first, notices.slice(i, end)) ?? t("jobs.log.unknown"));
     i = end;
   }
+  // The hint names a setting the mode must allow: zero mode has no bass arrival alignment.
+  if (!lfAlign && lfAlignAvailable && notices.some((notice) => notice.code === "pair_phase")) lines.push(t("notice.pair_phase.hint"));
   return lines;
 }
 
@@ -231,6 +233,31 @@ export function noticeText(t: Translate, number: FormatNumber, notice: Notice, r
           hz: number(hz!), depth: number(depth!, 1), fill: number(fill!, 1),
         })).join(", ") : "";
       }
+      break;
+    }
+    case "pair_phase": {
+      // Adjacent bands share a span; its phase and loss both come from the band with the worst cancellation (ADR 0035).
+      const bands = (p.bands ?? "").split(",").map((band) => band.split(":").map((value) => value.trim() === "" ? Number.NaN : num(value)));
+      const valid = bands.every((band) => band.length === 4 && band.every(Number.isFinite) && band[0]! < band[1]!);
+      const spans: { lo: number; hi: number; phase: number; loss: number }[] = [];
+      if (valid) {
+        for (const [lo, hi, phase, loss] of bands) {
+          const previous = spans.at(-1);
+          if (previous && Math.abs(previous.hi - lo!) <= 1) {
+            previous.hi = hi!;
+            if (loss! < previous.loss) {
+              previous.phase = phase!;
+              previous.loss = loss!;
+            }
+          } else spans.push({ lo: lo!, hi: hi!, phase: phase!, loss: loss! });
+        }
+      }
+      Object.assign(params, {
+        a: code("a"), b: code("b"),
+        spans: spans.map(({ lo, hi, phase, loss }) => t("notice.pair_phase.span", {
+          lo: number(lo), hi: number(hi), phase: number(phase), loss: number(loss),
+        })).join(", "),
+      });
       break;
     }
     case "input_hp":

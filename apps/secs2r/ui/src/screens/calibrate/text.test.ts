@@ -17,9 +17,9 @@ function words(locale: Locale): { t: Translate; number: FormatNumber } {
   return { t, number };
 }
 
-const lines = (locale: Locale, notices: Notice[]) => {
+const lines = (locale: Locale, notices: Notice[], lfAlign = false, lfAlignAvailable = true) => {
   const { t, number } = words(locale);
-  return noteLines(t, number, notices);
+  return noteLines(t, number, notices, lfAlign, lfAlignAvailable);
 };
 const n = (code: string, params: Record<string, string>): Notice => ({ code, params });
 
@@ -57,8 +57,56 @@ describe("calculation notes", () => {
     expect(lines("en", [note])).toEqual(["Dip correction limit (Ltf): no dips limited"]);
   });
 
+  it("formats pair phase with display roles and integer phase and loss in both locales", () => {
+    const note = n("pair_phase", { a: "Tfl", b: "Rb", bands: "89:112:-169.6:-20.3" });
+    expect(lines("ko", [note], true)).toEqual(["채널 사이 위상(Ltf·Rrs): 89~112 Hz에서 위상차 −170°, 함께 울리면 −20 dB"]);
+    expect(lines("en", [note], true)).toEqual(["Phase between channels (Ltf·Rrs): 89–112 Hz: −170° phase difference, −20 dB when playing together"]);
+  });
+
+  it("merges adjacent pair-phase bands and keeps the phase of the worst loss in each span", () => {
+    const note = n("pair_phase", { a: "L", b: "Ls", bands: "44:56:179.0:-12.2,56:71:164.6:-18.7,89:112:170.0:-20.3,112:141:174.0:-24.1,141:178:178.0:-22.0" });
+    expect(lines("ko", [note], true)).toEqual(["채널 사이 위상(L·Ls): 44~71 Hz에서 위상차 165°, 함께 울리면 −19 dB, 89~178 Hz에서 위상차 174°, 함께 울리면 −24 dB"]);
+    expect(lines("en", [note], true)).toEqual(["Phase between channels (L·Ls): 44–71 Hz: 165° phase difference, −19 dB when playing together, 89–178 Hz: 174° phase difference, −24 dB when playing together"]);
+  });
+
+  it("does not hint bass arrival alignment when the mode cannot use it", () => {
+    const notes = [n("pair_phase", { a: "L", b: "Ls", bands: "89:112:170.0:-20.3" })];
+    for (const locale of ["ko", "en"] as const) {
+      expect(lines(locale, notes, false, false)).toHaveLength(1);
+      expect(lines(locale, notes, false, true)).toHaveLength(2);
+    }
+  });
+
+  it("appends one pair-phase hint at the end only when a pair note exists and bass arrival alignment is off", () => {
+    const notes = [
+      n("pair_phase", { a: "L", b: "Ls", bands: "89:112:170.0:-20.3" }),
+      n("pair_phase", { a: "R", b: "Rs", bands: "112:141:174.0:-24.1" }),
+      n("ba_cost", { value: "1" }),
+    ];
+    for (const locale of ["ko", "en"] as const) {
+      const hint = locale === "ko"
+        ? "저음 도착 맞추기를 켜면 메인끼리의 저역 위상이 가까워집니다."
+        : "Turning on 'Align bass arrival' reduces low-frequency phase differences between the main speakers.";
+      const aligned = lines(locale, notes, true);
+      expect(aligned).toHaveLength(3);
+      expect(aligned).not.toContain(hint);
+      expect(lines(locale, notes, false)).toEqual([...aligned, hint]);
+      expect(lines(locale, notes.slice(2), false)).toEqual([aligned[2]]);
+      expect(lines(locale, [], false)).toEqual([]);
+    }
+  });
+
+  it("does not expose malformed pair-phase bands as raw text or nonfinite numbers", () => {
+    for (const bands of ["", "89:112:170", "89:112::bad", "89:112:NaN:-20", "112:89:170:-20"]) {
+      for (const locale of ["ko", "en"] as const) {
+        const text = lines(locale, [n("pair_phase", { a: "L", b: "R", bands })], true)[0];
+        expect(text).toBe(locale === "ko" ? "채널 사이 위상(L·R): " : "Phase between channels (L·R): ");
+      }
+    }
+  });
+
   it("has a sentence for every calibration notice code in both locales", () => {
-    const codes = ["measurement_resampled", "rc_limit", "rc_room_volume", "rc_no_room_volume", "rc_auto_cap", "rc_bands", "lf_align", "mode_decay", "mode_decay_none", "hf_phase", "hf_phase_none", "dip_limit", "input_hp", "polarity_reversed", "polarity_split", "sub_narrow_band", "sub_high_gain", "lift_capped", "latency", "phase_strength", "phase_band", "long_mode_boost", "gd_cuts", "two_way", "sub_filters", "sub_filter_peq", "ba_cost", "ba_bus_pass", "bus_gain_anchored", "layout_fallback", "layout", "ba_manual", "low_protect"];
+    const codes = ["measurement_resampled", "rc_limit", "rc_room_volume", "rc_no_room_volume", "rc_auto_cap", "rc_bands", "lf_align", "mode_decay", "mode_decay_none", "hf_phase", "hf_phase_none", "dip_limit", "pair_phase", "input_hp", "polarity_reversed", "polarity_split", "sub_narrow_band", "sub_high_gain", "lift_capped", "latency", "phase_strength", "phase_band", "long_mode_boost", "gd_cuts", "two_way", "sub_filters", "sub_filter_peq", "ba_cost", "ba_bus_pass", "bus_gain_anchored", "layout_fallback", "layout", "ba_manual", "low_protect"];
     for (const locale of ["ko", "en"] as const) {
       const { t, number } = words(locale);
       for (const code of codes) expect(noticeText(t, number, n(code, {})), `${locale}: ${code}`).not.toBeNull();

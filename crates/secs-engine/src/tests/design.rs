@@ -47,6 +47,9 @@ fn note_value(note: &crate::notes::Note) -> Value {
         Note::PolaritySplit { groups, confidence } => {
             json!({"PolaritySplit": {"groups": groups, "confidence": confidence}})
         }
+        Note::PairPhase { a, b, bands } => {
+            json!({"PairPhase": {"a": a, "b": b, "bands": bands}})
+        }
         Note::LowProtect {
             role,
             rolloff_hz,
@@ -297,6 +300,111 @@ fn golden_rooms_have_no_polarity_notes() {
             design.notes
         );
     }
+}
+
+#[test]
+fn pair_phase_runs_once_on_the_final_pass_and_reports_dolby() {
+    let assert_pairs_are_unique = |label: &str, result: &crate::Design| {
+        let mut pairs = BTreeMap::new();
+        for note in &result.notes {
+            let crate::Note::PairPhase { a, b, bands } = note else {
+                continue;
+            };
+            assert!(pairs.insert((a, b), bands).is_none(), "{label}: {a}/{b}");
+            assert!(
+                bands
+                    .iter()
+                    .all(|band| band.3 <= crate::pair_phase::LOSS_DB)
+            );
+            eprintln!("PAIR_PHASE {label} {a}/{b} {bands:?}");
+        }
+    };
+
+    for name in ["dolby", "room", "room_dba"] {
+        let result = replay(name);
+        for main in &result.mains {
+            assert!(
+                main.after
+                    .iter()
+                    .zip(main.combined.iter().zip(main.response.iter()))
+                    .all(|(after, (combined, response))| {
+                        let expected = combined * response;
+                        (after.re.to_bits(), after.im.to_bits())
+                            == (expected.re.to_bits(), expected.im.to_bits())
+                    }),
+                "{name}/{}",
+                main.role
+            );
+        }
+        assert_pairs_are_unique(name, &result);
+        // The wiring itself: dolby's rear surround and top front left cancel
+        // in the 70-112 Hz bands, the two rooms have no cancelling pair.
+        let pairs: Vec<_> = result
+            .notes
+            .iter()
+            .filter_map(|note| match note {
+                crate::Note::PairPhase { a, b, bands } => Some((a.as_str(), b.as_str(), bands)),
+                _ => None,
+            })
+            .collect();
+        if name == "dolby" {
+            let (_, _, bands) = pairs
+                .iter()
+                .find(|(a, b, _)| *a == "Rs" && *b == "Tfl")
+                .expect("dolby reports Rs/Tfl");
+            assert!(
+                bands
+                    .iter()
+                    .any(|band| band.0 >= 70.0 && band.1 <= 113.0 && band.3 <= -12.0),
+                "{bands:?}"
+            );
+        } else {
+            assert!(pairs.is_empty(), "{name}: {pairs:?}");
+        }
+    }
+
+    // The check runs exactly once: not in the agreement probe pass, and not
+    // for a subs-only calculation. The observer sees the "pair_phase" stage.
+    let runs = std::sync::atomic::AtomicUsize::new(0);
+    let count = |name: &str, _: std::time::Duration| {
+        if name == "pair_phase" {
+            runs.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+    };
+    let mut case = cases::load("room");
+    case.config.rc_range.1 = None;
+    case.config.rc_hi_basis = secs_types::calibration::RcHiBasis::Agreement;
+    let context = Context::serial();
+    let fitters = design::production_fitters(context.cancel());
+    let result = design::design_observed(
+        &DesignRequest {
+            measurements: &case.measurements,
+            config: &case.config,
+            tuning: &case.tuning,
+            subs_only: false,
+            adapter_notes: &[],
+        },
+        &context,
+        &*fitters,
+        &count,
+    )
+    .unwrap();
+    assert_pairs_are_unique("room/agreement", &result);
+    assert_eq!(runs.load(std::sync::atomic::Ordering::SeqCst), 1);
+    design::design_observed(
+        &DesignRequest {
+            measurements: &case.measurements,
+            config: &case.config,
+            tuning: &case.tuning,
+            subs_only: true,
+            adapter_notes: &[],
+        },
+        &context,
+        &*fitters,
+        &count,
+    )
+    .unwrap();
+    assert_eq!(runs.load(std::sync::atomic::Ordering::SeqCst), 1);
 }
 
 #[test]
@@ -687,7 +795,14 @@ fn design_matches_recorded_stages() {
         assert_eq!(result.adapter_notes, Vec::<String>::new());
         compare_value(
             &format!("{name}/notes"),
-            &Value::Array(result.notes.iter().map(note_value).collect()),
+            &Value::Array(
+                result
+                    .notes
+                    .iter()
+                    .filter(|note| !matches!(note, crate::notes::Note::PairPhase { .. }))
+                    .map(note_value)
+                    .collect(),
+            ),
             &o["typed_notes"],
             gate,
         );
@@ -717,9 +832,11 @@ fn design_matches_recorded_stages() {
         let kinds: Vec<_> = result
             .notes
             .iter()
+            .filter(|note| !matches!(note, crate::notes::Note::PairPhase { .. }))
             .map(|n| match n {
                 crate::notes::Note::PolarityReversed { .. } => "PolarityReversed",
                 crate::notes::Note::PolaritySplit { .. } => "PolaritySplit",
+                crate::notes::Note::PairPhase { .. } => "PairPhase",
                 crate::notes::Note::LowProtect { .. } => "LowProtect",
                 crate::notes::Note::LiftCapped { .. } => "LiftCapped",
                 crate::notes::Note::SubFilters(_) => "SubFilters",

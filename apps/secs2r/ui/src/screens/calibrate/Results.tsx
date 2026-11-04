@@ -260,7 +260,7 @@ export function Verdict({
   // A main whose direct sound is opposite to the others is a warning with a one-click fix (ADR 0033), not a note.
   const polarity = polarityWarnings(result.notes);
   // The engine notes as sentences, for everyone, as upstream shows them; rc_limit is the RC card's line.
-  const notes = noteLines(t, number, result.notes.filter((note) => note.code !== "rc_limit" && !unprotected.includes(note) && !polarity.includes(note)));
+  const notes = noteLines(t, number, result.notes.filter((note) => note.code !== "rc_limit" && !unprotected.includes(note) && !polarity.includes(note)), view.settings.lf_align, view.settings.mode !== "zero");
 
   return (
     <Card
