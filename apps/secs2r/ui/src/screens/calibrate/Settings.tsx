@@ -44,7 +44,7 @@ import {
   type RejectionPlace,
   type UpperChoice,
 } from "./settingsView";
-import { FAILED_TEXT, MODES, MODE_EFFECT, MODE_NAME, bandTypeText, filterSpec, groupName, modeSpecText, noticeText, rangeNotices, rangeRejectionText, subRoles, xoGroups } from "./text";
+import { FAILED_TEXT, MODES, MODE_EFFECT, MODE_NAME, bandTypeText, filterSpec, groupName, modeSpecText, noteLines, noticeText, rangeNotices, rangeRejectionText, subRoles, xoGroups } from "./text";
 import { DESIGN_RATE, rateText, tapsAt } from "../system/outputRate";
 import type { BandTypeChoice, CalibrateActions, CalibrateJob, CalibrateView, SettingEdit, SubLayout, SubModeChoice } from "./types";
 
@@ -1181,6 +1181,25 @@ function MimoSection({ view, actions, onSampleRateSettings }: FailureProps) {
           </div>
           {state()}
           {mimo && <ComputeResult report={mimo.compute} />}
+          {/* The MIMO run's own notes (guard reductions and the like), collapsed like the verdict's calculation notes. */}
+          {mimo && mimo.notes.length > 0 && (
+            <details className="ui-details calibrate-notes" data-ui="calibrate.mimo.notes">
+              <summary>{t("calibrate.verdict.notes", { count: mimo.notes.length })}</summary>
+              <ul>
+                {noteLines(t, number, mimo.notes, true).map((line, i) => (
+                  <li key={i}>{line}</li>
+                ))}
+              </ul>
+            </details>
+          )}
+          {/* The guards judge the worst seat instead of the sum (ADR 0036): a MIMO-only setting, so it only stales MIMO. */}
+          <Toggle
+            id="calibrate.mimo.seat_guard"
+            label={t("calibrate.mimo.seat_guard")}
+            help={t("calibrate.mimo.seat_guard.hint")}
+            checked={s.mimo_seat_guard}
+            onChange={(value) => actions.changeSetting({ kind: "mimo_seat_guard", on: value })}
+          />
           <Advanced id="calibrate.mimo.advanced" count={3}>
             <Toggle
               id="calibrate.mimo.low_auto"

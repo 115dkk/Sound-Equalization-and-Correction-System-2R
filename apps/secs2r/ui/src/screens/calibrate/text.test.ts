@@ -24,6 +24,28 @@ const lines = (locale: Locale, notices: Notice[], lfAlign = false) => {
 const n = (code: string, params: Record<string, string>): Notice => ({ code, params });
 
 describe("calculation notes", () => {
+  it.each(["mimo_guard_reduced", "mimo_guard_disabled"])("formats %s with and without a position in both locales", (code) => {
+    const params = { role: "Rb", gain_db: "-6.25", rejected_db: "-3.25", band_lo_hz: "40", band_hi_hz: "50.5", band_db: "1.5", mode_hz: "48", tail_db: "1.25" };
+    for (const locale of ["ko", "en"] as const) {
+      const action = locale === "ko"
+        ? code === "mimo_guard_reduced" ? "Rrs 서포트를 −6.3 dB로 줄였습니다." : "Rrs 서포트를 껐습니다."
+        : code === "mimo_guard_reduced" ? "Reduced Rrs support to −6.3 dB." : "Disabled Rrs support.";
+      const causes = locale === "ko" ? "40~51 Hz 늦은 에너지 +1.5 dB · 48 Hz 모드의 꼬리 에너지 +1.3 dB" : "40–51 Hz late energy +1.5 dB · 48 Hz mode tail energy +1.3 dB";
+      const prefix = locale === "ko" ? "위치 3에서 " : "At position 3, ";
+      const without = `${causes} · ${action}`;
+      expect(lines(locale, [n(code, params)])).toEqual([without]);
+      expect(lines(locale, [n(code, { ...params, position: "3" })])).toEqual([prefix + without]);
+      // Older records may have only one cause, or no cause details.
+      expect(lines(locale, [n(code, { role: "Rb", gain_db: "-6.25" })])).toEqual([action]);
+      expect(lines(locale, [n(code, { role: "Rb", gain_db: "-6.25", position: "3", mode_hz: "48", tail_db: "1.25" })])).toEqual([
+        prefix + (locale === "ko" ? "48 Hz 모드의 꼬리 에너지 +1.3 dB" : "48 Hz mode tail energy +1.3 dB") + ` · ${action}`,
+      ]);
+      expect(lines(locale, [n(code, { role: "Rb", gain_db: "-6.25", position: "3", band_lo_hz: "40", band_hi_hz: "50.5", band_db: "1.5" })])).toEqual([
+        prefix + (locale === "ko" ? "40~51 Hz 늦은 에너지 +1.5 dB" : "40–51 Hz late energy +1.5 dB") + ` · ${action}`,
+      ]);
+    }
+  });
+
   it("formats reversed polarity with display roles, integer counts and two-decimal correlation in both locales", () => {
     const note = n("polarity_reversed", { role: "Rb", compared: "3.0", confidence: "0.946" });
     expect(lines("ko", [note])).toEqual(["극성 반전이 의심됩니다. Rrs의 직접음이 다른 스피커 3개와 반대 부호입니다(상관 0.95)."]);

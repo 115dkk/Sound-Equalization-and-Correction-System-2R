@@ -11,6 +11,21 @@ import type { Mode } from "./bindings/Mode";
 import type { MimoExportDecision } from "./bindings/MimoExportDecision";
 import { umikFile } from "../screens/connect/fixtures";
 
+describe("mock MIMO seat guard", () => {
+  it("defaults off from recorded settings and persists edits when reopening a saved project", async () => {
+    const mock = createMockService({ tickMs: 0 });
+    try {
+      expect((await mock.request({ method: "calibration_settings_get" })).mimo_seat_guard).toBe(false);
+      expect(await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "mimo_seat_guard", on: true } } })).toMatchObject({ mimo_seat_guard: true });
+      await mock.request({ method: "project_save", params: { path: "/seat-guard.secs" } });
+      await mock.request({ method: "project_new", params: { path: "/new-seat-guard.secs", preset: "2.0", sub_count: 0, sample: false, tutorial: false } });
+      expect((await mock.request({ method: "calibration_settings_get" })).mimo_seat_guard).toBe(false);
+      await mock.request({ method: "project_open", params: { path: "/seat-guard.secs" } });
+      expect((await mock.request({ method: "calibration_settings_get" })).mimo_seat_guard).toBe(true);
+    } finally { mock.dispose(); }
+  });
+});
+
 describe("mock job groups", () => {
   it.each([
     [{ method: "calibrate", params: { settings: null, subs_only: false } }, { method: "recommend_xo" }],
@@ -893,7 +908,7 @@ describe("mock calibrate with MIMO (P141, P142)", () => {
       await mimoOn(mock);
       await mock.request({ method: "calibrate", params: withMimo });
       mock.drain();
-      for (const edit of [{ kind: "fsiso", hz: 120 }, { kind: "mimo_low", hz: 25 }, { kind: "mimo_max", count: 2 }, { kind: "mimo_fir", on: true }] as const) {
+      for (const edit of [{ kind: "fsiso", hz: 120 }, { kind: "mimo_low", hz: 25 }, { kind: "mimo_max", count: 2 }, { kind: "mimo_fir", on: true }, { kind: "mimo_seat_guard", on: true }, { kind: "mimo_seat_guard", on: false }] as const) {
         await mock.request({ method: "calibration_settings_edit", params: { edit } });
         const results = await mock.request({ method: "results" });
         expect(results.calibration?.stale, edit.kind).toBe(false);

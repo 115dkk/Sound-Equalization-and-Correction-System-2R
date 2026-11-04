@@ -152,6 +152,8 @@ pub enum MimoNote {
 #[derive(Debug, Clone, PartialEq)]
 pub struct GuardCause {
     pub rejected_db: f64,
+    /// Measured position that produced the rejection when the seat guard is on.
+    pub position: Option<u32>,
     /// Late energy rise over every position, `(lo Hz, hi Hz, dB)`: a
     /// third-octave band or a ±1.5 Hz band around a late mode.
     pub band: Option<(f64, f64, f64)>,

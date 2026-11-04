@@ -74,6 +74,7 @@ fn ideal(fx: &Fixture) -> MimoDesign {
                     let (role, text) = text.split_once(": ").unwrap();
                     let cause = crate::GuardCause {
                         rejected_db: 0.0,
+                        position: None,
                         band: None,
                         tail: None,
                     };
@@ -713,6 +714,40 @@ fn mimo_run_compute_fir_and_iir_end_to_end() {
                 assert!(!events.iter().any(|p| p.stage == "engine.mimo_iir"));
             }
         }
+    }
+}
+
+#[test]
+fn mimo_seat_guard_off_keeps_goldens_bit_identical() {
+    let case = cases::load("room_filters");
+    let design = design::replay("room_filters");
+    for fir in [false, true] {
+        let explicit = settings(fir);
+        let mut json = serde_json::to_value(&explicit).unwrap();
+        json.as_object_mut().unwrap().remove("mimo_seat_guard");
+        let legacy: CalibrationSettings = serde_json::from_value(json).unwrap();
+        assert!(!legacy.mimo_seat_guard);
+        assert_eq!(legacy.mimo_key(), explicit.mimo_key());
+
+        let expected = mimo::compute(
+            &design,
+            &case.measurements,
+            &case.config,
+            &explicit,
+            &Tuning::default(),
+            &Context::serial(),
+        )
+        .unwrap();
+        let actual = mimo::compute(
+            &design,
+            &case.measurements,
+            &case.config,
+            &legacy,
+            &Tuning::default(),
+            &Context::serial(),
+        )
+        .unwrap();
+        assert_eq!(actual, expected, "fir={fir}");
     }
 }
 

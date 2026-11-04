@@ -215,6 +215,9 @@ enum ProjectAction {
         /// MIMO supports as FIR or as IIR (PEQ and all-pass) filters.
         #[arg(long, value_enum)]
         mimo_supports: Option<SupportKind>,
+        /// Evaluate MIMO guards at each measured position.
+        #[arg(long, value_enum)]
+        mimo_seat_guard: Option<Switch>,
         /// PEQ derivative method (experimental analytic results differ from SECS 2).
         #[arg(long, value_enum)]
         peq_derivatives: Option<PeqDerivativeChoice>,
@@ -667,6 +670,7 @@ fn run(action: Action, runner: &mut Runner) {
                 path,
                 mimo,
                 mimo_supports,
+                mimo_seat_guard,
                 low_protect,
                 lf_align,
                 mode_decay,
@@ -688,6 +692,11 @@ fn run(action: Action, runner: &mut Runner) {
                 if let Some(kind) = mimo_supports {
                     edits.push(SettingEdit::MimoFir {
                         on: matches!(kind, SupportKind::Fir),
+                    });
+                }
+                if let Some(value) = mimo_seat_guard {
+                    edits.push(SettingEdit::MimoSeatGuard {
+                        on: matches!(value, Switch::On),
                     });
                 }
                 if peq_derivatives.is_some() || mimo_iir_derivatives.is_some() {

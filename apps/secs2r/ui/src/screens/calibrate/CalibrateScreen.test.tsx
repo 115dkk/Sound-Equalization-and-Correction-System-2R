@@ -761,6 +761,14 @@ describe("MIMO 함께 계산", () => {
     expect(actions.changeSetting).toHaveBeenLastCalledWith({ kind: "mimo_on", on: true });
   });
 
+  it("hides the per-position guard when MIMO is off or fewer than three positions are measured", () => {
+    for (const view of [fx.splView, fx.readyMimoTwoView, fx.onePositionView]) {
+      setup(view);
+      expect(ui("calibrate.mimo.seat_guard")).toBeNull();
+      cleanupAll();
+    }
+  });
+
   it("is off below three positions and says why on its own line, and 보정 계산 stays on", () => {
     const actions = setup(fx.readyMimoTwoView);
     const toggle = must("calibrate.run.mimo") as HTMLButtonElement;
@@ -1247,6 +1255,7 @@ const REACH_IDS = [
   "calibrate.mimo.low",
   "calibrate.mimo.max",
   "calibrate.mimo.fir",
+  "calibrate.mimo.seat_guard",
   "calibrate.mimo.compute",
   "calibrate.mimo.reason",
   "calibrate.mimo.state",

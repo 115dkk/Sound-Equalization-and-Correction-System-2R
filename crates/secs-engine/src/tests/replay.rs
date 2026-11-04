@@ -82,6 +82,7 @@ fn design_replay_mimo_responses_match_fresh_preparation_bits() {
                 exclude: vec![],
                 max_supports: 0,
                 fir: matches!(support, Support::Fir { .. }),
+                seat_guard: false,
             };
             let supports = vec![(
                 case.config.mains[0].clone(),

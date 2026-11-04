@@ -327,7 +327,7 @@ export function mockInputHpNotes(settings: CalibrationSettings): Notice[] {
 }
 
 /** Settings edits that change only the MIMO result (secs-types `mimo_key`). */
-const MIMO_ONLY_EDITS: ReadonlySet<SettingEdit["kind"]> = new Set(["fsiso", "mimo_low", "mimo_max", "mimo_fir"]);
+const MIMO_ONLY_EDITS: ReadonlySet<SettingEdit["kind"]> = new Set(["fsiso", "mimo_low", "mimo_max", "mimo_fir", "mimo_seat_guard"]);
 
 /** The service fails a calibration on the agreement basis below three measured positions (secs-service `check_rc_agreement`). */
 const rcAgreementError = (settings: CalibrationSettings, positions: number): IpcError | undefined =>
@@ -722,6 +722,7 @@ export function createMockService(options: MockOptions = {}): MockService {
       case "mimo_low": settings.mimo_low = edit.hz === null ? null : clamp(edit.hz, LIMITS.mimo_low); break;
       case "mimo_max": settings.mimo_max_supports = Math.round(clamp(edit.count, LIMITS.mimo_max)); break;
       case "mimo_fir": settings.mimo_fir = edit.on; break;
+      case "mimo_seat_guard": settings.mimo_seat_guard = edit.on; break;
       case "analytic_derivatives":
         if (edit.peq !== undefined) settings.peq_analytic_derivatives = edit.peq;
         if (edit.mimo_iir !== undefined) settings.mimo_iir_analytic_derivatives = edit.mimo_iir;

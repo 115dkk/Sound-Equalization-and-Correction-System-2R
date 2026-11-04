@@ -2185,6 +2185,21 @@ tests = [
 ]
 
 [[feature]]
+id = "calibration.mimo_seat_guard"
+kind = "workflow"
+milestone = "M5"
+status = "implemented"
+upstream = "new; ADR 0036"
+tests = [
+  "secs-engine::mimo_seat_guard_rejects_a_support_that_worsens_one_position",
+  "secs-engine::mimo_seat_guard_off_keeps_goldens_bit_identical",
+  "secs-engine::mimo_seat_guard_applies_to_iir_guards",
+  "secs-types::mimo_seat_guard_defaults_off_and_preserves_legacy_mimo_key",
+  "secs-project::mimo_seat_guard_round_trip_and_legacy_default",
+  "secs-service::mimo_seat_guard_edits_persist_and_mark_only_mimo_stale",
+]
+
+[[feature]]
 id = "calibration.input_hp"
 kind = "workflow"
 milestone = "M5"
@@ -2247,6 +2262,14 @@ milestone = "M5"
 status = "implemented"
 upstream = "new; project set --dip-limit on|off"
 tests = ["secs2r-cli::project_set_persists_dip_limit_switch"]
+
+[[feature]]
+id = "cli.mimo_seat_guard"
+kind = "workflow"
+milestone = "M5"
+status = "implemented"
+upstream = "new; ADR 0036"
+tests = ["secs2r-cli::project_set_persists_mimo_seat_guard_switch"]
 
 [[feature]]
 id = "apply.camilla_ws"

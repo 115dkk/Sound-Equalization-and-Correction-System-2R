@@ -200,6 +200,9 @@ pub struct CalibrationSettings {
     #[ts(type = "number")]
     pub mimo_max_supports: i64,
     pub mimo_fir: bool,
+    /// Evaluates MIMO guards at each measured position (ADR 0036).
+    #[serde(default)]
+    pub mimo_seat_guard: bool,
     /// Experimental: PEQ fits use closed-form Jacobians (results leave SECS 2).
     #[serde(default)]
     pub peq_analytic_derivatives: bool,
@@ -259,6 +262,7 @@ impl Default for CalibrationSettings {
             mimo_max_supports: 0,
             // Beta 1.3.0: MIMO supports start as FIR in a new project.
             mimo_fir: true,
+            mimo_seat_guard: false,
             peq_analytic_derivatives: false,
             mimo_iir_analytic_derivatives: false,
             xo: Vec::new(),
@@ -457,6 +461,9 @@ impl CalibrationSettings {
         .unwrap();
         if self.mimo_iir_analytic_derivatives {
             out.push_str("|mimo_iir_analytic_derivatives");
+        }
+        if self.mimo_seat_guard {
+            out.push_str("|seat_guard");
         }
         out
     }
@@ -965,6 +972,33 @@ mod tests {
         assert_eq!(
             mimo.mimo_key(),
             format!("{mimo_key}|mimo_iir_analytic_derivatives")
+        );
+    }
+
+    #[test]
+    fn mimo_seat_guard_defaults_off_and_preserves_legacy_mimo_key() {
+        let baseline = CalibrationSettings::default();
+        let engine_key = baseline.engine_key();
+        let mimo_key = baseline.mimo_key();
+        assert!(!baseline.mimo_seat_guard);
+        assert!(!mimo_key.contains("seat_guard"));
+
+        let mut json = serde_json::to_value(&baseline).unwrap();
+        json.as_object_mut().unwrap().remove("mimo_seat_guard");
+        let mut legacy: CalibrationSettings = serde_json::from_value(json).unwrap();
+        assert!(!legacy.mimo_seat_guard);
+        assert_eq!(legacy.engine_key(), engine_key);
+        assert_eq!(legacy.mimo_key(), mimo_key);
+
+        legacy.mimo_seat_guard = true;
+        assert_eq!(legacy.engine_key(), engine_key);
+        assert_eq!(legacy.mimo_key(), format!("{mimo_key}|seat_guard"));
+        let edit: crate::settings_edit::SettingEdit =
+            serde_json::from_value(serde_json::json!({"kind": "mimo_seat_guard", "on": true}))
+                .unwrap();
+        assert_eq!(
+            edit,
+            crate::settings_edit::SettingEdit::MimoSeatGuard { on: true }
         );
     }
 

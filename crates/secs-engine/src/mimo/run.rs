@@ -26,6 +26,7 @@ pub struct MimoKey {
     pub exclude: Vec<String>,
     pub max_supports: usize,
     pub fir: bool,
+    pub seat_guard: bool,
 }
 
 impl MimoKey {
@@ -51,6 +52,7 @@ impl MimoKey {
             exclude,
             max_supports: settings.mimo_max_supports.clamp(0, 12) as usize,
             fir: settings.mimo_fir,
+            seat_guard: settings.mimo_seat_guard,
         }
     }
 
@@ -60,6 +62,7 @@ impl MimoKey {
             f_low: self.f_low,
             exclude: self.exclude.clone(),
             max_supports: (self.max_supports != 0).then_some(self.max_supports),
+            seat_guard: self.seat_guard,
             taps_low: if self.fir {
                 FIR_TAPS_LOW
             } else {

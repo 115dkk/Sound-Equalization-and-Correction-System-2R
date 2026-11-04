@@ -33,6 +33,10 @@ input_hp_hz: number | null, rc_lo: number, rc_hi: number | null, rc_hi_basis: Rc
  */
 rc_bands: Array<RcBand>, room_volume_m3: number | null, room_dims_m: [number, number, number] | null, mimo_on: boolean, fsiso: number, mimo_low: number | null, mimo_max_supports: number, mimo_fir: boolean, 
 /**
+ * Evaluates MIMO guards at each measured position (ADR 0036).
+ */
+mimo_seat_guard: boolean, 
+/**
  * Experimental: PEQ fits use closed-form Jacobians (results leave SECS 2).
  */
 peq_analytic_derivatives: boolean, 
