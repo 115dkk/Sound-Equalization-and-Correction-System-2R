@@ -74,7 +74,8 @@ fn ideal(fx: &Fixture) -> MimoDesign {
                     let (role, text) = text.split_once(": ").unwrap();
                     let cause = crate::GuardCause {
                         rejected_db: 0.0,
-                        position: None,
+                        band_position: None,
+                        tail_position: None,
                         band: None,
                         tail: None,
                     };

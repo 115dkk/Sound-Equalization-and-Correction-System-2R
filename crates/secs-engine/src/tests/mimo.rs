@@ -495,7 +495,23 @@ fn mimo_seat_guard_rejects_a_support_that_worsens_one_position() {
     assert!(guards.len() > 1, "the seat guard must reduce the support");
     assert!(scale < 1.0);
     let cause = guard_cause(&guards, &[2, 5, 9]).unwrap();
-    assert_eq!(cause.position, Some(2));
+    assert_eq!(cause.band_position, Some(2));
+    assert!(cause.tail_position.is_none() || cause.tail.is_some());
+
+    // A position with no late energy before the support and some after is a
+    // violation, and a position silent before and after says nothing.
+    assert_eq!(
+        crate::mimo::design::seat_change(0.0, 1.0),
+        Some(crate::mimo::design::SEAT_VIOLATION_DB)
+    );
+    assert!(crate::mimo::design::seat_change(0.0, 0.0).is_none());
+    assert!((crate::mimo::design::seat_change(1.0, 2.0).unwrap() - 3.0103).abs() < 1e-3);
+    assert!(
+        crate::mimo::design::seat_change(1e-32, 1e-32)
+            .unwrap()
+            .abs()
+            < 1e-9
+    );
 }
 
 #[test]

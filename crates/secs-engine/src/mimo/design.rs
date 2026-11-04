@@ -549,13 +549,13 @@ impl BandGuard {
             let mut position = None;
             for (p, (before, after)) in before.iter().zip(after).enumerate() {
                 for (k, (&a, b)) in before.iter().zip(after).enumerate() {
-                    if a > 0.0 {
-                        let change = 10.0 * ((b + 1e-30) / a).log10();
-                        if change > worst {
-                            worst = change;
-                            band = Some(self.hz[k]);
-                            position = Some(p);
-                        }
+                    let Some(change) = seat_change(a, b) else {
+                        continue;
+                    };
+                    if change > worst {
+                        worst = change;
+                        band = Some(self.hz[k]);
+                        position = Some(p);
                     }
                 }
             }
@@ -693,12 +693,12 @@ impl<'a> T60Guard<'a> {
                 {
                     let yf = sosfilt(&baseline.sos, y)?;
                     let b = decay::energy(&yf[t.min(yf.len())..]);
-                    if a > 0.0 {
-                        let candidate = 10.0 * ((b + 1e-30) / a).log10();
-                        if candidate > change {
-                            change = candidate;
-                            position = Some(p);
-                        }
+                    let Some(candidate) = seat_change(a, b) else {
+                        continue;
+                    };
+                    if candidate > change {
+                        change = candidate;
+                        position = Some(p);
                     }
                 }
                 tails.push((fm, baseline.energy, change, position));
@@ -798,21 +798,38 @@ impl GuardStep {
 }
 
 /// The last rejected guard step as a note's cause; `None` when every step
+/// One position's energy change in dB for the seat guard (ADR 0036). Energy
+/// that appears where the baseline had none is a violation, not a skipped
+/// position; only a position with no energy before and after says nothing.
+pub(crate) fn seat_change(before: f64, after: f64) -> Option<f64> {
+    if before > 0.0 {
+        // The same floor on both sides: an unchanged tiny energy is 0 dB.
+        Some(10.0 * ((after + 1e-30) / (before + 1e-30)).log10())
+    } else if after > 0.0 {
+        Some(SEAT_VIOLATION_DB)
+    } else {
+        None
+    }
+}
+
+/// The change reported when a position gains energy it had none of.
+pub(crate) const SEAT_VIOLATION_DB: f64 = 99.0;
+
 /// passed (no reduction).
 pub(crate) fn guard_cause(
     guards: &[GuardStep],
     positions: &[u32],
 ) -> Option<crate::notes::GuardCause> {
     let step = guards.iter().rev().find(|step| !step.passes())?;
-    let position = if step.band_db > 1.0 {
-        step.band_position
-    } else {
-        step.tail_position
-    }
-    .and_then(|index| positions.get(index).copied());
+    let at = |index: Option<usize>| index.and_then(|index| positions.get(index).copied());
     Some(crate::notes::GuardCause {
         rejected_db: 20.0 * step.scale.max(1e-9).log10(),
-        position,
+        band_position: (step.band_db > 1.0)
+            .then(|| at(step.band_position))
+            .flatten(),
+        tail_position: (step.t60_change > 0.15)
+            .then(|| at(step.tail_position))
+            .flatten(),
         band: (step.band_db > 1.0)
             .then_some(step.band_hz)
             .flatten()
