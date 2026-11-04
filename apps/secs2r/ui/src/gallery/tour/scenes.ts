@@ -550,13 +550,16 @@ export const TOUR_SCENES: TourScene[] = [
     id: "calibrate.sub",
     step: "calibrate",
     title: { ko: "서브우퍼 설정 편집", en: "Editing subwoofer settings" },
-    note: { ko: "서브 정렬의 고급을 펴고 고정 방식으로 바꾼 SW2를 고른 상태입니다.", en: "BA advanced is open on SW2, switched to the fixed method." },
+    note: {
+      ko: "서브 정렬에서 고정 방식으로 바꾼 SW2를 고른 상태입니다. 값과 고정 필터가 카드 본문에 보입니다.",
+      en: "SW2, switched to the fixed method, is chosen in the BA card; its values and fixed filters sit in the card body.",
+    },
     setup: async (mock) => {
       await inProgress(mock);
       await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "sub_mode", role: "SW2", mode: "fixed" } } });
       await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "sub", role: "SW2", patch: { gain_db: -2.5, delay_ms: 3.2, lp_hz: 90 } } } });
     },
-    ops: [...choosePath("native", "calibrate"), click(ui("calibrate.ba.advanced")), click(ui("calibrate.ba.edit.SW2")), reveal(`.ui-segmented-field:has(${ui("calibrate.ba.edit")})`)],
+    ops: [...choosePath("native", "calibrate"), click(ui("calibrate.ba.edit.SW2")), reveal(`.ui-segmented-field:has(${ui("calibrate.ba.edit")})`)],
   },
   {
     id: "calibrate.analytic",

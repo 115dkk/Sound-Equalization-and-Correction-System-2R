@@ -91,7 +91,7 @@ const must = (id: string) => {
   return element;
 };
 
-function setup(view: CalibrateView, options: { locale?: "ko" | "en"; initial?: { targetMenu?: boolean; editSub?: string; latePositions?: boolean; rangeAdvanced?: boolean; notesOpen?: boolean } } = {}) {
+function setup(view: CalibrateView, options: { locale?: "ko" | "en"; initial?: { targetMenu?: boolean; editSub?: string; latePositions?: boolean; rangeAdvanced?: boolean; baAdvanced?: boolean; notesOpen?: boolean } } = {}) {
   const actions = mockActions();
   const changeSetting: CalibrateActions["changeSetting"] = async (change, accepted) => {
     const edit = settingEdit(change, view.settings);
@@ -326,6 +326,26 @@ describe("보정 screen", () => {
     expect(screen.getByText(translate("ko", "calibrate.analytic.mimo_unused"))).toBeTruthy();
   });
 
+  it("puts the boost limit in the range card's body above 딥 보정 제한 and leaves 고급 one setting (ADR 0038)", () => {
+    const actions = setup(fx.splView);
+    const advanced = must("calibrate.range.advanced");
+    expect(advanced.getAttribute("aria-expanded")).toBe("false");
+    expect(advanced.querySelector(".ui-advanced__count")?.textContent).toBe("1개");
+    const boost = must("calibrate.range.boost");
+    expect(boost.closest(".ui-advanced")).toBeNull();
+    // After the low-end group, right before 딥 보정 제한.
+    expect(must("calibrate.range.low_end").compareDocumentPosition(boost) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(boost.compareDocumentPosition(must("calibrate.range.dip_limit")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    commitNumber("calibrate.range.boost", "6");
+    expect(actions.changeSetting).toHaveBeenLastCalledWith({ kind: "boost_max", db: 6 });
+    expect(advanced.getAttribute("aria-expanded")).toBe("false");
+    // Opened, 고급 holds the experiment alone.
+    fireEvent.click(advanced);
+    const panel = advanced.closest(".ui-advanced")!.querySelector(".ui-advanced__panel")!;
+    expect(panel.querySelector('[data-ui="calibrate.analytic"]')).not.toBeNull();
+    expect(panel.querySelector('[data-ui="calibrate.range.boost"]')).toBeNull();
+  });
+
   it("sends unsupported resampling rates to measurements instead of reopening the conversion choice", () => {
     const actions = setup({ ...fx.emptyView, failure: { job: "recommend_xo", error: ipcError("engine_input", "unsupported rate", {
       reason: "unsupported_resampling_rate", position: "1", role: "SW3", actual_hz: "4000", min_hz: "8000", max_hz: "384000",
@@ -518,9 +538,10 @@ describe("보정 screen", () => {
     expect(actions.changeSetting).toHaveBeenLastCalledWith({ kind: "sub_mode", role: "SW1", mode: "bundle:A" });
     fireEvent.click(must("calibrate.mimo.on"));
     expect(actions.changeSetting).toHaveBeenLastCalledWith({ kind: "mimo_on", on: true });
-    openAdvanced();
+    // In the range card's body, before any 고급 opens (ADR 0038).
     commitNumber("calibrate.range.boost", "6");
     expect(actions.changeSetting).toHaveBeenLastCalledWith({ kind: "boost_max", db: 6 });
+    openAdvanced();
     fireEvent.click(must("calibrate.xo.peq"));
     expect(actions.changeSetting).toHaveBeenLastCalledWith({ kind: "xo_peq", on: false });
     fireEvent.change(must("calibrate.ba.infra"), { target: { value: "SW1" } });
@@ -535,6 +556,10 @@ describe("보정 screen", () => {
 
   it("edits a fixed sub's values and a group's layout", () => {
     const actions = setup(fx.baView, { initial: { editSub: "SW2" } });
+    // The sub asked for is chosen first, its editor and the main delay in the card's body; 고급 stays folded (ADR 0038).
+    expect(must("calibrate.ba.advanced").getAttribute("aria-expanded")).toBe("false");
+    expect(must("calibrate.ba.edit.SW2").getAttribute("aria-checked")).toBe("true");
+    for (const id of ["calibrate.ba.edit", "calibrate.ba.editor", "calibrate.ba.main_delay"]) expect(must(id).closest(".ui-advanced"), id).toBeNull();
     commitNumber("calibrate.ba.gain", "6");
     expect(actions.changeSetting).toHaveBeenLastCalledWith({ kind: "sub", role: "SW2", patch: { gain_db: 6 } });
     fireEvent.click(must("calibrate.ba.polarity.normal"));
@@ -546,12 +571,49 @@ describe("보정 screen", () => {
     expect(must("calibrate.ba.settings_warnings").textContent).toContain("SW2");
     cleanupAll();
     const group = setup(fx.subsOnlyView, { initial: { editSub: "SW2" } });
+    // A group and no fixed sub: no main delay.
+    expect(ui("calibrate.ba.main_delay")).toBeNull();
     fireEvent.change(must("calibrate.ba.layout"), { target: { value: "multi" } });
     expect(group.changeSetting).toHaveBeenLastCalledWith({ kind: "sub_layout", bundle: "A", layout: "multi" });
     commitNumber("calibrate.ba.rear_trim", "-1.25");
     expect(group.changeSetting).toHaveBeenLastCalledWith({ kind: "rear_trim", bundle: "A", ms: -1.25 });
     expect(must("calibrate.ba.subs_only").textContent).toBe("서브만 계산한 결과");
     expect(must("calibrate.ba.filters").textContent).toContain("묶음 A DBA");
+  });
+
+  it("opens the BA card's 고급 for the tutorial's infra quest", () => {
+    setup(fx.baView, { initial: { editSub: "SW3", baAdvanced: true } });
+    expect(must("calibrate.ba.advanced").getAttribute("aria-expanded")).toBe("true");
+    expect(ui("calibrate.ba.infra")).not.toBeNull();
+  });
+
+  it("shows the sub to set, its editor and the main delay in the BA card's body and keeps only the infra sub under 고급 (ADR 0038)", () => {
+    setup(fx.baView);
+    const advanced = must("calibrate.ba.advanced");
+    expect(advanced.getAttribute("aria-expanded")).toBe("false");
+    expect(advanced.querySelector(".ui-advanced__count")?.textContent).toBe("1개");
+    const edit = must("calibrate.ba.edit");
+    for (const id of ["calibrate.ba.edit", "calibrate.ba.editor", "calibrate.ba.main_delay"]) expect(must(id).closest(".ui-advanced"), id).toBeNull();
+    // Right under the warnings, right above 고급.
+    expect(must("calibrate.ba.settings_warnings").compareDocumentPosition(edit) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(must("calibrate.ba.main_delay").compareDocumentPosition(advanced) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // The first sub is automatic: fixed filters and MIMO support, no values. Choosing the fixed SW2 shows its values.
+    expect(must("calibrate.ba.editor").querySelector('[data-ui="calibrate.ba.mimo_support"]')).not.toBeNull();
+    expect(ui("calibrate.ba.values")).toBeNull();
+    fireEvent.click(must("calibrate.ba.edit.SW2"));
+    expect(must("calibrate.ba.values").closest(".ui-advanced")).toBeNull();
+    expect(advanced.getAttribute("aria-expanded")).toBe("false");
+    // Opened, 고급 holds the infra sub alone.
+    fireEvent.click(advanced);
+    const panel = advanced.closest(".ui-advanced")!.querySelector(".ui-advanced__panel")!;
+    expect(panel.querySelector('[data-ui="calibrate.ba.infra"]')).not.toBeNull();
+    expect([...panel.querySelectorAll("[data-ui]")].map((n) => n.getAttribute("data-ui") ?? "").filter((id) => !id.startsWith("calibrate.ba.infra"))).toEqual([]);
+    expect(edit.closest(".ui-advanced")).toBeNull();
+    cleanupAll();
+    // Every sub automatic: the editor still shows, the main delay does not.
+    setup(fx.splView);
+    expect(must("calibrate.ba.editor").closest(".ui-advanced")).toBeNull();
+    expect(ui("calibrate.ba.main_delay")).toBeNull();
   });
 
   it("starts the screen's jobs and disables the others while one runs", () => {
@@ -1287,7 +1349,7 @@ describe("극저역 보호 자동 설정 (ADR 0022)", () => {
     const toggle = within(group).getByRole("switch", { name: "자동 설정" });
     expect(toggle.getAttribute("data-ui")).toBe("calibrate.range.low_protect");
     expect(toggle.getAttribute("aria-checked")).toBe("false");
-    expect(toggle.closest('[data-ui="calibrate.range.advanced"]')).toBeNull();
+    expect(toggle.closest(".ui-advanced")).toBeNull();
     expect(ui("calibrate.range.low_protect.help")).not.toBeNull();
     fireEvent.click(toggle);
     expect(actions.changeSetting).toHaveBeenCalledWith({ kind: "low_protect", on: true });
@@ -1343,7 +1405,7 @@ describe("극저역 보호 수동 설정, the input cut (ADR 0031)", () => {
     expect(toggle.getAttribute("data-ui")).toBe("calibrate.range.input_hp");
     expect(toggle.getAttribute("aria-checked")).toBe("false");
     expect(must("calibrate.range.low_protect").compareDocumentPosition(toggle) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(toggle.closest('[data-ui="calibrate.range.advanced"]')).toBeNull();
+    expect(toggle.closest(".ui-advanced")).toBeNull();
     expect(ui("calibrate.range.input_hp.hz")).toBeNull();
     fireEvent.click(toggle);
     expect(actions.changeSetting).toHaveBeenCalledWith({ kind: "input_hp", hz: 25 });

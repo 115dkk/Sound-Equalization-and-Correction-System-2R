@@ -28,6 +28,8 @@ export type CalibrateScreenProps = {
         editSub?: string | undefined;
         latePositions?: boolean | undefined;
         rangeAdvanced?: boolean | undefined;
+        /** Draw the BA card's 고급 open: the tutorial's infra quest points inside it. */
+        baAdvanced?: boolean | undefined;
         notesOpen?: boolean | undefined;
       }
     | undefined;
@@ -61,6 +63,7 @@ export function CalibrateScreen({ view, actions, initial, blocked }: CalibrateSc
         actions={actions}
         editSub={initial?.editSub}
         rangeAdvanced={initial?.rangeAdvanced}
+        baAdvanced={initial?.baAdvanced}
         sampleRateRequest={sampleRateRequest}
         onSampleRateSettings={openSampleRateSettings}
       />
