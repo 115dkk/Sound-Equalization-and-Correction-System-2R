@@ -67,15 +67,15 @@ pub fn bands(f: &[f64], a: &[Complex64], b: &[Complex64]) -> Vec<Band> {
 }
 
 /// The band edges in hertz: `BAND_HZ.0`, the geometric means of neighbouring
-/// centres, then `BAND_HZ.1`.
+/// centres, then `BAND_HZ.1`, so the outer bands reach the ends of the
+/// inspection range.
 pub fn band_edges() -> Vec<f64> {
-    let edge = 2.0_f64.powf(1.0 / 6.0);
     (0..=CENTERS_HZ.len())
         .map(|k| {
             if k == 0 {
-                (CENTERS_HZ[0] / edge).max(BAND_HZ.0)
+                BAND_HZ.0
             } else if k == CENTERS_HZ.len() {
-                (CENTERS_HZ[k - 1] * edge).min(BAND_HZ.1)
+                BAND_HZ.1
             } else {
                 (CENTERS_HZ[k - 1] * CENTERS_HZ[k]).sqrt()
             }
@@ -149,6 +149,8 @@ mod tests {
                 assert_eq!(band.1, bands[k + 1].0);
             }
         }
+        assert_eq!(edges[0], BAND_HZ.0);
+        assert_eq!(edges[CENTERS_HZ.len()], BAND_HZ.1);
         assert!((edges[3] - 89.4427).abs() < 0.01);
         assert!((edges[4] - 111.8034).abs() < 0.01);
         assert!((edges[5] - 141.4214).abs() < 0.01);
