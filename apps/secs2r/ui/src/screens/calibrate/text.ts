@@ -132,7 +132,7 @@ function runKey(notice: Notice): string | null {
 }
 
 /** Calculation notes as lines: runs of one collection note joined (`runKey`), every line a catalog sentence. */
-export function noteLines(t: Translate, number: FormatNumber, notices: readonly Notice[], lfAlign: boolean): string[] {
+export function noteLines(t: Translate, number: FormatNumber, notices: readonly Notice[], lfAlign: boolean, lfAlignAvailable = true): string[] {
   const lines: string[] = [];
   for (let i = 0; i < notices.length; ) {
     const first = notices[i]!;
@@ -142,7 +142,8 @@ export function noteLines(t: Translate, number: FormatNumber, notices: readonly 
     lines.push(noticeText(t, number, first, notices.slice(i, end)) ?? t("jobs.log.unknown"));
     i = end;
   }
-  if (!lfAlign && notices.some((notice) => notice.code === "pair_phase")) lines.push(t("notice.pair_phase.hint"));
+  // The hint names a setting the mode must allow: zero mode has no bass arrival alignment.
+  if (!lfAlign && lfAlignAvailable && notices.some((notice) => notice.code === "pair_phase")) lines.push(t("notice.pair_phase.hint"));
   return lines;
 }
 
@@ -242,7 +243,7 @@ export function noticeText(t: Translate, number: FormatNumber, notice: Notice, r
       if (valid) {
         for (const [lo, hi, phase, loss] of bands) {
           const previous = spans.at(-1);
-          if (previous && previous.hi === lo) {
+          if (previous && Math.abs(previous.hi - lo!) <= 1) {
             previous.hi = hi!;
             if (loss! < previous.loss) {
               previous.phase = phase!;

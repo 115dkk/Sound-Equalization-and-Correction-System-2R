@@ -337,6 +337,30 @@ fn pair_phase_runs_once_on_the_final_pass_and_keeps_goldens() {
             );
         }
         assert_pairs_are_unique(name, &result);
+        // The wiring itself: dolby's rear surround and top front left cancel
+        // in the 70-112 Hz bands, the two rooms have no cancelling pair.
+        let pairs: Vec<_> = result
+            .notes
+            .iter()
+            .filter_map(|note| match note {
+                crate::Note::PairPhase { a, b, bands } => Some((a.as_str(), b.as_str(), bands)),
+                _ => None,
+            })
+            .collect();
+        if name == "dolby" {
+            let (_, _, bands) = pairs
+                .iter()
+                .find(|(a, b, _)| *a == "Rs" && *b == "Tfl")
+                .expect("dolby reports Rs/Tfl");
+            assert!(
+                bands
+                    .iter()
+                    .any(|band| band.0 >= 70.0 && band.1 <= 113.0 && band.3 <= -12.0),
+                "{bands:?}"
+            );
+        } else {
+            assert!(pairs.is_empty(), "{name}: {pairs:?}");
+        }
     }
 
     let mut case = cases::load("room");

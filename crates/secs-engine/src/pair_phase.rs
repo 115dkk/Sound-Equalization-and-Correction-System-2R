@@ -23,13 +23,17 @@ pub type Band = (f64, f64, f64, f64);
 /// Cancellation is
 /// `10 * log10(sum(|a + b|^2) / sum((|a| + |b|)^2))`, bounded below by
 /// [`FLOOR_DB`]. Bands without a bin in all three inputs are omitted.
+///
+/// Neighbouring bands share their edge, the geometric mean of the two
+/// centres, so a run of cancelling bands reads as one span after rounding.
 pub fn bands(f: &[f64], a: &[Complex64], b: &[Complex64]) -> Vec<Band> {
-    let edge = 2.0_f64.powf(1.0 / 6.0);
+    let edges = band_edges();
     CENTERS_HZ
         .iter()
-        .filter_map(|&center| {
-            let lo = (center / edge).max(BAND_HZ.0);
-            let hi = (center * edge).min(BAND_HZ.1);
+        .enumerate()
+        .filter_map(|(k, _)| {
+            let lo = edges[k];
+            let hi = edges[k + 1];
             let bins = f
                 .iter()
                 .zip(a)
@@ -58,6 +62,23 @@ pub fn bands(f: &[f64], a: &[Complex64], b: &[Complex64]) -> Vec<Band> {
                 (10.0 * (combined / separate).log10()).max(FLOOR_DB)
             };
             Some((lo, hi, phase_deg, loss_db))
+        })
+        .collect()
+}
+
+/// The band edges in hertz: `BAND_HZ.0`, the geometric means of neighbouring
+/// centres, then `BAND_HZ.1`.
+pub fn band_edges() -> Vec<f64> {
+    let edge = 2.0_f64.powf(1.0 / 6.0);
+    (0..=CENTERS_HZ.len())
+        .map(|k| {
+            if k == 0 {
+                (CENTERS_HZ[0] / edge).max(BAND_HZ.0)
+            } else if k == CENTERS_HZ.len() {
+                (CENTERS_HZ[k - 1] * edge).min(BAND_HZ.1)
+            } else {
+                (CENTERS_HZ[k - 1] * CENTERS_HZ[k]).sqrt()
+            }
         })
         .collect()
 }
@@ -113,6 +134,24 @@ mod tests {
             assert!((band.2 - phase_deg).abs() < 1e-10, "{band:?}");
             assert!((band.3 - loss_db).abs() < 0.03, "{band:?}");
         }
+    }
+
+    #[test]
+    fn pair_phase_bands_share_edges_between_neighbours() {
+        let edges = band_edges();
+        assert_eq!(edges.len(), CENTERS_HZ.len() + 1);
+        let same = response(0.0);
+        let bands = bands(&CENTERS_HZ, &same, &same);
+        assert_eq!(bands.len(), CENTERS_HZ.len());
+        for (k, band) in bands.iter().enumerate() {
+            assert!(band.0 < CENTERS_HZ[k] && CENTERS_HZ[k] < band.1, "{band:?}");
+            if k + 1 < bands.len() {
+                assert_eq!(band.1, bands[k + 1].0);
+            }
+        }
+        assert!((edges[3] - 89.4427).abs() < 0.01);
+        assert!((edges[4] - 111.8034).abs() < 0.01);
+        assert!((edges[5] - 141.4214).abs() < 0.01);
     }
 
     #[test]

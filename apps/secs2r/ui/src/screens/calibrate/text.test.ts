@@ -17,9 +17,9 @@ function words(locale: Locale): { t: Translate; number: FormatNumber } {
   return { t, number };
 }
 
-const lines = (locale: Locale, notices: Notice[], lfAlign = false) => {
+const lines = (locale: Locale, notices: Notice[], lfAlign = false, lfAlignAvailable = true) => {
   const { t, number } = words(locale);
-  return noteLines(t, number, notices, lfAlign);
+  return noteLines(t, number, notices, lfAlign, lfAlignAvailable);
 };
 const n = (code: string, params: Record<string, string>): Notice => ({ code, params });
 
@@ -67,6 +67,14 @@ describe("calculation notes", () => {
     const note = n("pair_phase", { a: "L", b: "Ls", bands: "44:56:179.0:-12.2,56:71:164.6:-18.7,89:112:170.0:-20.3,112:141:174.0:-24.1,141:178:178.0:-22.0" });
     expect(lines("ko", [note], true)).toEqual(["채널 사이 위상(L·Ls): 44~71 Hz에서 위상차 165°, 함께 울리면 −19 dB, 89~178 Hz에서 위상차 174°, 함께 울리면 −24 dB"]);
     expect(lines("en", [note], true)).toEqual(["Phase between channels (L·Ls): 44–71 Hz: 165° phase difference, −19 dB when playing together, 89–178 Hz: 174° phase difference, −24 dB when playing together"]);
+  });
+
+  it("does not hint bass arrival alignment when the mode cannot use it", () => {
+    const notes = [n("pair_phase", { a: "L", b: "Ls", bands: "89:112:170.0:-20.3" })];
+    for (const locale of ["ko", "en"] as const) {
+      expect(lines(locale, notes, false, false)).toHaveLength(1);
+      expect(lines(locale, notes, false, true)).toHaveLength(2);
+    }
   });
 
   it("appends one pair-phase hint at the end only when a pair note exists and bass arrival alignment is off", () => {
