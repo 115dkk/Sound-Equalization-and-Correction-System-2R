@@ -64,6 +64,7 @@ SHIP = (
     "apps/*",
     "bindings/python/*",
     "bindings/dotnet/*",
+    "bindings/node/*",
     "Cargo.toml",
     "Cargo.lock",
     "rust-toolchain.toml",
@@ -111,6 +112,7 @@ API_MANIFEST = Path("crates/secs-api/Cargo.toml")
 BINDINGS = (
     (Path("bindings/python/Cargo.toml"), "bindings/python"),
     (Path("bindings/dotnet/native/Cargo.toml"), "bindings/dotnet"),
+    (Path("bindings/node/Cargo.toml"), "bindings/node"),
 )
 API_NOT_PACKAGED_DIRS = ("tests", "examples", "benches")
 

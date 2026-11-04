@@ -21,6 +21,8 @@ struct FirstPartyCrate {
 #[derive(Deserialize)]
 struct Budget {
     budget: BTreeMap<String, usize>,
+    #[serde(default, rename = "macro-unsafe")]
+    macro_unsafe: BTreeMap<String, String>,
 }
 
 #[derive(Deserialize)]
@@ -155,6 +157,7 @@ fn workspace_members_are_all_covered_by_policy_gates() {
     for (name, dir) in [
         ("secs-py", "bindings/python"),
         ("secs-dotnet-sys", "bindings/dotnet/native"),
+        ("secs-node-sys", "bindings/node"),
     ] {
         assert!(
             first_party_crates().iter().any(|krate| krate.name == name),
@@ -455,6 +458,35 @@ fn count_unsafe_tokens(source: &str) -> usize {
         .count()
 }
 
+fn root_unsafe_lint_violations(
+    source: &str,
+    budget: usize,
+    macro_unsafe: bool,
+    test_example_or_bench: bool,
+    build_script: bool,
+) -> Vec<String> {
+    let code = strip_comments_and_literals(source);
+    let has_forbid = has_crate_attribute(&code, "#![forbid(unsafe_code)]");
+    let has_deny = has_crate_attribute(&code, "#![deny(unsafe_code)]");
+    // Integration tests, examples and benches are crates of their own and
+    // always forbid unsafe. A production root uses deny when handwritten
+    // unsafe has a budget or a dependency macro emits an allow attribute; a
+    // build script expands no such macro, so without a budget it forbids.
+    let expects_deny = !test_example_or_bench && (budget > 0 || (macro_unsafe && !build_script));
+    let mut violations = Vec::new();
+    if expects_deny {
+        if !has_deny {
+            violations.push("expected #![deny(unsafe_code)]".to_owned());
+        }
+        if has_forbid {
+            violations.push("must not carry #![forbid(unsafe_code)]".to_owned());
+        }
+    } else if !has_forbid {
+        violations.push("expected #![forbid(unsafe_code)]".to_owned());
+    }
+    violations
+}
+
 #[test]
 fn every_crate_root_forbids_unsafe() {
     let budget = load_budget();
@@ -462,43 +494,22 @@ fn every_crate_root_forbids_unsafe() {
 
     for krate in first_party_crates() {
         let budget_for_crate = budget.budget.get(&krate.name).copied().unwrap_or(0);
+        let macro_unsafe = budget.macro_unsafe.contains_key(&krate.name);
         for root in crate_roots(&krate.dir) {
             let source = fs::read_to_string(&root)
                 .unwrap_or_else(|error| panic!("{}: {error}", root.display()));
-            let code = strip_comments_and_literals(&source);
-            let has_forbid = has_crate_attribute(&code, "#![forbid(unsafe_code)]");
-            let has_deny = has_crate_attribute(&code, "#![deny(unsafe_code)]");
-            // Integration tests, examples and benches are crates of their own
-            // that never need the budget, so they forbid unsafe even in a
-            // budgeted crate; only the library, binaries and build script may
-            // carry `deny` instead.
-            let allowed = if is_test_example_or_bench(&krate.dir, &root) {
-                0
-            } else {
-                budget_for_crate
-            };
-
-            if allowed == 0 && !has_forbid {
+            for violation in root_unsafe_lint_violations(
+                &source,
+                budget_for_crate,
+                macro_unsafe,
+                is_test_example_or_bench(&krate.dir, &root),
+                root.file_name().is_some_and(|name| name == "build.rs"),
+            ) {
                 violations.push(format!(
-                    "{} (crate {}): expected #![forbid(unsafe_code)]",
+                    "{} (crate {}): {violation}",
                     relative_path(&root),
                     krate.name
                 ));
-            } else if allowed > 0 {
-                if !has_deny {
-                    violations.push(format!(
-                        "{} (crate {}): unsafe budget is {allowed}; expected #![deny(unsafe_code)]",
-                        relative_path(&root),
-                        krate.name
-                    ));
-                }
-                if has_forbid {
-                    violations.push(format!(
-                        "{} (crate {}): unsafe budget is {allowed}; must not carry #![forbid(unsafe_code)]",
-                        relative_path(&root),
-                        krate.name
-                    ));
-                }
             }
         }
     }
@@ -510,8 +521,56 @@ fn every_crate_root_forbids_unsafe() {
     );
 }
 
+#[test]
+fn macro_unsafe_crate_roots_require_deny_without_forbid() {
+    assert!(root_unsafe_lint_violations("#![deny(unsafe_code)]", 0, true, false, false).is_empty());
+    assert!(
+        !root_unsafe_lint_violations("#![forbid(unsafe_code)]", 0, true, false, false).is_empty()
+    );
+    assert!(
+        root_unsafe_lint_violations("#![forbid(unsafe_code)]", 0, true, true, false).is_empty()
+    );
+    // The build script of a macro-unsafe crate expands no dependency macro and forbids.
+    assert!(
+        root_unsafe_lint_violations("#![forbid(unsafe_code)]", 0, true, false, true).is_empty()
+    );
+    assert!(!root_unsafe_lint_violations("#![deny(unsafe_code)]", 0, true, false, true).is_empty());
+    // A budgeted crate's build script keeps deny, as before.
+    assert!(root_unsafe_lint_violations("#![deny(unsafe_code)]", 3, false, false, true).is_empty());
+}
+
 fn lint_value<'a>(manifest: &'a toml::Value, group: &str, lint: &str) -> Option<&'a str> {
     manifest.get("lints")?.get(group)?.get(lint)?.as_str()
+}
+
+fn unsafe_lint_table_violations(manifest: &toml::Value, requires_local_table: bool) -> Vec<String> {
+    let inherits_workspace = manifest
+        .get("lints")
+        .and_then(|lints| lints.get("workspace"))
+        .and_then(toml::Value::as_bool)
+        == Some(true);
+    let mut violations = Vec::new();
+    if !requires_local_table {
+        if !inherits_workspace {
+            violations.push("expected [lints] workspace = true".to_owned());
+        }
+        return violations;
+    }
+    if inherits_workspace {
+        violations.push("must not inherit workspace lints".to_owned());
+    }
+    for (group, lint) in [
+        ("rust", "unsafe_code"),
+        ("rust", "unsafe_op_in_unsafe_fn"),
+        ("clippy", "undocumented_unsafe_blocks"),
+        ("clippy", "multiple_unsafe_ops_per_block"),
+        ("clippy", "missing_safety_doc"),
+    ] {
+        if lint_value(manifest, group, lint) != Some("deny") {
+            violations.push(format!("expected [lints.{group}] {lint} = \"deny\""));
+        }
+    }
+    violations
 }
 
 #[test]
@@ -522,45 +581,13 @@ fn budgeted_crates_carry_the_unsafe_lint_table() {
     for krate in first_party_crates() {
         let manifest = read_toml(&krate.manifest);
         let allowed = budget.budget.get(&krate.name).copied().unwrap_or(0);
-        let inherits_workspace = manifest
-            .get("lints")
-            .and_then(|lints| lints.get("workspace"))
-            .and_then(toml::Value::as_bool)
-            == Some(true);
-
-        if allowed == 0 {
-            if !inherits_workspace {
-                violations.push(format!(
-                    "{} (crate {}): budget is 0; expected [lints] workspace = true",
-                    relative_path(&krate.manifest),
-                    krate.name
-                ));
-            }
-            continue;
-        }
-
-        if inherits_workspace {
+        let requires_local_table = allowed > 0 || budget.macro_unsafe.contains_key(&krate.name);
+        for violation in unsafe_lint_table_violations(&manifest, requires_local_table) {
             violations.push(format!(
-                "{} (crate {}): budget is {allowed}; must not inherit workspace lints",
+                "{} (crate {}): {violation}",
                 relative_path(&krate.manifest),
                 krate.name
             ));
-        }
-
-        for (group, lint) in [
-            ("rust", "unsafe_code"),
-            ("rust", "unsafe_op_in_unsafe_fn"),
-            ("clippy", "undocumented_unsafe_blocks"),
-            ("clippy", "multiple_unsafe_ops_per_block"),
-            ("clippy", "missing_safety_doc"),
-        ] {
-            if lint_value(&manifest, group, lint) != Some("deny") {
-                violations.push(format!(
-                    "{} (crate {}): budget is {allowed}; expected [lints.{group}] {lint} = \"deny\"",
-                    relative_path(&krate.manifest),
-                    krate.name
-                ));
-            }
         }
     }
 
@@ -569,6 +596,25 @@ fn budgeted_crates_carry_the_unsafe_lint_table() {
         "unsafe lint-table violations:\n{}",
         violations.join("\n")
     );
+}
+
+#[test]
+fn macro_unsafe_crates_require_local_unsafe_lint_table() {
+    let valid = toml::from_str(
+        r#"
+        [lints.rust]
+        unsafe_code = "deny"
+        unsafe_op_in_unsafe_fn = "deny"
+        [lints.clippy]
+        undocumented_unsafe_blocks = "deny"
+        multiple_unsafe_ops_per_block = "deny"
+        missing_safety_doc = "deny"
+        "#,
+    )
+    .unwrap();
+    let invalid = toml::from_str("[lints]\nworkspace = true\n").unwrap();
+    assert!(unsafe_lint_table_violations(&valid, true).is_empty());
+    assert!(!unsafe_lint_table_violations(&invalid, true).is_empty());
 }
 
 #[test]
@@ -611,6 +657,16 @@ fn no_unsafe_outside_budget() {
     );
 }
 
+fn stale_budget_names(budget: &Budget, crate_names: &BTreeSet<String>) -> Vec<String> {
+    budget
+        .budget
+        .keys()
+        .chain(budget.macro_unsafe.keys())
+        .filter(|name| !crate_names.contains(*name))
+        .cloned()
+        .collect()
+}
+
 #[test]
 fn budget_names_only_existing_crates() {
     let budget = load_budget();
@@ -618,18 +674,27 @@ fn budget_names_only_existing_crates() {
         .into_iter()
         .map(|krate| krate.name)
         .collect();
-    let stale: Vec<String> = budget
-        .budget
-        .keys()
-        .filter(|name| !crate_names.contains(*name))
-        .cloned()
-        .collect();
+    let stale = stale_budget_names(&budget, &crate_names);
 
     assert!(
         stale.is_empty(),
-        "unsafe-budget.toml names crates that do not exist under crates/ or apps/:\n{}",
+        "unsafe-budget.toml names workspace crates that do not exist:\n{}",
         stale.join("\n")
     );
+}
+
+#[test]
+fn macro_unsafe_budget_names_must_exist() {
+    let crate_names = BTreeSet::from(["exists".to_owned()]);
+    let mut budget = Budget {
+        budget: BTreeMap::new(),
+        macro_unsafe: BTreeMap::from([("exists".to_owned(), "macro".to_owned())]),
+    };
+    assert!(stale_budget_names(&budget, &crate_names).is_empty());
+    budget
+        .macro_unsafe
+        .insert("missing".to_owned(), "macro".to_owned());
+    assert_eq!(stale_budget_names(&budget, &crate_names), ["missing"]);
 }
 
 #[test]

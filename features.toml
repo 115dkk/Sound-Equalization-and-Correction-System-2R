@@ -1821,6 +1821,20 @@ tests = ["secs-dotnet-sys::bootstrap_reports_the_native_crate_version", "secs-do
 note = "ADR 0032: NuGet package Secs2R exposes the embedded engine and authenticated local API client to C#, .NET and Unity through the C ABI isolation crate secs-dotnet-sys. bindings/dotnet/tests/Secs2R.Tests installs the packed package and verifies versions, structured errors, closed-port failure, event cancellation and a mock-measurement calibration with an Equalizer APO export."
 
 [[feature]]
+id = "api.node"
+kind = "api"
+milestone = "M6"
+status = "partial"
+tests = [
+  "secs-node-sys::rejects_invalid_job_and_timeout",
+  "secs-node-sys::unwraps_success_and_preserves_error",
+  "secs-node-sys::bounded_queue_drops_oldest_and_counts",
+  "secs-node-sys::closed_queue_returns_none",
+  "secs-node-sys::token_and_path_are_mutually_exclusive",
+]
+note = "ADR 0040: the napi-rs isolation crate exposes the embedded engine and authenticated local API client. P182 adds the npm package, JavaScript iterator wrappers and installed-package tests."
+
+[[feature]]
 id = "app.local_api"
 kind = "app"
 milestone = "M6"

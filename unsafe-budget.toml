@@ -1,9 +1,12 @@
 # Handwritten `unsafe` allowance per crate, counted as `unsafe` tokens in the
 # crate's Rust sources (comments, strings and char literals excluded). Every
-# crate not listed here has 0 and must carry `#![forbid(unsafe_code)]`.
-# A listed crate with a budget above 0 carries `#![deny(unsafe_code)]` and its
-# own `[lints.rust]` table instead. Raising a number requires an ADR
-# (docs/adr) first (docs/adr/0002).
+# crate not listed in either table has 0 and must carry
+# `#![forbid(unsafe_code)]`. A crate in `[macro-unsafe]` still has 0 handwritten
+# tokens, but carries `#![deny(unsafe_code)]` because a dependency macro emits
+# an `allow(unsafe_code)` attribute that cannot relax `forbid`.
+# A crate with a budget above 0 also carries `#![deny(unsafe_code)]` and its own
+# `[lints.rust]` table. Raising a number or adding a macro exception requires an
+# ADR (docs/adr) first (docs/adr/0002).
 [budget]
 # ADR 0011: Windows taskbar large-icon creation, assignment and replacement
 # cleanup. Other OS audio and probe paths continue through safe wrapper crates.
@@ -13,3 +16,6 @@ secs-cuda-sys = 80
 # ADR 0032: the C ABI of the Secs2R NuGet package: the exported functions and
 # the borrows of the buffers C# owns.
 secs-dotnet-sys = 32
+
+[macro-unsafe]
+secs-node-sys = "napi-derive 3.7.0 emits #[allow(unsafe_code)] in generated code (ADR 0040)"

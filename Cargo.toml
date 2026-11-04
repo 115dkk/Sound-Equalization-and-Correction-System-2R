@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/*", "apps/*", "bindings/python", "bindings/dotnet/native"]
+members = ["crates/*", "apps/*", "bindings/python", "bindings/dotnet/native", "bindings/node"]
 
 [workspace.package]
 version = "0.51.0"

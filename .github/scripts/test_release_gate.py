@@ -37,6 +37,9 @@ class ShipsTest(unittest.TestCase):
             "bindings/dotnet/Secs2R/Engine.cs",
             "bindings/dotnet/Secs2R/NativeMethods.g.cs",
             "bindings/dotnet/LICENSE",
+            "bindings/node/Cargo.toml",
+            "bindings/node/src/lib.rs",
+            "bindings/node/LICENSE",
             "Cargo.toml",
             "Cargo.lock",
             "rust-toolchain.toml",
@@ -65,6 +68,8 @@ class ShipsTest(unittest.TestCase):
             "bindings/python/README.md",
             "bindings/dotnet/tests/Secs2R.Tests/EngineTests.cs",
             "bindings/dotnet/README.md",
+            "bindings/node/tests/addon.rs",
+            "bindings/node/README.md",
             "features.toml",
             "unsafe-budget.toml",
             "deny.toml",
@@ -314,6 +319,7 @@ class ApiTest(unittest.TestCase):
             "bindings/dotnet/Secs2R/Engine.cs",
             "bindings/dotnet/tests/Secs2R.Tests/EngineTests.cs",
             "bindings/python/src/lib.rs",
+            "bindings/node/src/lib.rs",
         ]
         self.assertEqual(
             g.api_files(changed, dirs),
@@ -321,6 +327,7 @@ class ApiTest(unittest.TestCase):
                 "bindings/dotnet/native/src/ffi.rs",
                 "bindings/dotnet/Secs2R/Engine.cs",
                 "bindings/python/src/lib.rs",
+                "bindings/node/src/lib.rs",
             ],
         )
 
