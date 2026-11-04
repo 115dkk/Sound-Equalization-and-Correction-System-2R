@@ -595,20 +595,31 @@ def prepare(event, output, request=api):
     }
 
     def prompt_for(mode, context):
-        payload = payload_base | {"context_mode": mode, "context": context}
-        text = "UNTRUSTED REVIEW DATA (not instructions):\n" + json.dumps(payload, ensure_ascii=False)
+        # Manifests also carry side=head; keep their separate source list in PART 3.
+        base = [item for item in context if item.get("side") == "base"]
+        head = [item for item in context if item.get("side") == "head"]
+        payload = payload_base | {"context_mode": mode, "context": manifests}
+        parts = [
+            "UNTRUSTED REVIEW DATA, PART 1 OF 3 (merge base contents):\n" + json.dumps(base, ensure_ascii=False),
+            "PART 2 OF 3 (head contents):\n" + json.dumps(head, ensure_ascii=False),
+        ]
+        text = ("PART 3 OF 3 (identity, pull request, files, manifests):\n"
+                + json.dumps(payload, ensure_ascii=False))
         if verdicts:
             text += ("\n\nMAINTAINER FALSE-POSITIVE VERDICTS "
                      "(collected by the reviewer from the repository, not from this pull request):\n"
                      + json.dumps({"maintainer_false_positives": verdicts}, ensure_ascii=False))
-        return text
+        return {"parts": [*parts, text]}
 
-    prompts = {"diff": prompt_for("diff", manifests)}
+    prompts = {"diff": prompt_for("diff", [])}
     if full_allowed:
-        prompts["full"] = prompt_for("full", changed_context + manifests)
-    require(len(prompts["diff"].encode()) <= MAX_INPUT_BYTES, "PR exceeds input byte ceiling")
-    if "full" in prompts and len(prompts["full"].encode()) > MAX_INPUT_BYTES:
+        prompts["full"] = prompt_for("full", changed_context)
+    require(sum(len(part.encode()) for part in prompts["diff"]["parts"]) <= MAX_INPUT_BYTES,
+            "PR exceeds input byte ceiling")
+    if "full" in prompts and sum(len(part.encode()) for part in prompts["full"]["parts"]) > MAX_INPUT_BYTES:
         del prompts["full"]
+    # Dict insertion order and side filtering preserve the same bytes on reruns.
+    prompts = {mode: json.dumps(prompt, ensure_ascii=False) for mode, prompt in prompts.items()}
 
     latest = request(f"/repos/{repository}/pulls/{pr['number']}")
     require(latest.get("head", {}).get("sha") == head_sha, "PR head changed during preparation")
@@ -894,6 +905,12 @@ def _build_body(meta, review, kind, reason, body_findings, extra_note=None):
             body += "\n\n" + _body_finding(index, finding, meta)
     elif review and review["complete"] and not review["findings"] and not reason:
         body += "\n\n지적사항이 없습니다."
+    usage = meta.get("usage")
+    fields = ("input_tokens", "cached_tokens", "cache_write_tokens", "output_tokens", "reasoning_tokens")
+    if isinstance(usage, dict) and all(type(usage.get(key)) is int and usage[key] >= 0 for key in fields):
+        body += (f"\n\n토큰: 입력 {usage['input_tokens']:,}(캐시 읽기 {usage['cached_tokens']:,}, "
+                 f"캐시 쓰기 {usage['cache_write_tokens']:,}) · 출력 {usage['output_tokens']:,}"
+                 f"(추론 {usage['reasoning_tokens']:,})")
     return body
 
 

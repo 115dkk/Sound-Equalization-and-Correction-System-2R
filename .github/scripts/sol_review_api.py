@@ -19,8 +19,9 @@ MAX_OUTPUT_TOKENS = 128_000
 # Prompts sol_review.py prepares, tried in this order.
 PROMPTS = (("full", "prompt.txt"), ("diff", "prompt-diff.txt"))
 # Request fields the input token count endpoint accepts; it takes no output
-# limit or storage flag.
-COUNTED_FIELDS = ("model", "instructions", "input", "reasoning", "text")
+# limit, storage flag or prompt_cache_options. Input content blocks do accept
+# prompt_cache_breakpoint, so the counted input stays identical.
+COUNTED_FIELDS = ("model", "input", "reasoning", "text")
 # Error codes OpenAI sends when the account has no usable credit or quota left.
 QUOTA_CODES = {"insufficient_quota", "billing_hard_limit_reached", "billing_not_active"}
 # Answers worth waiting out; only the side-effect-free token count is retried.
@@ -85,17 +86,36 @@ def instructions(policy, guide, rules):
     return text
 
 
+def prompt_bytes(prompt, trusted_instructions):
+    # Prepared artifacts contain only user data, never developer instructions.
+    if not isinstance(prompt, dict) or set(prompt) != {"parts"}:
+        raise ValueError("Invalid prepared prompt")
+    parts = prompt["parts"]
+    if not isinstance(parts, list) or len(parts) != 3 or any(not isinstance(part, str) or not part for part in parts):
+        raise ValueError("Invalid prepared prompt parts")
+    return sum(len(text.encode()) for text in [trusted_instructions, *parts])
+
+
 def build_request(prompt, trusted_instructions, schema, model, effort, output_tokens):
-    if not prompt or len((prompt + trusted_instructions).encode()) > MAX_INPUT_BYTES:
+    if prompt_bytes(prompt, trusted_instructions) > MAX_INPUT_BYTES:
         raise ValueError("Input missing or exceeds byte budget")
     if model != "gpt-6.1-sol":
         raise ValueError("Model change requires reviewing capabilities and pricing")
     if effort not in ("low", "medium", "high", "xhigh"):
         raise ValueError("Unsupported reasoning effort")
+    ttl = os.environ.get("REVIEW_CACHE_TTL", "30m")
+    if ttl not in ("30m", "12h"):
+        raise ValueError("Unsupported cache TTL")
+    developer = {"type": "input_text", "text": trusted_instructions,
+                 "prompt_cache_breakpoint": {"mode": "explicit"}}
+    parts = [{"type": "input_text", "text": text} for text in prompt["parts"]]
+    for part in parts[:2]:
+        part["prompt_cache_breakpoint"] = {"mode": "explicit"}
     return {
         "model": model,
-        "instructions": trusted_instructions,
-        "input": prompt,
+        "input": [{"role": "developer", "content": [developer]},
+                  {"role": "user", "content": parts}],
+        "prompt_cache_options": {"mode": "explicit", "ttl": ttl},
         "reasoning": {"effort": effort},
         "max_output_tokens": bounded_int(output_tokens, 1024, MAX_OUTPUT_TOKENS),
         "store": False,
@@ -197,10 +217,10 @@ def choose(directory, trusted_instructions, schema, counter=None):
         path = directory / name
         if not path.is_file():
             continue
-        prompt = path.read_text(encoding="utf-8")
+        prompt = strict_json(path.read_text(encoding="utf-8"))
         # prepare could bound only the prompt; the request also carries the
         # instructions, so a full prompt just under the ceiling still falls to diff.
-        if index < len(PROMPTS) - 1 and len((prompt + trusted_instructions).encode()) > MAX_INPUT_BYTES:
+        if index < len(PROMPTS) - 1 and prompt_bytes(prompt, trusted_instructions) > MAX_INPUT_BYTES:
             continue
         body = build_request(
             prompt, trusted_instructions, schema,
@@ -226,6 +246,11 @@ def run(directory, trusted_instructions, schema, transport=None, counter=None):
     # An old output must never survive a failed retry.
     output = directory / "result.json"
     output.unlink(missing_ok=True)
+    metadata = directory / "metadata.json"
+    meta = strict_json(metadata.read_text(encoding="utf-8"))
+    # A failed rerun must not publish the previous response's token usage.
+    meta.pop("usage", None)
+    metadata.write_text(json.dumps(meta), encoding="utf-8")
     timeout = bounded_int(os.environ.get("REVIEW_TIMEOUT_SECONDS", "1800"), 30, 1800)
     started = time.monotonic()
     mode, body, tokens = choose(directory, trusted_instructions, schema, counter)
@@ -233,12 +258,31 @@ def run(directory, trusted_instructions, schema, transport=None, counter=None):
     # together, so the counts come out of the model's wait.
     timeout = max(30, timeout - int(time.monotonic() - started))
     # The publisher says in the review body when only the diff was sent.
-    metadata = directory / "metadata.json"
-    meta = strict_json(metadata.read_text(encoding="utf-8"))
     meta["context_mode"], meta["input_tokens"] = mode, tokens
     metadata.write_text(json.dumps(meta), encoding="utf-8")
     value = transport(body, timeout) if transport else post("responses", body, timeout, retry=False)
+    meta["usage"] = response_usage(value)
+    metadata.write_text(json.dumps(meta), encoding="utf-8")
     output.write_text(json.dumps(extract_result(value), ensure_ascii=False), encoding="utf-8")
+
+
+def response_usage(response):
+    """Keep only nonnegative token counts, including for incomplete responses."""
+    usage = response.get("usage") or {}
+    if not isinstance(usage, dict):
+        usage = {}
+    def count(source, name):
+        value = source.get(name, 0) if isinstance(source, dict) else 0
+        return value if type(value) is int and value >= 0 else 0
+    inputs = usage.get("input_tokens_details")
+    outputs = usage.get("output_tokens_details")
+    return {
+        "input_tokens": count(usage, "input_tokens"),
+        "cached_tokens": count(inputs, "cached_tokens"),
+        "cache_write_tokens": count(inputs, "cache_write_tokens"),
+        "output_tokens": count(usage, "output_tokens"),
+        "reasoning_tokens": count(outputs, "reasoning_tokens"),
+    }
 
 
 def quota_code(error):

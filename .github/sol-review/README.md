@@ -6,7 +6,7 @@
 
 ## 리뷰 기준
 
-모델에 주는 지시(`instructions`)는 신뢰하는 문서만으로 이루어지고, 모두 main에서 가져옵니다.
+모델에 주는 지시(`developer` 메시지)는 신뢰하는 문서만으로 이루어지고, 모두 main에서 가져옵니다.
 
 - `policy.txt`: 신뢰 경계, SECS 불변식, 범주와 막는 지적의 규칙, 위치 표기, 출력 형식, 유지보수자가 정한 한국어 작성 규칙.
 - `guide.md`: 리뷰 방법. Google Engineering Practices의 리뷰어 지침(CC BY 3.0)과 OpenAI Codex의 리뷰 루브릭(Apache-2.0)을
@@ -91,6 +91,36 @@ GitHub 리뷰 API에는 SHA를 비교해 바꾸는 쓰기가 없어, 마지막 �
 OpenAI 연결에는 TCP keepalive를 켭니다. GitHub의 호스팅 러너가 도는 Azure는 4분쯤 아무것도 오가지 않는 연결을 끊는데,
 `xhigh`의 리뷰는 답을 보내기 전까지 그보다 오래 생각하기도 합니다(2026-11-03 #163의 리뷰가 5분 만에 `RemoteDisconnected`로 끊겼습니다).
 
+## 프롬프트 캐싱
+
+gpt-6.1-sol에는 명시적 캐싱(`prompt_cache_options.mode: explicit`)을 씁니다. 재사용할 내용부터 보내고,
+`input_text` 블록에 `prompt_cache_breakpoint: {"mode": "explicit"}`를 붙입니다.
+
+1. `developer` 메시지에는 main의 정책·지침·저장소 규칙만 넣고, 블록 끝에 캐시 지점을 둡니다.
+2. `user` 메시지의 PART 1에는 merge base 쪽 파일 내용만, PART 2에는 head 쪽 파일 내용만 넣고 각각 캐시 지점을 둡니다.
+   diff 모드에서는 두 목록이 비어 있습니다. 같은 입력의 파일 순서와 JSON 키 순서를 유지합니다.
+3. PART 3에는 커밋 식별 정보, PR 제목과 본문, 패치와 파일 목록, 읽지 못한 파일, 문맥 모드, 매니페스트를 넣습니다.
+   유지보수자의 오탐 판정도 이 블록 뒤에 이어 붙입니다. 이 블록에는 캐시 지점이 없으므로 캐시 쓰기 할증이 붙지 않습니다.
+
+캐시 지점까지의 접두 내용이 완전히 같아야 읽기를 재사용합니다. head 내용이 달라져도 merge base 쪽 접두가 같으면
+PART 1까지 재사용할 수 있습니다. 각 캐시 접두에는 눈에 보이는 입력 토큰이 1,024개 이상 있어야 합니다.
+PR의 글은 user 메시지에만 넣으며, 캐시를 써도 신뢰 경계는 바뀌지 않습니다.
+
+`SOL_REVIEW_CACHE_TTL`은 `30m`(기본값)과 `12h`만 허용합니다. 요청의 `prompt_cache_options.ttl`로 보내며,
+캐시 쓰기 요금은 각각 일반 입력 요금의 1.25배와 2.5배이고 읽기는 두 설정 모두 0.05배입니다. 이 배수는
+일반 입력 요금에 더하는 금액이 아니라 해당 토큰에 적용하는 총 요금입니다. 2026-11-04 기준 입력 272,000토큰
+이하인 요청은 100만 토큰당 일반 입력 2달러·캐시 읽기 0.10달러, 이를 넘는 요청은 각각 4달러·0.20달러입니다.
+`prompt_cache_retention`과 `prompt_cache_key`는 보내지 않습니다.
+
+토큰 계산 API에는 같은 메시지 배열과 블록의 캐시 지점을 보내되, 그 API의 최상위 요청 필드에 없는
+`prompt_cache_options`는 빼고 보냅니다. 준비 파일은 PR 데이터 블록 목록의 JSON을 담고, main의 지시는 API 단계에서
+별도로 읽어 developer 메시지로 만듭니다. 입력 바이트 한도는 JSON 저장 형식이 아니라 모든 블록의 UTF-8 본문 합으로 검사합니다.
+
+응답의 실제 사용량은 메타데이터에 기록하고 리뷰 본문 끝에 다음처럼 표시합니다. 응답에서 빠진 사용량 필드는 0으로
+기록하며, 사용량 메타데이터가 없는 이전 실행의 리뷰에는 이 줄을 넣지 않습니다.
+
+`토큰: 입력 357,078(캐시 읽기 0, 캐시 쓰기 357,078) · 출력 12,345(추론 11,000)`
+
 ## 설정
 
 필수 secret은 `OPENAI_API_KEY` 하나입니다. 키 값이나 기존 secret 목록은 코드에서 조회하지 않습니다.
@@ -101,6 +131,7 @@ OpenAI 연결에는 TCP keepalive를 켭니다. GitHub의 호스팅 러너가 �
 | SOL_REVIEW_PUBLISH | 켜짐 | 문자열 `false`일 때만 게시 대신 dry-run |
 | SOL_REVIEW_MODEL | gpt-6.1-sol | 현재 허용 모델 하나; 교체 시 기능/가격과 allowlist 검토 |
 | SOL_REVIEW_EFFORT | xhigh | low/medium/high/xhigh |
+| SOL_REVIEW_CACHE_TTL | 30m | 캐시 최소 보존 시간, 30m/12h |
 | SOL_REVIEW_MAX_OUTPUT_TOKENS | 64000 | 1024–128000, reasoning/output API 한도 |
 | SOL_REVIEW_TIMEOUT_SECONDS | 1800 | 30–1800초, 별도 Actions 단계 32분/리뷰 잡 40분 한도 |
 
@@ -108,8 +139,9 @@ effort 기본값은 `xhigh`이고(유지보수자 결정 2026-11-02), 생각이 
 `xhigh`의 추론 토큰도 출력 한도(`SOL_REVIEW_MAX_OUTPUT_TOKENS`)에 들어가므로, 출력 한도에 걸린 불완전 응답이 잦으면 그 값을 올려야 합니다.
 
 실행당 모델 응답 호출은 **1회**이고, 그 앞에 입력 토큰 계산 호출이 프롬프트마다 한 번(많아야 두 번) 있습니다.
-2026-11-02의 가격(입력 100만 토큰당 2달러, 출력 100만 토큰당 10달러)으로 입력 922,000 토큰과 출력 64,000 토큰을 다 쓰면
-한 번에 약 2.5달러이고, 보통 PR은 그보다 적습니다. 재실행은 그만큼 비용이 더 듭니다.
+입력 272,000토큰을 넘는 요청은 출력 100만 토큰당 15달러입니다(2026-11-04 기준). 입력 922,000토큰과 출력
+64,000토큰을 모두 쓰고 입력을 전부 새로 캐시에 쓴다고 가정하면, `30m`에서는 약 5.57달러, `12h`에서는 약 10.18달러입니다.
+실제 비용은 일반 입력·캐시 읽기·캐시 쓰기의 토큰 수에 따라 달라집니다.
 
 ## 검증
 
@@ -121,6 +153,8 @@ python3 -m unittest discover -s .github/scripts -p 'test_sol_review*.py' -v
 stale 결과, 게시 오류, 글 다듬기, 자격 증명 분리를 검사합니다. 실제 모델의 리뷰 품질과 인젝션 저항, 인증, 과금, 리뷰 제출은
 오프라인 시험으로 확인되지 않습니다. `workflow_run`은 main에 있는 워크플로만 부르므로, 이 구조는 머지한 뒤 다음 PR에서 처음 돕니다.
 
+- https://developers.openai.com/api/docs/guides/prompt-caching
+- https://developers.openai.com/api/reference/resources/responses/subresources/input_tokens/methods/count
 - https://developers.openai.com/api/reference/resources/responses/methods/create
 - https://developers.openai.com/api/docs/models/gpt-6.1-sol
 - https://docs.github.com/en/actions/reference/security/secure-use
