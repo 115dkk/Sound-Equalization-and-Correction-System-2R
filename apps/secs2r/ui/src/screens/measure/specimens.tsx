@@ -187,9 +187,9 @@ const measureSpecimens: SpecimenDef[] = [
   frame("screen.measure.tutorial-loading", "Measure · tutorial, demo data loading (device busy)", () => <Tutorial view={sampleLoadingView} />),
   {
     id: "screen.measure.options",
-    title: "Measure · options with 고급 open (acoustic timing: one repetition)",
+    title: "Measure · options (acoustic timing: one repetition)",
     width: 380,
-    render: () => <MeasureOptions view={partialView} actions={noopActions} busy={false} advancedOpen />,
+    render: () => <MeasureOptions view={partialView} actions={noopActions} busy={false} />,
   },
 ];
 

@@ -516,7 +516,9 @@ describe("useCalibrateScreen", () => {
     const toggle = () => document.querySelector<HTMLElement>('[data-ui="calibrate.range.dip_limit"]')!;
     expect(toggle().textContent).toBe(locale === "ko" ? "딥 보정 제한" : "Limit dip correction");
     expect(toggle().getAttribute("aria-checked")).toBe("false");
-    expect(toggle().closest('[data-ui="calibrate.range.advanced"]')).toBeNull();
+    expect(toggle().closest(".ui-advanced")).toBeNull();
+    // The boost limit sits beside it in the body too (ADR 0038).
+    expect(document.querySelector('[data-ui="calibrate.range.boost"]')!.closest(".ui-advanced")).toBeNull();
     mock.calls.length = 0;
     for (const on of [true, false]) {
       await perform(() => fireEvent.click(toggle()));

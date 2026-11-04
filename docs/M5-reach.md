@@ -40,7 +40,7 @@
 | 마이크 보정 알약: 알 수 없음 / 불러온 파일 없음 / 파일 이름 | `connect.mic_cal` | 없음 | P30 |
 | 출력 드라이버(시스템의 측정 출력 장치) | `connect.output_device` | 없음 | P30 |
 | 샘플레이트(읽기 전용) | `connect.sample_rate` | 없음 | P30 |
-| 스윕 길이 64k…4M "길이 · 초", 기본 256k(측정·가져오기의 측정 옵션에서만 정함, P58) | `measure.options.sweep` | 없음 | P30, P86 |
+| 스윕 길이 64k…4M "길이 · 초", 기본 256k(측정·가져오기의 측정 옵션에서만 정함, P58) | `measure.options.sweep` | 없음 | P30, P86, P179 (ADR 0038) |
 | REW가 떠 있는데 장치 목록이 비면 다시 읽기(2초마다, 15번) | `connect.input_device`, `connect.devices.retry` (다시 읽기는 `status_watch`의 `MeasureStatus`, P33) | 없음 | P30 |
 | 장치 공유: 자동 / 독점 / 공유(자체 측정의 장치 카드에서 펼침) | `connect.devices.details`, `connect.share_mode` | 없음 | P30, P58 |
 | 진행 조건: REW 실행과 Pro("REW 를 켜 주세요.") | `connect.rew.hint`, `connect.rew.launch` | 없음 | P30 |
@@ -120,7 +120,7 @@
 | [이 위치 측정] (잰 위치면 다시 측정, 모두 끝나면 끔): 카운트다운, 프로젝트 경로, 계획 확인, 측정 | `measure.position.start`, `measure.next`, `measure.path.note` | 모두 측정하면 끄는 대신 주 동작이 "보정으로"(`measure.next`). 경로가 없으면 `~/Documents/SECS/측정 …`을 몰래 만들지 않고 저장 대화상자를 먼저 엶(작업서 P31a, 편차 번호 없음) | P31a |
 | [측정 취소]: 카운트다운은 바로, 스윕은 지금 스윕 뒤 멈춤 | `measure.cancel` | U8: 트레이의 `jobs.cancel.measure`도 같은 잡을 멈춤 | P31a |
 | [마지막 위치 다시]: 마지막으로 끝낸 위치를 지움 | `measure.redo`, `measure.clear`, `measure.clear.confirm`, `measure.clear.undo` | U5: 확인 뒤 지우고 알림에서 되돌림 | P31a |
-| 옵션: 시작 지연, 스윕 길이(1절과 4절의 같은 설정도 이곳에서만 정함, P58), 반복 1/2/4/8(REW에서 음향 기준이 아닐 때만) | `measure.options.delay`, `measure.options.sweep`, `measure.options.repeats` | U15 | P31a, P86 |
+| 옵션: 시작 지연, 스윕 길이(1절과 4절의 같은 설정도 이곳에서만 정함, P58), 반복 1/2/4/8(REW에서 음향 기준이 아닐 때만) | `measure.options.delay`, `measure.options.sweep`, `measure.options.repeats` | U15 | P31a, P86, P179 (ADR 0038) |
 | [mdat 불러오기] | `measure.mdat.load` | — | P31a |
 | [파일 관리] | `measure.files.open` | — | P31a |
 | [데모 데이터] (튜토리얼만) | `measure.sample.load` | — | P31a |
@@ -178,7 +178,7 @@
 | 추가 구간 1~4: 하한과 상한 20–20000 Hz(1 kHz 아래 5 단위, 그 위 50 단위), 빼기, 거부된 값은 그 입력 옆에 이유를 보이고 저장된 값은 그대로 | `calibrate.range.extra.<n>`, `calibrate.range.extra.<n>.lower`, `calibrate.range.extra.<n>.upper`, `calibrate.range.extra.<n>.remove` | D48 | P148 (ADR 0024) |
 | 룸 볼륨 0–100000 m³(0 = 없음) | `calibrate.range.volume` | 없음 | P31b |
 | 방 치수 가로 × 세로 × 높이 0–100 m, 0.1 단위(셋 다 넣으면 볼륨) | `calibrate.range.dims.w`, `calibrate.range.dims.d`, `calibrate.range.dims.h` | 없음 | P31b |
-| 부스트 상한 0–10 dB, 기본 10 | `calibrate.range.boost` | 없음 | P31b |
+| 부스트 상한 0–10 dB, 기본 10 | `calibrate.range.boost` | 없음 | P31b, P179 (ADR 0038) |
 | 극저역 보호의 자동 설정(롤오프 아래 부스트 막기), 기본 꺼짐 | `calibrate.range.low_protect`, 근거 줄은 계산 메모, 막지 못한 채널은 `calibrate.verdict.low_protect` 경고 | 없음 | P145 (ADR 0022) |
 | RC 상한이 정해진 방법(엔진 메모와 룸 볼륨) | `calibrate.range.notes` | 없음 | P31b |
 | XO 그룹 | `calibrate.xo.group` | 없음 | P31b |
@@ -190,11 +190,11 @@
 | 서브가 없으면 "서브가 없어 XO가 없습니다" | `calibrate.xo.none` | 없음 | P31b |
 | 인프라 서브(없음 또는 서브), 인프라 XO 10–300 Hz(처음 25), 종류 LR24/LR12/LR48/BW12/BW24, 인프라 최대 부스트 0–24 dB | `calibrate.ba.infra`, `calibrate.ba.infra_hz`, `calibrate.ba.infra_type`, `calibrate.ba.infra_boost`, `calibrate.ba.infra_note` | 없음 | P31b |
 | 서브마다 방식: 자동, 고정, 묶음 A, 묶음 B | `calibrate.ba.mode.<role>` | 없음 | P31b |
-| 고칠 서브 고르기(업스트림 서브 콤보) | `calibrate.ba.edit` | 없음 | P31b |
+| 고칠 서브 고르기(업스트림 서브 콤보) | `calibrate.ba.edit` | 없음 | P31b, P179 (ADR 0038) |
 | 묶음 레이아웃(상대값 고정, DBA, 멀티서브), DBA 줄 앞·뒤, 뒤 지연 보정 −20…20 ms | `calibrate.ba.layout`, `calibrate.ba.dba_row`, `calibrate.ba.rear_trim` | 없음 | P31b |
 | 값(고정, 상대값 고정 묶음): 게인 −60…+20 dB 0.5 단위, 딜레이 0–500 ms 0.1 단위, 극성, 올패스 1–2(f 0–500 Hz, Q 0.1–20) | `calibrate.ba.gain`, `calibrate.ba.delay`, `calibrate.ba.polarity`, `calibrate.ba.allpass.<n>.hz`, `calibrate.ba.allpass.<n>.q` | 없음 | P31b |
 | 고정 필터(모든 방식): HP·LP 0–300 Hz와 종류(종류를 고르면 HP 20, LP 80), PEQ 1–3(f, Q, 게인 −30…+12 dB) | `calibrate.ba.hp_type`, `calibrate.ba.hp`, `calibrate.ba.lp_type`, `calibrate.ba.lp`, `calibrate.ba.peq.<n>.hz`, `calibrate.ba.peq.<n>.q`, `calibrate.ba.peq.<n>.gain` | 없음 | P31b |
-| 메인 추가 지연 0–100 ms(고정 서브가 있을 때) | `calibrate.ba.main_delay` | 없음 | P31b |
+| 메인 추가 지연 0–100 ms(고정 서브가 있을 때) | `calibrate.ba.main_delay` | 없음 | P31b, P179 (ADR 0038) |
 | MIMO 서포트로 쓰기, 기본 켬 | `calibrate.ba.mimo_support` | 없음 | P31b |
 | [서브만 계산] | `calibrate.ba.compute_subs` | 없음 | P31b |
 | [결과 값 가져오기] | `calibrate.ba.take_values` | 없음 | P31b |
