@@ -869,8 +869,7 @@ impl BandGuard {
                 .iter()
                 .zip(Self::power_by_position(pb, ys, &self.bounds))
                 .flat_map(|(before, after)| before.iter().copied().zip(after))
-                .filter(|(b, _)| *b > 0.0)
-                .map(|(b, a)| 10.0 * ((a + 1e-30) / b).log10())
+                .filter_map(|(b, a)| super::design::seat_change(b, a))
                 .reduce(f64::max)
                 .unwrap_or(-99.0);
         }

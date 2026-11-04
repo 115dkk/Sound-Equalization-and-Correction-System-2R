@@ -31,18 +31,18 @@ describe("calculation notes", () => {
         ? code === "mimo_guard_reduced" ? "Rrs 서포트를 −6.3 dB로 줄였습니다." : "Rrs 서포트를 껐습니다."
         : code === "mimo_guard_reduced" ? "Reduced Rrs support to −6.3 dB." : "Disabled Rrs support.";
       const causes = locale === "ko" ? "40~51 Hz 늦은 에너지 +1.5 dB · 48 Hz 모드의 꼬리 에너지 +1.3 dB" : "40–51 Hz late energy +1.5 dB · 48 Hz mode tail energy +1.3 dB";
-      const prefix = locale === "ko" ? "위치 3에서 " : "At position 3, ";
+      const at = (position: string) => (locale === "ko" ? `위치 ${position}에서 ` : `At position ${position}, `);
+      const band = locale === "ko" ? "40~51 Hz 늦은 에너지 +1.5 dB" : "40–51 Hz late energy +1.5 dB";
+      const tail = locale === "ko" ? "48 Hz 모드의 꼬리 에너지 +1.3 dB" : "48 Hz mode tail energy +1.3 dB";
       const without = `${causes} · ${action}`;
       expect(lines(locale, [n(code, params)])).toEqual([without]);
-      expect(lines(locale, [n(code, { ...params, position: "3" })])).toEqual([prefix + without]);
+      // Each guard names its own position: the band at 2, the tail at 5.
+      expect(lines(locale, [n(code, { ...params, band_position: "2", tail_position: "5" })])).toEqual([`${at("2")}${band} · ${at("5")}${tail} · ${action}`]);
+      expect(lines(locale, [n(code, { ...params, tail_position: "5" })])).toEqual([`${band} · ${at("5")}${tail} · ${action}`]);
       // Older records may have only one cause, or no cause details.
       expect(lines(locale, [n(code, { role: "Rb", gain_db: "-6.25" })])).toEqual([action]);
-      expect(lines(locale, [n(code, { role: "Rb", gain_db: "-6.25", position: "3", mode_hz: "48", tail_db: "1.25" })])).toEqual([
-        prefix + (locale === "ko" ? "48 Hz 모드의 꼬리 에너지 +1.3 dB" : "48 Hz mode tail energy +1.3 dB") + ` · ${action}`,
-      ]);
-      expect(lines(locale, [n(code, { role: "Rb", gain_db: "-6.25", position: "3", band_lo_hz: "40", band_hi_hz: "50.5", band_db: "1.5" })])).toEqual([
-        prefix + (locale === "ko" ? "40~51 Hz 늦은 에너지 +1.5 dB" : "40–51 Hz late energy +1.5 dB") + ` · ${action}`,
-      ]);
+      expect(lines(locale, [n(code, { role: "Rb", gain_db: "-6.25", tail_position: "3", mode_hz: "48", tail_db: "1.25" })])).toEqual([`${at("3")}${tail} · ${action}`]);
+      expect(lines(locale, [n(code, { role: "Rb", gain_db: "-6.25", band_position: "3", band_lo_hz: "40", band_hi_hz: "50.5", band_db: "1.5" })])).toEqual([`${at("3")}${band} · ${action}`]);
     }
   });
 
