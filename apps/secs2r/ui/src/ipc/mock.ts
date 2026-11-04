@@ -997,7 +997,7 @@ export function createMockService(options: MockOptions = {}): MockService {
           summary.latency_ms = spec.max_latency_ms;
           summary.verdict.added_delay_ms = spec.max_latency_ms;
           summary.notes = [rcLimitNote(captured, positions), ...mockRcBandsNotes(captured, positions), ...mockLowProtectNotes(captured, config.speakers.map((s) => s.role)), ...mockInputHpNotes(captured)];
-          summary.notes.push({ code: "polarity_reversed", params: { role: "Rs", confidence: "0.94", compared: "3" } });
+          summary.notes.push({ code: "polarity_reversed", params: { role: "Rs", confidence: "0.94", compared: "3", opposite: "3" } });
           summary.notes.push({ code: "pair_phase", params: { a: "L", b: "Ls", bands: "89:112:170.0:-20.3,112:141:174.0:-24.1" } });
           summary.scorecard = roles.map((role) => ({ ...clone(fx.scorecard.find((score) => score.role === role) ?? fx.scorecard[0]!), role }));
           summary.late_energy = fx.lateEnergy(roles, needProject().positions);

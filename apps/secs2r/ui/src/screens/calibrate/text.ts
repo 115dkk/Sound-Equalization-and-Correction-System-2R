@@ -279,7 +279,7 @@ export function noticeText(t: Translate, number: FormatNumber, notice: Notice, r
       params.hz = f("hz");
       break;
     case "polarity_reversed":
-      Object.assign(params, { code: code(), compared: f("compared"), confidence: f("confidence", 2) });
+      Object.assign(params, { code: code(), compared: f("compared"), opposite: f("opposite"), confidence: f("confidence", 2) });
       break;
     case "polarity_split":
       Object.assign(params, {
