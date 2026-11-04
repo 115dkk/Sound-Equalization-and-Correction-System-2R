@@ -1,5 +1,7 @@
 # P173 Daybreak: 메인 채널 사이의 위상 검사 메모
 
+> 2026-11-04 덧붙임: `pair_phase::bands`와 `check`는 수치 계산이라 `CLAUDE.md`의 작업 분배상 ASTRA 몫입니다. 구현은 Daybreak가 했고, 그 뒤 ASTRA가 읽기 전용으로 감사해 결함 넷(NaN을 최대 상쇄로 판정, 200 Hz 경계 누락, 탐색 패스 미실행의 확인 부재, 골든 비교 시험의 이름)을 찾았으며 모두 고쳤습니다. 다음부터 수치 구현은 처음부터 ASTRA에게 맡깁니다.
+
 ADR 0035(`docs/adr/0035-pair-phase.md`)를 구현하십시오. 먼저 그 ADR과 `CONTEXT.md`, `CLAUDE.md`를 읽으십시오. 작업 트리는 `E:\wt\p1-pair-phase`(브랜치 `claude/p1-pair-phase`)이고 그 안에서만 일하십시오.
 
 ## 목표

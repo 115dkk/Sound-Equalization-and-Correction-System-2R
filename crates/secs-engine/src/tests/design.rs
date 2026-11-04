@@ -303,7 +303,7 @@ fn golden_rooms_have_no_polarity_notes() {
 }
 
 #[test]
-fn pair_phase_runs_once_on_the_final_pass_and_keeps_goldens() {
+fn pair_phase_runs_once_on_the_final_pass_and_reports_dolby() {
     let assert_pairs_are_unique = |label: &str, result: &crate::Design| {
         let mut pairs = BTreeMap::new();
         for note in &result.notes {
@@ -363,12 +363,20 @@ fn pair_phase_runs_once_on_the_final_pass_and_keeps_goldens() {
         }
     }
 
+    // The check runs exactly once: not in the agreement probe pass, and not
+    // for a subs-only calculation. The observer sees the "pair_phase" stage.
+    let runs = std::sync::atomic::AtomicUsize::new(0);
+    let count = |name: &str, _: std::time::Duration| {
+        if name == "pair_phase" {
+            runs.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+    };
     let mut case = cases::load("room");
     case.config.rc_range.1 = None;
     case.config.rc_hi_basis = secs_types::calibration::RcHiBasis::Agreement;
     let context = Context::serial();
     let fitters = design::production_fitters(context.cancel());
-    let result = design::design(
+    let result = design::design_observed(
         &DesignRequest {
             measurements: &case.measurements,
             config: &case.config,
@@ -378,9 +386,25 @@ fn pair_phase_runs_once_on_the_final_pass_and_keeps_goldens() {
         },
         &context,
         &*fitters,
+        &count,
     )
     .unwrap();
     assert_pairs_are_unique("room/agreement", &result);
+    assert_eq!(runs.load(std::sync::atomic::Ordering::SeqCst), 1);
+    design::design_observed(
+        &DesignRequest {
+            measurements: &case.measurements,
+            config: &case.config,
+            tuning: &case.tuning,
+            subs_only: true,
+            adapter_notes: &[],
+        },
+        &context,
+        &*fitters,
+        &count,
+    )
+    .unwrap();
+    assert_eq!(runs.load(std::sync::atomic::Ordering::SeqCst), 1);
 }
 
 #[test]

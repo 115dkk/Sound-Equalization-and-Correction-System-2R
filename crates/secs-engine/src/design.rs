@@ -1109,26 +1109,36 @@ fn design_pass(
         timings,
     };
     if run_final_checks {
-        let responses = design
-            .mains
+        let pair_started = std::time::Instant::now();
+        // Only the inspection range's bins are kept, a few hundred per main,
+        // so the check stays far below the reserved design budget (TD-24).
+        let (lo, hi) = crate::pair_phase::BAND_HZ;
+        let kept: Vec<usize> = f
             .iter()
-            .filter_map(|main| {
-                crate::stage_responses(&design, &main.role, &prepared.h, config.main_position).map(
-                    |stages| {
-                        let response = stages
-                            .top_xo
-                            .iter()
-                            .zip(main.response.iter())
-                            .map(|(measured, correction)| measured * correction)
-                            .collect();
-                        (main.role.clone(), response)
-                    },
-                )
-            })
-            .collect::<Vec<_>>();
+            .enumerate()
+            .filter(|&(_, &hz)| hz >= lo && hz <= hi)
+            .map(|(i, _)| i)
+            .collect();
+        let band_f: Vec<f64> = kept.iter().map(|&i| f[i]).collect();
+        let mut responses = Vec::with_capacity(design.mains.len());
+        for main in &design.mains {
+            check(ctx)?;
+            let Some(stages) =
+                crate::stage_responses(&design, &main.role, &prepared.h, config.main_position)
+            else {
+                continue;
+            };
+            let response: Vec<C> = kept
+                .iter()
+                .map(|&i| stages.top_xo[i] * main.response[i])
+                .collect();
+            responses.push((main.role.clone(), response));
+        }
         design
             .notes
-            .extend(crate::pair_phase::check(design_freqs(), &responses));
+            .extend(crate::pair_phase::check(&band_f, &responses));
+        check(ctx)?;
+        observed("pair_phase", pair_started.elapsed());
     }
     Ok((design, agreement_limits))
 }

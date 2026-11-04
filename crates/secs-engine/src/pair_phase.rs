@@ -38,7 +38,10 @@ pub fn bands(f: &[f64], a: &[Complex64], b: &[Complex64]) -> Vec<Band> {
                 .iter()
                 .zip(a)
                 .zip(b)
-                .filter(|((frequency, _), _)| lo <= **frequency && **frequency < hi)
+                .filter(|((frequency, _), _)| {
+                    let last = k + 1 == CENTERS_HZ.len();
+                    lo <= **frequency && (**frequency < hi || (last && **frequency <= hi))
+                })
                 .map(|((_, a), b)| (*a, *b))
                 .collect::<Vec<_>>();
             if bins.is_empty() {
@@ -59,9 +62,15 @@ pub fn bands(f: &[f64], a: &[Complex64], b: &[Complex64]) -> Vec<Band> {
             let loss_db = if separate == 0.0 {
                 0.0
             } else {
-                (10.0 * (combined / separate).log10()).max(FLOOR_DB)
+                10.0 * (combined / separate).log10()
             };
-            Some((lo, hi, phase_deg, loss_db))
+            // A band whose responses do not compute (NaN, overflow) is not a
+            // cancellation: `f64::max` would otherwise turn NaN into the floor.
+            // Minus infinity is a complete cancellation and clamps to the floor.
+            if !phase_deg.is_finite() || loss_db.is_nan() {
+                return None;
+            }
+            Some((lo, hi, phase_deg, loss_db.max(FLOOR_DB)))
         })
         .collect()
 }
@@ -154,6 +163,20 @@ mod tests {
         assert!((edges[3] - 89.4427).abs() < 0.01);
         assert!((edges[4] - 111.8034).abs() < 0.01);
         assert!((edges[5] - 141.4214).abs() < 0.01);
+    }
+
+    #[test]
+    fn pair_phase_bands_skip_non_finite_and_include_the_top_edge() {
+        let one = vec![Complex64::new(1.0, 0.0)];
+        let minus = vec![Complex64::new(-1.0, 0.0)];
+        let top = bands(&[BAND_HZ.1], &one, &minus);
+        assert_eq!(top.len(), 1);
+        assert_eq!(top[0].3, FLOOR_DB);
+        assert!(bands(&[BAND_HZ.0 - 0.01], &one, &minus).is_empty());
+        assert!(bands(&[100.0], &[Complex64::new(f64::NAN, 0.0)], &one).is_empty());
+        let huge = vec![Complex64::new(1e200, 0.0)];
+        assert!(bands(&[100.0], &huge, &huge).is_empty());
+        assert!(check(&[100.0], &[("L".into(), huge.clone()), ("R".into(), huge)]).is_empty());
     }
 
     #[test]
