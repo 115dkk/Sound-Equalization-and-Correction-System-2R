@@ -37,7 +37,9 @@ fn dip_limit_fills_narrow_dips_partly_and_broad_loss_fully() {
     let hi = bin(centre * 2_f64.powf(1.0 / 8.0));
     sm[lo..hi].fill(-8.0);
     let mut narrow: Vec<_> = sm.iter().map(|value| -value).collect();
-    let dips = rc::limit_dip_fills(&power, &sm, &target, 0.0, &mut narrow);
+    let unlimited = narrow.clone();
+    let bins = rc::limit_dip_fills(&power, &sm, &target, 0.0, &mut narrow);
+    let dips = rc::dip_notes(&bins, &narrow, &unlimited);
     assert_eq!(narrow[bin(centre)], 5.0);
     assert_eq!(dips, vec![(design_freqs()[lo], 8.0, 5.0)]);
 
@@ -62,7 +64,8 @@ fn dip_limit_fills_narrow_dips_partly_and_broad_loss_fully() {
             .collect();
     let mut broad: Vec<_> = broad_sm.iter().map(|value| -value).collect();
     let before = broad.clone();
-    assert!(rc::limit_dip_fills(&broad_power, &broad_sm, &target, 0.0, &mut broad).is_empty());
+    let bins = rc::limit_dip_fills(&broad_power, &broad_sm, &target, 0.0, &mut broad);
+    assert!(rc::dip_notes(&bins, &broad, &before).is_empty());
     assert!(
         broad
             .iter()
@@ -80,7 +83,9 @@ fn dip_limit_keeps_the_cut_floor_on_peaks() {
     let power = vec![10_f64.powf(30.0 / 10.0); BINS];
     let sm = vec![30.0; BINS];
     let mut corr = vec![rc::CUT_FLOOR_DB; BINS];
-    assert!(rc::limit_dip_fills(&power, &sm, &target, 0.0, &mut corr).is_empty());
+    let unlimited = corr.clone();
+    let bins = rc::limit_dip_fills(&power, &sm, &target, 0.0, &mut corr);
+    assert!(rc::dip_notes(&bins, &corr, &unlimited).is_empty());
     assert!(corr.iter().all(|value| *value == rc::CUT_FLOOR_DB));
 }
 
@@ -109,8 +114,25 @@ fn dip_limit_notes_list_the_deepest_limited_dips() {
         sm[at..at + 2].fill(-(4.0 + index as f64));
     }
     let mut corr: Vec<_> = sm.iter().map(|value| -value).collect();
-    let dips = rc::limit_dip_fills(&power, &sm, &target, 0.0, &mut corr);
+    let unlimited = corr.clone();
+    let bins = rc::limit_dip_fills(&power, &sm, &target, 0.0, &mut corr);
+    let dips = rc::dip_notes(&bins, &corr, &unlimited);
     assert_eq!(dips.len(), 6);
+
+    // A dip another limit removes anyway (the band mask zeroes both targets)
+    // is not a limited dip: only the cap's own reduction counts.
+    let masked_out = bin(300.0);
+    let mut limited = corr.clone();
+    let mut without = unlimited.clone();
+    for value in &mut limited[masked_out..masked_out + 2] {
+        *value = 0.0;
+    }
+    for value in &mut without[masked_out..masked_out + 2] {
+        *value = 0.0;
+    }
+    let kept = rc::dip_notes(&bins, &limited, &without);
+    assert_eq!(kept.len(), 6);
+    assert!(kept.iter().all(|&(hz, _, _)| hz < 290.0));
     assert!(dips.windows(2).all(|pair| pair[0].1 >= pair[1].1));
     assert_eq!(dips[0].1, 10.0);
     assert_eq!(dips[0].2, 6.0);

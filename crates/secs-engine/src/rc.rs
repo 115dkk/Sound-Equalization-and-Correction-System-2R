@@ -120,25 +120,42 @@ pub(crate) fn limit_dip_fills(
     target: &[f64],
     level_db: f64,
     corr: &mut [f64],
-) -> Vec<(f64, f64, f64)> {
-    let frequencies = design_freqs();
+) -> Vec<(f64, f64)> {
     let env: Vec<_> = smooth(power, 1.0)
         .into_iter()
         .map(|value| 10.0 * (value + 1e-30).log10())
         .collect();
+    (0..BINS)
+        .map(|i| {
+            let depth = (env[i] - sm[i]).max(0.0);
+            let fill = if depth <= 2.0 {
+                depth
+            } else {
+                2.0 + (depth - 2.0) / 2.0
+            }
+            .min(6.0);
+            corr[i] = corr[i].min((target[i] + level_db - env[i] + fill).max(CUT_FLOOR_DB));
+            (depth, fill)
+        })
+        .collect()
+}
+
+/// The dips the cap really limited (ADR 0034): bins at least 4 dB deep whose
+/// final design target is 0.5 dB or more below what the other limits alone
+/// would have left. `bins` is `limit_dip_fills`' per-bin (depth, fill);
+/// `limited` and `unlimited` are the design target after every other limit,
+/// with and without the cap. Contiguous bins form one dip, reported at its
+/// deepest bin as (Hz, depth, fill); deepest first, six at most.
+pub(crate) fn dip_notes(
+    bins: &[(f64, f64)],
+    limited: &[f64],
+    unlimited: &[f64],
+) -> Vec<(f64, f64, f64)> {
+    let frequencies = design_freqs();
     let mut dips = Vec::new();
     let mut current = None;
-    for i in 0..BINS {
-        let depth = (env[i] - sm[i]).max(0.0);
-        let fill = if depth <= 2.0 {
-            depth
-        } else {
-            2.0 + (depth - 2.0) / 2.0
-        }
-        .min(6.0);
-        let before = corr[i];
-        corr[i] = corr[i].min((target[i] + level_db - env[i] + fill).max(CUT_FLOOR_DB));
-        if depth >= 4.0 && before - corr[i] >= 0.5 {
+    for (i, &(depth, fill)) in bins.iter().enumerate() {
+        if depth >= 4.0 && unlimited[i] - limited[i] >= 0.5 {
             let candidate = (frequencies[i], depth, fill);
             if current.is_none_or(|(_, deepest, _)| depth > deepest) {
                 current = Some(candidate);
@@ -921,9 +938,16 @@ fn prepare_correction(
             )
         })
         .collect();
-    let dip_limit = s
-        .dip_limit
-        .then(|| limit_dip_fills(&power, &sm, &target, input.level_db, &mut corr));
+    // The dip cap (ADR 0034) and the target it would have left alone: the
+    // other limits below apply to both, so the notes name only the dips the
+    // cap really reduced.
+    let mut dip_bins = s.dip_limit.then(|| {
+        let unlimited = corr.clone();
+        (
+            limit_dip_fills(&power, &sm, &target, input.level_db, &mut corr),
+            unlimited,
+        )
+    });
     let mut notes = Vec::new();
     let mut nb = no_boost_mask(input);
     let rolloff = protection_rolloff(input);
@@ -938,26 +962,33 @@ fn prepare_correction(
     trace.long_mode = lm.clone();
     let bands = band_set(s.rc_lo, s.rc_hi, &s.rc_bands);
     for i in 0..BINS {
-        if nb[i] {
-            corr[i] = corr[i].min(0.0);
+        let limit = |mut value: f64| {
+            if nb[i] {
+                value = value.min(0.0);
+            }
+            if let Some(hz) = rolloff
+                && f[i] >= hz
+                && f[i] < 2.0 * hz
+            {
+                value = value.min(c.max_boost_db * (f[i] / hz).log2());
+            }
+            if lm[i]
+                || cuts.iter().any(|&(hz, _, _)| {
+                    let width = 2_f64.powf(1.0 / 24.0);
+                    f[i] >= hz / width && f[i] <= hz * width
+                })
+            {
+                value = value.min(t.long_boost_db);
+            }
+            value * magnitude_mask(f[i], &bands)
+        };
+        corr[i] = limit(corr[i]);
+        if let Some((_, unlimited)) = dip_bins.as_mut() {
+            unlimited[i] = limit(unlimited[i]);
         }
-        if let Some(hz) = rolloff
-            && f[i] >= hz
-            && f[i] < 2.0 * hz
-        {
-            corr[i] = corr[i].min(c.max_boost_db * (f[i] / hz).log2());
-        }
-        if lm[i]
-            || cuts.iter().any(|&(hz, _, _)| {
-                let width = 2_f64.powf(1.0 / 24.0);
-                f[i] >= hz / width && f[i] <= hz * width
-            })
-        {
-            corr[i] = corr[i].min(t.long_boost_db);
-        }
-        corr[i] *= magnitude_mask(f[i], &bands);
     }
     let design_db = corr.clone();
+    let dip_limit = dip_bins.map(|(bins, unlimited)| dip_notes(&bins, &corr, &unlimited));
     let mut lf = (s.lf_align && c.taps > 0).then(|| {
         let f_lin = crate::low_protect::rolloff(input.comb, input.main_position, None)
             .map_or(s.rc_lo, |hz| (1.5 * hz).max(s.rc_lo));
