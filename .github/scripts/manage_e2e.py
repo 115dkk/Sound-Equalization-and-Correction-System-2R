@@ -665,6 +665,17 @@ return texts.join(' | ').slice(0, 2000);
 """
 
 
+SETTLED = """
+const e = arguments[0];
+const surface = e.closest('[role="menu"], [role="dialog"], .ui-popover') || e;
+if (typeof surface.getAnimations === 'function'
+    && surface.getAnimations({subtree: true}).some(a => a.playState === 'running')) return false;
+const r = e.getBoundingClientRect();
+const key = [r.x, r.y, r.width, r.height].map(v => Math.round(v)).join(',');
+if (e.__secsSettled !== key) { e.__secsSettled = key; return false; }
+return true;
+"""
+
 SETUP_CALL = """
 return window.__TAURI_INTERNALS__.invoke('secs_call', {request: arguments[0]}).then(envelope => {
   if (!envelope.ok) throw new Error(JSON.stringify(envelope.error));
@@ -795,10 +806,18 @@ class Scenario:
         # Retried as a whole: right after a project opens the rail re-lays out,
         # and a click then lands on the status block ("element click
         # intercepted", which clicks nothing) or on a replaced element.
+        # A menu or dialog is positioned after its first layout and rises into
+        # place (ui-rise), so a click computed from its first rectangle lands
+        # on what was under it: PR #178's reruns hit the empty state's 새
+        # 프로젝트 button instead of the 열기 item. The click waits until the
+        # element's rectangle is the same on two polls and nothing animates
+        # on its surface.
         selector = ui(name)
         def attempt():
             element = self.driver.find(selector)
             if self.driver.attribute(element, "disabled") is not None:
+                return False
+            if not self.driver.execute(SETTLED, {ELEMENT: element}):
                 return False
             self.driver.click(element)
             return True

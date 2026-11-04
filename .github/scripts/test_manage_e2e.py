@@ -476,6 +476,9 @@ class ClickTest(unittest.TestCase):
             def attribute(self, element, name):
                 return None
 
+            def execute(self, script, *args):
+                return True
+
             def click(self, element):
                 self.clicks += 1
                 if self.clicks == 1:
@@ -486,6 +489,36 @@ class ClickTest(unittest.TestCase):
         scenario.log = lambda *args, **kwargs: None
         scenario.click("frame.rail.export")
         self.assertEqual(scenario.driver.clicks, 2)
+
+    def test_a_click_waits_until_the_element_has_settled(self):
+        # The settle script answers false while a menu is still rising into
+        # place (its rectangle differs between polls); the click lands only
+        # after it answers true, and the poll runs the script, not a sleep.
+        class Driver:
+            def __init__(self):
+                self.polls = 0
+                self.clicks = 0
+
+            def find(self, selector):
+                return {"selector": selector}
+
+            def attribute(self, element, name):
+                return None
+
+            def execute(self, script, *args):
+                self.assertion = script is m.SETTLED and args[0] == {m.ELEMENT: {"selector": m.ui("frame.project.open")}}
+                self.polls += 1
+                return self.polls >= 3
+
+            def click(self, element):
+                self.clicks += 1
+
+        scenario = object.__new__(m.Scenario)
+        scenario.driver = Driver()
+        scenario.log = lambda *args, **kwargs: None
+        scenario.click("frame.project.open")
+        self.assertTrue(scenario.driver.assertion)
+        self.assertEqual((scenario.driver.polls, scenario.driver.clicks), (3, 1))
 
 if __name__ == "__main__":
     unittest.main()
