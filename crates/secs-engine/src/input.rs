@@ -193,6 +193,8 @@ pub struct EngineConfig {
     pub mode_decay: bool,
     /// Unwind constant FIR phase above the correction bands (ADR 0030).
     pub hf_phase: bool,
+    /// Limit how much one main fills a narrow response dip (ADR 0034).
+    pub dip_limit: bool,
     /// Room volume in m³, for the Schroeder frequency.
     pub room_volume_m3: Option<f64>,
     /// Automatic upper-limit evidence; ignored for a manual RC range.

@@ -45,8 +45,20 @@ describe("calculation notes", () => {
     }
   });
 
+  it("formats limited dips with display roles, integer Hz and one-decimal dB in both locales", () => {
+    const note = n("dip_limit", { role: "Rb", count: "2", dips: "94.43:7.54:4.77,136.78:9.20:5.60" });
+    expect(lines("ko", [note])).toEqual(["딥 보정 제한(Rrs): 94 Hz 7.5 dB 딥을 4.8 dB까지, 137 Hz 9.2 dB 딥을 5.6 dB까지"]);
+    expect(lines("en", [note])).toEqual(["Dip correction limit (Rrs): 94 Hz dip, 7.5 dB deep, filled by up to 4.8 dB, 137 Hz dip, 9.2 dB deep, filled by up to 5.6 dB"]);
+  });
+
+  it("reports no limited dips when the count is zero in both locales", () => {
+    const note = n("dip_limit", { role: "Tfl", count: "0", dips: "" });
+    expect(lines("ko", [note])).toEqual(["딥 보정 제한(Ltf): 줄인 딥 없음"]);
+    expect(lines("en", [note])).toEqual(["Dip correction limit (Ltf): no dips limited"]);
+  });
+
   it("has a sentence for every calibration notice code in both locales", () => {
-    const codes = ["measurement_resampled", "rc_limit", "rc_room_volume", "rc_no_room_volume", "rc_auto_cap", "rc_bands", "lf_align", "mode_decay", "mode_decay_none", "hf_phase", "hf_phase_none", "input_hp", "polarity_reversed", "polarity_split", "sub_narrow_band", "sub_high_gain", "lift_capped", "latency", "phase_strength", "phase_band", "long_mode_boost", "gd_cuts", "two_way", "sub_filters", "sub_filter_peq", "ba_cost", "ba_bus_pass", "bus_gain_anchored", "layout_fallback", "layout", "ba_manual", "low_protect"];
+    const codes = ["measurement_resampled", "rc_limit", "rc_room_volume", "rc_no_room_volume", "rc_auto_cap", "rc_bands", "lf_align", "mode_decay", "mode_decay_none", "hf_phase", "hf_phase_none", "dip_limit", "input_hp", "polarity_reversed", "polarity_split", "sub_narrow_band", "sub_high_gain", "lift_capped", "latency", "phase_strength", "phase_band", "long_mode_boost", "gd_cuts", "two_way", "sub_filters", "sub_filter_peq", "ba_cost", "ba_bus_pass", "bus_gain_anchored", "layout_fallback", "layout", "ba_manual", "low_protect"];
     for (const locale of ["ko", "en"] as const) {
       const { t, number } = words(locale);
       for (const code of codes) expect(noticeText(t, number, n(code, {})), `${locale}: ${code}`).not.toBeNull();

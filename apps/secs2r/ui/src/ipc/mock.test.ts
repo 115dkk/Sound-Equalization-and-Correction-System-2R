@@ -1049,6 +1049,24 @@ describe("mock 저음 도착 맞추기, 고역 위상 맞추기 and 방 울림 �
   });
 });
 
+describe("mock dip correction limit (ADR 0034)", () => {
+  it.each(["zero", "mixed", "linear", "ultra"] as const)("defaults off, persists both edits and marks fresh results stale in %s mode", async (mode) => {
+    const mock = createMockService({ tickMs: 0 });
+    try {
+      expect((await mock.request({ method: "calibration_settings_get" })).dip_limit).toBe(false);
+      await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "mode", mode } } });
+      for (const on of [true, false]) {
+        await mock.request({ method: "calibrate", params: { settings: null, subs_only: false } });
+        mock.drain();
+        expect((await mock.request({ method: "results" })).calibration?.stale).toBe(false);
+        expect(await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "dip_limit", on } } })).toMatchObject({ mode, dip_limit: on });
+        expect((await mock.request({ method: "calibration_settings_get" })).dip_limit).toBe(on);
+        expect((await mock.request({ method: "results" })).calibration).toMatchObject({ stale: true, stale_reason: "settings" });
+      }
+    } finally { mock.dispose(); }
+  });
+});
+
 describe("mock extra correction bands (ADR 0024)", () => {
   type Edit = import("./bindings/SettingEdit").SettingEdit;
   const refusal = (mock: ReturnType<typeof createMockService>, edit: Edit) =>

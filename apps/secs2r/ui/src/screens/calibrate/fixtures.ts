@@ -82,6 +82,7 @@ export const baseSettings: CalibrationSettings = {
   lf_align: false,
   mode_decay: false,
   hf_phase: false,
+  dip_limit: false,
   input_hp_hz: null,
   rc_lo: 20,
   rc_hi: null,

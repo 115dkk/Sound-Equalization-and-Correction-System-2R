@@ -2155,6 +2155,23 @@ tests = [
 ]
 
 [[feature]]
+id = "calibration.dip_limit"
+kind = "workflow"
+milestone = "M5"
+status = "implemented"
+upstream = "new; ADR 0034"
+tests = [
+  "secs-engine::dip_limit_fills_narrow_dips_partly_and_broad_loss_fully",
+  "secs-engine::dip_limit_off_and_golden_rooms_are_bit_identical",
+  "secs-engine::dip_limit_notes_list_the_deepest_limited_dips",
+  "secs-engine::dip_limit_stays_on_in_the_agreement_probe",
+  "secs-types::dip_limit_defaults_off_and_preserves_legacy_engine_key",
+  "secs-project::dip_limit_round_trip_and_legacy_default",
+  "secs-service::dip_limit_edits_persist_and_mark_results_stale",
+  "secs-service::dip_limit_notices_list_dips",
+]
+
+[[feature]]
 id = "calibration.input_hp"
 kind = "workflow"
 milestone = "M5"
@@ -2209,6 +2226,14 @@ milestone = "M5"
 status = "implemented"
 upstream = "new; project set --hf-phase on|off"
 tests = ["secs2r-cli::project_set_persists_hf_phase_switch"]
+
+[[feature]]
+id = "cli.dip_limit"
+kind = "workflow"
+milestone = "M5"
+status = "implemented"
+upstream = "new; project set --dip-limit on|off"
+tests = ["secs2r-cli::project_set_persists_dip_limit_switch"]
 
 [[feature]]
 id = "apply.camilla_ws"

@@ -133,7 +133,7 @@ function correctionSettings(s: CalibrationSettings): string {
     Object.values(s.subs_manual).some((entry) => entry.mode === "fixed") ? s.sub_main_delay_ms : null,
     s.infra_boost_max_db, s.xo_peq_on, s.xo_peq_lo, s.xo_peq_hi, s.boost_max_db,
     s.rc_hi_basis, s.rc_hi_transition, [...s.rc_bands].sort((a, b) => a.lo_hz - b.lo_hz || a.hi_hz - b.hi_hz).map((band) => [band.lo_hz, band.hi_hz]),
-    s.sample_rate_policy, s.low_protect, s.lf_align, s.mode_decay, s.hf_phase, s.input_hp_hz, s.peq_analytic_derivatives,
+    s.sample_rate_policy, s.low_protect, s.lf_align, s.mode_decay, s.hf_phase, s.dip_limit, s.input_hp_hz, s.peq_analytic_derivatives,
   ]);
 }
 /** Where the service writes what it applies to CamillaDSP (`app_data_path/applied/camilladsp`). */
@@ -654,6 +654,7 @@ export function createMockService(options: MockOptions = {}): MockService {
       case "lf_align": settings.lf_align = edit.on; break;
       case "mode_decay": settings.mode_decay = edit.on; break;
       case "hf_phase": settings.hf_phase = edit.on; break;
+      case "dip_limit": settings.dip_limit = edit.on; break;
       case "input_hp": settings.input_hp_hz = edit.hz; break;
       case "ultra_ms": settings.ultra_ms = clamp(edit.ms, LIMITS.ultra_ms); break;
       case "rc_lo": settings.rc_lo = edit.hz; break;

@@ -27,6 +27,7 @@ pub(crate) static CALIBRATION_SHAPE: Shape = Shape::Record {
         "lf_align",
         "mode_decay",
         "hf_phase",
+        "dip_limit",
         "input_hp_hz",
         "rc_hi_basis",
         "rc_hi_transition",
@@ -73,6 +74,7 @@ pub fn calibration_from_project(project: &Project) -> CalibrationSettings {
     out.lf_align = get("lf_align").is_some_and(PyJson::is_truthy);
     out.mode_decay = get("mode_decay").is_some_and(PyJson::is_truthy);
     out.hf_phase = get("hf_phase").is_some_and(PyJson::is_truthy);
+    out.dip_limit = get("dip_limit").is_some_and(PyJson::is_truthy);
     out.input_hp_hz = num(
         get("input_hp_hz"),
         CALIBRATION_LIMITS.input_hp.0,
@@ -258,6 +260,9 @@ fn calibration_json(settings: &CalibrationSettings) -> PyJson {
     }
     if settings.hf_phase {
         values.push(("hf_phase".into(), PyJson::Bool(true)));
+    }
+    if settings.dip_limit {
+        values.push(("dip_limit".into(), PyJson::Bool(true)));
     }
     if let Some(hz) = settings.input_hp_hz {
         values.push(("input_hp_hz".into(), PyJson::Float(hz)));

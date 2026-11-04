@@ -37,6 +37,8 @@ pub struct Setup {
     pub mode_decay: bool,
     /// ADR 0030; the agreement probe also clears this switch.
     pub hf_phase: bool,
+    /// ADR 0034; unlike the phase switches, the agreement probe keeps this on.
+    pub dip_limit: bool,
     pub peq_bands: usize,
     pub input_hp_hz: Option<f64>,
 }
@@ -132,6 +134,7 @@ impl Setup {
             lf_align: config.lf_align,
             mode_decay: config.mode_decay,
             hf_phase: config.hf_phase,
+            dip_limit: config.dip_limit,
             peq_bands: config.peq_bands.unwrap_or(16),
             input_hp_hz: config.input_hp_hz,
         }

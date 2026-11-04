@@ -176,6 +176,9 @@ pub struct CalibrationSettings {
     /// Unwinds the RC FIR's constant phase above the band (ADR 0030).
     #[serde(default)]
     pub hf_phase: bool,
+    /// Limits how much one main fills a narrow response dip (ADR 0034).
+    #[serde(default)]
+    pub dip_limit: bool,
     /// Common 8th-order Butterworth high-pass on every input before the MIMO
     /// fork, in Hz; `None` is off (ADR 0031).
     #[serde(default)]
@@ -241,6 +244,7 @@ impl Default for CalibrationSettings {
             lf_align: false,
             mode_decay: false,
             hf_phase: false,
+            dip_limit: false,
             input_hp_hz: None,
             rc_lo: 20.0,
             rc_hi: None,
@@ -346,6 +350,9 @@ impl CalibrationSettings {
         }
         if self.hf_phase {
             out.push_str("|hf_phase");
+        }
+        if self.dip_limit {
+            out.push_str("|dip_limit");
         }
         // ADR 0031: the chain is a calibration output, so the cut joins this key.
         if let Some(hz) = self.input_hp_hz {
@@ -851,6 +858,28 @@ mod tests {
         assert_eq!(
             edit,
             crate::settings_edit::SettingEdit::HfPhase { on: true }
+        );
+    }
+
+    #[test]
+    fn dip_limit_defaults_off_and_preserves_legacy_engine_key() {
+        let baseline = CalibrationSettings::default();
+        assert!(!baseline.dip_limit);
+        let key = baseline.engine_key();
+        assert!(!key.contains("dip_limit"));
+        let mut json = serde_json::to_value(&baseline).unwrap();
+        json.as_object_mut().unwrap().remove("dip_limit");
+        let mut legacy: CalibrationSettings = serde_json::from_value(json).unwrap();
+        assert_eq!(legacy, baseline);
+        legacy.dip_limit = true;
+        assert_eq!(legacy.engine_key(), format!("{key}|dip_limit"));
+        legacy.dip_limit = false;
+        assert_eq!(legacy.engine_key(), key);
+        let edit: crate::settings_edit::SettingEdit =
+            serde_json::from_value(serde_json::json!({"kind": "dip_limit", "on": true})).unwrap();
+        assert_eq!(
+            edit,
+            crate::settings_edit::SettingEdit::DipLimit { on: true }
         );
     }
 

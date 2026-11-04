@@ -148,6 +148,52 @@ fn low_protect_edits_persist_and_mark_results_stale() {
 }
 
 #[test]
+fn dip_limit_edits_persist_and_mark_results_stale() {
+    let root = temp_root("dip-limit");
+    fs::create_dir_all(&root).unwrap();
+    let (path, settings) = write_case(&root, "room");
+    let initial = service();
+    open(&initial, &path);
+    let events = Arc::new(Events::default());
+    let job = start_calibration(&initial, events.clone(), settings);
+    finished_result(events.wait(job, Duration::from_secs(120)));
+    assert!(!read_results(&initial).calibration.unwrap().stale);
+    call_ok(
+        &initial,
+        Request::CalibrationSettingsEdit(secs_types::ipc::CalibrationSettingsEditParams {
+            edit: secs_types::settings_edit::SettingEdit::DipLimit { on: true },
+        }),
+        Arc::new(NoEvents),
+    );
+    assert!(read_results(&initial).calibration.unwrap().stale);
+    call_ok(
+        &initial,
+        Request::ProjectSave(secs_types::ipc::ProjectSaveParams { path: None }),
+        Arc::new(NoEvents),
+    );
+    let reopened = service();
+    open(&reopened, &path);
+    let Response::CalibrationSettingsGet(settings) = call_ok(
+        &reopened,
+        Request::CalibrationSettingsGet,
+        Arc::new(NoEvents),
+    ) else {
+        panic!()
+    };
+    assert!(settings.dip_limit);
+    assert!(read_results(&reopened).calibration.unwrap().stale);
+    call_ok(
+        &reopened,
+        Request::CalibrationSettingsEdit(secs_types::ipc::CalibrationSettingsEditParams {
+            edit: secs_types::settings_edit::SettingEdit::DipLimit { on: false },
+        }),
+        Arc::new(NoEvents),
+    );
+    assert!(!read_results(&reopened).calibration.unwrap().stale);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn lf_align_and_mode_decay_edits_persist_and_mark_results_stale() {
     use secs_types::settings_edit::SettingEdit;
 

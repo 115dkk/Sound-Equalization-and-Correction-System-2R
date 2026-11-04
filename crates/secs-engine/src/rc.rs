@@ -69,6 +69,7 @@ pub struct RcOutput {
     pub lf_align: Option<LfAlignOutcome>,
     pub mode_decay: Option<ModeDecayOutcome>,
     pub hf_phase: Option<HfPhaseOutcome>,
+    dip_limit: Option<Vec<(f64, f64, f64)>>,
     protection: crate::low_protect::LimitOutcome,
 }
 pub struct ChannelRc {
@@ -107,6 +108,68 @@ fn smoothed_db(power: &[f64]) -> Vec<f64> {
         .zip(sm3)
         .map(|(sm, sm3)| (10.0 * (sm + 1e-30).log10()).max(10.0 * (sm3 + 1e-30).log10() - 3.0))
         .collect()
+}
+
+/// The lowest target correction, upstream's `-25` cut clamp; the dip cap
+/// (ADR 0034) never lowers a cut below it.
+pub(crate) const CUT_FLOOR_DB: f64 = -25.0;
+
+pub(crate) fn limit_dip_fills(
+    power: &[f64],
+    sm: &[f64],
+    target: &[f64],
+    level_db: f64,
+    corr: &mut [f64],
+) -> Vec<(f64, f64)> {
+    let env: Vec<_> = smooth(power, 1.0)
+        .into_iter()
+        .map(|value| 10.0 * (value + 1e-30).log10())
+        .collect();
+    (0..BINS)
+        .map(|i| {
+            let depth = (env[i] - sm[i]).max(0.0);
+            let fill = if depth <= 2.0 {
+                depth
+            } else {
+                2.0 + (depth - 2.0) / 2.0
+            }
+            .min(6.0);
+            corr[i] = corr[i].min((target[i] + level_db - env[i] + fill).max(CUT_FLOOR_DB));
+            (depth, fill)
+        })
+        .collect()
+}
+
+/// The dips the cap really limited (ADR 0034): bins at least 4 dB deep whose
+/// final design target is 0.5 dB or more below what the other limits alone
+/// would have left. `bins` is `limit_dip_fills`' per-bin (depth, fill);
+/// `limited` and `unlimited` are the design target after every other limit,
+/// with and without the cap. Contiguous bins form one dip, reported at its
+/// deepest bin as (Hz, depth, fill); deepest first, six at most.
+pub(crate) fn dip_notes(
+    bins: &[(f64, f64)],
+    limited: &[f64],
+    unlimited: &[f64],
+) -> Vec<(f64, f64, f64)> {
+    let frequencies = design_freqs();
+    let mut dips = Vec::new();
+    let mut current = None;
+    for (i, &(depth, fill)) in bins.iter().enumerate() {
+        if depth >= 4.0 && unlimited[i] - limited[i] >= 0.5 {
+            let candidate = (frequencies[i], depth, fill);
+            if current.is_none_or(|(_, deepest, _)| depth > deepest) {
+                current = Some(candidate);
+            }
+        } else if let Some(dip) = current.take() {
+            dips.push(dip);
+        }
+    }
+    if let Some(dip) = current {
+        dips.push(dip);
+    }
+    dips.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.total_cmp(&b.0)));
+    dips.truncate(6);
+    dips
 }
 
 /// Evaluate the actual pass-1 RC response against each position's target error.
@@ -774,6 +837,7 @@ struct FirPreparation {
     cuts: Vec<Peq>,
     dr: Option<Vec<C>>,
     mode_decay: Option<ModeDecayOutcome>,
+    dip_limit: Option<Vec<(f64, f64, f64)>>,
 }
 
 struct LfPreparation {
@@ -865,7 +929,7 @@ fn prepare_correction(
         .map(|i| {
             let sm = sm[i];
             (target[i] + input.level_db - sm).clamp(
-                -25.0,
+                CUT_FLOOR_DB,
                 if f[i] > 16000.0 {
                     c.max_boost_db.min(2.0)
                 } else {
@@ -874,6 +938,16 @@ fn prepare_correction(
             )
         })
         .collect();
+    // The dip cap (ADR 0034) and the target it would have left alone: the
+    // other limits below apply to both, so the notes name only the dips the
+    // cap really reduced.
+    let mut dip_bins = s.dip_limit.then(|| {
+        let unlimited = corr.clone();
+        (
+            limit_dip_fills(&power, &sm, &target, input.level_db, &mut corr),
+            unlimited,
+        )
+    });
     let mut notes = Vec::new();
     let mut nb = no_boost_mask(input);
     let rolloff = protection_rolloff(input);
@@ -888,26 +962,33 @@ fn prepare_correction(
     trace.long_mode = lm.clone();
     let bands = band_set(s.rc_lo, s.rc_hi, &s.rc_bands);
     for i in 0..BINS {
-        if nb[i] {
-            corr[i] = corr[i].min(0.0);
+        let limit = |mut value: f64| {
+            if nb[i] {
+                value = value.min(0.0);
+            }
+            if let Some(hz) = rolloff
+                && f[i] >= hz
+                && f[i] < 2.0 * hz
+            {
+                value = value.min(c.max_boost_db * (f[i] / hz).log2());
+            }
+            if lm[i]
+                || cuts.iter().any(|&(hz, _, _)| {
+                    let width = 2_f64.powf(1.0 / 24.0);
+                    f[i] >= hz / width && f[i] <= hz * width
+                })
+            {
+                value = value.min(t.long_boost_db);
+            }
+            value * magnitude_mask(f[i], &bands)
+        };
+        corr[i] = limit(corr[i]);
+        if let Some((_, unlimited)) = dip_bins.as_mut() {
+            unlimited[i] = limit(unlimited[i]);
         }
-        if let Some(hz) = rolloff
-            && f[i] >= hz
-            && f[i] < 2.0 * hz
-        {
-            corr[i] = corr[i].min(c.max_boost_db * (f[i] / hz).log2());
-        }
-        if lm[i]
-            || cuts.iter().any(|&(hz, _, _)| {
-                let width = 2_f64.powf(1.0 / 24.0);
-                f[i] >= hz / width && f[i] <= hz * width
-            })
-        {
-            corr[i] = corr[i].min(t.long_boost_db);
-        }
-        corr[i] *= magnitude_mask(f[i], &bands);
     }
     let design_db = corr.clone();
+    let dip_limit = dip_bins.map(|(bins, unlimited)| dip_notes(&bins, &corr, &unlimited));
     let mut lf = (s.lf_align && c.taps > 0).then(|| {
         let f_lin = crate::low_protect::rolloff(input.comb, input.main_position, None)
             .map_or(s.rc_lo, |hz| (1.5 * hz).max(s.rc_lo));
@@ -1016,6 +1097,7 @@ fn prepare_correction(
             lf_align: None,
             mode_decay,
             hf_phase: None,
+            dip_limit,
             protection,
         }));
     }
@@ -1124,6 +1206,7 @@ fn prepare_correction(
         cuts,
         dr,
         mode_decay,
+        dip_limit,
     }))
 }
 
@@ -1381,6 +1464,7 @@ fn finish_correction(
         lf_align,
         mode_decay: prepared.mode_decay.clone(),
         hf_phase,
+        dip_limit: prepared.dip_limit.clone(),
         protection,
     })
 }
@@ -1474,6 +1558,12 @@ pub(crate) fn channel_with_cuts(
             role: input.role.to_owned(),
             rotation_deg: hf.rotation_deg,
             limited: hf.limited,
+        });
+    }
+    if let Some(dips) = &out.dip_limit {
+        out.notes.push(Note::DipLimit {
+            role: input.role.to_owned(),
+            dips: dips.clone(),
         });
     }
     let gd_cuts = if input.tuning.gd_cuts {
