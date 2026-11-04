@@ -23,18 +23,25 @@ pub type Band = (f64, f64, f64, f64);
 /// Cancellation is
 /// `10 * log10(sum(|a + b|^2) / sum((|a| + |b|)^2))`, bounded below by
 /// [`FLOOR_DB`]. Bands without a bin in all three inputs are omitted.
+///
+/// Neighbouring bands share their edge, the geometric mean of the two
+/// centres, so a run of cancelling bands reads as one span after rounding.
 pub fn bands(f: &[f64], a: &[Complex64], b: &[Complex64]) -> Vec<Band> {
-    let edge = 2.0_f64.powf(1.0 / 6.0);
+    let edges = band_edges();
     CENTERS_HZ
         .iter()
-        .filter_map(|&center| {
-            let lo = (center / edge).max(BAND_HZ.0);
-            let hi = (center * edge).min(BAND_HZ.1);
+        .enumerate()
+        .filter_map(|(k, _)| {
+            let lo = edges[k];
+            let hi = edges[k + 1];
             let bins = f
                 .iter()
                 .zip(a)
                 .zip(b)
-                .filter(|((frequency, _), _)| lo <= **frequency && **frequency < hi)
+                .filter(|((frequency, _), _)| {
+                    let last = k + 1 == CENTERS_HZ.len();
+                    lo <= **frequency && (**frequency < hi || (last && **frequency <= hi))
+                })
                 .map(|((_, a), b)| (*a, *b))
                 .collect::<Vec<_>>();
             if bins.is_empty() {
@@ -52,12 +59,37 @@ pub fn bands(f: &[f64], a: &[Complex64], b: &[Complex64]) -> Vec<Band> {
                 .iter()
                 .map(|(a, b)| (a.norm() + b.norm()).powi(2))
                 .sum::<f64>();
+            // A band whose energies do not compute (NaN, overflow in either
+            // sum) is not a cancellation: an overflowing denominator alone
+            // would read as a complete one. Minus infinity from a finite
+            // denominator and zero sum is a complete cancellation and clamps
+            // to the floor.
+            if !phase_deg.is_finite() || !combined.is_finite() || !separate.is_finite() {
+                return None;
+            }
             let loss_db = if separate == 0.0 {
                 0.0
             } else {
-                (10.0 * (combined / separate).log10()).max(FLOOR_DB)
+                10.0 * (combined / separate).log10()
             };
-            Some((lo, hi, phase_deg, loss_db))
+            Some((lo, hi, phase_deg, loss_db.max(FLOOR_DB)))
+        })
+        .collect()
+}
+
+/// The band edges in hertz: `BAND_HZ.0`, the geometric means of neighbouring
+/// centres, then `BAND_HZ.1`, so the outer bands reach the ends of the
+/// inspection range.
+pub fn band_edges() -> Vec<f64> {
+    (0..=CENTERS_HZ.len())
+        .map(|k| {
+            if k == 0 {
+                BAND_HZ.0
+            } else if k == CENTERS_HZ.len() {
+                BAND_HZ.1
+            } else {
+                (CENTERS_HZ[k - 1] * CENTERS_HZ[k]).sqrt()
+            }
         })
         .collect()
 }
@@ -113,6 +145,44 @@ mod tests {
             assert!((band.2 - phase_deg).abs() < 1e-10, "{band:?}");
             assert!((band.3 - loss_db).abs() < 0.03, "{band:?}");
         }
+    }
+
+    #[test]
+    fn pair_phase_bands_share_edges_between_neighbours() {
+        let edges = band_edges();
+        assert_eq!(edges.len(), CENTERS_HZ.len() + 1);
+        let same = response(0.0);
+        let bands = bands(&CENTERS_HZ, &same, &same);
+        assert_eq!(bands.len(), CENTERS_HZ.len());
+        for (k, band) in bands.iter().enumerate() {
+            assert!(band.0 < CENTERS_HZ[k] && CENTERS_HZ[k] < band.1, "{band:?}");
+            if k + 1 < bands.len() {
+                assert_eq!(band.1, bands[k + 1].0);
+            }
+        }
+        assert_eq!(edges[0], BAND_HZ.0);
+        assert_eq!(edges[CENTERS_HZ.len()], BAND_HZ.1);
+        assert!((edges[3] - 89.4427).abs() < 0.01);
+        assert!((edges[4] - 111.8034).abs() < 0.01);
+        assert!((edges[5] - 141.4214).abs() < 0.01);
+    }
+
+    #[test]
+    fn pair_phase_bands_skip_non_finite_and_include_the_top_edge() {
+        let one = vec![Complex64::new(1.0, 0.0)];
+        let minus = vec![Complex64::new(-1.0, 0.0)];
+        let top = bands(&[BAND_HZ.1], &one, &minus);
+        assert_eq!(top.len(), 1);
+        assert_eq!(top[0].3, FLOOR_DB);
+        assert!(bands(&[BAND_HZ.0 - 0.01], &one, &minus).is_empty());
+        assert!(bands(&[100.0], &[Complex64::new(f64::NAN, 0.0)], &one).is_empty());
+        let huge = vec![Complex64::new(1e200, 0.0)];
+        assert!(bands(&[100.0], &huge, &huge).is_empty());
+        // Only the denominator overflows: not a cancellation either.
+        let big = vec![Complex64::new(1.3e154, 0.0)];
+        let big_minus = vec![Complex64::new(-1e153, 0.0)];
+        assert!(bands(&[100.0], &big, &big_minus).is_empty());
+        assert!(check(&[100.0], &[("L".into(), huge.clone()), ("R".into(), huge)]).is_empty());
     }
 
     #[test]
