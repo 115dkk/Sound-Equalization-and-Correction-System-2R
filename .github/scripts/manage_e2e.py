@@ -875,7 +875,24 @@ class Scenario:
         self.active_application = executable
         self.shown(ui("host" if shell else "frame"))
 
+    def dismiss_offer(self):
+        # Once the app is ready with no project open it offers 새 프로젝트
+        # (App.tsx), and the dialog's backdrop then intercepts the menu click:
+        # PR #178's reruns failed there after a relaunch. Cancel the offer when
+        # it appears; while the service still holds the project the status
+        # block shows the file instead and nothing is offered.
+        def state():
+            return self.driver.execute(
+                "if (document.querySelector('[data-ui=\"project.new.cancel\"]')) return 'offered';"
+                "return document.querySelector('[data-ui=\"frame.status.file\"]') ? 'open' : null;")
+        if wait_for("project offer", state, timeout=15) == "offered":
+            self.log("dismiss_offer")
+            self.click("project.new.cancel")
+            wait_for("offer closed", lambda: self.driver.execute(
+                "return document.querySelector('.ui-dialog-backdrop') === null;"))
+
     def open_project(self):
+        self.dismiss_offer()
         self.click("frame.project")
         self.click("frame.project.open")
         # After the setup reload the service may still hold the project: the

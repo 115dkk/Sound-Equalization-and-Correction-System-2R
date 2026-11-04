@@ -520,5 +520,60 @@ class ClickTest(unittest.TestCase):
         self.assertTrue(scenario.driver.assertion)
         self.assertEqual((scenario.driver.polls, scenario.driver.clicks), (3, 1))
 
+
+class OfferTest(unittest.TestCase):
+    def test_an_offered_new_project_dialog_is_cancelled_before_the_menu(self):
+        class Driver:
+            def __init__(self):
+                self.scripts = []
+                self.clicked = []
+
+            def execute(self, script, *args):
+                self.scripts.append(script)
+                if "project.new.cancel" in script:
+                    return "offered"
+                if "ui-dialog-backdrop" in script:
+                    return True
+                return True  # settle check
+
+            def find(self, selector):
+                return {"selector": selector}
+
+            def attribute(self, element, name):
+                return None
+
+            def click(self, element):
+                self.clicked.append(element["selector"])
+
+        scenario = object.__new__(m.Scenario)
+        scenario.driver = Driver()
+        scenario.log = lambda *args, **kwargs: None
+        scenario.dismiss_offer()
+        self.assertEqual(scenario.driver.clicked, [m.ui("project.new.cancel")])
+
+    def test_an_open_project_is_not_dismissed(self):
+        class Driver:
+            def __init__(self):
+                self.clicked = []
+
+            def execute(self, script, *args):
+                return "open" if "project.new.cancel" in script else True
+
+            def find(self, selector):
+                return {"selector": selector}
+
+            def attribute(self, element, name):
+                return None
+
+            def click(self, element):
+                self.clicked.append(element["selector"])
+
+        scenario = object.__new__(m.Scenario)
+        scenario.driver = Driver()
+        scenario.log = lambda *args, **kwargs: None
+        scenario.dismiss_offer()
+        self.assertEqual(scenario.driver.clicked, [])
+
+
 if __name__ == "__main__":
     unittest.main()
