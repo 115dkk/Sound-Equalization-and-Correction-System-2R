@@ -875,6 +875,12 @@ fn notices(note: &secs_engine::Note) -> Vec<Notice> {
 /// there; a band or tail key is present only for a guard that did.
 fn guard_cause_params(cause: &secs_engine::GuardCause) -> Vec<(&'static str, String)> {
     let mut params = vec![("rejected_db", cause.rejected_db.to_string())];
+    if let Some(position) = cause.band_position {
+        params.push(("band_position", position.to_string()));
+    }
+    if let Some(position) = cause.tail_position {
+        params.push(("tail_position", position.to_string()));
+    }
     if let Some((lo, hi, db)) = cause.band {
         params.extend([
             ("band_lo_hz", lo.to_string()),
@@ -1842,6 +1848,8 @@ mod tests {
                 gain_db: -6.25,
                 cause: secs_engine::GuardCause {
                     rejected_db: -3.25,
+                    band_position: Some(3),
+                    tail_position: Some(5),
                     band: Some((40.0, 50.5, 1.5)),
                     tail: None,
                 },
@@ -1850,6 +1858,8 @@ mod tests {
                 role: "R".into(),
                 cause: secs_engine::GuardCause {
                     rejected_db: -12.0,
+                    band_position: None,
+                    tail_position: None,
                     band: Some((46.5, 49.5, 2.0)),
                     tail: Some((48.0, 1.25)),
                 },
@@ -1877,7 +1887,7 @@ mod tests {
                 {"code":"mimo_support_excluded","params":{"role":"SW2"}},
                 {"code":"mimo_support_range","params":{"role":"L","enabled":"true","lo_hz":"50.25","hi_hz":"150"}},
                 {"code":"mimo_support_range","params":{"role":"R","enabled":"false"}},
-                {"code":"mimo_guard_reduced","params":{"role":"L","gain_db":"-6.25","rejected_db":"-3.25","band_lo_hz":"40","band_hi_hz":"50.5","band_db":"1.5"}},
+                {"code":"mimo_guard_reduced","params":{"role":"L","gain_db":"-6.25","rejected_db":"-3.25","band_position":"3","tail_position":"5","band_lo_hz":"40","band_hi_hz":"50.5","band_db":"1.5"}},
                 {"code":"mimo_guard_disabled","params":{"role":"R","rejected_db":"-12","band_lo_hz":"46.5","band_hi_hz":"49.5","band_db":"2","mode_hz":"48","tail_db":"1.25"}},
                 {"code":"mimo_support_limit","params":{"max_supports":"2"}},
                 {"code":"mimo_fir_budget","params":{"support_count":"2","taps_total":"16000","sample_rate_hz":"48000"}}

@@ -35,6 +35,7 @@ pub struct MimoRequest {
     pub exclude: Vec<String>,
     pub groups: Option<Vec<String>>,
     pub taps_low: usize,
+    pub seat_guard: bool,
 }
 
 impl Default for MimoRequest {
@@ -47,6 +48,7 @@ impl Default for MimoRequest {
             exclude: Vec::new(),
             groups: None,
             taps_low: 180,
+            seat_guard: false,
         }
     }
 }
@@ -433,10 +435,11 @@ pub(crate) struct BandGuard {
     hz: Vec<(f64, f64)>,
     bands: Vec<(usize, usize)>,
     before: Vec<f64>,
+    before_by_position: Option<Vec<Vec<f64>>>,
 }
 
 impl BandGuard {
-    pub(crate) fn new(xs: &[Vec<f64>], fsiso: f64) -> Self {
+    pub(crate) fn new(xs: &[Vec<f64>], fsiso: f64, seat_guard: bool) -> Self {
         let n = xs[0].len();
         let bins = secs_dsp::grid::freqs(2 * n, FS_LOW).expect("MIMO grid");
         let refs: Vec<_> = xs.iter().map(Vec::as_slice).collect();
@@ -463,30 +466,39 @@ impl BandGuard {
             hz,
             bands,
             before: Vec::new(),
+            before_by_position: None,
         };
-        guard.before = guard.energies(xs, true);
+        if seat_guard {
+            guard.before_by_position = Some(guard.position_energies(xs, true));
+        } else {
+            guard.before = guard.energies(xs, true);
+        }
         guard
+    }
+
+    fn spectrum(&self, response: &[f64], start: usize, baseline: bool) -> Vec<f64> {
+        let mut window = vec![0.0; 2 * self.n];
+        for t in start..self.n {
+            // Preserve the original baseline's x + 0.0, including -0.0.
+            window[t] = if baseline {
+                response[t] + 0.0
+            } else {
+                response[t]
+            };
+        }
+        fft::rfft(&window)
+            .iter()
+            .map(|h| {
+                let a = h.re.hypot(h.im);
+                a * a
+            })
+            .collect()
     }
 
     fn energies(&self, responses: &[Vec<f64>], baseline: bool) -> Vec<f64> {
         let mut totals = vec![0.0; self.bands.len()];
         for (response, &start) in responses.iter().zip(&self.starts) {
-            let mut window = vec![0.0; 2 * self.n];
-            for t in start..self.n {
-                // Preserve the original baseline's x + 0.0, including -0.0.
-                window[t] = if baseline {
-                    response[t] + 0.0
-                } else {
-                    response[t]
-                };
-            }
-            let spectrum: Vec<_> = fft::rfft(&window)
-                .iter()
-                .map(|h| {
-                    let a = h.re.hypot(h.im);
-                    a * a
-                })
-                .collect();
+            let spectrum = self.spectrum(response, start, baseline);
             for (total, &(begin, end)) in totals.iter_mut().zip(&self.bands) {
                 *total += pairwise_sum(&spectrum[begin..end]);
             }
@@ -494,12 +506,49 @@ impl BandGuard {
         totals
     }
 
+    fn position_energies(&self, responses: &[Vec<f64>], baseline: bool) -> Vec<Vec<f64>> {
+        responses
+            .iter()
+            .zip(&self.starts)
+            .map(|(response, &start)| {
+                let spectrum = self.spectrum(response, start, baseline);
+                self.bands
+                    .iter()
+                    .map(|&(begin, end)| pairwise_sum(&spectrum[begin..end]))
+                    .collect()
+            })
+            .collect()
+    }
+
     pub(crate) fn evaluate(&self, ys: &[Vec<f64>]) -> f64 {
         self.evaluate_band(ys).0
     }
 
-    /// The worst late-energy change in dB and its band `(lo, hi)` in Hz.
-    pub(crate) fn evaluate_band(&self, ys: &[Vec<f64>]) -> (f64, Option<(f64, f64)>) {
+    /// The worst late-energy change, its band in Hz, and measured-position index.
+    pub(crate) fn evaluate_band(
+        &self,
+        ys: &[Vec<f64>],
+    ) -> (f64, Option<(f64, f64)>, Option<usize>) {
+        if let Some(before) = &self.before_by_position {
+            let after = self.position_energies(ys, false);
+            let mut worst = -99.0;
+            let mut band = None;
+            let mut position = None;
+            for (p, (before, after)) in before.iter().zip(after).enumerate() {
+                for (k, (&a, b)) in before.iter().zip(after).enumerate() {
+                    let Some(change) = seat_change(a, b) else {
+                        continue;
+                    };
+                    if change > worst {
+                        worst = change;
+                        band = Some(self.hz[k]);
+                        position = Some(p);
+                    }
+                }
+            }
+            return (worst, band, position);
+        }
+
         let changes: Vec<_> = self
             .before
             .iter()
@@ -516,7 +565,7 @@ impl BandGuard {
             .iter()
             .position(|change| *change == Some(worst))
             .map(|k| self.hz[k]);
-        (worst, band)
+        (worst, band, None)
     }
 }
 
@@ -527,7 +576,7 @@ pub fn worst_t60_change(
     ys: &[Vec<f64>],
     count: usize,
 ) -> Result<f64, EngineError> {
-    T60Guard::new(xs, count).evaluate(ys)
+    T60Guard::new(xs, count, false).evaluate(ys)
 }
 
 #[derive(Debug)]
@@ -536,6 +585,7 @@ struct TailBaseline {
     positions: usize,
     sos: Sos,
     energy: f64,
+    energy_by_position: Option<Vec<f64>>,
 }
 
 /// Fixed original modal peaks and mode-specific tails, shared across guard
@@ -548,10 +598,11 @@ pub(crate) struct T60Guard<'a> {
     original_modes: Vec<f64>,
     starts: Vec<usize>,
     baselines: Vec<TailBaseline>,
+    seat_guard: bool,
 }
 
 impl<'a> T60Guard<'a> {
-    pub(crate) fn new(xs: &'a [Vec<f64>], count: usize) -> Self {
+    pub(crate) fn new(xs: &'a [Vec<f64>], count: usize, seat_guard: bool) -> Self {
         Self {
             xs,
             count,
@@ -561,6 +612,7 @@ impl<'a> T60Guard<'a> {
             ),
             starts: xs.iter().map(|x| onset(x) + 180).collect(),
             baselines: Vec::new(),
+            seat_guard,
         }
     }
 
@@ -568,11 +620,11 @@ impl<'a> T60Guard<'a> {
         Ok(self.evaluate_mode(ys)?.0)
     }
 
-    /// The worst tail change in the 0.15 scale and the mode it is at, Hz.
+    /// The worst tail change, its mode in Hz, and measured-position index.
     pub(crate) fn evaluate_mode(
         &mut self,
         ys: &[Vec<f64>],
-    ) -> Result<(f64, Option<f64>), EngineError> {
+    ) -> Result<(f64, Option<f64>, Option<usize>), EngineError> {
         let mut modes: Vec<_> = self
             .original_modes
             .iter()
@@ -597,39 +649,75 @@ impl<'a> T60Guard<'a> {
             } else {
                 let sos = butter(2, &[(fm - 1.5).max(1.0), fm + 1.5], BType::Bandpass, FS_LOW)?;
                 let mut energy = 0.0;
+                let mut energy_by_position = self.seat_guard.then(Vec::new);
                 for (x, &t) in self.xs.iter().zip(&self.starts).take(positions) {
                     let xf = sosfilt(&sos, x)?;
-                    energy += decay::energy(&xf[t.min(xf.len())..]);
+                    let value = decay::energy(&xf[t.min(xf.len())..]);
+                    energy += value;
+                    if let Some(values) = &mut energy_by_position {
+                        values.push(value);
+                    }
                 }
                 self.baselines.push(TailBaseline {
                     frequency: fm,
                     positions,
                     sos,
                     energy,
+                    energy_by_position,
                 });
                 self.baselines.len() - 1
             };
             let baseline = &self.baselines[index];
-            let mut after = 0.0;
-            for (y, &t) in ys.iter().zip(&self.starts).take(positions) {
-                let yf = sosfilt(&baseline.sos, y)?;
-                after += decay::energy(&yf[t.min(yf.len())..]);
+            if let Some(before) = &baseline.energy_by_position {
+                let mut change = -99.0;
+                let mut position = None;
+                for (p, ((y, &t), &a)) in ys
+                    .iter()
+                    .zip(&self.starts)
+                    .take(positions)
+                    .zip(before)
+                    .enumerate()
+                {
+                    let yf = sosfilt(&baseline.sos, y)?;
+                    let b = decay::energy(&yf[t.min(yf.len())..]);
+                    let Some(candidate) = seat_change(a, b) else {
+                        continue;
+                    };
+                    if candidate > change {
+                        change = candidate;
+                        position = Some(p);
+                    }
+                }
+                tails.push((fm, baseline.energy, change, position));
+            } else {
+                let mut after = 0.0;
+                for (y, &t) in ys.iter().zip(&self.starts).take(positions) {
+                    let yf = sosfilt(&baseline.sos, y)?;
+                    after += decay::energy(&yf[t.min(yf.len())..]);
+                }
+                let change = if baseline.energy > 0.0 {
+                    10.0 * ((after + 1e-30) / baseline.energy).log10()
+                } else {
+                    -99.0
+                };
+                tails.push((fm, baseline.energy, change, None));
             }
-            tails.push((fm, baseline.energy, after));
         }
-        let top = tails.iter().map(|&(_, a, _)| a).fold(0.0, f64::max);
+        let top = tails
+            .iter()
+            .map(|&(_, energy, _, _)| energy)
+            .fold(0.0, f64::max);
         let mut worst: f64 = -99.0;
         let mut mode = None;
-        for (fm, a, b) in tails {
-            if a > 0.0 && a >= top * 10f64.powf(-20.0 / 10.0) {
-                let change = 10.0 * ((b + 1e-30) / a).log10();
-                if change > worst {
-                    mode = Some(fm);
-                }
-                worst = worst.max(change);
+        let mut position = None;
+        for (fm, energy, change, candidate_position) in tails {
+            if energy > 0.0 && energy >= top * 10f64.powf(-20.0 / 10.0) && change > worst {
+                worst = change;
+                mode = Some(fm);
+                position = candidate_position;
             }
         }
-        Ok((worst * 0.15, mode))
+        Ok((worst * 0.15, mode, position))
     }
 }
 
@@ -686,6 +774,8 @@ pub(crate) struct GuardStep {
     /// `T60Guard::evaluate_mode`).
     pub band_hz: Option<(f64, f64)>,
     pub mode_hz: Option<f64>,
+    pub band_position: Option<usize>,
+    pub tail_position: Option<usize>,
 }
 
 impl GuardStep {
@@ -695,11 +785,38 @@ impl GuardStep {
 }
 
 /// The last rejected guard step as a note's cause; `None` when every step
+/// One position's energy change in dB for the seat guard (ADR 0036). Energy
+/// that appears where the baseline had none is a violation, not a skipped
+/// position; only a position with no energy before and after says nothing.
+pub(crate) fn seat_change(before: f64, after: f64) -> Option<f64> {
+    if before > 0.0 {
+        // The same floor on both sides: an unchanged tiny energy is 0 dB.
+        Some(10.0 * ((after + 1e-30) / (before + 1e-30)).log10())
+    } else if after > 0.0 {
+        Some(SEAT_VIOLATION_DB)
+    } else {
+        None
+    }
+}
+
+/// The change reported when a position gains energy it had none of.
+pub(crate) const SEAT_VIOLATION_DB: f64 = 99.0;
+
 /// passed (no reduction).
-pub(crate) fn guard_cause(guards: &[GuardStep]) -> Option<crate::notes::GuardCause> {
+pub(crate) fn guard_cause(
+    guards: &[GuardStep],
+    positions: &[u32],
+) -> Option<crate::notes::GuardCause> {
     let step = guards.iter().rev().find(|step| !step.passes())?;
+    let at = |index: Option<usize>| index.and_then(|index| positions.get(index).copied());
     Some(crate::notes::GuardCause {
         rejected_db: 20.0 * step.scale.max(1e-9).log10(),
+        band_position: (step.band_db > 1.0)
+            .then(|| at(step.band_position))
+            .flatten(),
+        tail_position: (step.t60_change > 0.15)
+            .then(|| at(step.tail_position))
+            .flatten(),
         band: (step.band_db > 1.0)
             .then_some(step.band_hz)
             .flatten()
@@ -1007,8 +1124,8 @@ fn design_selected(
         .collect();
     let mut scale = 1.0;
     let mut guards = Vec::new();
-    let band_guard = BandGuard::new(xs, req.fsiso);
-    let mut tail_guard = T60Guard::new(xs, 6);
+    let band_guard = BandGuard::new(xs, req.fsiso, req.seat_guard);
+    let mut tail_guard = T60Guard::new(xs, 6, req.seat_guard);
     for step in 0..5 {
         check(ctx)?;
         let trial: Vec<Vec<_>> = supports
@@ -1028,14 +1145,16 @@ fn design_selected(
                 x.iter().zip(add).map(|(x, a)| x + a).collect()
             })
             .collect();
-        let (band_db, band_hz) = band_guard.evaluate_band(&ys);
-        let (t60_change, mode_hz) = tail_guard.evaluate_mode(&ys)?;
+        let (band_db, band_hz, band_position) = band_guard.evaluate_band(&ys);
+        let (t60_change, mode_hz, tail_position) = tail_guard.evaluate_mode(&ys)?;
         let guard = GuardStep {
             scale,
             band_db,
             t60_change,
             band_hz,
             mode_hz,
+            band_position,
+            tail_position,
         };
         let passes = guard.passes();
         guards.push(guard);
@@ -1322,7 +1441,7 @@ pub(crate) fn design_mimo_prepared_accelerated(
     let mut traces = Vec::new();
     for (role, result) in results {
         let scale = result.trace.guard_scale;
-        if let Some(cause) = guard_cause(&result.trace.guards) {
+        if let Some(cause) = guard_cause(&result.trace.guards, positions) {
             out.notes.push(Note::Mimo(if scale > 0.0 {
                 crate::notes::MimoNote::GuardReduced {
                     role: role.clone(),
@@ -1502,7 +1621,7 @@ pub(crate) fn design_mimo_before(
     let mut traces = Vec::new();
     for (role, result) in results {
         let scale = result.trace.guard_scale;
-        if let Some(cause) = guard_cause(&result.trace.guards) {
+        if let Some(cause) = guard_cause(&result.trace.guards, positions) {
             out.notes.push(Note::Mimo(if scale > 0.0 {
                 crate::notes::MimoNote::GuardReduced {
                     role: role.clone(),

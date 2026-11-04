@@ -170,6 +170,22 @@ export function noticeText(t: Translate, number: FormatNumber, notice: Notice, r
   /** A phrase that follows the note's own after a comma (lf_align's pull limit). */
   let after: MessageKey | null = null;
   switch (notice.code) {
+    case "mimo_guard_reduced":
+    case "mimo_guard_disabled": {
+      // Each guard names the position it judged (ADR 0036): the band and the tail can differ.
+      const at = (key: string) => (p[key] !== undefined ? t("notice.mimo_guard.position", { position: f(key) }) : "");
+      const causes: string[] = [];
+      if (p.band_lo_hz !== undefined && p.band_hi_hz !== undefined && p.band_db !== undefined) {
+        causes.push(at("band_position") + t("notice.mimo_guard.band", { lo: f("band_lo_hz"), hi: f("band_hi_hz"), db: signed("band_db") }));
+      }
+      if (p.mode_hz !== undefined && p.tail_db !== undefined) {
+        causes.push(at("tail_position") + t("notice.mimo_guard.tail", { hz: f("mode_hz"), db: signed("tail_db") }));
+      }
+      const action = notice.code === "mimo_guard_reduced"
+        ? t("notice.mimo_guard_reduced", { code: code(), gain_db: signed("gain_db") })
+        : t("notice.mimo_guard_disabled", { code: code() });
+      return [...causes, action].join(" · ");
+    }
     case "measurement_resampled":
       if (num(p.count) === 1) key = "notice.measurement_resampled.one";
       Object.assign(params, { count: f("count"), target_hz: f("target_hz") });

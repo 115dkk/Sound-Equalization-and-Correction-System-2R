@@ -2,6 +2,17 @@
 
 SECS 2R의 변경 기록입니다. 번호는 major.minor.patch이고, 0.x는 모두 사전 출시판이며 정식 출시는 1.0.0부터입니다(docs/adr/0006). 각 절의 내용이 그 버전의 릴리스 본문이 됩니다. 업스트림 SECS 2의 변경 기록은 [`docs/upstream/CHANGELOG.md`](docs/upstream/CHANGELOG.md)에 있습니다.
 
+## 0.51.0 - 2026-11-04
+
+MIMO 설정에 '위치별 가드'를 추가한 판입니다. 이 설정을 끈 계산 결과와 내보낸 파일은 0.50.0과 같습니다.
+
+### 추가한 것
+
+- MIMO 카드에 '위치별 가드'(기본 꺼짐)를 추가했습니다. 켜면 서포트를 줄일지 정하는 대역 가드와 T60 가드가 모든 위치의 합 대신 가장 나빠지는 위치를 봅니다. 어느 자리도 MIMO 때문에 나빠지지 않는 대신 서포트가 더 자주 줄거나 꺼집니다. 서포트를 줄이거나 끈 메모에는 그 판정이 나온 위치가 함께 보이고, CLI는 `project set --mimo-seat-guard on|off`로 바꿉니다(docs/adr/0036).
+- 이 설정은 MIMO 결과에만 들어가므로 바꿔도 보정 결과는 낡지 않고 MIMO 결과만 낡습니다. 프로젝트 파일에는 켰을 때만 `mimo_seat_guard: true`를 저장하고, 업스트림 SECS 2는 이 키를 무시합니다(docs/DEVIATIONS.md D58).
+- 공개 크레이트와 `secs2r`, `Secs2R`의 판이 함께 0.20.0으로 오릅니다.
+- 라이브러리: `CalibrationSettings.mimo_seat_guard`, `SettingEdit::MimoSeatGuard`, `MimoRequest.seat_guard`, `GuardCause.position`을 추가했습니다. 이 타입을 직접 만드는 코드는 고쳐야 합니다.
+
 ## 0.50.0 - 2026-11-04
 
 보정 뒤 메인 채널 사이의 위상을 검사해 알리는 판입니다. 계산 결과와 내보낸 파일은 0.49.0과 같습니다.

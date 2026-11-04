@@ -385,6 +385,7 @@ pub(crate) struct Problem {
     pub fsiso: f64,
     pub direct: f64,
     pub level_db: f64,
+    pub seat_guard: bool,
 }
 
 #[derive(Default)]
@@ -783,6 +784,7 @@ pub(crate) fn applied(pb: &Problem, supports: &[(usize, IirSupport)]) -> Vec<Vec
 struct BandGuard {
     bounds: Vec<(usize, usize)>,
     before: Vec<f64>,
+    before_by_position: Option<Vec<Vec<f64>>>,
 }
 
 impl BandGuard {
@@ -802,8 +804,19 @@ impl BandGuard {
                 )
             })
             .collect::<Vec<_>>();
-        let before = Self::power(pb, &pb.xs, &bounds);
-        Self { bounds, before }
+        let (before, before_by_position) = if pb.seat_guard {
+            (
+                Vec::new(),
+                Some(Self::power_by_position(pb, &pb.xs, &bounds)),
+            )
+        } else {
+            (Self::power(pb, &pb.xs, &bounds), None)
+        };
+        Self {
+            bounds,
+            before,
+            before_by_position,
+        }
     }
 
     fn power(pb: &Problem, ys: &[Vec<f64>], bounds: &[(usize, usize)]) -> Vec<f64> {
@@ -825,7 +838,41 @@ impl BandGuard {
         total
     }
 
+    fn power_by_position(
+        pb: &Problem,
+        ys: &[Vec<f64>],
+        bounds: &[(usize, usize)],
+    ) -> Vec<Vec<f64>> {
+        ys.iter()
+            .enumerate()
+            .map(|(p, y)| {
+                let mut windowed: Vec<_> = y.iter().zip(&pb.wl[p]).map(|(y, w)| y * w).collect();
+                windowed.resize(pb.nf, 0.0);
+                let power: Vec<_> = fft::rfft(&windowed)
+                    .iter()
+                    .map(|&h| {
+                        let a = response::magnitude(h);
+                        a * a
+                    })
+                    .collect();
+                bounds
+                    .iter()
+                    .map(|&(a, b)| pairwise_sum(&power[a..b]))
+                    .collect()
+            })
+            .collect()
+    }
+
     fn evaluate(&self, pb: &Problem, ys: &[Vec<f64>]) -> f64 {
+        if let Some(before) = &self.before_by_position {
+            return before
+                .iter()
+                .zip(Self::power_by_position(pb, ys, &self.bounds))
+                .flat_map(|(before, after)| before.iter().copied().zip(after))
+                .filter_map(|(b, a)| super::design::seat_change(b, a))
+                .reduce(f64::max)
+                .unwrap_or(-99.0);
+        }
         self.before
             .iter()
             .zip(Self::power(pb, ys, &self.bounds))
@@ -851,7 +898,7 @@ impl<'a> OutcomeGuard<'a> {
         Self {
             pb,
             band: BandGuard::new(pb),
-            tail: super::design::T60Guard::new(&pb.xs, 6),
+            tail: super::design::T60Guard::new(&pb.xs, 6, pb.seat_guard),
         }
     }
 
@@ -995,6 +1042,7 @@ pub(crate) fn build_problem(
         fsiso: req.fsiso,
         direct: 0.0,
         level_db: req.level_db,
+        seat_guard: req.seat_guard,
     };
     for role in &pb.roles {
         pb.ranges.push(
@@ -1674,6 +1722,7 @@ mod operator_tests {
                 fsiso: 100.0,
                 direct: 1.0,
                 level_db,
+                seat_guard: false,
             },
             t,
             x,

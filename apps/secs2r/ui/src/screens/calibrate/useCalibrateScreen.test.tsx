@@ -417,6 +417,42 @@ describe("useCalibrateScreen", () => {
     expect(result.current.view?.failure).toMatchObject({ job: "calibrate", error: { code: "engine_input", params: { reason: "rc_agreement_positions", measured: "2", required: "3" } } });
   });
 
+  it.each(["ko", "en"] as const)("sends mimo_seat_guard edits from the switch and stales only MIMO (%s)", async (locale) => {
+    installFakeCanvas();
+    await session.call({ method: "calibration_settings_edit", params: { edit: { kind: "mimo_on", on: true } } });
+    await session.call({ method: "calibrate", params: { settings: null, subs_only: false, mimo: true } });
+    await perform(mock.drain);
+    function Live() {
+      const { view, actions } = useCalibrateScreen();
+      return view ? <CalibrateScreen view={view} actions={actions} /> : null;
+    }
+    renderWith(<Live />, { session, locale });
+    const toggle = () => document.querySelector<HTMLElement>('[data-ui="calibrate.mimo.seat_guard"]')!;
+    expect(toggle().textContent).toBe(locale === "ko" ? "위치별 가드" : "Per-position guard");
+    expect(toggle().getAttribute("aria-checked")).toBe("false");
+    expect(toggle().closest('[data-ui="calibrate.mimo.advanced"]')).toBeNull();
+    const calibration = session.stores.results.getSnapshot()?.calibration;
+    expect(calibration?.stale).toBe(false);
+    expect(session.stores.results.getSnapshot()?.mimo?.stale).toBe(false);
+    mock.calls.length = 0;
+    for (const on of [true, false]) {
+      await perform(() => fireEvent.click(toggle()));
+      expect(mock.calls).toContainEqual({ method: "calibration_settings_edit", params: { edit: { kind: "mimo_seat_guard", on } } });
+      expect(toggle().getAttribute("aria-checked")).toBe(String(on));
+      expect(session.stores.settings.getSnapshot()?.mimo_seat_guard).toBe(on);
+      expect(session.stores.results.getSnapshot()?.calibration).toEqual(calibration);
+      expect(session.stores.results.getSnapshot()?.mimo?.stale).toBe(true);
+      expect(mock.calls.some((call) => call.method === "calibrate" || call.method === "mimo")).toBe(false);
+      await perform(() => fireEvent.click(document.querySelector<HTMLElement>('[data-ui="calibrate.mimo.compute"]')!));
+      await perform(mock.drain);
+      expect(mock.calls).toContainEqual({ method: "mimo", params: { settings: null } });
+      expect(session.stores.results.getSnapshot()?.mimo?.stale).toBe(false);
+      expect(session.stores.results.getSnapshot()?.calibration).toEqual(calibration);
+      expect(mock.calls.some((call) => call.method === "calibrate")).toBe(false);
+      mock.calls.length = 0;
+    }
+  });
+
   it.each(["ko", "en"] as const)("sends dip_limit edits from the range switch and updates saved state without recalculating (%s)", async (locale) => {
     installFakeCanvas();
     await session.call({ method: "calibrate", params: { settings: null, subs_only: false } });

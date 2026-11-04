@@ -260,8 +260,8 @@ fn mimo_guard_baselines_and_applied_response_preserve_bits() {
                 .collect()
         })
         .collect();
-    let band_guard = BandGuard::new(&xs, 150.0);
-    let mut tail_guard = T60Guard::new(&xs, 6);
+    let band_guard = BandGuard::new(&xs, 150.0, false);
+    let mut tail_guard = T60Guard::new(&xs, 6, false);
     for scale in [1.0, 10f64.powf(-3.0 / 20.0), 0.25, 0.0, 1.0] {
         let trial: Vec<Vec<_>> = supports
             .iter()
@@ -280,19 +280,103 @@ fn mimo_guard_baselines_and_applied_response_preserve_bits() {
                 x.iter().zip(add).map(|(x, a)| x + a).collect()
             })
             .collect();
-        let (band_db, band) = band_guard.evaluate_band(&ys);
+        let (band_db, band, position) = band_guard.evaluate_band(&ys);
+        assert_eq!(position, None);
         assert_eq!(
             band_db.to_bits(),
             worst_band_db(&xs, &paths, &trial, 150.0).to_bits()
         );
         assert!(band.is_some_and(|(lo, hi)| lo < hi));
-        let (tail, mode) = tail_guard.evaluate_mode(&ys).unwrap();
+        let (tail, mode, position) = tail_guard.evaluate_mode(&ys).unwrap();
+        assert_eq!(position, None);
         assert_eq!(
             tail.to_bits(),
             worst_t60_change_before(&xs, &ys, 6).unwrap().to_bits()
         );
         assert!(mode.is_some());
     }
+}
+
+#[test]
+fn mimo_seat_guard_rejects_a_support_that_worsens_one_position() {
+    use crate::mimo::design::{BandGuard, GuardStep, T60Guard, guard_cause};
+
+    let n = 720;
+    let xs: Vec<Vec<f64>> = (0..3)
+        .map(|p| {
+            (0..n)
+                .map(|k| {
+                    if k < 3 + p {
+                        0.0
+                    } else {
+                        let t = (k - 3 - p) as f64 / 600.0;
+                        (-4.0 * t).exp() * (2.0 * std::f64::consts::PI * 48.0 * t).cos()
+                    }
+                })
+                .collect()
+        })
+        .collect();
+    let applied = |scale: f64| {
+        xs.iter()
+            .enumerate()
+            .map(|(p, x)| {
+                let support = [0.25, -0.5, -0.5][p] * scale;
+                x.iter().map(|sample| sample * (1.0 + support)).collect()
+            })
+            .collect::<Vec<Vec<f64>>>()
+    };
+
+    let off_band = BandGuard::new(&xs, 150.0, false);
+    let mut off_tail = T60Guard::new(&xs, 6, false);
+    let ys = applied(1.0);
+    let (off_band_db, _, off_band_position) = off_band.evaluate_band(&ys);
+    let (off_tail_change, _, off_tail_position) = off_tail.evaluate_mode(&ys).unwrap();
+    assert!(off_band_db <= 1.0);
+    assert!(off_tail_change <= 0.15);
+    assert_eq!((off_band_position, off_tail_position), (None, None));
+
+    let on_band = BandGuard::new(&xs, 150.0, true);
+    let mut on_tail = T60Guard::new(&xs, 6, true);
+    let mut scale = 1.0;
+    let mut guards = Vec::new();
+    for _ in 0..5 {
+        let ys = applied(scale);
+        let (band_db, band_hz, band_position) = on_band.evaluate_band(&ys);
+        let (t60_change, mode_hz, tail_position) = on_tail.evaluate_mode(&ys).unwrap();
+        guards.push(GuardStep {
+            scale,
+            band_db,
+            t60_change,
+            band_hz,
+            mode_hz,
+            band_position,
+            tail_position,
+        });
+        if band_db <= 1.0 && t60_change <= 0.15 {
+            break;
+        }
+        scale *= 10f64.powf(-3.0 / 20.0);
+    }
+    assert!(guards.len() > 1, "the seat guard must reduce the support");
+    assert!(scale < 1.0);
+    let cause = guard_cause(&guards, &[2, 5, 9]).unwrap();
+    assert_eq!(cause.band_position, Some(2));
+    assert!(cause.tail_position.is_none() || cause.tail.is_some());
+
+    // A position with no late energy before the support and some after is a
+    // violation, and a position silent before and after says nothing.
+    assert_eq!(
+        crate::mimo::design::seat_change(0.0, 1.0),
+        Some(crate::mimo::design::SEAT_VIOLATION_DB)
+    );
+    assert!(crate::mimo::design::seat_change(0.0, 0.0).is_none());
+    assert!((crate::mimo::design::seat_change(1.0, 2.0).unwrap() - 3.0103).abs() < 1e-3);
+    assert!(
+        crate::mimo::design::seat_change(1e-32, 1e-32)
+            .unwrap()
+            .abs()
+            < 1e-9
+    );
 }
 
 #[test]
@@ -304,15 +388,20 @@ fn mimo_guard_cause_names_the_last_rejected_level_and_its_guards() {
         t60_change,
         band_hz: Some((40.0, 50.4)),
         mode_hz: Some(47.5),
+        band_position: None,
+        tail_position: None,
     };
     let down = 10f64.powf(-3.0 / 20.0);
-    assert_eq!(guard_cause(&[step(1.0, 0.5, 0.1)]), None);
+    assert_eq!(guard_cause(&[step(1.0, 0.5, 0.1)], &[1, 2, 3]), None);
     // The band guard failed at full level, the tail guard at −3 dB, and −6 dB passed.
-    let cause = guard_cause(&[
-        step(1.0, 2.0, 0.1),
-        step(down, 0.8, 0.3),
-        step(down * down, 0.5, 0.1),
-    ])
+    let cause = guard_cause(
+        &[
+            step(1.0, 2.0, 0.1),
+            step(down, 0.8, 0.3),
+            step(down * down, 0.5, 0.1),
+        ],
+        &[1, 2, 3],
+    )
     .unwrap();
     assert!((cause.rejected_db + 3.0).abs() < 1e-12);
     assert_eq!(cause.band, None);
@@ -320,13 +409,16 @@ fn mimo_guard_cause_names_the_last_rejected_level_and_its_guards() {
     assert_eq!(hz, 47.5);
     assert!((tail_db - 2.0).abs() < 1e-12);
     // Every level failed: the cause is the last, −12 dB trial, with both guards.
-    let cause = guard_cause(&[
-        step(1.0, 3.0, 0.4),
-        step(down, 3.0, 0.4),
-        step(down.powi(2), 3.0, 0.4),
-        step(down.powi(3), 3.0, 0.4),
-        step(down.powi(4), 1.5, 0.2),
-    ])
+    let cause = guard_cause(
+        &[
+            step(1.0, 3.0, 0.4),
+            step(down, 3.0, 0.4),
+            step(down.powi(2), 3.0, 0.4),
+            step(down.powi(3), 3.0, 0.4),
+            step(down.powi(4), 1.5, 0.2),
+        ],
+        &[1, 2, 3],
+    )
     .unwrap();
     assert!((cause.rejected_db + 12.0).abs() < 1e-12);
     assert_eq!(cause.band, Some((40.0, 50.4, 1.5)));

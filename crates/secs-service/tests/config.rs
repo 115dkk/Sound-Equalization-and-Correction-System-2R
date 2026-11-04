@@ -917,6 +917,7 @@ fn service_config_oracle_replays_values_and_saved_project_bytes() {
                     object.remove("mimo_iir_analytic_derivatives"),
                     Some(false.into())
                 );
+                assert_eq!(object.remove("mimo_seat_guard"), Some(false.into()));
                 assert_eq!(actual, fixture.outputs()["calibration"], "{}", fixture.id);
             }
             Response::PatchSheetCsv(_) => {}

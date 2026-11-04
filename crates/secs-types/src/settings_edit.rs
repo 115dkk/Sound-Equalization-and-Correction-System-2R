@@ -219,6 +219,9 @@ pub enum SettingEdit {
     MimoFir {
         on: bool,
     },
+    MimoSeatGuard {
+        on: bool,
+    },
     /// Experimental closed-form derivatives (D43, D44); an absent part keeps its value.
     AnalyticDerivatives {
         #[serde(default, skip_serializing_if = "Option::is_none")]

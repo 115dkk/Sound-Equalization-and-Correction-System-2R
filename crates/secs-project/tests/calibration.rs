@@ -41,6 +41,7 @@ fn calibration_parse_store_and_saved_bytes_match_oracle() {
             object.remove("mimo_iir_analytic_derivatives"),
             Some(false.into())
         );
+        assert_eq!(object.remove("mimo_seat_guard"), Some(false.into()));
         if settings.xo_rec_include {
             assert_eq!(object.remove("xo_rec_include"), None);
         } else {
@@ -240,6 +241,30 @@ fn analytic_derivative_settings_round_trip_and_defaults_preserve_saved_bytes() {
     settings.mimo_iir_analytic_derivatives = false;
     store_calibration(&mut project, &settings);
     assert_eq!(project.save_text(), default_text);
+}
+
+#[test]
+fn mimo_seat_guard_round_trip_and_legacy_default() {
+    let mut project = Project::from_preset("2.1").unwrap();
+    let mut settings = calibration_from_project(&project);
+    store_calibration(&mut project, &settings);
+    let baseline = project.save_text();
+    assert!(!settings.mimo_seat_guard);
+    assert!(!baseline.contains("mimo_seat_guard"));
+
+    settings.mimo_seat_guard = true;
+    store_calibration(&mut project, &settings);
+    let saved = project.save_text();
+    assert_eq!(
+        serde_json::from_str::<Value>(&saved).unwrap()["calibration"]["mimo_seat_guard"],
+        true
+    );
+    let reopened = Project::from_json(loads(&saved).unwrap()).unwrap();
+    assert!(calibration_from_project(&reopened).mimo_seat_guard);
+
+    settings.mimo_seat_guard = false;
+    store_calibration(&mut project, &settings);
+    assert_eq!(project.save_text(), baseline);
 }
 
 #[test]

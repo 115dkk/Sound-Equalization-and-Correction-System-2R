@@ -61,6 +61,7 @@ fn problem(fx: &Fixture) -> Problem {
         fsiso: number(&p["fsiso"]),
         direct: number(&p["direct"]),
         level_db: number(&p["level_db"]),
+        seat_guard: false,
         roles,
     }
 }
@@ -406,6 +407,28 @@ fn mimo_iir_postprocessing_matches_oracle() {
             }
         }
     }
+}
+
+#[test]
+fn mimo_seat_guard_applies_to_iir_guards() {
+    let t = Tuning::default();
+    let mut strictly_worse = false;
+    for fx in fixtures() {
+        let mut pb = problem(&fx);
+        let x = fx.f64s(&fx.outputs()["reference"]["joint"]["x"]);
+        let supports: Vec<_> = unpack(&x, &pols(&fx), &t).into_iter().enumerate().collect();
+        let aggregate = outcome(&pb, &supports).unwrap();
+        pb.seat_guard = true;
+        let per_position = outcome(&pb, &supports).unwrap();
+        assert!(per_position.0 + 1e-12 >= aggregate.0, "{} band", fx.id);
+        assert!(per_position.1 + 1e-12 >= aggregate.1, "{} tail", fx.id);
+        strictly_worse |=
+            per_position.0 > aggregate.0 + 1e-9 || per_position.1 > aggregate.1 + 1e-9;
+    }
+    assert!(
+        strictly_worse,
+        "at least one IIR guard must expose a worse position"
+    );
 }
 
 #[test]
