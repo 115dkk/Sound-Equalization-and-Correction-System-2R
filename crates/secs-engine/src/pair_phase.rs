@@ -59,17 +59,19 @@ pub fn bands(f: &[f64], a: &[Complex64], b: &[Complex64]) -> Vec<Band> {
                 .iter()
                 .map(|(a, b)| (a.norm() + b.norm()).powi(2))
                 .sum::<f64>();
+            // A band whose energies do not compute (NaN, overflow in either
+            // sum) is not a cancellation: an overflowing denominator alone
+            // would read as a complete one. Minus infinity from a finite
+            // denominator and zero sum is a complete cancellation and clamps
+            // to the floor.
+            if !phase_deg.is_finite() || !combined.is_finite() || !separate.is_finite() {
+                return None;
+            }
             let loss_db = if separate == 0.0 {
                 0.0
             } else {
                 10.0 * (combined / separate).log10()
             };
-            // A band whose responses do not compute (NaN, overflow) is not a
-            // cancellation: `f64::max` would otherwise turn NaN into the floor.
-            // Minus infinity is a complete cancellation and clamps to the floor.
-            if !phase_deg.is_finite() || loss_db.is_nan() {
-                return None;
-            }
             Some((lo, hi, phase_deg, loss_db.max(FLOOR_DB)))
         })
         .collect()
@@ -176,6 +178,10 @@ mod tests {
         assert!(bands(&[100.0], &[Complex64::new(f64::NAN, 0.0)], &one).is_empty());
         let huge = vec![Complex64::new(1e200, 0.0)];
         assert!(bands(&[100.0], &huge, &huge).is_empty());
+        // Only the denominator overflows: not a cancellation either.
+        let big = vec![Complex64::new(1.3e154, 0.0)];
+        let big_minus = vec![Complex64::new(-1e153, 0.0)];
+        assert!(bands(&[100.0], &big, &big_minus).is_empty());
         assert!(check(&[100.0], &[("L".into(), huge.clone()), ("R".into(), huge)]).is_empty());
     }
 
