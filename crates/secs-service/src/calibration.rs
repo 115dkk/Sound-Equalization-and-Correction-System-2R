@@ -900,10 +900,12 @@ pub(crate) fn scalar_notice(note: &secs_engine::Note) -> Notice {
             role,
             confidence,
             compared,
+            opposite,
         } => {
             params.insert("role".into(), role.clone());
             params.insert("confidence".into(), confidence.to_string());
             params.insert("compared".into(), compared.to_string());
+            params.insert("opposite".into(), opposite.to_string());
             "polarity_reversed"
         }
         Note::PolaritySplit { groups, confidence } => {
@@ -1337,11 +1339,13 @@ mod tests {
             role: "SR".into(),
             confidence: 0.94,
             compared: 3,
+            opposite: 3,
         });
         assert_eq!(reversed.code, "polarity_reversed");
         assert_eq!(reversed.params["role"], "SR");
         assert_eq!(reversed.params["confidence"], "0.94");
         assert_eq!(reversed.params["compared"], "3");
+        assert_eq!(reversed.params["opposite"], "3");
 
         let split = scalar_notice(&Note::PolaritySplit {
             groups: (vec!["L".into(), "R".into()], vec!["C".into(), "Ls".into()]),
