@@ -42,6 +42,8 @@ mod mimo;
 mod normalize;
 #[path = "../src/notes.rs"]
 mod notes;
+#[path = "../src/pair_phase.rs"]
+mod pair_phase;
 #[path = "../src/polarity.rs"]
 mod polarity;
 #[path = "../src/preview.rs"]

@@ -552,7 +552,8 @@ fn design_pass(
     let positions = prepared.h.positions().to_vec();
     let progress = ctx.stage("engine.design", 1 + config.mains.len() as u64);
     let mut notes = Vec::new();
-    if !req.subs_only && !matches!(pass, RcPass::Probe) {
+    let run_final_checks = !req.subs_only && !matches!(pass, RcPass::Probe);
+    if run_final_checks {
         notes.extend(crate::polarity::check(
             req.measurements,
             &config.mains,
@@ -1066,48 +1067,68 @@ fn design_pass(
         notes.push(Note::InputHp { hz });
     }
     check(ctx)?;
-    Ok((
-        Design {
-            chain: SignalChain {
-                input_hp_hz: setup.input_hp_hz,
-                sample_rate: SR,
-                mains: channels,
-                subs,
-                sub_bus_peq: alignment.bus_peq,
-                main_extra_ms: shift,
-                lift_ms: setup.lift_ms,
-                latency_ms,
-            },
-            mains,
-            subs: sub,
-            ref_level,
-            rc_hi: setup.rc_hi,
-            rc_bands,
-            rc_auto,
-            schroeder_hz,
-            target_display: spl_grid.iter().map(|&g| interp(g, f, &target_db)).collect(),
-            target_db,
-            spectra: DesignSpectra {
-                raw: Arc::new(prepared.h0.clone()),
-                used: Arc::new(used),
-                main_position: config.main_position,
-                positions,
-            },
-            notes,
-            adapter_notes: req.adapter_notes.to_vec(),
-            groups: config.groups.clone(),
-            target: config.target.clone(),
-            xo: config.xo.clone(),
-            scores,
-            replay: Arc::new(crate::DesignReplay::new(
-                req.measurements,
-                config,
-                setup,
-                prepared,
-            )),
-            #[cfg(test)]
-            timings,
+    let mut design = Design {
+        chain: SignalChain {
+            input_hp_hz: setup.input_hp_hz,
+            sample_rate: SR,
+            mains: channels,
+            subs,
+            sub_bus_peq: alignment.bus_peq,
+            main_extra_ms: shift,
+            lift_ms: setup.lift_ms,
+            latency_ms,
         },
-        agreement_limits,
-    ))
+        mains,
+        subs: sub,
+        ref_level,
+        rc_hi: setup.rc_hi,
+        rc_bands,
+        rc_auto,
+        schroeder_hz,
+        target_display: spl_grid.iter().map(|&g| interp(g, f, &target_db)).collect(),
+        target_db,
+        spectra: DesignSpectra {
+            raw: Arc::new(prepared.h0.clone()),
+            used: Arc::new(used),
+            main_position: config.main_position,
+            positions,
+        },
+        notes,
+        adapter_notes: req.adapter_notes.to_vec(),
+        groups: config.groups.clone(),
+        target: config.target.clone(),
+        xo: config.xo.clone(),
+        scores,
+        replay: Arc::new(crate::DesignReplay::new(
+            req.measurements,
+            config,
+            setup,
+            prepared,
+        )),
+        #[cfg(test)]
+        timings,
+    };
+    if run_final_checks {
+        let responses = design
+            .mains
+            .iter()
+            .filter_map(|main| {
+                crate::stage_responses(&design, &main.role, &prepared.h, config.main_position).map(
+                    |stages| {
+                        let response = stages
+                            .top_xo
+                            .iter()
+                            .zip(main.response.iter())
+                            .map(|(measured, correction)| measured * correction)
+                            .collect();
+                        (main.role.clone(), response)
+                    },
+                )
+            })
+            .collect::<Vec<_>>();
+        design
+            .notes
+            .extend(crate::pair_phase::check(design_freqs(), &responses));
+    }
+    Ok((design, agreement_limits))
 }

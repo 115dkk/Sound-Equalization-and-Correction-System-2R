@@ -24,6 +24,35 @@ beforeEach(async () => {
 afterEach(async () => { cleanup(); await session.monitor(false); session.dispose(); mock.dispose(); vi.restoreAllMocks(); });
 
 describe("useCalibrateScreen", () => {
+  it.each(["ko", "en"] as const)("shows pair phase in calculation notes and updates the hint with saved bass arrival alignment (%s)", async (locale) => {
+    installFakeCanvas();
+    await session.call({ method: "calibrate", params: { settings: null, subs_only: false } });
+    await perform(mock.drain);
+    function Live() {
+      const { view, actions } = useCalibrateScreen();
+      return view ? <CalibrateScreen view={view} actions={actions} /> : null;
+    }
+    renderWith(<Live />, { session, locale });
+    const pair = locale === "ko"
+      ? "채널 사이 위상(L·Ls): 89~141 Hz에서 위상차 174°, 함께 울리면 −24 dB"
+      : "Phase between channels (L·Ls): 89–141 Hz: 174° phase difference, −24 dB when playing together";
+    const hint = locale === "ko"
+      ? "저음 도착 맞추기를 켜면 메인끼리의 저역 위상이 가까워집니다."
+      : "Turning on 'Align bass arrival' reduces low-frequency phase differences between the main speakers.";
+    const notes = () => [...document.querySelectorAll('[data-ui="calibrate.verdict.notes"] li')].map((li) => li.textContent);
+    expect(notes()).toContain(pair);
+    expect(notes().at(-1)).toBe(hint);
+    expect(notes().filter((line) => line === hint)).toHaveLength(1);
+    mock.calls.length = 0;
+    for (const on of [true, false]) {
+      await perform(() => session.call({ method: "calibration_settings_edit", params: { edit: { kind: "lf_align", on } } }));
+      expect(notes()).toContain(pair);
+      expect(notes().filter((line) => line === hint)).toHaveLength(on ? 0 : 1);
+      if (!on) expect(notes().at(-1)).toBe(hint);
+    }
+    expect(mock.calls.some((call) => call.method === "calibrate")).toBe(false);
+  });
+
   it("shows the reversed polarity warning and flips its speaker through IPC, leaving a stale result", async () => {
     installFakeCanvas();
     const config = await session.call({ method: "config_get" });

@@ -13,6 +13,13 @@ pub enum Note {
         groups: (Vec<String>, Vec<String>),
         confidence: f64,
     },
+    /// ADR 0035, one per main pair whose corrected reference response cancels
+    /// by at least 6 dB in one or more inspected one-third-octave bands.
+    PairPhase {
+        a: String,
+        b: String,
+        bands: Vec<crate::pair_phase::Band>,
+    },
     LiftCapped {
         from_ms: f64,
         taps: usize,

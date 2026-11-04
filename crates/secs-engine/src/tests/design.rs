@@ -46,6 +46,9 @@ fn note_value(note: &crate::notes::Note) -> Value {
         Note::PolaritySplit { groups, confidence } => {
             json!({"PolaritySplit": {"groups": groups, "confidence": confidence}})
         }
+        Note::PairPhase { a, b, bands } => {
+            json!({"PairPhase": {"a": a, "b": b, "bands": bands}})
+        }
         Note::LowProtect {
             role,
             rolloff_hz,
@@ -296,6 +299,63 @@ fn golden_rooms_have_no_polarity_notes() {
             design.notes
         );
     }
+}
+
+#[test]
+fn pair_phase_runs_once_on_the_final_pass_and_keeps_goldens() {
+    let assert_pairs_are_unique = |label: &str, result: &crate::Design| {
+        let mut pairs = BTreeMap::new();
+        for note in &result.notes {
+            let crate::Note::PairPhase { a, b, bands } = note else {
+                continue;
+            };
+            assert!(pairs.insert((a, b), bands).is_none(), "{label}: {a}/{b}");
+            assert!(
+                bands
+                    .iter()
+                    .all(|band| band.3 <= crate::pair_phase::LOSS_DB)
+            );
+            eprintln!("PAIR_PHASE {label} {a}/{b} {bands:?}");
+        }
+    };
+
+    for name in ["dolby", "room", "room_dba"] {
+        let result = replay(name);
+        for main in &result.mains {
+            assert!(
+                main.after
+                    .iter()
+                    .zip(main.combined.iter().zip(main.response.iter()))
+                    .all(|(after, (combined, response))| {
+                        let expected = combined * response;
+                        (after.re.to_bits(), after.im.to_bits())
+                            == (expected.re.to_bits(), expected.im.to_bits())
+                    }),
+                "{name}/{}",
+                main.role
+            );
+        }
+        assert_pairs_are_unique(name, &result);
+    }
+
+    let mut case = cases::load("room");
+    case.config.rc_range.1 = None;
+    case.config.rc_hi_basis = secs_types::calibration::RcHiBasis::Agreement;
+    let context = Context::serial();
+    let fitters = design::production_fitters(context.cancel());
+    let result = design::design(
+        &DesignRequest {
+            measurements: &case.measurements,
+            config: &case.config,
+            tuning: &case.tuning,
+            subs_only: false,
+            adapter_notes: &[],
+        },
+        &context,
+        &*fitters,
+    )
+    .unwrap();
+    assert_pairs_are_unique("room/agreement", &result);
 }
 
 #[test]
@@ -686,7 +746,14 @@ fn design_matches_recorded_stages() {
         assert_eq!(result.adapter_notes, Vec::<String>::new());
         compare_value(
             &format!("{name}/notes"),
-            &Value::Array(result.notes.iter().map(note_value).collect()),
+            &Value::Array(
+                result
+                    .notes
+                    .iter()
+                    .filter(|note| !matches!(note, crate::notes::Note::PairPhase { .. }))
+                    .map(note_value)
+                    .collect(),
+            ),
             &o["typed_notes"],
             gate,
         );
@@ -716,9 +783,11 @@ fn design_matches_recorded_stages() {
         let kinds: Vec<_> = result
             .notes
             .iter()
+            .filter(|note| !matches!(note, crate::notes::Note::PairPhase { .. }))
             .map(|n| match n {
                 crate::notes::Note::PolarityReversed { .. } => "PolarityReversed",
                 crate::notes::Note::PolaritySplit { .. } => "PolaritySplit",
+                crate::notes::Note::PairPhase { .. } => "PairPhase",
                 crate::notes::Note::LowProtect { .. } => "LowProtect",
                 crate::notes::Note::LiftCapped { .. } => "LiftCapped",
                 crate::notes::Note::SubFilters(_) => "SubFilters",

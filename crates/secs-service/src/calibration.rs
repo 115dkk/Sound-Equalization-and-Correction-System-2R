@@ -909,6 +909,19 @@ pub(crate) fn scalar_notice(note: &secs_engine::Note) -> Notice {
             params.insert("confidence".into(), confidence.to_string());
             "polarity_split"
         }
+        Note::PairPhase { a, b, bands } => {
+            params.insert("a".into(), a.clone());
+            params.insert("b".into(), b.clone());
+            params.insert(
+                "bands".into(),
+                bands
+                    .iter()
+                    .map(|(lo, hi, phase, loss)| format!("{lo:.0}:{hi:.0}:{phase:.1}:{loss:.1}"))
+                    .collect::<Vec<_>>()
+                    .join(","),
+            );
+            "pair_phase"
+        }
         Note::LowProtect {
             role,
             rolloff_hz,
@@ -1335,6 +1348,22 @@ mod tests {
         assert_eq!(split.params["a"], "L,R");
         assert_eq!(split.params["b"], "C,Ls");
         assert_eq!(split.params["confidence"], "0.91");
+    }
+
+    #[test]
+    fn pair_phase_notes_map_to_notices_with_bands() {
+        let notice = scalar_notice(&Note::PairPhase {
+            a: "L".into(),
+            b: "Ls".into(),
+            bands: vec![(89.1, 112.2, 167.25, -20.04), (112.2, 141.4, 179.96, -30.0)],
+        });
+        assert_eq!(notice.code, "pair_phase");
+        assert_eq!(notice.params["a"], "L");
+        assert_eq!(notice.params["b"], "Ls");
+        assert_eq!(
+            notice.params["bands"],
+            "89:112:167.2:-20.0,112:141:180.0:-30.0"
+        );
     }
 
     #[test]
@@ -1946,6 +1975,11 @@ mod tests {
                 target_t60_s: 0.25,
                 modes: vec![(63.0, 0.8, -6.5)],
             },
+            Note::PairPhase {
+                a: "L".into(),
+                b: "Ls".into(),
+                bands: vec![(89.0, 112.0, 170.0, -20.0)],
+            },
             Note::Mimo(secs_engine::MimoNote::SupportLimit { max_supports: 2 }),
         ];
         let codes: Vec<_> = notes
@@ -1980,6 +2014,7 @@ mod tests {
                 "hf_phase_none",
                 "dip_limit",
                 "mode_decay",
+                "pair_phase",
                 "mimo_support_limit",
             ]
         );

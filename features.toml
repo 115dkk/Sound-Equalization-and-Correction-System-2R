@@ -112,6 +112,19 @@ tests = [
 ]
 
 [[feature]]
+id = "engine.pair_phase"
+kind = "engine"
+milestone = "M2"
+status = "implemented"
+upstream = "new; ADR 0035"
+tests = [
+  "secs-engine::pair_phase_bands_measure_phase_difference_and_loss",
+  "secs-engine::pair_phase_check_reports_only_cancelling_pairs_worst_first",
+  "secs-engine::pair_phase_runs_once_on_the_final_pass_and_keeps_goldens",
+  "secs-service::pair_phase_notes_map_to_notices_with_bands",
+]
+
+[[feature]]
 id = "engine.main_polarity"
 kind = "engine"
 milestone = "M2"
