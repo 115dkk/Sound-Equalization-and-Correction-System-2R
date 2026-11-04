@@ -790,7 +790,8 @@ impl GuardStep {
 /// position; only a position with no energy before and after says nothing.
 pub(crate) fn seat_change(before: f64, after: f64) -> Option<f64> {
     if before > 0.0 {
-        Some(10.0 * ((after + 1e-30) / before).log10())
+        // The same floor on both sides: an unchanged tiny energy is 0 dB.
+        Some(10.0 * ((after + 1e-30) / (before + 1e-30)).log10())
     } else if after > 0.0 {
         Some(SEAT_VIOLATION_DB)
     } else {

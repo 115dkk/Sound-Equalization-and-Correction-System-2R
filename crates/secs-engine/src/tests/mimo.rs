@@ -371,6 +371,12 @@ fn mimo_seat_guard_rejects_a_support_that_worsens_one_position() {
     );
     assert!(crate::mimo::design::seat_change(0.0, 0.0).is_none());
     assert!((crate::mimo::design::seat_change(1.0, 2.0).unwrap() - 3.0103).abs() < 1e-3);
+    assert!(
+        crate::mimo::design::seat_change(1e-32, 1e-32)
+            .unwrap()
+            .abs()
+            < 1e-9
+    );
 }
 
 #[test]
