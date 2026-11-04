@@ -215,6 +215,9 @@ enum ProjectAction {
         /// MIMO supports as FIR or as IIR (PEQ and all-pass) filters.
         #[arg(long, value_enum)]
         mimo_supports: Option<SupportKind>,
+        /// Start MIMO support action this many milliseconds after onset.
+        #[arg(long, value_name = "ms")]
+        mimo_early: Option<f64>,
         /// Evaluate MIMO guards at each measured position.
         #[arg(long, value_enum)]
         mimo_seat_guard: Option<Switch>,
@@ -670,6 +673,7 @@ fn run(action: Action, runner: &mut Runner) {
                 path,
                 mimo,
                 mimo_supports,
+                mimo_early,
                 mimo_seat_guard,
                 low_protect,
                 lf_align,
@@ -693,6 +697,9 @@ fn run(action: Action, runner: &mut Runner) {
                     edits.push(SettingEdit::MimoFir {
                         on: matches!(kind, SupportKind::Fir),
                     });
+                }
+                if let Some(ms) = mimo_early {
+                    edits.push(SettingEdit::MimoEarly { ms });
                 }
                 if let Some(value) = mimo_seat_guard {
                     edits.push(SettingEdit::MimoSeatGuard {

@@ -54,6 +54,8 @@ pub struct CalibrationLimits {
     pub mimo_low: (f64, f64),
     /// Maximum number of MIMO supports (0 = no cap).
     pub mimo_max: (f64, f64),
+    /// Protected MIMO onset interval (ms, ADR 0037).
+    pub mimo_early_ms: (f64, f64),
 }
 
 /// Upstream's clamp of a stored RC low edge (calibration.py), kept for reading
@@ -80,6 +82,7 @@ pub const CALIBRATION_LIMITS: CalibrationLimits = CalibrationLimits {
     fsiso: (50.0, 150.0),
     mimo_low: (15.0, 150.0),
     mimo_max: (0.0, 12.0),
+    mimo_early_ms: (5.0, 60.0),
 };
 
 /// Sweep lengths a measurement plan accepts, shortest first.
@@ -213,7 +216,7 @@ mod tests {
             "{limits}"
         );
         assert!(
-            limits.ends_with("  mimo_max: [0, 12],\n} as const;\n"),
+            limits.ends_with("  mimo_max: [0, 12],\n  mimo_early_ms: [5, 60],\n} as const;\n"),
             "{limits}"
         );
     }

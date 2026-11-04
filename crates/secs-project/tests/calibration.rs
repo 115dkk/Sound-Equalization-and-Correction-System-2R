@@ -42,6 +42,7 @@ fn calibration_parse_store_and_saved_bytes_match_oracle() {
             Some(false.into())
         );
         assert_eq!(object.remove("mimo_seat_guard"), Some(false.into()));
+        assert_eq!(object.remove("mimo_early_ms"), Some(60.0.into()));
         if settings.xo_rec_include {
             assert_eq!(object.remove("xo_rec_include"), None);
         } else {
@@ -265,6 +266,35 @@ fn mimo_seat_guard_round_trip_and_legacy_default() {
     settings.mimo_seat_guard = false;
     store_calibration(&mut project, &settings);
     assert_eq!(project.save_text(), baseline);
+}
+
+#[test]
+fn mimo_early_round_trip_and_legacy_default() {
+    let mut project = Project::from_preset("2.1").unwrap();
+    let mut settings = calibration_from_project(&project);
+    store_calibration(&mut project, &settings);
+    let baseline = project.save_text();
+    assert_eq!(settings.mimo_early_ms, 60.0);
+    assert!(!baseline.contains("mimo_early_ms"));
+
+    settings.mimo_early_ms = 20.0;
+    store_calibration(&mut project, &settings);
+    let saved = project.save_text();
+    assert_eq!(
+        serde_json::from_str::<Value>(&saved).unwrap()["calibration"]["mimo_early_ms"],
+        20.0
+    );
+    let reopened = Project::from_json(loads(&saved).unwrap()).unwrap();
+    assert_eq!(calibration_from_project(&reopened).mimo_early_ms, 20.0);
+
+    settings.mimo_early_ms = 60.0;
+    store_calibration(&mut project, &settings);
+    assert_eq!(project.save_text(), baseline);
+
+    let legacy =
+        Project::from_json(loads(r#"{"extra":{"calibration":{"mimo_on":true}}}"#).unwrap())
+            .unwrap();
+    assert_eq!(calibration_from_project(&legacy).mimo_early_ms, 60.0);
 }
 
 #[test]

@@ -783,6 +783,7 @@ pub(crate) fn applied(pb: &Problem, supports: &[(usize, IirSupport)]) -> Vec<Vec
 
 struct BandGuard {
     bounds: Vec<(usize, usize)>,
+    windows: Vec<Vec<f64>>,
     before: Vec<f64>,
     before_by_position: Option<Vec<Vec<f64>>>,
 }
@@ -804,25 +805,36 @@ impl BandGuard {
                 )
             })
             .collect::<Vec<_>>();
-        let (before, before_by_position) = if pb.seat_guard {
-            (
-                Vec::new(),
-                Some(Self::power_by_position(pb, &pb.xs, &bounds)),
-            )
-        } else {
-            (Self::power(pb, &pb.xs, &bounds), None)
-        };
-        Self {
+        // Guard late energy remains the established 60 ms definition even
+        // when the optimizer starts supports sooner (P177).
+        let windows: Vec<Vec<f64>> = pb
+            .xs
+            .iter()
+            .map(|x| {
+                let start = (decay::onset(x) + super::design::GUARD_EARLY).min(pb.n);
+                (0..pb.n)
+                    .map(|i| if i >= start { 1.0 } else { 0.0 })
+                    .collect()
+            })
+            .collect();
+        let mut guard = Self {
             bounds,
-            before,
-            before_by_position,
+            windows,
+            before: Vec::new(),
+            before_by_position: None,
+        };
+        if pb.seat_guard {
+            guard.before_by_position = Some(guard.power_by_position(pb, &pb.xs));
+        } else {
+            guard.before = guard.power(pb, &pb.xs);
         }
+        guard
     }
 
-    fn power(pb: &Problem, ys: &[Vec<f64>], bounds: &[(usize, usize)]) -> Vec<f64> {
-        let mut total = vec![0.0; bounds.len()];
-        for (p, y) in ys.iter().enumerate() {
-            let mut windowed: Vec<_> = y.iter().zip(&pb.wl[p]).map(|(y, w)| y * w).collect();
+    fn power(&self, pb: &Problem, ys: &[Vec<f64>]) -> Vec<f64> {
+        let mut total = vec![0.0; self.bounds.len()];
+        for (y, window) in ys.iter().zip(&self.windows) {
+            let mut windowed: Vec<_> = y.iter().zip(window).map(|(y, w)| y * w).collect();
             windowed.resize(pb.nf, 0.0);
             let power: Vec<_> = fft::rfft(&windowed)
                 .iter()
@@ -831,22 +843,18 @@ impl BandGuard {
                     a * a
                 })
                 .collect();
-            for (total, &(a, b)) in total.iter_mut().zip(bounds) {
+            for (total, &(a, b)) in total.iter_mut().zip(&self.bounds) {
                 *total += pairwise_sum(&power[a..b]);
             }
         }
         total
     }
 
-    fn power_by_position(
-        pb: &Problem,
-        ys: &[Vec<f64>],
-        bounds: &[(usize, usize)],
-    ) -> Vec<Vec<f64>> {
+    fn power_by_position(&self, pb: &Problem, ys: &[Vec<f64>]) -> Vec<Vec<f64>> {
         ys.iter()
-            .enumerate()
-            .map(|(p, y)| {
-                let mut windowed: Vec<_> = y.iter().zip(&pb.wl[p]).map(|(y, w)| y * w).collect();
+            .zip(&self.windows)
+            .map(|(y, window)| {
+                let mut windowed: Vec<_> = y.iter().zip(window).map(|(y, w)| y * w).collect();
                 windowed.resize(pb.nf, 0.0);
                 let power: Vec<_> = fft::rfft(&windowed)
                     .iter()
@@ -855,7 +863,7 @@ impl BandGuard {
                         a * a
                     })
                     .collect();
-                bounds
+                self.bounds
                     .iter()
                     .map(|&(a, b)| pairwise_sum(&power[a..b]))
                     .collect()
@@ -867,7 +875,7 @@ impl BandGuard {
         if let Some(before) = &self.before_by_position {
             return before
                 .iter()
-                .zip(Self::power_by_position(pb, ys, &self.bounds))
+                .zip(self.power_by_position(pb, ys))
                 .flat_map(|(before, after)| before.iter().copied().zip(after))
                 .filter(|(b, _)| *b > 0.0)
                 .map(|(b, a)| 10.0 * ((a + 1e-30) / b).log10())
@@ -876,7 +884,7 @@ impl BandGuard {
         }
         self.before
             .iter()
-            .zip(Self::power(pb, ys, &self.bounds))
+            .zip(self.power(pb, ys))
             .filter(|(b, _)| **b > 0.0)
             .map(|(b, a)| 10.0 * ((a + 1e-30) / b).log10())
             .reduce(f64::max)
@@ -1060,7 +1068,7 @@ pub(crate) fn build_problem(
         let h = crate::input_response(design, input, spectra, p)
             .ok_or_else(|| EngineError::Input(format!("missing MIMO input {p}/{input}")))?;
         let x = secs_dsp::lowrate::to_low(&h, design_freqs(), N)?;
-        let onset = decay::onset(&x) + 36;
+        let onset = decay::onset(&x) + super::design::early_samples(req.mimo_early_ms);
         pb.wl
             .push((0..N).map(|i| if i >= onset { 1.0 } else { 0.0 }).collect());
         pb.we
@@ -1099,6 +1107,8 @@ fn validate_request(req: &MimoRequest, t: &Tuning) -> Result<(), EngineError> {
     if !(0.0..300.0).contains(&req.fsiso)
         || req.fsiso == 0.0
         || !req.level_db.is_finite()
+        || !req.mimo_early_ms.is_finite()
+        || !(5.0..=60.0).contains(&req.mimo_early_ms)
         || !t.mimo_band_db.is_finite()
         || t.mimo_band_db <= 0.0
         || !t.mimo_q_max.is_finite()

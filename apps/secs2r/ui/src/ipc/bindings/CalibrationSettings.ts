@@ -33,6 +33,10 @@ input_hp_hz: number | null, rc_lo: number, rc_hi: number | null, rc_hi_basis: Rc
  */
 rc_bands: Array<RcBand>, room_volume_m3: number | null, room_dims_m: [number, number, number] | null, mimo_on: boolean, fsiso: number, mimo_low: number | null, mimo_max_supports: number, mimo_fir: boolean, 
 /**
+ * Interval after onset protected from MIMO support action (ms, ADR 0037).
+ */
+mimo_early_ms: number, 
+/**
  * Evaluates MIMO guards at each measured position (ADR 0036).
  */
 mimo_seat_guard: boolean, 

@@ -1207,6 +1207,8 @@
   "calibrate.mimo.max": "Max supports per input",
   "calibrate.mimo.max.zero": "0 = no limit",
   "calibrate.mimo.max.hint": "Limits the number of support paths for each input. Lower it if the DSP has limited per-path delay capacity.",
+  "calibrate.mimo.early": "Early interval",
+  "calibrate.mimo.early.hint": "Time after onset before supports start acting, in ms. Shortening it may reduce early ringing, but drives the supports harder. Supports are reduced or disabled more often to prevent a worse response. The default is 60 ms.",
   "calibrate.mimo.seat_guard": "Per-position guard",
   "calibrate.mimo.seat_guard.hint": "Decides whether to reduce support using the worst-affected position instead of the sum across all positions. Prevents designs that worsen a single position, but reduces support more often.",
   "calibrate.mimo.fir": "Calculate supports as FIR",

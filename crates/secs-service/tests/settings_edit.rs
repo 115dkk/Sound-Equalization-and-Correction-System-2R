@@ -247,6 +247,75 @@ fn mimo_seat_guard_edits_persist_and_mark_only_mimo_stale() {
 }
 
 #[test]
+fn mimo_early_edits_validate_persist_and_mark_only_mimo_stale() {
+    use secs_types::settings_edit::SettingEdit;
+
+    let root = std::env::temp_dir().join(format!("secs-mimo-early-{}", std::process::id()));
+    fs::create_dir_all(&root).unwrap();
+    let path = root.join("early.secs").to_string_lossy().into_owned();
+    let service = Service::new(Deps::default());
+    call(
+        &service,
+        Request::ProjectNew(ProjectNewParams {
+            path: path.clone(),
+            preset: "2.1".into(),
+            sub_count: 1,
+            sample: false,
+            tutorial: false,
+        }),
+    );
+    let Response::CalibrationSettingsGet(baseline) =
+        call(&service, Request::CalibrationSettingsGet)
+    else {
+        panic!("expected calibration settings")
+    };
+    let engine_key = baseline.engine_key();
+    let mimo_key = baseline.mimo_key();
+
+    for ms in [4.9, 60.1, f64::NAN] {
+        let result = service.call(
+            Request::CalibrationSettingsEdit(CalibrationSettingsEditParams {
+                edit: SettingEdit::MimoEarly { ms },
+            }),
+            Arc::new(NoEvents),
+        );
+        assert!(matches!(result, Envelope::Err(error) if error.code == ErrorCode::InvalidRequest));
+    }
+
+    let Response::CalibrationSettingsEdit(settings) = call(
+        &service,
+        Request::CalibrationSettingsEdit(CalibrationSettingsEditParams {
+            edit: SettingEdit::MimoEarly { ms: 20.0 },
+        }),
+    ) else {
+        panic!("expected edited calibration settings")
+    };
+    assert_eq!(settings.mimo_early_ms, 20.0);
+    assert_eq!(settings.engine_key(), engine_key);
+    assert_ne!(settings.mimo_key(), mimo_key);
+    call(
+        &service,
+        Request::ProjectSave(ProjectSaveParams { path: None }),
+    );
+    assert!(fs::read_to_string(&path).unwrap().contains("mimo_early_ms"));
+
+    let reopened = Service::new(Deps::default());
+    call(
+        &reopened,
+        Request::ProjectOpen(ProjectPathParams { path: path.clone() }),
+    );
+    let Response::CalibrationSettingsGet(settings) =
+        call(&reopened, Request::CalibrationSettingsGet)
+    else {
+        panic!("expected persisted calibration settings")
+    };
+    assert_eq!(settings.mimo_early_ms, 20.0);
+    assert_eq!(settings.engine_key(), engine_key);
+    assert_ne!(settings.mimo_key(), mimo_key);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn rc_upper_edits_persist_and_reject_invalid_factors() {
     use secs_types::{calibration::RcHiBasis, settings_edit::SettingEdit};
     let root = std::env::temp_dir().join(format!("secs-rc-upper-{}", std::process::id()));

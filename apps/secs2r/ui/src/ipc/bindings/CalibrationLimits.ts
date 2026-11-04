@@ -81,4 +81,8 @@ mimo_low: [number, number],
 /**
  * Maximum number of MIMO supports (0 = no cap).
  */
-mimo_max: [number, number], };
+mimo_max: [number, number], 
+/**
+ * Protected MIMO onset interval (ms, ADR 0037).
+ */
+mimo_early_ms: [number, number], };

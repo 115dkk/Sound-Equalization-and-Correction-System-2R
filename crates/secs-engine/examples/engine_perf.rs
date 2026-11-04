@@ -420,9 +420,21 @@ fn main() {
             let direct =
                 secs_dsp::lowrate::to_low(&d.mains[0].response, grid::design_freqs(), 720).unwrap();
             measure("mimo_profile_normal", name, threads, || {
-                mimo::design::normal_equations(&xs, &filtered, req.taps_low, 10.0)
+                mimo::design::normal_equations(
+                    &xs,
+                    &filtered,
+                    req.taps_low,
+                    10.0,
+                    mimo::design::early_samples(req.mimo_early_ms),
+                )
             });
-            let (ata, atb) = mimo::design::normal_equations(&xs, &filtered, req.taps_low, 10.0);
+            let (ata, atb) = mimo::design::normal_equations(
+                &xs,
+                &filtered,
+                req.taps_low,
+                10.0,
+                mimo::design::early_samples(req.mimo_early_ms),
+            );
             let n = atb.len();
             let norm = secs_dsp::pairwise_sum(&(0..n).map(|k| ata[k * n + k]).collect::<Vec<_>>())
                 / n as f64;

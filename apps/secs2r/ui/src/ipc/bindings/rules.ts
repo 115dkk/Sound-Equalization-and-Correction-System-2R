@@ -21,6 +21,7 @@ export const CALIBRATION_LIMITS: CalibrationLimits = {
   fsiso: [50, 150],
   mimo_low: [15, 150],
   mimo_max: [0, 12],
+  mimo_early_ms: [5, 60],
 } as const;
 export const SWEEP_LENGTHS = ["64k", "128k", "256k", "512k", "1M", "2M", "4M"] as const;
 export const START_DELAYS = ["끄기", "5 초", "10 초", "15 초"] as const;

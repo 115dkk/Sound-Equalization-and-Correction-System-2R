@@ -45,6 +45,137 @@ fn request(fx: &Fixture) -> MimoRequest {
 }
 
 #[test]
+fn mimo_early_sixty_keeps_goldens_bit_identical() {
+    use secs_types::calibration::CalibrationSettings;
+
+    let req = MimoRequest::default();
+    assert_eq!(req.mimo_early_ms, 60.0);
+    assert_eq!(crate::mimo::design::early_samples(req.mimo_early_ms), 36);
+    let key = crate::MimoKey::from_settings(&CalibrationSettings::default());
+    assert_eq!(key.mimo_early_ms, 60.0);
+    assert_eq!(key.request().mimo_early_ms, req.mimo_early_ms);
+
+    let fx = Fixture::load("engine_mimo", "room");
+    let stage = &fx.inputs()["stage"]["inputs"]["L"];
+    let xs: Vec<_> = stage["xs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| fx.f64s(v))
+        .collect();
+    let candidates = vec!["R".to_owned()];
+    let paths: Vec<Vec<Vec<f64>>> = (0..xs.len())
+        .map(|p| vec![fx.f64s(&fx.inputs()["stage"]["paths"]["R"][p])])
+        .collect();
+    let legacy = normal_equations(&xs, &paths, req.taps_low, 10.0, 36);
+    let configured = normal_equations(
+        &xs,
+        &paths,
+        req.taps_low,
+        10.0,
+        crate::mimo::design::early_samples(req.mimo_early_ms),
+    );
+    assert_eq!(legacy.0, configured.0, "FIR normal matrix bits");
+    assert_eq!(legacy.1, configured.1, "FIR right-hand-side bits");
+    let direct = fx.f64s(&stage["direct"]);
+    let legacy = design_input(
+        &xs,
+        &paths,
+        &direct,
+        &candidates,
+        &MimoRequest::default(),
+        &Context::serial(),
+    )
+    .unwrap();
+    let configured =
+        design_input(&xs, &paths, &direct, &candidates, &req, &Context::serial()).unwrap();
+    assert_eq!(legacy.supports, configured.supports, "60 ms support bits");
+    assert_eq!(
+        legacy.level_db.to_bits(),
+        configured.level_db.to_bits(),
+        "60 ms level bits"
+    );
+    assert_eq!(legacy.trace, configured.trace, "60 ms trace bits");
+}
+
+#[test]
+fn mimo_early_shorter_window_lets_supports_act_sooner() {
+    use crate::mimo::design::{BandGuard, T60Guard};
+
+    let n = 720;
+    let xs: Vec<Vec<f64>> = (0..3)
+        .map(|position| {
+            let onset = 2 + position;
+            (0..n)
+                .map(|sample| {
+                    if sample < onset {
+                        0.0
+                    } else {
+                        let t = (sample - onset) as f64 / 600.0;
+                        let phase = position as f64 * 0.2;
+                        (-t / 0.32).exp() * (2.0 * std::f64::consts::PI * 50.0 * t + phase).sin()
+                            + 0.7
+                                * (-t / 0.21).exp()
+                                * (2.0 * std::f64::consts::PI * 90.0 * t - phase).sin()
+                    }
+                })
+                .collect()
+        })
+        .collect();
+    let paths: Vec<Vec<Vec<f64>>> = xs.iter().map(|x| vec![x.clone()]).collect();
+    let design = |early| {
+        let (ata, atb) = normal_equations(&xs, &paths, 1, 10.0, early);
+        crate::mimo::solve::solve(&ata, &atb, 1e-12, false).unwrap()[0]
+    };
+    let support_20 = design(12);
+    let support_60 = design(36);
+    let interval_energy = |support: f64| {
+        xs.iter()
+            .flat_map(|x| {
+                let start = crate::decay::onset(x) + 12;
+                let end = (crate::decay::onset(x) + 36).min(x.len());
+                x[start..end]
+                    .iter()
+                    .map(move |&v| (v + support * v).powi(2))
+            })
+            .sum::<f64>()
+    };
+    assert!(interval_energy(support_20) < interval_energy(support_60));
+
+    let applied: Vec<Vec<f64>> = xs
+        .iter()
+        .map(|x| x.iter().map(|&v| v + support_20 * v).collect())
+        .collect();
+    assert!(BandGuard::new(&xs, 150.0, false).evaluate(&applied) <= 1.0);
+    assert!(T60Guard::new(&xs, 6, false).evaluate(&applied).unwrap() <= 0.15);
+}
+
+#[test]
+fn mimo_early_clamps_to_three_samples() {
+    assert_eq!(crate::mimo::design::early_samples(5.0), 3);
+    assert_eq!(crate::mimo::design::early_samples(1.0), 3);
+
+    let case = cases::load("room_dba");
+    let design = design::replay("room_dba");
+    for invalid in [4.9, 60.1, f64::NAN] {
+        let request = MimoRequest {
+            mimo_early_ms: invalid,
+            ..MimoRequest::default()
+        };
+        assert!(matches!(
+            crate::design_mimo(
+                &design,
+                &case.measurements,
+                &case.config,
+                &request,
+                &Context::serial(),
+            ),
+            Err(crate::EngineError::Input(_))
+        ));
+    }
+}
+
+#[test]
 fn mimo_toeplitz_normal_equations_match_dense() {
     let mut seed = 771_u64;
     let mut random = || {
@@ -66,7 +197,7 @@ fn mimo_toeplitz_normal_equations_match_dense() {
             })
             .collect();
         for early in [0.0, 10.0] {
-            let (ata, atb) = normal_equations(&xs, &paths, taps, early);
+            let (ata, atb) = normal_equations(&xs, &paths, taps, early, 36);
             let dim = taps * candidates;
             let mut dense_a = Vec::new();
             let mut dense_b = Vec::new();
@@ -135,7 +266,7 @@ fn mimo_bounded_block_batches_preserve_bits() {
         })
         .collect();
     for early in [0.0, 10.0] {
-        let expected = normal_equations(&xs, &paths, 17, early);
+        let expected = normal_equations(&xs, &paths, 17, early, 36);
         for threads in [1, 4] {
             let ctx = Context::new(
                 threads,
@@ -144,7 +275,8 @@ fn mimo_bounded_block_batches_preserve_bits() {
                 CancelToken::new(),
             );
             let got =
-                crate::mimo::design::normal_equations_mapped(&xs, &paths, 17, early, &ctx).unwrap();
+                crate::mimo::design::normal_equations_mapped(&xs, &paths, 17, early, 36, &ctx)
+                    .unwrap();
             for (a, b) in got
                 .0
                 .iter()
@@ -191,14 +323,17 @@ fn mimo_scalar_ranking_preserves_near_ties_and_direct_scores() {
     let expected: Vec<_> = (0..4)
         .map(|j| {
             let candidate_paths: Vec<_> = paths.iter().map(|g| vec![g[j].clone()]).collect();
-            let (a, b) = normal_equations(&xs, &candidate_paths, taps, 0.0);
+            let (a, b) = normal_equations(&xs, &candidate_paths, taps, 0.0, 36);
             let diagonal: Vec<_> = (0..taps).map(|k| a[k * taps + k]).collect();
             let lambda = 1e-2 * secs_dsp::pairwise_sum(&diagonal) / taps as f64;
             let u = crate::mimo::solve::solve(&a, &b, lambda, false).unwrap();
-            (candidates[j].clone(), rank_score_direct(&xs, &paths, j, &u))
+            (
+                candidates[j].clone(),
+                rank_score_direct(&xs, &paths, j, &u, 36),
+            )
         })
         .collect();
-    let got = rank_supports(&candidates, &xs, &paths, taps, &Context::serial()).unwrap();
+    let got = rank_supports(&candidates, &xs, &paths, taps, 36, &Context::serial()).unwrap();
     let mut sorted = expected.clone();
     sorted.sort_by(|a, b| a.1.total_cmp(&b.1));
     assert_eq!(
@@ -908,7 +1043,7 @@ fn mimo_cholesky_matches_lu_on_golden_system() {
                 .collect()
         })
         .collect();
-    let (ata, atb) = normal_equations(&xs, &paths, 180, 10.0);
+    let (ata, atb) = normal_equations(&xs, &paths, 180, 10.0, 36);
     let dim = atb.len();
     let mean = secs_dsp::pairwise_sum(&(0..dim).map(|k| ata[k * dim + k]).collect::<Vec<_>>())
         / dim as f64;
@@ -1074,7 +1209,13 @@ fn mimo_ridge_sweep_recorded_systems_and_trajectories() {
                         .collect()
                 })
                 .collect();
-            let (ata, atb) = normal_equations(&xs, &paths, req.taps_low, 10.0);
+            let (ata, atb) = normal_equations(
+                &xs,
+                &paths,
+                req.taps_low,
+                10.0,
+                crate::mimo::design::early_samples(req.mimo_early_ms),
+            );
             for threads in [1, 4] {
                 let ctx = Context::new(
                     threads,
@@ -1087,6 +1228,7 @@ fn mimo_ridge_sweep_recorded_systems_and_trajectories() {
                     &paths,
                     req.taps_low,
                     10.0,
+                    crate::mimo::design::early_samples(req.mimo_early_ms),
                     &ctx,
                 )
                 .unwrap();

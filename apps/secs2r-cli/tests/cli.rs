@@ -237,6 +237,28 @@ fn project_set_persists_mimo_seat_guard_switch() {
 }
 
 #[test]
+fn project_set_persists_mimo_early() {
+    let root = root("mimo-early");
+    let project = root.join("room.secs");
+    let path = project.to_string_lossy();
+    assert_success(&run(&["project", "new", &path, "--preset", "2.1"]).0);
+
+    let result = assert_success(&run(&["project", "set", &path, "--mimo-early", "20"]).0);
+    let settings = result
+        .iter()
+        .find(|item| item["reply"]["data"]["method"] == "calibration_settings_get")
+        .unwrap();
+    assert_eq!(settings["reply"]["data"]["data"]["mimo_early_ms"], 20.0);
+    let saved: Value = serde_json::from_slice(&fs::read(&project).unwrap()).unwrap();
+    assert_eq!(saved["calibration"]["mimo_early_ms"], 20.0);
+
+    assert_success(&run(&["project", "set", &path, "--mimo-early", "60"]).0);
+    let saved: Value = serde_json::from_slice(&fs::read(&project).unwrap()).unwrap();
+    assert!(saved["calibration"].get("mimo_early_ms").is_none());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn project_set_persists_and_clears_rc_bands() {
     let root = root("rc-bands");
     let project = root.join("room.secs");

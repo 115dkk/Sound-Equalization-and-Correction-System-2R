@@ -11,6 +11,45 @@ import type { Mode } from "./bindings/Mode";
 import type { MimoExportDecision } from "./bindings/MimoExportDecision";
 import { umikFile } from "../screens/connect/fixtures";
 
+describe("mock MIMO early interval", () => {
+  it("defaults to 60 ms from recorded settings and persists edits when reopening a saved project", async () => {
+    const mock = createMockService({ tickMs: 0 });
+    try {
+      expect((await mock.request({ method: "calibration_settings_get" })).mimo_early_ms).toBe(60);
+      expect(await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "mimo_early", ms: 20 } } })).toMatchObject({ mimo_early_ms: 20 });
+      await mock.request({ method: "project_save", params: { path: "/mimo-early.secs" } });
+      await mock.request({ method: "project_new", params: { path: "/new-mimo-early.secs", preset: "2.0", sub_count: 0, sample: false, tutorial: false } });
+      expect((await mock.request({ method: "calibration_settings_get" })).mimo_early_ms).toBe(60);
+      await mock.request({ method: "project_open", params: { path: "/mimo-early.secs" } });
+      expect((await mock.request({ method: "calibration_settings_get" })).mimo_early_ms).toBe(20);
+    } finally { mock.dispose(); }
+  });
+
+  it.each([5, 20.5, 60])("accepts an early interval of %s ms without clamping", async (ms) => {
+    const mock = createMockService({ tickMs: 0 });
+    try {
+      expect(await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "mimo_early", ms } } })).toMatchObject({ mimo_early_ms: ms });
+    } finally { mock.dispose(); }
+  });
+
+  it.each([4, 61, NaN, Infinity, -Infinity])("refuses invalid early interval %s without changing settings or results", async (ms) => {
+    const mock = createMockService({ tickMs: 0 });
+    try {
+      await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "mimo_on", on: true } } });
+      await mock.request({ method: "calibrate", params: { settings: null, subs_only: false, mimo: true } });
+      mock.drain();
+      await mock.request({ method: "project_save", params: { path: "/mimo-early.secs" } });
+      const settings = await mock.request({ method: "calibration_settings_get" });
+      const results = await mock.request({ method: "results" });
+      const project = await mock.request({ method: "project_info" });
+      await expect(mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "mimo_early", ms } } })).rejects.toMatchObject({ error: { code: "invalid_request", params: { field: "mimo_early_ms", reason: "mimo_early_range", min: "5", max: "60" } } });
+      expect(await mock.request({ method: "calibration_settings_get" })).toEqual(settings);
+      expect(await mock.request({ method: "results" })).toEqual(results);
+      expect(await mock.request({ method: "project_info" })).toEqual(project);
+    } finally { mock.dispose(); }
+  });
+});
+
 describe("mock MIMO seat guard", () => {
   it("defaults off from recorded settings and persists edits when reopening a saved project", async () => {
     const mock = createMockService({ tickMs: 0 });
@@ -908,7 +947,7 @@ describe("mock calibrate with MIMO (P141, P142)", () => {
       await mimoOn(mock);
       await mock.request({ method: "calibrate", params: withMimo });
       mock.drain();
-      for (const edit of [{ kind: "fsiso", hz: 120 }, { kind: "mimo_low", hz: 25 }, { kind: "mimo_max", count: 2 }, { kind: "mimo_fir", on: true }, { kind: "mimo_seat_guard", on: true }, { kind: "mimo_seat_guard", on: false }] as const) {
+      for (const edit of [{ kind: "fsiso", hz: 120 }, { kind: "mimo_low", hz: 25 }, { kind: "mimo_max", count: 2 }, { kind: "mimo_fir", on: true }, { kind: "mimo_early", ms: 20 }, { kind: "mimo_early", ms: 60 }, { kind: "mimo_seat_guard", on: true }, { kind: "mimo_seat_guard", on: false }] as const) {
         await mock.request({ method: "calibration_settings_edit", params: { edit } });
         const results = await mock.request({ method: "results" });
         expect(results.calibration?.stale, edit.kind).toBe(false);

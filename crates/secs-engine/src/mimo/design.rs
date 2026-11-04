@@ -18,7 +18,12 @@ use crate::{
 };
 
 const FS_LOW: f64 = 600.0;
-const EARLY: usize = 36;
+/// The guards retain their established 60 ms definition (P177).
+pub(super) const GUARD_EARLY: usize = 36;
+
+pub(crate) fn early_samples(mimo_early_ms: f64) -> usize {
+    ((mimo_early_ms * FS_LOW / 1000.0).round() as usize).max(3)
+}
 
 use super::solve::solve;
 use crate::{EngineConfig, MeasurementSet};
@@ -35,6 +40,7 @@ pub struct MimoRequest {
     pub exclude: Vec<String>,
     pub groups: Option<Vec<String>>,
     pub taps_low: usize,
+    pub mimo_early_ms: f64,
     pub seat_guard: bool,
 }
 
@@ -48,6 +54,7 @@ impl Default for MimoRequest {
             exclude: Vec::new(),
             groups: None,
             taps_low: 180,
+            mimo_early_ms: 60.0,
             seat_guard: false,
         }
     }
@@ -238,19 +245,20 @@ pub(crate) fn convolve(a: &[f64], b: &[f64]) -> Vec<f64> {
 /// One block pair `(j, jj)` of the weighted normal equations, summed over
 /// positions in order, and the right-hand side of `j` when `j == jj`.
 /// The first row/column are direct time sums; the diagonal recurrence handles
-/// the truncated last sample and the weight step at `onset + 36`.
+/// the truncated last sample and the weight step after the protected interval.
 fn block_pair(
     xs: &[Vec<f64>],
     paths: &[Vec<Vec<f64>>],
     (j, jj): (usize, usize),
     taps: usize,
     early_weight: f64,
+    early_samples: usize,
 ) -> (Vec<f64>, Vec<f64>) {
     let mut total = vec![0.0; taps * taps];
     let mut rhs = vec![0.0; if j == jj { taps } else { 0 }];
     for (x, gs) in xs.iter().zip(paths) {
         let n = x.len();
-        let e = (onset(x) + EARLY).min(n);
+        let e = (onset(x) + early_samples).min(n);
         let c = |t: usize| if t < e { early_weight } else { 1.0 };
         let (g, h) = (&gs[j], &gs[jj]);
         for (k, b) in rhs.iter_mut().enumerate() {
@@ -321,12 +329,13 @@ pub(crate) fn normal_equations(
     paths: &[Vec<Vec<f64>>],
     taps: usize,
     early_weight: f64,
+    early_samples: usize,
 ) -> (Vec<f64>, Vec<f64>) {
     let candidates = paths[0].len();
     let dim = candidates * taps;
     let (mut ata, mut atb) = (vec![0.0; dim * dim], vec![0.0; dim]);
     for pair in block_pairs(candidates) {
-        let block = block_pair(xs, paths, pair, taps, early_weight);
+        let block = block_pair(xs, paths, pair, taps, early_weight, early_samples);
         place(vec![(pair, block)], &mut ata, &mut atb, taps);
     }
     (ata, atb)
@@ -340,6 +349,7 @@ pub(crate) fn normal_equations_mapped(
     paths: &[Vec<Vec<f64>>],
     taps: usize,
     early_weight: f64,
+    early_samples: usize,
     ctx: &Context,
 ) -> Result<(Vec<f64>, Vec<f64>), EngineError> {
     check(ctx)?;
@@ -351,7 +361,10 @@ pub(crate) fn normal_equations_mapped(
     for pairs in block_pairs(candidates).chunks(8) {
         let blocks = ctx
             .map(pairs.to_vec(), |pair| {
-                (pair, block_pair(xs, paths, pair, taps, early_weight))
+                (
+                    pair,
+                    block_pair(xs, paths, pair, taps, early_weight, early_samples),
+                )
             })
             .map_err(|_| EngineError::Cancelled)?;
         place(blocks, &mut ata, &mut atb, taps);
@@ -386,7 +399,7 @@ pub(crate) fn worst_band_db(
                 *a += v;
             }
         }
-        let e = (onset(x) + EARLY).min(n);
+        let e = (onset(x) + GUARD_EARLY).min(n);
         for (acc, addition) in [(&mut before, false), (&mut after, true)] {
             let mut y = vec![0.0; nf];
             for t in e..n {
@@ -462,7 +475,7 @@ impl BandGuard {
             .collect();
         let mut guard = Self {
             n,
-            starts: xs.iter().map(|x| (onset(x) + EARLY).min(n)).collect(),
+            starts: xs.iter().map(|x| (onset(x) + GUARD_EARLY).min(n)).collect(),
             hz,
             bands,
             before: Vec::new(),
@@ -836,12 +849,13 @@ pub(crate) fn rank_supports(
     xs: &[Vec<f64>],
     paths: &[Vec<Vec<f64>>],
     taps: usize,
+    early_samples: usize,
     ctx: &Context,
 ) -> Result<Vec<(String, f64)>, EngineError> {
     let late_input: Vec<_> = xs
         .iter()
         .flat_map(|x| {
-            let e = onset(x) + EARLY;
+            let e = onset(x) + early_samples;
             x.iter()
                 .enumerate()
                 .map(move |(t, &x)| if t >= e { x } else { 0.0 })
@@ -853,7 +867,7 @@ pub(crate) fn rank_supports(
     for (j, role) in candidates.iter().enumerate() {
         check(ctx)?;
         let candidate_paths: Vec<_> = paths.iter().map(|g| vec![g[j].clone()]).collect();
-        let (ata, atb) = normal_equations(xs, &candidate_paths, taps, 0.0);
+        let (ata, atb) = normal_equations(xs, &candidate_paths, taps, 0.0, early_samples);
         let diagonal: Vec<_> = (0..taps).map(|k| ata[k * taps + k]).collect();
         let lambda = 1e-2 * pairwise_sum(&diagonal) / taps as f64;
         let u = solve(&ata, &atb, lambda, false)?;
@@ -866,7 +880,7 @@ pub(crate) fn rank_supports(
         scored.push((
             role.clone(),
             if direct {
-                rank_score_direct(xs, paths, j, &u)
+                rank_score_direct(xs, paths, j, &u, early_samples)
             } else {
                 score
             },
@@ -892,7 +906,7 @@ pub(crate) fn rank_supports(
         scores.push((
             role,
             if direct {
-                rank_score_direct(xs, paths, j, &u)
+                rank_score_direct(xs, paths, j, &u, early_samples)
             } else {
                 score
             },
@@ -948,11 +962,12 @@ pub(crate) fn rank_score_direct(
     paths: &[Vec<Vec<f64>>],
     candidate: usize,
     u: &[f64],
+    early_samples: usize,
 ) -> f64 {
     let mut residual = Vec::new();
     for (x, gs) in xs.iter().zip(paths) {
         let y = convolve(&gs[candidate], u);
-        let e = onset(x) + EARLY;
+        let e = onset(x) + early_samples;
         residual.extend(
             x.iter()
                 .enumerate()
@@ -1020,7 +1035,14 @@ fn design_input_accelerated(
         .max_supports
         .is_some_and(|cap| cap > 0 && candidates.len() > cap)
     {
-        rank_supports(candidates, xs, &all_paths, taps, ctx)?
+        rank_supports(
+            candidates,
+            xs,
+            &all_paths,
+            taps,
+            early_samples(req.mimo_early_ms),
+            ctx,
+        )?
     } else {
         Vec::new()
     };
@@ -1075,7 +1097,8 @@ fn design_selected(
     let lp = lowpass_fir(req.fsiso, 31)?;
     let n = xs[0].len();
     let started = std::time::Instant::now();
-    let (ata, atb) = normal_equations_mapped(xs, paths, taps, 10.0, ctx)?;
+    let (ata, atb) =
+        normal_equations_mapped(xs, paths, taps, 10.0, early_samples(req.mimo_early_ms), ctx)?;
     observe("normal_equations", started.elapsed());
     let started = std::time::Instant::now();
     let dim = atb.len();
@@ -1452,6 +1475,8 @@ fn validate_request(req: &MimoRequest) -> Result<(), EngineError> {
         || req.taps_low == 0
         || req.taps_low > 720
         || req.f_low.is_some_and(|f| !f.is_finite())
+        || !req.mimo_early_ms.is_finite()
+        || !(5.0..=60.0).contains(&req.mimo_early_ms)
     {
         return Err(EngineError::Input("invalid MIMO request".into()));
     }
@@ -1501,6 +1526,8 @@ pub(crate) fn design_mimo_before(
         || req.taps_low == 0
         || req.taps_low > 720
         || req.f_low.is_some_and(|f| !f.is_finite())
+        || !req.mimo_early_ms.is_finite()
+        || !(5.0..=60.0).contains(&req.mimo_early_ms)
     {
         return Err(EngineError::Input("invalid MIMO request".into()));
     }
