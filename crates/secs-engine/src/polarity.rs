@@ -60,12 +60,12 @@ fn band_weight(frequency: f64) -> f64 {
     if !(lower_zero..=upper_zero).contains(&frequency) {
         0.0
     } else if frequency < BAND_HZ.0 {
-        let phase = (frequency / lower_zero).log2() * PI;
+        let phase = (frequency / lower_zero).log2() * 2.0 * PI;
         0.5 * (1.0 - phase.cos())
     } else if frequency <= BAND_HZ.1 {
         1.0
     } else {
-        let phase = (frequency / BAND_HZ.1).log2() * PI;
+        let phase = (frequency / BAND_HZ.1).log2() * 2.0 * PI;
         0.5 * (1.0 + phase.cos())
     }
 }
@@ -158,31 +158,42 @@ fn pair_results(
     result
 }
 
-fn signed_groups(pairs: &[Vec<Option<f64>>]) -> Vec<i8> {
-    let mut signs = vec![0; pairs.len()];
-    for root in 0..pairs.len() {
-        if signs[root] != 0 {
-            continue;
-        }
-        signs[root] = 1;
-        let mut queue = VecDeque::from([root]);
-        while let Some(left) = queue.pop_front() {
-            for right in 0..pairs.len() {
-                let Some(value) = pairs[left][right] else {
-                    continue;
-                };
-                if signs[right] == 0 {
-                    signs[right] = if value < 0.0 {
-                        -signs[left]
-                    } else {
-                        signs[left]
-                    };
-                    queue.push_back(right);
-                }
+/// One connected set of mains joined by decided pairs, with the sign each
+/// main gets from the root; `None` when the decided signs contradict each
+/// other (a triangle of negative pairs), in which case no verdict is given.
+fn component(
+    pairs: &[Vec<Option<f64>>],
+    root: usize,
+    seen: &mut [bool],
+) -> Option<(Vec<usize>, Vec<i8>)> {
+    let mut signs = vec![0_i8; pairs.len()];
+    signs[root] = 1;
+    seen[root] = true;
+    let mut members = vec![root];
+    let mut queue = VecDeque::from([root]);
+    let mut consistent = true;
+    while let Some(left) = queue.pop_front() {
+        for right in 0..pairs.len() {
+            let Some(value) = pairs[left][right] else {
+                continue;
+            };
+            let expected = if value < 0.0 {
+                -signs[left]
+            } else {
+                signs[left]
+            };
+            if signs[right] == 0 {
+                signs[right] = expected;
+                seen[right] = true;
+                members.push(right);
+                queue.push_back(right);
+            } else if signs[right] != expected {
+                consistent = false;
             }
         }
     }
-    signs
+    members.sort_unstable();
+    consistent.then_some((members, signs))
 }
 
 /// Check relative polarity among main channels after configured inversions.
@@ -191,61 +202,62 @@ pub fn check(set: &MeasurementSet, mains: &[String], main_position: u32) -> Vec<
         return Vec::new();
     }
     let pairs = pair_results(set, mains, main_position);
-    let candidates = (0..mains.len())
-        .filter(|&left| {
-            let negative = pairs[left]
-                .iter()
-                .flatten()
-                .filter(|value| **value < 0.0)
-                .count();
-            let positive = pairs[left]
-                .iter()
-                .flatten()
-                .filter(|value| **value > 0.0)
-                .count();
-            negative > positive
-        })
-        .collect::<Vec<_>>();
-    if candidates.is_empty() {
-        return Vec::new();
-    }
-    if candidates.len() * 2 < mains.len() {
-        return candidates
-            .into_iter()
-            .map(|index| {
-                let decided = pairs[index].iter().flatten().copied().collect::<Vec<_>>();
+    // Each set of mains joined by decided pairs is judged on its own: a main
+    // nobody could correlate with that set carries no vote on it. Inside a
+    // set the decided signs split the mains in two; the smaller side is the
+    // reversed one, and equal sides leave the choice open.
+    let mut seen = vec![false; mains.len()];
+    let mut notes = Vec::new();
+    for root in 0..mains.len() {
+        if seen[root] || !pairs[root].iter().any(Option::is_some) {
+            continue;
+        }
+        let Some((members, signs)) = component(&pairs, root, &mut seen) else {
+            continue;
+        };
+        let first_sign = signs[members[0]];
+        let (a, b): (Vec<usize>, Vec<usize>) = members
+            .iter()
+            .copied()
+            .partition(|&index| signs[index] == first_sign);
+        if b.is_empty() {
+            continue;
+        }
+        let reversed = if a.len() < b.len() {
+            Some(&a)
+        } else if b.len() < a.len() {
+            Some(&b)
+        } else {
+            None
+        };
+        if let Some(reversed) = reversed {
+            notes.extend(reversed.iter().map(|&index| {
+                let values = pairs[index].iter().flatten().copied().collect::<Vec<_>>();
                 Note::PolarityReversed {
                     role: mains[index].clone(),
-                    confidence: levels::median(decided.iter().map(|value| value.abs()).collect()),
-                    compared: decided.len(),
+                    confidence: levels::median(values.iter().map(|value| value.abs()).collect()),
+                    compared: values.len(),
+                    opposite: values.iter().filter(|value| **value < 0.0).count(),
                 }
-            })
-            .collect();
+            }));
+            continue;
+        }
+        let confidence = members
+            .iter()
+            .enumerate()
+            .flat_map(|(k, &left)| members[k + 1..].iter().map(move |&right| (left, right)))
+            .filter(|(left, right)| signs[*left] != signs[*right])
+            .filter_map(|(left, right)| pairs[left][right].map(f64::abs))
+            .collect::<Vec<_>>();
+        notes.push(Note::PolaritySplit {
+            groups: (
+                a.iter().map(|&index| mains[index].clone()).collect(),
+                b.iter().map(|&index| mains[index].clone()).collect(),
+            ),
+            confidence: levels::median(confidence),
+        });
     }
-
-    let signs = signed_groups(&pairs);
-    let first_sign = signs[0];
-    let a = mains
-        .iter()
-        .zip(&signs)
-        .filter(|(_, sign)| **sign == first_sign)
-        .map(|(role, _)| role.clone())
-        .collect::<Vec<_>>();
-    let b = mains
-        .iter()
-        .zip(&signs)
-        .filter(|(_, sign)| **sign != first_sign)
-        .map(|(role, _)| role.clone())
-        .collect::<Vec<_>>();
-    let confidence = (0..mains.len())
-        .flat_map(|left| (left + 1..mains.len()).map(move |right| (left, right)))
-        .filter(|(left, right)| signs[*left] != signs[*right])
-        .filter_map(|(left, right)| pairs[left][right].map(f64::abs))
-        .collect::<Vec<_>>();
-    vec![Note::PolaritySplit {
-        groups: (a, b),
-        confidence: levels::median(confidence),
-    }]
+    notes
 }
 
 #[cfg(test)]
@@ -318,7 +330,7 @@ mod tests {
         );
         assert!(matches!(
             notes.as_slice(),
-            [Note::PolarityReversed { role, compared: 3, .. }] if role == "Ls"
+            [Note::PolarityReversed { role, compared: 3, opposite: 3, .. }] if role == "Ls"
         ));
 
         let pair = ["L", "R"].map(String::from);
@@ -334,6 +346,162 @@ mod tests {
             matches!(notes.as_slice(), [Note::PolaritySplit { groups, .. }]
             if groups.0 == ["L", "R"] && groups.1 == ["C", "Ls"])
         );
+    }
+
+    #[test]
+    fn polarity_check_judges_the_majority_among_decided_mains() {
+        // Only L and R can be correlated: the three silent mains carry no vote,
+        // so the pair is a split, not two reversed mains.
+        let mains = ["L", "R", "C", "Ls", "Rs"].map(String::from);
+        let silent = || Samples::F64(vec![0.0; 1024].into());
+        let notes = check(
+            &MeasurementSet {
+                positions: vec![(
+                    1,
+                    vec![
+                        ("L".into(), measurement(pulse(1.0, 0))),
+                        ("R".into(), measurement(pulse(-1.0, 0))),
+                        ("C".into(), measurement(silent())),
+                        ("Ls".into(), measurement(silent())),
+                        ("Rs".into(), measurement(silent())),
+                    ],
+                )],
+            },
+            &mains,
+            1,
+        );
+        assert!(
+            matches!(notes.as_slice(), [Note::PolaritySplit { groups, .. }]
+            if groups.0 == ["L"] && groups.1 == ["R"])
+        );
+
+        // Two reversed mains among five: each is opposite to the three normal
+        // ones and agrees with the other reversed one.
+        let notes = check(
+            &set(&[
+                ("L", 1.0),
+                ("R", 1.0),
+                ("C", 1.0),
+                ("Ls", -1.0),
+                ("Rs", -1.0),
+            ]),
+            &mains,
+            1,
+        );
+        assert!(matches!(
+            notes.as_slice(),
+            [
+                Note::PolarityReversed { role: a, compared: 4, opposite: 3, .. },
+                Note::PolarityReversed { role: b, compared: 4, opposite: 3, .. },
+            ] if a == "Ls" && b == "Rs"
+        ));
+    }
+
+    #[test]
+    fn polarity_check_judges_each_connected_component() {
+        // L and R were measured at one position, C, Ls and Rs at another, so
+        // nothing joins the two sets: L against R is a split of its own, and
+        // the agreeing trio says nothing about it.
+        let mains = ["L", "R", "C", "Ls", "Rs"].map(String::from);
+        let notes = check(
+            &MeasurementSet {
+                positions: vec![
+                    (
+                        1,
+                        vec![
+                            ("L".into(), measurement(pulse(1.0, 0))),
+                            ("R".into(), measurement(pulse(-1.0, 0))),
+                        ],
+                    ),
+                    (
+                        2,
+                        vec![
+                            ("C".into(), measurement(pulse(1.0, 0))),
+                            ("Ls".into(), measurement(pulse(1.0, 0))),
+                            ("Rs".into(), measurement(pulse(1.0, 0))),
+                        ],
+                    ),
+                ],
+            },
+            &mains,
+            1,
+        );
+        assert!(
+            matches!(notes.as_slice(), [Note::PolaritySplit { groups, .. }]
+            if groups.0 == ["L"] && groups.1 == ["R"])
+        );
+    }
+
+    #[test]
+    fn polarity_check_withholds_a_component_with_contradicting_signs() {
+        // Every pair measured at its own position and every pair opposite:
+        // no assignment of signs fits, so there is no verdict.
+        let mains = ["L", "R", "C"].map(String::from);
+        let notes = check(
+            &MeasurementSet {
+                positions: vec![
+                    (
+                        1,
+                        vec![
+                            ("L".into(), measurement(pulse(1.0, 0))),
+                            ("R".into(), measurement(pulse(-1.0, 0))),
+                        ],
+                    ),
+                    (
+                        2,
+                        vec![
+                            ("L".into(), measurement(pulse(1.0, 0))),
+                            ("C".into(), measurement(pulse(-1.0, 0))),
+                        ],
+                    ),
+                    (
+                        3,
+                        vec![
+                            ("R".into(), measurement(pulse(1.0, 0))),
+                            ("C".into(), measurement(pulse(-1.0, 0))),
+                        ],
+                    ),
+                ],
+            },
+            &mains,
+            1,
+        );
+        assert!(notes.is_empty());
+    }
+
+    #[test]
+    fn polarity_check_reverses_the_smaller_sign_group_not_the_lonely_main() {
+        // Decided pairs: L/R same, L/Rs opposite, Rs/Ls same, Ls/C opposite.
+        // The signs split {L, R, C} from {Ls, Rs}: the pair is reversed even
+        // though C is the only main whose decided pairs are all negative.
+        let mains = ["L", "R", "C", "Ls", "Rs"].map(String::from);
+        let position = |index: u32, pair: [(&str, f64); 2]| {
+            (
+                index,
+                pair.iter()
+                    .map(|(role, sign)| ((*role).into(), measurement(pulse(*sign, 0))))
+                    .collect(),
+            )
+        };
+        let notes = check(
+            &MeasurementSet {
+                positions: vec![
+                    position(1, [("L", 1.0), ("R", 1.0)]),
+                    position(2, [("L", 1.0), ("Rs", -1.0)]),
+                    position(3, [("Rs", 1.0), ("Ls", 1.0)]),
+                    position(4, [("Ls", 1.0), ("C", -1.0)]),
+                ],
+            },
+            &mains,
+            1,
+        );
+        assert!(matches!(
+            notes.as_slice(),
+            [
+                Note::PolarityReversed { role: a, compared: 2, opposite: 1, .. },
+                Note::PolarityReversed { role: b, compared: 2, opposite: 1, .. },
+            ] if a == "Ls" && b == "Rs"
+        ));
     }
 
     #[test]
