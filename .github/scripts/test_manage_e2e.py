@@ -530,11 +530,7 @@ class OfferTest(unittest.TestCase):
 
             def execute(self, script, *args):
                 self.scripts.append(script)
-                if "project.new.cancel" in script:
-                    return "offered"
-                if "ui-dialog-backdrop" in script:
-                    return True
-                return True  # settle check
+                return True  # offered, then closed; the settle check too
 
             def find(self, selector):
                 return {"selector": selector}
@@ -551,13 +547,13 @@ class OfferTest(unittest.TestCase):
         scenario.dismiss_offer()
         self.assertEqual(scenario.driver.clicked, [m.ui("project.new.cancel")])
 
-    def test_an_open_project_is_not_dismissed(self):
+    def test_no_offer_within_the_wait_means_nothing_to_dismiss(self):
         class Driver:
             def __init__(self):
                 self.clicked = []
 
             def execute(self, script, *args):
-                return "open" if "project.new.cancel" in script else True
+                return False if "project.new.cancel" in script else True
 
             def find(self, selector):
                 return {"selector": selector}
@@ -571,7 +567,7 @@ class OfferTest(unittest.TestCase):
         scenario = object.__new__(m.Scenario)
         scenario.driver = Driver()
         scenario.log = lambda *args, **kwargs: None
-        scenario.dismiss_offer()
+        scenario.dismiss_offer(timeout=0.5)
         self.assertEqual(scenario.driver.clicked, [])
 
 

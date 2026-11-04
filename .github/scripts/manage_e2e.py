@@ -875,21 +875,23 @@ class Scenario:
         self.active_application = executable
         self.shown(ui("host" if shell else "frame"))
 
-    def dismiss_offer(self):
+    def dismiss_offer(self, timeout=20):
         # Once the app is ready with no project open it offers 새 프로젝트
         # (App.tsx), and the dialog's backdrop then intercepts the menu click:
-        # PR #178's reruns failed there after a relaunch. Cancel the offer when
-        # it appears; while the service still holds the project the status
-        # block shows the file instead and nothing is offered.
-        def state():
-            return self.driver.execute(
-                "if (document.querySelector('[data-ui=\"project.new.cancel\"]')) return 'offered';"
-                "return document.querySelector('[data-ui=\"frame.status.file\"]') ? 'open' : null;")
-        if wait_for("project offer", state, timeout=15) == "offered":
-            self.log("dismiss_offer")
-            self.click("project.new.cancel")
-            wait_for("offer closed", lambda: self.driver.execute(
-                "return document.querySelector('.ui-dialog-backdrop') === null;"))
+        # PR #178's reruns failed there after a relaunch, once before the menu
+        # opened and once after. The status block is drawn either way, so the
+        # only reliable sign is the dialog itself: wait for it a little and
+        # cancel it; with the project still held by the service it never comes.
+        offered = lambda: self.driver.execute(
+            "return document.querySelector('[data-ui=\"project.new.cancel\"]') !== null;")
+        try:
+            wait_for("project offer", offered, timeout=timeout)
+        except CheckError:
+            return
+        self.log("dismiss_offer")
+        self.click("project.new.cancel")
+        wait_for("offer closed", lambda: self.driver.execute(
+            "return document.querySelector('.ui-dialog-backdrop') === null;"))
 
     def open_project(self):
         self.dismiss_offer()
