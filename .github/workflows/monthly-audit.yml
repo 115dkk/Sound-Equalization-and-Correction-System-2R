@@ -365,17 +365,25 @@ jobs:
           # never drift to another one: anything that would switch models
           # ends with an explicit error instead. The refresh loop above keeps
           # the OIDC request variables; the session itself does not get them.
-          # 200 turns, because the codebase keeps growing (maintainer,
+          # 250 turns, because the codebase keeps growing (maintainer,
           # 2026-10-31).
+          # CLAUDE_CODE_ENABLE_TASKS and CLAUDE_CODE_ENABLE_TODO_TOOLS turn on
+          # TaskCreate, TaskUpdate and TaskList, which -p sessions leave off, so
+          # the audit can plan its dimensions and work through them in order.
           set +e
           env -u ACTIONS_ID_TOKEN_REQUEST_TOKEN -u ACTIONS_ID_TOKEN_REQUEST_URL \
-          claude \
+          CLAUDE_CODE_ENABLE_TASKS=1 CLAUDE_CODE_ENABLE_TODO_TOOLS=1 claude \
             --model "$AUDIT_MODEL" \
             --effort xhigh \
             --settings "{\"availableModels\": [\"$AUDIT_MODEL\"]}" \
             --permission-mode auto \
-            --max-turns 200 \
+            --max-turns 250 \
             -p "
+          Task tools (TaskCreate, TaskUpdate, TaskList) are available. Before
+          each part, create one task per dimension or step it requires, then
+          mark each one in progress and completed as you work through them,
+          so no dimension is skipped when the session runs long.
+
           You will perform two analyses in sequence within this single
           session. Each part writes its deliverable to its own Markdown file
           in the repository root (do not commit them). Print only a short
