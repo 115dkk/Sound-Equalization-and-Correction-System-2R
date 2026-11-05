@@ -3,8 +3,9 @@ import { useProjectIdentity } from "../../state/react";
 // The settings that change the correction, in sections grouped by what they
 // change: 모드, 보정 범위, 크로스오버, 서브 정렬 (BA), 저음 도착과 울림,
 // MIMO. Every change goes through `changeSetting` (calibration_settings_set)
-// and only marks the result stale. Detail sits under 고급; every correction
-// mode is available in the mode selector. MIMO is chosen beside 보정 계산 too
+// and only marks the result stale. Experiments, resource budgets and rare
+// setups sit under 고급 (ADR 0038); every correction mode is available in the
+// mode selector. MIMO is chosen beside 보정 계산 too
 // (MIMO 함께 계산, P142); its card keeps the details and MIMO만 계산. So is
 // XO 추천 포함 (ADR 0028); the crossover card has its switch as well.
 import { ComputeControl, ComputeResult } from "./ComputeControl";
@@ -492,7 +493,22 @@ function RangeSection({ view, actions, advancedOpen = false }: Props & { advance
       )}
       <ExtraBands settings={s} primaryHi={shownHi} rejection={rejection} change={actions.changeSetting} />
       <LowEnd settings={s} change={actions.changeSetting} />
-      {/* Deep narrow dips are filled only partly (ADR 0034): beside the low-end group, not a protection. */}
+      {/* The boost limit and 딥 보정 제한 both limit how far the correction reaches, so they sit together in the body (ADR 0038). */}
+      <div className="calibrate-fields">
+        <NumberField
+          id="calibrate.range.boost"
+          label={t("calibrate.range.boost")}
+          value={s.boost_max_db}
+          min={LIMITS.boost[0]}
+          max={LIMITS.boost[1]}
+          step={1}
+          digits={1}
+          unit="dB"
+          help={t("calibrate.range.boost.hint")}
+          onChange={(db) => actions.changeSetting({ kind: "boost_max", db })}
+        />
+      </div>
+      {/* Deep narrow dips are filled only partly (ADR 0034): a limit beside the boost limit, not a protection. */}
       <Toggle
         id="calibrate.range.dip_limit"
         label={t("calibrate.range.dip_limit")}
@@ -500,22 +516,8 @@ function RangeSection({ view, actions, advancedOpen = false }: Props & { advance
         checked={s.dip_limit}
         onChange={(on) => void actions.changeSetting({ kind: "dip_limit", on })}
       />
-      {/* An experiment left on stays in view: the section opens with it. */}
-      <Advanced id="calibrate.range.advanced" count={2} defaultOpen={advancedOpen || analytic !== "off"}>
-        <div className="calibrate-fields">
-          <NumberField
-            id="calibrate.range.boost"
-            label={t("calibrate.range.boost")}
-            value={s.boost_max_db}
-            min={LIMITS.boost[0]}
-            max={LIMITS.boost[1]}
-            step={1}
-            digits={1}
-            unit="dB"
-            help={t("calibrate.range.boost.hint")}
-            onChange={(db) => actions.changeSetting({ kind: "boost_max", db })}
-          />
-        </div>
+      {/* Only the experiment is left under 고급 (ADR 0038). Left on, it stays in view: the section opens with it. */}
+      <Advanced id="calibrate.range.advanced" count={1} defaultOpen={advancedOpen || analytic !== "off"}>
         <Segmented<AnalyticScope>
           id="calibrate.analytic"
           label={t("calibrate.analytic.title")}
@@ -892,7 +894,7 @@ function SubEditor({ view, actions, role }: Props & { role: string }) {
   );
 }
 
-function BaSection({ view, actions, onSampleRateSettings, editSub }: FailureProps & { editSub?: string | undefined }) {
+function BaSection({ view, actions, onSampleRateSettings, editSub, advancedOpen = false }: FailureProps & { editSub?: string | undefined; advancedOpen?: boolean | undefined }) {
   const t = useT();
   const number = useNumber();
   const s = view.settings;
@@ -961,7 +963,35 @@ function BaSection({ view, actions, onSampleRateSettings, editSub }: FailureProp
           ))}
         </ul>
       )}
-      <Advanced id="calibrate.ba.advanced" defaultOpen={editSub !== undefined}>
+      {/* The sub to set, its editor and the main delay sit in the body (ADR 0038): the card itself shows only with two or more subs.
+          The editor shows for every sub (fixed filters and MIMO support apply to auto subs too); its values only for a fixed sub
+          or a fixed-relative group, and the main delay only while a sub is fixed. */}
+      <Segmented
+        id="calibrate.ba.edit"
+        label={t("calibrate.ba.edit")}
+        value={role}
+        options={subs.map((r) => ({ value: r, label: roleCode(r) }))}
+        onChange={setEditing}
+      />
+      <SubEditor view={view} actions={actions} role={role} />
+      {anyFixed && (
+        <div className="calibrate-fields">
+          <NumberField
+            id="calibrate.ba.main_delay"
+            label={t("calibrate.ba.main_delay")}
+            value={s.sub_main_delay_ms}
+            min={LIMITS.main_delay[0]}
+            max={LIMITS.main_delay[1]}
+            step={0.1}
+            digits={2}
+            unit="ms"
+            help={t("calibrate.ba.main_delay.hint")}
+            onChange={(ms) => actions.changeSetting({ kind: "main_delay", ms })}
+          />
+        </div>
+      )}
+      {/* 고급 keeps only the infra sub, a rare setup (ADR 0038); the tutorial opens it for its infra quest (App.tsx). */}
+      <Advanced id="calibrate.ba.advanced" count={1} defaultOpen={advancedOpen}>
         <fieldset className="calibrate-group" data-ui="calibrate.ba.infra_group">
           <legend className="ui-field__label">{t("calibrate.ba.infra_title")}</legend>
           <div className="calibrate-fields">
@@ -1020,30 +1050,6 @@ function BaSection({ view, actions, onSampleRateSettings, editSub }: FailureProp
             </p>
           )}
         </fieldset>
-        <Segmented
-          id="calibrate.ba.edit"
-          label={t("calibrate.ba.edit")}
-          value={role}
-          options={subs.map((r) => ({ value: r, label: roleCode(r) }))}
-          onChange={setEditing}
-        />
-        <SubEditor view={view} actions={actions} role={role} />
-        {anyFixed && (
-          <div className="calibrate-fields">
-            <NumberField
-              id="calibrate.ba.main_delay"
-              label={t("calibrate.ba.main_delay")}
-              value={s.sub_main_delay_ms}
-              min={LIMITS.main_delay[0]}
-              max={LIMITS.main_delay[1]}
-              step={0.1}
-              digits={2}
-              unit="ms"
-              help={t("calibrate.ba.main_delay.hint")}
-              onChange={(ms) => actions.changeSetting({ kind: "main_delay", ms })}
-            />
-          </div>
-        )}
       </Advanced>
     </SettingsCard>
   );
@@ -1268,9 +1274,10 @@ export function Settings({
   actions,
   editSub,
   rangeAdvanced,
+  baAdvanced,
   sampleRateRequest,
   onSampleRateSettings,
-}: FailureProps & { editSub?: string | undefined; rangeAdvanced?: boolean | undefined; sampleRateRequest: number }) {
+}: FailureProps & { editSub?: string | undefined; rangeAdvanced?: boolean | undefined; baAdvanced?: boolean | undefined; sampleRateRequest: number }) {
   const t = useT();
   return (
     <section className="calibrate-settings" aria-labelledby="calibrate.settings.title" data-ui="calibrate.settings">
@@ -1284,7 +1291,7 @@ export function Settings({
       <ModeSection view={view} actions={actions} />
       <RangeSection view={view} actions={actions} advancedOpen={rangeAdvanced} />
       <XoSection view={view} actions={actions} onSampleRateSettings={onSampleRateSettings} />
-      <BaSection view={view} actions={actions} onSampleRateSettings={onSampleRateSettings} editSub={editSub} />
+      <BaSection view={view} actions={actions} onSampleRateSettings={onSampleRateSettings} editSub={editSub} advancedOpen={baAdvanced} />
       <LfSection view={view} actions={actions} />
       <MimoSection view={view} actions={actions} onSampleRateSettings={onSampleRateSettings} />
     </section>

@@ -476,6 +476,9 @@ class ClickTest(unittest.TestCase):
             def attribute(self, element, name):
                 return None
 
+            def execute(self, script, *args):
+                return True
+
             def click(self, element):
                 self.clicks += 1
                 if self.clicks == 1:
@@ -486,6 +489,87 @@ class ClickTest(unittest.TestCase):
         scenario.log = lambda *args, **kwargs: None
         scenario.click("frame.rail.export")
         self.assertEqual(scenario.driver.clicks, 2)
+
+    def test_a_click_waits_until_the_element_has_settled(self):
+        # The settle script answers false while a menu is still rising into
+        # place (its rectangle differs between polls); the click lands only
+        # after it answers true, and the poll runs the script, not a sleep.
+        class Driver:
+            def __init__(self):
+                self.polls = 0
+                self.clicks = 0
+
+            def find(self, selector):
+                return {"selector": selector}
+
+            def attribute(self, element, name):
+                return None
+
+            def execute(self, script, *args):
+                self.assertion = script is m.SETTLED and args[0] == {m.ELEMENT: {"selector": m.ui("frame.project.open")}}
+                self.polls += 1
+                return self.polls >= 3
+
+            def click(self, element):
+                self.clicks += 1
+
+        scenario = object.__new__(m.Scenario)
+        scenario.driver = Driver()
+        scenario.log = lambda *args, **kwargs: None
+        scenario.click("frame.project.open")
+        self.assertTrue(scenario.driver.assertion)
+        self.assertEqual((scenario.driver.polls, scenario.driver.clicks), (3, 1))
+
+
+class OfferTest(unittest.TestCase):
+    def test_an_offered_new_project_dialog_is_cancelled_before_the_menu(self):
+        class Driver:
+            def __init__(self):
+                self.scripts = []
+                self.clicked = []
+
+            def execute(self, script, *args):
+                self.scripts.append(script)
+                return True  # offered, then closed; the settle check too
+
+            def find(self, selector):
+                return {"selector": selector}
+
+            def attribute(self, element, name):
+                return None
+
+            def click(self, element):
+                self.clicked.append(element["selector"])
+
+        scenario = object.__new__(m.Scenario)
+        scenario.driver = Driver()
+        scenario.log = lambda *args, **kwargs: None
+        scenario.dismiss_offer()
+        self.assertEqual(scenario.driver.clicked, [m.ui("project.new.cancel")])
+
+    def test_no_offer_within_the_wait_means_nothing_to_dismiss(self):
+        class Driver:
+            def __init__(self):
+                self.clicked = []
+
+            def execute(self, script, *args):
+                return False if "project.new.cancel" in script else True
+
+            def find(self, selector):
+                return {"selector": selector}
+
+            def attribute(self, element, name):
+                return None
+
+            def click(self, element):
+                self.clicked.append(element["selector"])
+
+        scenario = object.__new__(m.Scenario)
+        scenario.driver = Driver()
+        scenario.log = lambda *args, **kwargs: None
+        scenario.dismiss_offer(timeout=0.5)
+        self.assertEqual(scenario.driver.clicked, [])
+
 
 if __name__ == "__main__":
     unittest.main()

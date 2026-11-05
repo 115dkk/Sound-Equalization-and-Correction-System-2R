@@ -322,7 +322,9 @@ describe("측정·가져오기 screen", () => {
     const actions = renderStep(partialView);
     fireEvent.change(ui("measure.options.delay"), { target: { value: "10 초" } });
     expect(actions.setStartDelay).toHaveBeenCalledWith("10 초");
-    fireEvent.click(ui("measure.options.advanced"));
+    // All three sit in the card's body: there is no 고급 to open (ADR 0038).
+    expect(byUi("measure.options.advanced")).toBeNull();
+    expect(ui("measure.options.sweep").closest(".ui-advanced")).toBeNull();
     fireEvent.change(ui("measure.options.sweep"), { target: { value: "524288" } });
     expect(actions.setSweepLength).toHaveBeenCalledWith(524288);
     // REW's acoustic reference allows one sweep: the choice is not drawn at all.
@@ -331,19 +333,20 @@ describe("측정·가져오기 screen", () => {
     cleanup();
     const loopback: MeasureView = { ...partialView, layout: { ...partialView.layout, timing: { reference: "loopback", role: "", output: 14 } } };
     const other = makeActions();
-    renderWith(<MeasureOptions view={loopback} actions={other} busy={false} advancedOpen />);
+    renderWith(<MeasureOptions view={loopback} actions={other} busy={false} />);
+    expect(ui("measure.options.repeats").closest(".ui-advanced")).toBeNull();
     fireEvent.click(within(ui("measure.options.repeats")).getByRole("radio", { name: "4회" }));
     expect(other.setRepetitions).toHaveBeenCalledWith(4);
 
     // Native measurement records one sweep per channel, whatever reference is stored.
     cleanup();
-    renderWith(<MeasureOptions view={{ ...loopback, config: { ...loopback.config, method: "native" } }} actions={makeActions()} busy={false} advancedOpen />);
+    renderWith(<MeasureOptions view={{ ...loopback, config: { ...loopback.config, method: "native" } }} actions={makeActions()} busy={false} />);
     expect(byUi("measure.options.repeats")).toBeNull();
   });
 
   it("offers only the sweep lengths the service supplies, here the one place they are set", () => {
     const view: MeasureView = { ...partialView, sweepOptions: [{ samples: 131072, seconds: 2.7 }, { samples: 524288, seconds: 10.9 }], config: { ...partialView.config, sweep_length: 131072 } };
-    renderWith(<MeasureOptions view={view} actions={makeActions()} busy={false} advancedOpen />);
+    renderWith(<MeasureOptions view={view} actions={makeActions()} busy={false} />);
     const select = ui("measure.options.sweep") as HTMLSelectElement;
     expect(Array.from(select.options, (option) => option.value)).toEqual(["131072", "524288"]);
   });
@@ -492,7 +495,7 @@ describe("측정·가져오기 screen", () => {
           });
         },
       },
-      { view: partialView, extra: <MeasureOptions view={{ ...partialView, layout: { ...partialView.layout, timing: { reference: "none", role: "", output: 1 } } }} actions={makeActions()} busy={false} advancedOpen /> },
+      { view: partialView, extra: <MeasureOptions view={{ ...partialView, layout: { ...partialView.layout, timing: { reference: "none", role: "", output: 1 } } }} actions={makeActions()} busy={false} /> },
       {
         view: filesView,
         extra: <MdatFilesDialog open count={9} records={filesView.records} roleCount={13} busy={false} onLoad={() => {}} onClear={() => {}} onClose={() => {}} />,
