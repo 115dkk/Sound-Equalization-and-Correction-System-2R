@@ -16,7 +16,6 @@ import { useNumber, useT, type Translate } from "../../i18n/react";
 import type { CurveReference } from "../../ipc/bindings/CurveReference";
 import type { Notice } from "../../ipc/bindings/Notice";
 import {
-  Advanced,
   ArrangementMap,
   Button,
   Card,
@@ -515,22 +514,19 @@ function GraphCard({ view, actions }: { view: MeasureView; actions: MeasureActio
 /* ── Options ────────────────────────────────────────────────────────────── */
 
 /**
- * Start delay (shown), sweep length and repetitions (고급). Repetitions are
- * offered only where they can be used: REW with a loopback or no timing
- * reference. Native measurement records one sweep per channel, and REW's
- * acoustic reference allows one, so elsewhere the choice is not drawn.
+ * Start delay, sweep length and repetitions, all in the card's body (ADR 0038).
+ * Repetitions are offered only where they can be used: REW with a loopback or
+ * no timing reference. Native measurement records one sweep per channel, and
+ * REW's acoustic reference allows one, so elsewhere the choice is not drawn.
  */
 export function MeasureOptions({
   view,
   actions,
   busy,
-  advancedOpen = false,
 }: {
   view: MeasureView;
   actions: Pick<MeasureActions, "setStartDelay" | "setSweepLength" | "setRepetitions">;
   busy: boolean;
-  /** Gallery: draw 고급 open. */
-  advancedOpen?: boolean;
 }) {
   const t = useT();
   const number = useNumber();
@@ -549,33 +545,29 @@ export function MeasureOptions({
         help={t("measure.options.delay.hint")}
         disabled={busy}
       />
-      <Advanced id="measure.options.advanced" count={repeatable ? 2 : 1} defaultOpen={advancedOpen}>
-        <div className="measure-options__advanced">
-          <Select
-            id="measure.options.sweep"
-            label={t("measure.options.sweep")}
-            value={String(view.config.sweep_length)}
-            options={view.sweepOptions.map((option) => ({
-              value: String(option.samples),
-              label: t("measure.options.sweep.option", { length: sweepName(option.samples), seconds: number(option.seconds, 1) }),
-            }))}
-            onChange={(value) => void actions.setSweepLength(Number(value))}
-            help={t("measure.options.sweep.hint")}
-            disabled={busy}
-          />
-          {repeatable && (
-            <Segmented
-              id="measure.options.repeats"
-              label={t("measure.options.repeats")}
-              help={t("measure.options.repeats.hint")}
-              size="sm"
-              value={String(repetitions)}
-              options={REPETITIONS.map((n) => ({ value: String(n), label: t("measure.options.repeats.option", { n }), disabled: busy }))}
-              onChange={(value) => void actions.setRepetitions(Number(value))}
-            />
-          )}
-        </div>
-      </Advanced>
+      <Select
+        id="measure.options.sweep"
+        label={t("measure.options.sweep")}
+        value={String(view.config.sweep_length)}
+        options={view.sweepOptions.map((option) => ({
+          value: String(option.samples),
+          label: t("measure.options.sweep.option", { length: sweepName(option.samples), seconds: number(option.seconds, 1) }),
+        }))}
+        onChange={(value) => void actions.setSweepLength(Number(value))}
+        help={t("measure.options.sweep.hint")}
+        disabled={busy}
+      />
+      {repeatable && (
+        <Segmented
+          id="measure.options.repeats"
+          label={t("measure.options.repeats")}
+          help={t("measure.options.repeats.hint")}
+          size="sm"
+          value={String(repetitions)}
+          options={REPETITIONS.map((n) => ({ value: String(n), label: t("measure.options.repeats.option", { n }), disabled: busy }))}
+          onChange={(value) => void actions.setRepetitions(Number(value))}
+        />
+      )}
     </Card>
   );
 }

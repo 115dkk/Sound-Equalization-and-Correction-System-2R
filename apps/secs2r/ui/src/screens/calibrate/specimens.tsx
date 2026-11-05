@@ -321,8 +321,8 @@ export const calibrateSpecimens: SpecimenDef[] = [
   frame("settings", "settings: mode and correction range", () => <CalibrateFrame view={fx.splView} scrollTo="calibrate.settings" />),
   frame("no-subs", "no subs: the XO section says why", () => <CalibrateFrame view={fx.noSubsView} scrollTo="calibrate.settings.xo" />),
   frame("no-subs-run", "no subs: no XO 추천 포함 beside 다시 보정하기, only MIMO 함께 계산", () => <CalibrateFrame view={fx.noSubsView} />),
-  frame("ba-settings", "BA settings with 고급 open on a fixed sub", () => <CalibrateFrame view={fx.baView} scrollTo="calibrate.settings.ba" initial={{ editSub: "SW2" }} />),
-  frame("ba-editor", "BA 고급: values, fixed filters and MIMO support of a fixed sub", () => (
+  frame("ba-settings", "BA settings: a fixed sub chosen in the card body", () => <CalibrateFrame view={fx.baView} scrollTo="calibrate.settings.ba" initial={{ editSub: "SW2" }} />),
+  frame("ba-editor", "BA editor: values, fixed filters and MIMO support of a fixed sub", () => (
     <CalibrateFrame view={fx.baView} scrollTo="calibrate.ba.values" initial={{ editSub: "SW2" }} />
   )),
   frame("ultra", "초고지연 mode and its delay limit", () => <CalibrateFrame view={fx.ultraView} scrollTo="calibrate.settings.mode" />),
