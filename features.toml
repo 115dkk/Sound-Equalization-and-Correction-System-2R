@@ -571,7 +571,7 @@ id = "format.irs_store"
 kind = "format"
 milestone = "M1"
 status = "implemented"
-tests = ["secs-project::wav_writer_and_readers_match_oracle", "secs-project::wav_reader_decodes_hand_built_fixtures_of_every_supported_format_td47", "secs-project::wav_reader_rejects_hand_built_malformed_fixtures_td47", "secs-project::truncated_wav_data_chunk_is_rejected_f17"]
+tests = ["secs-project::wav_writer_and_readers_match_oracle", "secs-project::wav_reader_decodes_hand_built_fixtures_of_every_supported_format_td47", "secs-project::wav_reader_rejects_hand_built_malformed_fixtures_td47", "secs-project::truncated_wav_data_chunk_is_rejected_f17", "secs-project::wav_readers_reject_zero_rate_and_stereo_float_td228"]
 upstream = "rewapi/session.py"
 note = "float32 writer bytes match upstream; reader also supports mono PCM 16/24/32, float 32/64 and WAVE_FORMAT_EXTENSIBLE; PCM8 and non-left-aligned valid-bit/container combinations are unsupported"
 
@@ -607,7 +607,7 @@ id = "format.mdat_source_info"
 kind = "format"
 milestone = "M5"
 status = "implemented"
-tests = ["secs-mdat::source_info_extracts_and_round_trips_oracle_values", "secs-mdat::source_info_from_rew_measurement_matches_oracle", "secs-mdat::source_info_allocation_is_bounded"]
+tests = ["secs-mdat::source_info_extracts_and_round_trips_oracle_values", "secs-mdat::source_info_from_rew_measurement_matches_oracle", "secs-mdat::source_info_allocation_is_bounded", "secs-mdat::source_info_integer_box_rejects_i64_narrowing_td228"]
 upstream = "rew_mdat/source_info.py"
 note = "원 측정의 마이크 캘리브레이션, 장치, 박스 값, 시각과 형식을 꺼내고 비운 템플릿에 되넣으며 REW 측정 캘 파일을 파싱합니다."
 

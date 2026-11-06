@@ -162,10 +162,14 @@ fn wav_chunks(data: &[u8], default_format: Option<WavFormat>) -> Result<WavChunk
             break;
         }
     }
+    let format = format
+        .or(default_format)
+        .ok_or_else(|| ProjectError::Wav("missing fmt chunk".into()))?;
+    if format.sample_rate == 0 {
+        return Err(ProjectError::Wav("WAV sample rate is zero".into()));
+    }
     Ok((
-        format
-            .or(default_format)
-            .ok_or_else(|| ProjectError::Wav("missing fmt chunk".into()))?,
+        format,
         payload.ok_or_else(|| ProjectError::Wav("missing data chunk".into()))?,
     ))
 }
@@ -179,6 +183,18 @@ pub fn read_wav_float32(data: &[u8]) -> Result<(Vec<f32>, u32), ProjectError> {
         valid_bits: 32,
     };
     let (format, payload) = wav_chunks(data, Some(default))?;
+    if format.channels != 1 {
+        return Err(ProjectError::Wav(format!(
+            "float32 WAV has {} channels (expected 1)",
+            format.channels
+        )));
+    }
+    if format.block_align != 4 {
+        return Err(ProjectError::Wav(format!(
+            "float32 WAV block alignment is {} (expected 4)",
+            format.block_align
+        )));
+    }
     if format.tag != 3 || format.bits != 32 || payload.len() % 4 != 0 {
         return Err(ProjectError::Wav(format!(
             "not 32-bit float WAV (fmt={}, bits={})",

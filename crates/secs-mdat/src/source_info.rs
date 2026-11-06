@@ -421,12 +421,38 @@ pub fn boxes_for(stream: &Stream, prototype: NodeId) -> Boxes {
     boxes
 }
 
+fn validate_boxed_integer(name: &str, value: Boxed) -> Result<(), MdatError> {
+    if let Boxed::Integer(value) = value
+        && i32::try_from(value).is_err()
+    {
+        return Err(MdatError::Input(format!(
+            "{name} integer {value} is outside the Java Integer range"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_source_info(info: &SourceInfo) -> Result<(), MdatError> {
+    for (name, value) in &info.boxed {
+        validate_boxed_integer(name, *value)?;
+    }
+    for (cal_name, cal) in &info.cal {
+        for (name, value) in &cal.boxed {
+            validate_boxed_integer(&format!("{cal_name}.{name}"), *value)?;
+        }
+    }
+    Ok(())
+}
+
 pub fn apply(
     stream: &mut Stream,
     measurement: NodeId,
     info: Option<&SourceInfo>,
     boxes: &mut Boxes,
 ) -> Result<(), MdatError> {
+    if let Some(info) = info {
+        validate_source_info(info)?;
+    }
     scan(stream, measurement, boxes);
     scrub(stream, measurement)?;
     let Some(info) = info else {
