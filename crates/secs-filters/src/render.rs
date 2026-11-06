@@ -5,6 +5,7 @@ use secs_dsp::rate::{DESIGN_RATE, delay_samples, is_output_rate, taps_at};
 use secs_graph::emit::guard::find_ops;
 use secs_graph::{FilterPlan, FirView, Op};
 use std::f64::consts::PI;
+use std::sync::Arc;
 
 const FLOOR_RATIO: f64 = 1e-6;
 const MIN_LENGTH: usize = 4096;
@@ -131,7 +132,7 @@ impl Biquad {
 
 #[derive(Debug)]
 struct Route {
-    fir: Vec<f64>,
+    fir: Arc<[f64]>,
     gain: f64,
     delay_samples: usize,
     delay_ms: f64,
@@ -148,25 +149,36 @@ impl Route {
         max_len: usize,
         rate: u32,
     ) -> Result<Self, FiltersError> {
-        Self::from_parts_cancellable(parts, route_gain, input, output, max_len, rate, &|| false)
+        let mut firs = Vec::new();
+        Self::from_parts_cancellable(
+            parts,
+            route_gain,
+            (input, output),
+            max_len,
+            rate,
+            &mut firs,
+            &|| false,
+        )
     }
 
     fn from_parts_cancellable(
         parts: &[&[Op]],
         route_gain: f64,
-        input: &str,
-        output: &str,
+        pair: (&str, &str),
         max_len: usize,
         rate: u32,
+        firs: &mut Vec<(String, Arc<[f64]>)>,
         cancelled: &dyn Fn() -> bool,
     ) -> Result<Self, FiltersError> {
+        let (input, output) = pair;
         let mut route = Self {
-            fir: vec![1.0],
+            fir: Arc::from([1.0]),
             gain: route_gain,
             delay_samples: 0,
             delay_ms: 0.0,
             biquads: Vec::new(),
         };
+        let mut has_fir = false;
         for op in parts.iter().flat_map(|ops| ops.iter()) {
             if cancelled() {
                 return Err(FiltersError::Cancelled);
@@ -180,15 +192,29 @@ impl Route {
                 } => route
                     .biquads
                     .push(Biquad::peaking(*frequency, *q, *gain_db, rate)?),
-                Op::Fir { taps, .. } => {
-                    let taps = FirView::Full(taps).materialize_at(rate)?;
-                    route.fir = convolve(&route.fir, &taps, max_len, input, output, cancelled)?;
+                Op::Fir { name, taps, .. } => {
+                    let taps = materialized_fir(firs, name, FirView::Full(taps), rate)?;
+                    route.fir = if has_fir {
+                        convolve(&route.fir, &taps, max_len, input, output, cancelled)?.into()
+                    } else {
+                        has_fir = true;
+                        taps
+                    };
                 }
                 Op::FirLowRate {
-                    taps_low, fs_low, ..
+                    name,
+                    taps_low,
+                    fs_low,
+                    ..
                 } => {
-                    let taps = FirView::LowRate(taps_low, *fs_low).materialize_at(rate)?;
-                    route.fir = convolve(&route.fir, &taps, max_len, input, output, cancelled)?;
+                    let taps =
+                        materialized_fir(firs, name, FirView::LowRate(taps_low, *fs_low), rate)?;
+                    route.fir = if has_fir {
+                        convolve(&route.fir, &taps, max_len, input, output, cancelled)?.into()
+                    } else {
+                        has_fir = true;
+                        taps
+                    };
                 }
                 Op::Gain { db, .. } => route.gain *= 10_f64.powf(db / 20.0),
                 Op::Invert { .. } => route.gain = -route.gain,
@@ -286,6 +312,20 @@ impl Route {
     }
 }
 
+fn materialized_fir(
+    firs: &mut Vec<(String, Arc<[f64]>)>,
+    name: &str,
+    view: FirView<'_>,
+    rate: u32,
+) -> Result<Arc<[f64]>, FiltersError> {
+    if let Some((_, taps)) = firs.iter().find(|(cached, _)| cached == name) {
+        return Ok(Arc::clone(taps));
+    }
+    let taps: Arc<[f64]> = view.materialize_at(rate)?.into();
+    firs.push((name.to_owned(), Arc::clone(&taps)));
+    Ok(taps)
+}
+
 fn convolve(
     left: &[f64],
     right: &[f64],
@@ -348,6 +388,7 @@ fn collect_routes(
         })
         .collect::<Vec<_>>();
     let output_count = plan.outputs.len();
+    let mut firs = Vec::new();
     let mut add = |input_index: usize,
                    output: &str,
                    parts: &[&[Op]],
@@ -362,10 +403,10 @@ fn collect_routes(
         pair.routes.push(Route::from_parts_cancellable(
             parts,
             gain,
-            &pair.input,
-            &pair.output,
+            (&pair.input, &pair.output),
             max_len,
             rate,
+            &mut firs,
             cancelled,
         )?);
         Ok(())

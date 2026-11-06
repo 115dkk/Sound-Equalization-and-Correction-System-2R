@@ -1591,11 +1591,15 @@ fn convolution_csv(
     frequencies: &[f64],
     rate: u32,
     cancelled: &dyn Fn() -> bool,
-) -> Result<String, FiltersError> {
+) -> Result<(String, f64), FiltersError> {
     let mut text = String::from("frequency_hz,magnitude_db,phase_deg\n");
+    let mut peak = 0.0_f64;
     for &frequency in frequencies {
         let response = exact_dtft_cancellable(samples, frequency, rate, cancelled)?;
         let magnitude = response.norm();
+        if (20.0..=20_000.0).contains(&frequency) {
+            peak = peak.max(magnitude);
+        }
         let magnitude_db = if magnitude == 0.0 {
             -200.0
         } else {
@@ -1614,7 +1618,7 @@ fn convolution_csv(
             phase + 0.0
         ));
     }
-    Ok(text)
+    Ok((text, peak))
 }
 
 fn convolution_guide(
@@ -1829,15 +1833,9 @@ pub fn prepare_convolution_named_with_options(
                 .iter()
                 .map(|sample| f64::from((*sample * attenuation) as f32))
                 .collect::<Vec<_>>();
-            let mut peak = 0.0_f64;
-            for &frequency in frequencies
-                .iter()
-                .filter(|&&frequency| (20.0..=20_000.0).contains(&frequency))
-            {
-                peak = peak.max(
-                    exact_dtft_cancellable(&path.response, frequency, rate, cancelled)?.norm(),
-                );
-            }
+            let (csv_text, written_peak) =
+                convolution_csv(&written, &frequencies, rate, cancelled)?;
+            let peak = written_peak / attenuation;
             let peak_gain_db = if peak == 0.0 {
                 -200.0
             } else {
@@ -1848,10 +1846,7 @@ pub fn prepare_convolution_named_with_options(
                 wav_bytes(&written, rate)
                     .map_err(|error| FiltersError::Invalid(format!("{stem}: {error}")))?,
             ));
-            files.push((
-                prefix.join(&csv),
-                convolution_csv(&written, &frequencies, rate, cancelled)?.into_bytes(),
-            ));
+            files.push((prefix.join(&csv), csv_text.into_bytes()));
             routes.push(ConvolutionRoute {
                 input: path.input.clone(),
                 output: path.output.clone(),
