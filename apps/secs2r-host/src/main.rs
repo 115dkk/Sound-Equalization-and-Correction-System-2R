@@ -564,7 +564,17 @@ fn service_loop(
                     }
                     return Ok(());
                 }
-                secs_sys::host::ServiceEvent::SessionLogon(session) => {
+                event @ (secs_sys::host::ServiceEvent::SessionLogon(session)
+                | secs_sys::host::ServiceEvent::ConsoleConnect(session)) => {
+                    let transition_event = match event {
+                        secs_sys::host::ServiceEvent::SessionLogon(_) => {
+                            TransitionSessionEvent::Logon
+                        }
+                        secs_sys::host::ServiceEvent::ConsoleConnect(_) => {
+                            TransitionSessionEvent::ConsoleConnect
+                        }
+                        _ => unreachable!("matched a console connection event"),
+                    };
                     let owner_matches = managing_session_or_none(&mut core, paths) == Some(session);
                     let process_action = process_rules.apply(
                         if owner_matches {
@@ -580,7 +590,7 @@ fn service_loop(
                     let (next, effects) = transitions::decide(
                         &transition_state,
                         TransitionInput::Session {
-                            event: TransitionSessionEvent::Logon,
+                            event: transition_event,
                             session_id: session,
                             owner_matches,
                         },
@@ -602,7 +612,17 @@ fn service_loop(
                         mark_other_user(&mut core, paths, session)?;
                     }
                 }
-                secs_sys::host::ServiceEvent::SessionLogoff(session) => {
+                event @ (secs_sys::host::ServiceEvent::SessionLogoff(session)
+                | secs_sys::host::ServiceEvent::ConsoleDisconnect(session)) => {
+                    let transition_event = match event {
+                        secs_sys::host::ServiceEvent::SessionLogoff(_) => {
+                            TransitionSessionEvent::Logoff
+                        }
+                        secs_sys::host::ServiceEvent::ConsoleDisconnect(_) => {
+                            TransitionSessionEvent::ConsoleDisconnect
+                        }
+                        _ => unreachable!("matched a console disconnection event"),
+                    };
                     let child_session_ended =
                         transition_state.running_child_session == Some(session);
                     let owner_session_ended =
@@ -613,7 +633,7 @@ fn service_loop(
                     let (next, effects) = transitions::decide(
                         &transition_state,
                         TransitionInput::Session {
-                            event: TransitionSessionEvent::Logoff,
+                            event: transition_event,
                             session_id: session,
                             owner_matches: owner_session_ended,
                         },
@@ -631,7 +651,10 @@ fn service_loop(
                         &work_sender,
                         paths,
                     )?;
-                    if child_session_ended || owner_session_ended {
+                    if child_session_ended
+                        || owner_session_ended
+                        || transition_event == TransitionSessionEvent::ConsoleDisconnect
+                    {
                         core.camilla.state = ManagedProcessState::NoSession;
                         core.camilla.pid = None;
                     }

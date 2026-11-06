@@ -1136,6 +1136,8 @@ pub enum ServiceEvent {
     Stop,
     SessionLogon(u32),
     SessionLogoff(u32),
+    ConsoleConnect(u32),
+    ConsoleDisconnect(u32),
 }
 
 #[cfg(target_os = "windows")]
@@ -1178,6 +1180,21 @@ mod service_dispatch {
         }
     }
 
+    pub(super) fn session_event(
+        reason: SessionChangeReason,
+        session_id: u32,
+    ) -> Option<ServiceEvent> {
+        match reason {
+            SessionChangeReason::SessionLogon => Some(ServiceEvent::SessionLogon(session_id)),
+            SessionChangeReason::SessionLogoff => Some(ServiceEvent::SessionLogoff(session_id)),
+            SessionChangeReason::ConsoleConnect => Some(ServiceEvent::ConsoleConnect(session_id)),
+            SessionChangeReason::ConsoleDisconnect => {
+                Some(ServiceEvent::ConsoleDisconnect(session_id))
+            }
+            _ => None,
+        }
+    }
+
     fn status(
         handle: &ServiceStatusHandle,
         state: ServiceState,
@@ -1208,15 +1225,7 @@ mod service_dispatch {
                 ServiceControlHandlerResult::NoError
             }
             ServiceControl::SessionChange(change) => {
-                let event = match change.reason {
-                    SessionChangeReason::SessionLogon => {
-                        Some(ServiceEvent::SessionLogon(change.notification.session_id))
-                    }
-                    SessionChangeReason::SessionLogoff => {
-                        Some(ServiceEvent::SessionLogoff(change.notification.session_id))
-                    }
-                    _ => None,
-                };
+                let event = session_event(change.reason, change.notification.session_id);
                 if let Some(event) = event {
                     let _ = event_sender.send(event);
                 }
@@ -1243,7 +1252,7 @@ mod service_dispatch {
 }
 
 /// Runs a closure as the Windows service body. The closure returns only after a
-/// stop event and receives logon/logoff notifications through the channel.
+/// stop event and receives logon, logoff, and console-switch notifications.
 #[cfg(target_os = "windows")]
 pub fn run_service(
     worker: impl FnOnce(std::sync::mpsc::Receiver<ServiceEvent>) -> Result<(), IpcError>
@@ -1279,6 +1288,21 @@ mod tests {
         assert_eq!(
             service_dispatch::exit_code_for(&Err::<(), _>(ipc_error("worker failed"))),
             ServiceExitCode::ServiceSpecific(1)
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn service_session_change_maps_console_switch_events() {
+        use windows_service::service::SessionChangeReason;
+
+        assert_eq!(
+            service_dispatch::session_event(SessionChangeReason::ConsoleConnect, 8),
+            Some(ServiceEvent::ConsoleConnect(8))
+        );
+        assert_eq!(
+            service_dispatch::session_event(SessionChangeReason::ConsoleDisconnect, 8),
+            Some(ServiceEvent::ConsoleDisconnect(8))
         );
     }
 

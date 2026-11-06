@@ -1051,7 +1051,8 @@ fn dependency_package(
 
 /// OS-facing packages. Only the isolation crate may name them, so every other
 /// crate builds and tests on any OS without audio hardware (docs/adr/0002).
-const OS_PACKAGES: [&str; 16] = [
+const OS_PACKAGES: [&str; 17] = [
+    "windows-registry",
     "windows-service",
     "win-custody",
     "notify",

@@ -11,6 +11,8 @@ const REPAIR_DELAYS: [Duration; MAX_REPAIR_ATTEMPTS as usize - 1] =
 pub enum SessionEvent {
     Logon,
     Logoff,
+    ConsoleConnect,
+    ConsoleDisconnect,
 }
 
 #[derive(Debug, Clone)]
@@ -71,6 +73,7 @@ pub struct State {
     pub restart_scheduled: bool,
     pub eqapo_error: Option<String>,
     pub pending_takeover: Option<PendingTakeover>,
+    pub other_user: bool,
     repair_attempts: u8,
     repair_retry_after: Option<Duration>,
     repair_retry_pending: bool,
@@ -84,6 +87,7 @@ impl State {
             restart_scheduled: false,
             eqapo_error: None,
             pending_takeover: None,
+            other_user: false,
             repair_attempts: 0,
             repair_retry_after: None,
             repair_retry_pending: false,
@@ -206,6 +210,7 @@ pub fn decide(state: &State, input: Input) -> (State, Vec<Effect>) {
             next.restart_scheduled = false;
             next.eqapo_error = None;
             next.pending_takeover = None;
+            next.other_user = false;
             next.repair_attempts = 0;
             next.clear_repair_retry();
             effects.push(Effect::SaveState(next.managed.clone()));
@@ -226,12 +231,15 @@ pub fn decide(state: &State, input: Input) -> (State, Vec<Effect>) {
                 event: match event {
                     SessionEvent::Logon => "session_logon",
                     SessionEvent::Logoff => "session_logoff",
+                    SessionEvent::ConsoleConnect => "console_connect",
+                    SessionEvent::ConsoleDisconnect => "console_disconnect",
                 }
                 .into(),
                 fields: BTreeMap::from([("session".into(), session_id.to_string())]),
             }));
             match event {
-                SessionEvent::Logon if owner_matches => {
+                SessionEvent::Logon | SessionEvent::ConsoleConnect if owner_matches => {
+                    next.other_user = false;
                     if next.managed.owner_session_id != Some(session_id) {
                         next.managed.owner_session_id = Some(session_id);
                         effects.push(Effect::SaveState(next.managed.clone()));
@@ -247,14 +255,16 @@ pub fn decide(state: &State, input: Input) -> (State, Vec<Effect>) {
                         });
                     }
                 }
-                SessionEvent::Logon => {
+                SessionEvent::Logon | SessionEvent::ConsoleConnect => {
+                    next.other_user = true;
                     if next.running_child_session.is_some() || next.pending_takeover.is_some() {
                         effects.push(Effect::StopChild);
                     }
                     next.pending_takeover = None;
                     next.restart_scheduled = false;
                 }
-                SessionEvent::Logoff if owner_matches => {
+                SessionEvent::Logoff | SessionEvent::ConsoleDisconnect if owner_matches => {
+                    next.other_user = false;
                     if next.running_child_session.is_some()
                         || next.restart_scheduled
                         || next.pending_takeover.is_some()
@@ -264,7 +274,10 @@ pub fn decide(state: &State, input: Input) -> (State, Vec<Effect>) {
                     next.pending_takeover = None;
                     next.restart_scheduled = false;
                 }
-                SessionEvent::Logoff => {
+                SessionEvent::Logoff | SessionEvent::ConsoleDisconnect => {
+                    if event == SessionEvent::ConsoleDisconnect {
+                        next.other_user = false;
+                    }
                     if next.running_child_session == Some(session_id)
                         || next.pending_takeover.as_ref().map(|work| work.session)
                             == Some(session_id)
@@ -694,6 +707,59 @@ mod tests {
 
         assert!(drive(&mut state, effects, &mut platform).is_err());
         assert_eq!(state.running_child_session, None);
+    }
+
+    #[test]
+    fn console_switch_stops_for_another_user_and_resumes_for_the_owner() {
+        let mut state = State::new(
+            HostManaged {
+                camilla: Some(camilla("camilladsp.exe")),
+                owner_session_id: Some(7),
+                owner_user_sid: Some("sid-a".into()),
+                ..HostManaged::default()
+            },
+            Some(7),
+        );
+        let mut platform = FakePlatform::default();
+
+        let (next, effects) = decide(
+            &state,
+            Input::Session {
+                event: SessionEvent::ConsoleConnect,
+                session_id: 8,
+                owner_matches: false,
+            },
+        );
+        state = next;
+        assert!(state.other_user);
+        assert!(
+            effects
+                .iter()
+                .any(|effect| matches!(effect, Effect::StopChild))
+        );
+        drive(&mut state, effects, &mut platform).unwrap();
+
+        let (owner_again, effects) = decide(
+            &state,
+            Input::Session {
+                event: SessionEvent::ConsoleConnect,
+                session_id: 7,
+                owner_matches: true,
+            },
+        );
+        assert!(!owner_again.other_user);
+        assert_eq!(
+            owner_again
+                .pending_takeover
+                .as_ref()
+                .map(|work| work.session),
+            Some(7)
+        );
+        assert!(
+            effects
+                .iter()
+                .any(|effect| matches!(effect, Effect::LaunchChild { session: 7, .. }))
+        );
     }
 
     #[test]
