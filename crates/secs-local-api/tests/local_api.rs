@@ -496,3 +496,57 @@ fn ui_only_error_has_the_public_code() {
         "ui_only"
     );
 }
+
+#[test]
+fn slow_reader_receives_lagged_before_the_1013_close_td161() {
+    use secs_service::EventSink;
+    use secs_types::ipc::JobId;
+    use tokio_tungstenite::tungstenite::Message;
+
+    tokio::runtime::Runtime::new().unwrap().block_on(async {
+        let (service, hub) = service_with(Arc::new(secs_service::NullHost));
+        let server = running(service, hub.clone());
+        let mut request = format!("ws://127.0.0.1:{}/v1/events", server.port())
+            .into_client_request()
+            .unwrap();
+        request
+            .headers_mut()
+            .insert(AUTHORIZATION, format!("Bearer {TOKEN}").parse().unwrap());
+        let (mut socket, _) = tokio_tungstenite::connect_async(request).await.unwrap();
+        // Large frames exhaust the socket buffer while the client does not read.
+        // Use several ring capacities because the server can drain some concurrently.
+        for _ in 0..1024 {
+            hub.send(JobEvent::Progress {
+                job: JobId(1),
+                stage: "x".repeat(128 * 1024),
+                done: 0,
+                total: 1,
+            });
+        }
+        let mut saw_lagged = false;
+        loop {
+            let frame = tokio::time::timeout(Duration::from_secs(10), socket.next())
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap();
+            match frame {
+                Message::Text(text) => {
+                    assert!(!saw_lagged, "lagged must be the final text frame");
+                    let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+                    if value["kind"] == "lagged" {
+                        assert!(value["missed"].as_u64().unwrap() >= 5);
+                        saw_lagged = true;
+                    }
+                }
+                Message::Close(frame) => {
+                    assert!(saw_lagged, "missing lagged text before the close frame");
+                    assert_eq!(u16::from(frame.unwrap().code), 1013);
+                    break;
+                }
+                _ => {}
+            }
+        }
+        server.stop();
+    });
+}

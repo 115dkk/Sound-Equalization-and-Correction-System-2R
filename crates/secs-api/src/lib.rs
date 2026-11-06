@@ -97,6 +97,7 @@
 //!     match event? {
 //!         ServerEvent::Job { event } => println!("job: {event:?}"),
 //!         ServerEvent::Changed { method } => println!("changed: {method}"),
+//!         ServerEvent::Lagged { missed } => println!("missed: {missed}"),
 //!     }
 //! }
 //! # Ok(())

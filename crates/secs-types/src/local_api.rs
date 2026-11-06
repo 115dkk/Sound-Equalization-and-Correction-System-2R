@@ -66,11 +66,19 @@ pub struct LastExport {
 /// Event sent as one text frame on [`EVENTS_PATH`].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
+#[derive(ts_rs::TS)]
+#[ts(export)]
 pub enum ServerEvent {
     /// A service job event, regardless of which caller started the job.
     Job { event: JobEvent },
     /// A successful local-API request changed observable state.
     Changed { method: String },
+    /// Events lost by a slow subscriber; the server closes with code 1013 next.
+    Lagged {
+        /// Number of events no longer available in the server queue.
+        #[ts(type = "number")]
+        missed: u64,
+    },
 }
 
 /// Local-API policy for one IPC method.

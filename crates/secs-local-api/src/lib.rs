@@ -479,6 +479,11 @@ async fn websocket(mut socket: WebSocket, mut receiver: broadcast::Receiver<Serv
                     }
                 }
                 Err(broadcast::error::RecvError::Lagged(missed)) => {
+                    let text = serde_json::to_string(&ServerEvent::Lagged { missed })
+                        .expect("lagged event serialization");
+                    if socket.send(Message::Text(text.into())).await.is_err() {
+                        return;
+                    }
                     let _ = socket.send(Message::Close(Some(CloseFrame {
                         code: 1013,
                         reason: format!("missed {missed} events").into(),
