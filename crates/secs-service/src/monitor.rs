@@ -316,6 +316,14 @@ fn send_meter(job: &crate::jobs::JobContext, report: secs_audio::LevelReport) {
     });
 }
 
+/// The wire spelling of an error code (`snake_case`), as the envelope writes it.
+fn wire_name(code: ErrorCode) -> String {
+    serde_json::to_value(code)
+        .ok()
+        .and_then(|value| value.as_str().map(str::to_owned))
+        .unwrap_or_else(|| format!("{code:?}"))
+}
+
 fn send_play_end(
     job: &crate::jobs::JobContext,
     role: &str,
@@ -327,7 +335,7 @@ fn send_play_end(
         ("outcome".into(), outcome.into()),
     ]);
     if let Some(error) = error {
-        params.insert("error_code".into(), format!("{:?}", error.code));
+        params.insert("error_code".into(), wire_name(error.code));
         params.insert("detail".into(), error.detail.clone());
     }
     job.send(JobEvent::Log {
@@ -388,6 +396,9 @@ fn rew_loop(
                 ) {
                     Ok(()) => active = Some((play, std::time::Instant::now(), None)),
                     Err(error) => {
+                        // REW may have started the generator before the reply
+                        // was lost, so stop it as the other paths do.
+                        secs_rew::LevelMonitor::stop_generator(&mut rew);
                         let error = rew_error(error, link);
                         send_play_end(job, &play.role, "failed", Some(&error));
                         handled_generation = play.generation;

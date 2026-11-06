@@ -621,10 +621,13 @@ fn rew_level_monitor_survives_a_failed_play_td265() {
     events.wait_play_end(started.job, "L", "failed", Duration::from_secs(2));
     assert!(events.values.lock().unwrap().iter().any(|event| {
         matches!(event, JobEvent::Log { job, code, params }
-            if *job == started.job
-                && code == "level_play_end"
-                && params.get("role").is_some_and(|role| role == "L")
-                && params.contains_key("error_code"))
+        if *job == started.job
+            && code == "level_play_end"
+            && params.get("role").is_some_and(|role| role == "L")
+            && params.get("error_code").is_some_and(|code| {
+                // the wire spelling, as the envelope writes it
+                !code.is_empty() && code.chars().all(|c| c.is_ascii_lowercase() || c == '_')
+            }))
     }));
     assert!(
         !events
