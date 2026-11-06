@@ -131,7 +131,7 @@ impl Service {
                         IpcError::new(ErrorCode::Internal, "CamillaDSP export has no main config")
                     })?;
                 let text = fs::read_to_string(stage.join(&relative))
-                    .map_err(|error| io_error(stage.join(&relative), error))?;
+                    .map_err(|error| io_error(stage.join(&relative), &error))?;
                 // CamillaDSP identifies a convolution filter by its absolute file
                 // name, so every attempt gets another generation even when the
                 // design id is unchanged.
@@ -294,7 +294,7 @@ impl Service {
                 let previous_entry = match fs::read(&entry) {
                     Ok(bytes) => Some(bytes),
                     Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-                    Err(error) => return Err(io_error(&entry, error)),
+                    Err(error) => return Err(io_error(&entry, &error)),
                 };
                 let previous_generation = previous_entry.as_deref().and_then(entry_generation);
                 if let Err(error) = apply.before_generation_install(&final_for_job, &stage) {
@@ -323,7 +323,7 @@ impl Service {
                         None => match fs::remove_file(&entry) {
                             Ok(()) => Ok(()),
                             Err(remove) if remove.kind() == std::io::ErrorKind::NotFound => Ok(()),
-                            Err(remove) => Err(io_error(&entry, remove)),
+                            Err(remove) => Err(io_error(&entry, &remove)),
                         },
                     };
                     let mut retained = vec![generation.name.as_str()];
@@ -376,7 +376,7 @@ impl Service {
                 .with_param("target", "equalizer_apo")
         })?;
         let path = PathBuf::from(install.config_path).join("config.txt");
-        let text = fs::read_to_string(&path).map_err(|error| io_error(path.clone(), error))?;
+        let text = fs::read_to_string(&path).map_err(|error| io_error(path.clone(), &error))?;
         if let Some(updated) = self.deps.apply.eqapo_without_include(&text)? {
             write_changed(&path, updated.as_bytes())?;
         }
@@ -542,9 +542,10 @@ fn validate_address(address: &str) -> Result<(), IpcError> {
     }
 }
 
-fn io_error(path: impl AsRef<Path>, error: impl std::fmt::Display) -> IpcError {
+fn io_error(path: impl AsRef<Path>, error: &std::io::Error) -> IpcError {
     let detail = error.to_string();
-    let denied = detail.to_ascii_lowercase().contains("permission denied")
+    let denied = error.kind() == std::io::ErrorKind::PermissionDenied
+        || detail.to_ascii_lowercase().contains("permission denied")
         || detail.to_ascii_lowercase().contains("access is denied");
     IpcError::new(
         if denied {
@@ -555,6 +556,11 @@ fn io_error(path: impl AsRef<Path>, error: impl std::fmt::Display) -> IpcError {
         detail,
     )
     .with_param("path", path.as_ref().to_string_lossy())
+}
+
+fn non_io_error(path: impl AsRef<Path>, error: impl std::fmt::Display) -> IpcError {
+    IpcError::new(ErrorCode::ApplyFailed, error.to_string())
+        .with_param("path", path.as_ref().to_string_lossy())
 }
 
 /// The applied folder of one design: the start of its id, short enough for
@@ -635,9 +641,9 @@ fn read_retained(root: &Path) -> Result<Vec<String>, IpcError> {
     let bytes = match fs::read(&path) {
         Ok(bytes) => bytes,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(error) => return Err(io_error(&path, error)),
+        Err(error) => return Err(io_error(&path, &error)),
     };
-    let text = std::str::from_utf8(&bytes).map_err(|error| io_error(&path, error))?;
+    let text = std::str::from_utf8(&bytes).map_err(|error| non_io_error(&path, error))?;
     let mut names = Vec::new();
     for name in text.lines() {
         if name.is_empty() || !valid_generation_name(name) {
@@ -745,7 +751,7 @@ fn retire_after_success(root: &Path, keep: &[&str], has_previous: bool, log: &Lo
             "apply",
             &format!(
                 "could not clear retained applied generations: {}",
-                io_error(&path, error).detail
+                io_error(&path, &error).detail
             ),
         ),
     }
@@ -755,12 +761,12 @@ fn remove_stage(path: &Path) -> Result<(), IpcError> {
     match fs::remove_dir_all(path) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(io_error(path, error)),
+        Err(error) => Err(io_error(path, &error)),
     }
 }
 
 fn ensure_eqapo_include(config: &Path, apply: &dyn ApplyAdapter) -> Result<(), IpcError> {
-    let text = fs::read_to_string(config).map_err(|error| io_error(config, error))?;
+    let text = fs::read_to_string(config).map_err(|error| io_error(config, &error))?;
     let Some(updated) = apply.eqapo_with_include(&text)? else {
         return Ok(());
     };
@@ -776,9 +782,9 @@ fn write_changed(path: &Path, bytes: &[u8]) -> Result<(), IpcError> {
         return Ok(());
     }
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|error| io_error(path, error))?;
+        fs::create_dir_all(parent).map_err(|error| io_error(path, &error))?;
     }
-    secs_types::fs::write_atomic_bytes(path, bytes).map_err(|error| io_error(path, error))
+    secs_types::fs::write_atomic_bytes(path, bytes).map_err(|error| io_error(path, &error))
 }
 
 #[cfg(test)]
@@ -796,10 +802,32 @@ mod tests {
     }
 
     #[test]
+    fn permission_denied_is_classified_by_kind_not_by_english_text_td154() {
+        let korean = std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "액세스가 거부되었습니다.",
+        );
+        assert_eq!(
+            io_error(Path::new("config.txt"), &korean).code,
+            ErrorCode::PermissionDenied
+        );
+        let fallback = std::io::Error::other("permission denied");
+        assert_eq!(
+            io_error(Path::new("config.txt"), &fallback).code,
+            ErrorCode::PermissionDenied
+        );
+        let other = std::io::Error::other("disk full");
+        assert_eq!(
+            io_error(Path::new("config.txt"), &other).code,
+            ErrorCode::ApplyFailed
+        );
+    }
+
+    #[test]
     fn permission_mapping_carries_the_path() {
         let error = io_error(
             Path::new("config.txt"),
-            std::io::Error::from(std::io::ErrorKind::PermissionDenied),
+            &std::io::Error::from(std::io::ErrorKind::PermissionDenied),
         );
         assert_eq!(error.code, ErrorCode::PermissionDenied);
         assert_eq!(
