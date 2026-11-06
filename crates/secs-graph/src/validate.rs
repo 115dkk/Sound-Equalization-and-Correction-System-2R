@@ -190,6 +190,11 @@ pub(crate) fn graph(
         if !mode.is_ascii() {
             return Err(GraphError::NonAscii(format!("sub.{role}.mode = {mode:?}")));
         }
+        if mode.contains(['\n', '\r']) {
+            return Err(GraphError::Invalid(format!(
+                "unsafe sub.{role}.mode = {mode:?}"
+            )));
+        }
         allpasses(&format!("sub.{role}.allpass"), allpass)?;
         peqs(&format!("sub.{role}.peq"), peq)?;
     }

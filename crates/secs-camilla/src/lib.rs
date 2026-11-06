@@ -449,6 +449,12 @@ fn validate_options(options: &Options) -> Result<(), CamillaError> {
         ));
     }
     finite("options.lfe_lp_hz", options.lfe_lp_hz)?;
+    if options.note.contains(['\n', '\r']) {
+        return Err(CamillaError::Invalid(format!(
+            "unsafe options.note {:?}",
+            options.note
+        )));
+    }
     if !options.mode.is_ascii() {
         return Err(CamillaError::NonAscii(options.mode.clone()));
     }

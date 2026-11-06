@@ -1266,6 +1266,36 @@ fn failed_install_restores_the_previous_camilla_bundle_td22() {
 }
 
 #[test]
+fn option_note_newline_writes_nothing_td224() {
+    let fixture = Fixture::load("camilla", "direct_no_subs");
+    let temp = TempDir::new("note_newline");
+    let options = Options {
+        note: "a\nb".into(),
+        ..Options::default()
+    };
+    let error = write_config(&chain(&fixture), &temp.0, "bad", &options, None).unwrap_err();
+    assert!(matches!(&error, CamillaError::Invalid(_)), "{error}");
+    assert!(error.to_string().contains("options.note"), "{error}");
+    assert_eq!(fs::read_dir(&temp.0).unwrap().count(), 0);
+}
+
+#[test]
+fn sub_mode_newline_writes_nothing_td224() {
+    let fixture = Fixture::load("camilla", "direct_lfe_none");
+    let temp = TempDir::new("sub_mode_newline");
+    let mut bad = chain(&fixture);
+    let role = bad.subs[0].role.clone();
+    bad.subs[0].mode = "fixed\r".into();
+    let error = write_config(&bad, &temp.0, "bad", &Options::default(), None).unwrap_err();
+    assert!(matches!(&error, CamillaError::Invalid(_)), "{error}");
+    assert!(
+        error.to_string().contains(&format!("sub.{role}.mode")),
+        "{error}"
+    );
+    assert_eq!(fs::read_dir(&temp.0).unwrap().count(), 0);
+}
+
+#[test]
 fn invalid_values_write_nothing() {
     let fixture = Fixture::load("camilla", "direct_no_subs");
     let temp = TempDir::new("errors");

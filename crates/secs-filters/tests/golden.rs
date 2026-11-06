@@ -1724,6 +1724,31 @@ fn computed_subwoofer_text_scope_matches_oracle() {
 }
 
 #[test]
+fn filter_run_note_newline_writes_nothing_td224() {
+    let fixture = Fixture::load("filters", "rc_mixed");
+    let chain = chain(&fixture);
+    let value = &fixture.inputs()["run"];
+    let mode = export_mode(value);
+    let (label, rc_pieces, stamp) = run_parts(&fixture);
+    let run = FilterRun {
+        chain: &chain,
+        mimo: None,
+        mode: &mode,
+        note: "a\nb",
+        label: &label,
+        latency_ms: number(&value["latency_ms"]),
+        rc_pieces: &rc_pieces,
+        stamp: &stamp,
+    };
+    let root = TempDir::new("note_newline");
+    let folder = root.0.join("eqapo");
+    let error = export_eqapo(&run, &folder).unwrap_err();
+    assert!(matches!(&error, FiltersError::Invalid(_)), "{error}");
+    assert!(error.to_string().contains("note"), "{error}");
+    assert!(!folder.exists());
+}
+
+#[test]
 fn invalid_values_write_nothing_and_existing_files_are_replaced_atomically() {
     let fixture = Fixture::load("filters", "rc_mixed");
     let mut bad_chain = chain(&fixture);

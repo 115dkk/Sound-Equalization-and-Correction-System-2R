@@ -2013,6 +2013,9 @@ fn validate_run(run: &FilterRun<'_>) -> Result<(), FiltersError> {
     identifier("mode", run.mode)?;
     plain_roles(run.chain, run.mimo)?;
     finite("latency_ms", run.latency_ms)?;
+    if run.note.contains(['\n', '\r']) {
+        return Err(FiltersError::Invalid(format!("unsafe note {:?}", run.note)));
+    }
     if run.label.contains(['\0', '/', '\\']) {
         return Err(FiltersError::Invalid(format!(
             "unsafe label {:?}",
