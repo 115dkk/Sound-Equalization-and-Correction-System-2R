@@ -21,8 +21,7 @@ use secs_graph::emit::pyfmt::{format_fixed, round_ndigits};
 use secs_graph::emit::{grouped, guard};
 use secs_graph::files::{safe_name, wav_bytes, write_bundle_observed};
 use secs_graph::{
-    ExportGraph, FirView, GraphError, LFE_GAIN_DB, LFE_LP_HZ, LfeChoice, SAMPLE_RATE,
-    is_negative_delay,
+    ExportGraph, GraphError, LFE_GAIN_DB, LFE_LP_HZ, LfeChoice, SAMPLE_RATE, is_negative_delay,
 };
 pub use secs_graph::{FilterPlan, MimoFeed, Op, SubFeed};
 use secs_types::chain::{BandType, MimoPaths, SignalChain};
@@ -1244,25 +1243,17 @@ fn fir_files(
     prefix: &str,
     output_rate: u32,
 ) -> Result<(FirNames, ExportFiles), FiltersError> {
-    let mut names = Vec::new();
-    let mut files = Vec::new();
-    for (stem, taps) in plan.firs() {
-        taps.validate()?;
-        let filename = format!("{prefix}{stem}.wav");
-        let materialized = match taps {
-            FirView::Full(taps) => secs_dsp::rate::fir_to_rate(taps, output_rate),
-            FirView::LowRate(taps, fs_low) => {
-                secs_dsp::rate::lowrate_to_rate(taps, fs_low, output_rate)
-            }
-        }
-        .map_err(|error| FiltersError::Invalid(format!("{stem}: {error}")))?;
-        let bytes = wav_bytes(&materialized, output_rate)
-            .map_err(|error| FiltersError::Invalid(format!("{stem}: {error}")))?;
-        files.push((filename.clone(), bytes));
-        names.push((stem.to_owned(), filename));
-    }
+    let files = secs_graph::emit::fir_files(plan, prefix, output_rate)
+        .map_err(|error| FiltersError::Invalid(error.to_string()))?;
+    let names = plan
+        .firs()
+        .into_iter()
+        .zip(&files)
+        .map(|((stem, _), (filename, _))| (stem.to_owned(), filename.clone()))
+        .collect();
     Ok((names, files))
 }
+
 fn utf8_bom(text: &str) -> Vec<u8> {
     let mut bytes = vec![0xef, 0xbb, 0xbf];
     bytes.extend_from_slice(text.as_bytes());

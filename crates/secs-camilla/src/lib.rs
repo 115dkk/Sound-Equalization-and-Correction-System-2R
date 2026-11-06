@@ -16,7 +16,7 @@ pub mod pyfmt;
 
 use pyfmt::{format_fixed, format_g, format_i3, format_s30, repr_f64, round_ndigits};
 use secs_graph::emit::guard;
-use secs_graph::{ExportGraph, GraphError, LfeChoice};
+use secs_graph::{ExportGraph, FilterPlan, GraphError, LfeChoice, Op};
 use secs_types::chain::{BandType, MimoFilter, MimoPath, MimoPaths, SignalChain, SubChannel};
 use std::fmt::Write as _;
 use std::path::{Component, Path, PathBuf};
@@ -344,12 +344,26 @@ fn delay_samples(samples: i64) -> Json {
     )
 }
 
-/// [`wav_bytes`] for one exported FIR, naming its owner in a range error.
-fn fir_wav(owner: &str, taps: &[f64], rate: u32) -> Result<Vec<u8>, CamillaError> {
-    wav_bytes(taps, rate).map_err(|error| match error {
-        GraphError::NonFinite(name) => CamillaError::NonFinite(format!("{owner}.{name}")),
-        other => other.into(),
-    })
+fn fir_error(error: GraphError, plan: &FilterPlan) -> CamillaError {
+    let GraphError::NonFinite(detail) = error else {
+        return error.into();
+    };
+    let Some((stem, field)) = detail.split_once(": ") else {
+        return CamillaError::NonFinite(detail);
+    };
+    let has_stem = |ops: &[Op]| {
+        ops.iter().any(|op| match op {
+            Op::Fir { name, .. } | Op::FirLowRate { name, .. } => name == stem,
+            _ => false,
+        })
+    };
+    if let Some((role, _)) = plan.input_ops.iter().find(|(_, ops)| has_stem(ops)) {
+        CamillaError::NonFinite(format!("main.{role}.{field}"))
+    } else if let Some(index) = plan.mimo.iter().position(|feed| has_stem(&feed.ops)) {
+        CamillaError::NonFinite(format!("mimo.paths[{index}].{field}"))
+    } else {
+        CamillaError::NonFinite(detail)
+    }
 }
 
 fn absolute(path: &Path) -> Result<PathBuf, CamillaError> {
@@ -704,6 +718,12 @@ pub fn make_config_observed(
     if !fir_prefix.is_empty() {
         guard::identifier("coefficient filename prefix", fir_prefix, b"_-")?;
     }
+    let coeff_dir = out.join(COEFF_DIR);
+    let coeffs = secs_graph::emit::fir_files(graph.plan(), fir_prefix, options.output_rate)
+        .map_err(|error| fir_error(error, graph.plan()))?
+        .into_iter()
+        .map(|(name, bytes)| (coeff_dir.join(name), bytes))
+        .collect::<Vec<_>>();
     let chain = graph.chain();
     let mimo = graph.mimo();
     let mains = &chain.mains;
@@ -744,8 +764,6 @@ pub fn make_config_observed(
         filters.push(("input_hp".into(), combo("ButterworthHighpass", hz, 8)));
         pipeline.push(pipeline_all_filter("input_hp", "secs:input_hp", n_in));
     }
-    let mut coeffs = Vec::new();
-    let coeff_dir = out.join(COEFF_DIR);
     let fork = if paths.is_empty() {
         None
     } else {
@@ -785,12 +803,6 @@ pub fn make_config_observed(
                 )));
             }
             let filename = posix(&relative(&file, config_dir)?);
-            let taps = secs_dsp::rate::fir_to_rate(&main.fir, options.output_rate)
-                .map_err(|error| CamillaError::Invalid(error.to_string()))?;
-            coeffs.push((
-                file,
-                fir_wav(&format!("main.{}", main.role), &taps, options.output_rate)?,
-            ));
             let name = format!("in_{}_fir", main.role);
             filters.push((
                 name.clone(),
@@ -1076,16 +1088,6 @@ pub fn make_config_observed(
         }
         match &path.filter {
             MimoFilter::Fir { .. } | MimoFilter::FirLowRate { .. } => {
-                let taps = match &path.filter {
-                    MimoFilter::Fir { taps_48k } => {
-                        secs_dsp::rate::fir_to_rate(taps_48k, options.output_rate)
-                    }
-                    MimoFilter::FirLowRate { taps_low, fs_low } => {
-                        secs_dsp::rate::lowrate_to_rate(taps_low, *fs_low, options.output_rate)
-                    }
-                    MimoFilter::Iir { .. } => unreachable!(),
-                }
-                .map_err(|error| CamillaError::Invalid(error.to_string()))?;
                 let file = coeff_dir.join(format!("{fir_prefix}{tag}.wav"));
                 if file.parent() != Some(coeff_dir.as_path()) {
                     return Err(CamillaError::Invalid(format!(
@@ -1094,10 +1096,6 @@ pub fn make_config_observed(
                     )));
                 }
                 let filename = posix(&relative(&file, config_dir)?);
-                coeffs.push((
-                    file,
-                    fir_wav(&format!("mimo.paths[{index}]"), &taps, options.output_rate)?,
-                ));
                 let name = format!("{tag}_fir");
                 filters.push((
                     name.clone(),
