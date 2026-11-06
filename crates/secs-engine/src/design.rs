@@ -96,6 +96,10 @@ impl Design {
         self.replay.config()
     }
 
+    pub fn measurements(&self) -> &MeasurementSet {
+        self.replay.measurements()
+    }
+
     pub fn main_position(&self) -> u32 {
         self.config().main_position
     }

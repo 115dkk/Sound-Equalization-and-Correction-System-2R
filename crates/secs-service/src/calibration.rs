@@ -334,8 +334,8 @@ fn compute_and_commit_mimo(
     let ctx = compute_context(job, memory, background);
     let run = secs_engine::mimo::compute_with_acceleration(
         &design,
-        design.replay.measurements(),
-        design.replay.config(),
+        design.measurements(),
+        design.config(),
         &settings,
         &Tuning::default(),
         &ctx,
