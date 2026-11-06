@@ -87,7 +87,8 @@ def signature_problems(arch: str, details: str, certificate: bool = False) -> li
 
 def certificate_sha1(pem: str) -> str:
     """Lowercase hex SHA-1 of the DER of the first CERTIFICATE block: the hash
-    a code signing requirement writes as `certificate leaf = H"..."`."""
+    in a code signing requirement's `certificate root = H"..."` (a self-signed
+    certificate is its own root, so that is the slot codesign uses)."""
     match = re.search(r"-----BEGIN CERTIFICATE-----(.*?)-----END CERTIFICATE-----", pem, re.DOTALL)
     if match is None:
         raise ValueError("no CERTIFICATE block in the PEM")

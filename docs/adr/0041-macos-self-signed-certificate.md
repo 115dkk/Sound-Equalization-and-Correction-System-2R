@@ -16,7 +16,7 @@
 
 - 프로젝트가 스스로 발급한 X.509 인증서로 앱 번들에 서명합니다. 주체는 `CN=SECS 2R (self-signed), O=SECS 2R contributors`, 키는 RSA 3072, 서명은 SHA-256, 용도는 코드 서명(`keyUsage digitalSignature`, `extendedKeyUsage codeSigning`)입니다. Keychain Access가 만드는 '자체 서명 루트, 코드 서명' 인증서와 같은 모양이라 codesign이 자기 자신을 앵커로 받아들입니다.
 - 2026-11-06에 만들었고 2046-11-06에 만료됩니다. codesign은 서명할 때 인증서가 유효해야 하므로, 만료가 가까워지면 아래 절차로 바꿉니다.
-- 공개 절반은 `apps/secs2r/macos/codesign.pem`에 둡니다. 릴리스 검사가 앱의 서명을 이 파일과 맞춰 보고, 사용자도 `codesign -dvv`의 `Authority=`로 같은 인증서인지 봅니다. 지문은 SHA-1 `c202de54a24d45771d563d048eb14372157c817c`, SHA-256 `77f874ab2fbc029a3c0445de1ae28b7251a3a88f308eb4d6ad82869364d984e3`입니다. SHA-1은 macOS가 지정 요구 사항의 `certificate leaf = H"…"`에 쓰는 값입니다.
+- 공개 절반은 `apps/secs2r/macos/codesign.pem`에 둡니다. 릴리스 검사가 앱의 서명을 이 파일과 맞춰 보고, 사용자도 `codesign -dvv`의 `Authority=`로 같은 인증서인지 봅니다. 지문은 SHA-1 `c202de54a24d45771d563d048eb14372157c817c`, SHA-256 `77f874ab2fbc029a3c0445de1ae28b7251a3a88f308eb4d6ad82869364d984e3`입니다. SHA-1은 macOS가 지정 요구 사항의 `certificate root = H"…"`에 쓰는 값입니다. 자체 서명 인증서는 자기 자신이 루트이므로 그 자리가 root입니다.
 - 비밀 절반은 PKCS#12로 묶어 저장소 환경 `updater-signing`의 시크릿 `MACOS_CODESIGN_P12`(base64)와 `MACOS_CODESIGN_P12_PASSWORD`에 둡니다. 이 환경은 main에서만 배포하므로 PR 브랜치의 워크플로는 읽지 못합니다(업데이터 키와 같은 자리, ADR 0020). 유지보수자의 PC에 백업이 있습니다.
 
 ### 서명
@@ -39,7 +39,7 @@
 ## 결과
 
 - 판을 올려도(업데이터로든 손으로든) 마이크 허락이 유지됩니다. 0.53.0 이하에서 0.54.0으로 올릴 때는 서명 주체가 바뀌므로 허락 창이 한 번 더 열립니다.
-- 사용자가 서명한 주체를 확인할 수 있습니다. `codesign -dvv`의 `Authority=SECS 2R (self-signed)`와 `codesign -d -r -`의 `certificate leaf = H"c202de54a24d45771d563d048eb14372157c817c"`이 저장소의 공개 인증서와 맞습니다.
+- 사용자가 서명한 주체를 확인할 수 있습니다. `codesign -dvv`의 `Authority=SECS 2R (self-signed)`와 `codesign -d -r -`의 `certificate root = H"c202de54a24d45771d563d048eb14372157c817c"`이 저장소의 공개 인증서와 맞습니다.
 - 달라지지 않는 것이 있습니다. Apple이 공증(notarization)하지 않은 앱이므로 처음 열 때 Apple이 악성 코드 여부를 확인할 수 없다는 경고와 '그래도 열기'는 그대로입니다. 공증은 Apple 개발자 계정과 Developer ID 인증서가 있어야 합니다. 그렇게 되면 이 ADR을 대신하는 ADR을 씁니다.
 - macOS CLI(`secs2r-cli` tar.gz)는 이 인증서로 서명하지 않습니다. 링커가 넣는 임시 서명만 있고, 터미널에서 쓰는 도구라 마이크 허락과 무관합니다.
 - `updater-signing` 환경은 이제 업데이터 키와 코드 서명 인증서를 함께 가집니다. 이름은 그대로 둡니다.

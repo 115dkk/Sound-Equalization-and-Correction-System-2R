@@ -31,7 +31,8 @@ Signed Time=6 Nov 2026 at 12:00:00
 TeamIdentifier=not set
 """
 # A throwaway certificate (one day, 2026-11-06); its hash is what the
-# designated requirement of a bundle signed with it carries.
+# designated requirement of a bundle signed with it carries, in the root slot
+# (a self-signed certificate is its own root).
 FIXTURE_PEM = """-----BEGIN CERTIFICATE-----
 MIIDXTCCAkWgAwIBAgIUWe0vuEUONzJbk8mvUtH5m8DeZ3cwDQYJKoZIhvcNAQEL
 BQAwPjEdMBsGA1UEAwwUU0VDUyAyUiB0ZXN0IGZpeHR1cmUxHTAbBgNVBAoMFFNF
@@ -56,7 +57,7 @@ ew==
 """
 FIXTURE_SHA1 = "249bedcecc0f837de3a26280d27b2714563b483b"
 IDENTIFIER = "io.github.115dkk.secs2r"
-DESIGNATED = ('designated => identifier "io.github.115dkk.secs2r" and certificate leaf = '
+DESIGNATED = ('designated => identifier "io.github.115dkk.secs2r" and certificate root = '
               'H"249BEDCECC0F837DE3A26280D27B2714563B483B"\n')
 
 
@@ -94,8 +95,8 @@ class SignatureTest(unittest.TestCase):
 
     def test_the_designated_requirement_names_the_identifier_and_the_certificate(self):
         self.assertEqual(m.requirement_problems("Executable=/tmp/x\n" + DESIGNATED, IDENTIFIER, FIXTURE_SHA1), [])
-        root = DESIGNATED.replace("certificate leaf", "certificate root")
-        self.assertEqual(m.requirement_problems(root, IDENTIFIER, FIXTURE_SHA1), [])
+        leaf = DESIGNATED.replace("certificate root", "certificate leaf")
+        self.assertEqual(m.requirement_problems(leaf, IDENTIFIER, FIXTURE_SHA1), [])
         cdhash = 'designated => cdhash H"0f0f0f" or cdhash H"1e1e1e"\n'
         problems = m.requirement_problems(cdhash, IDENTIFIER, FIXTURE_SHA1)
         self.assertEqual(len(problems), 3)
