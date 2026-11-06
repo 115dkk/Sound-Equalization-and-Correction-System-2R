@@ -315,6 +315,16 @@ fn find_ops<'a>(items: &'a [(String, Vec<Op>)], role: &str) -> Option<&'a [Op]> 
         .map(|(_, value)| value.as_slice())
 }
 
+fn reserve_fir_name(names: &mut Vec<String>, name: String) -> Result<String, GraphError> {
+    if names.contains(&name) {
+        return Err(GraphError::Invalid(format!(
+            "colliding FIR filename {name}"
+        )));
+    }
+    names.push(name.clone());
+    Ok(name)
+}
+
 fn fixed_ops(chain: &SignalChain, role: &str) -> Vec<Op> {
     if let Some(main) = chain.mains.iter().find(|main| main.role == role) {
         return if main.polarity.unwrap_or(1) < 0 {
@@ -355,12 +365,13 @@ pub(crate) fn make(
     chain: &SignalChain,
     mimo: Option<&MimoPaths>,
     lfe_choice: LfeChoice,
-) -> FilterPlan {
+) -> Result<FilterPlan, GraphError> {
     let lfe_gain_db = match lfe_choice {
         LfeChoice::Omit => None,
         LfeChoice::Include { gain_db, lp_hz } => Some((gain_db, lp_hz)),
     };
     let lfe = !chain.subs.is_empty() && lfe_gain_db.is_some();
+    let mut fir_names = Vec::new();
     let mut plan = FilterPlan {
         inputs: chain.mains.iter().map(|main| main.role.clone()).collect(),
         outputs: chain
@@ -401,7 +412,7 @@ pub(crate) fn make(
             .collect::<Vec<_>>();
         if main.fir.len() > 1 {
             input.push(Op::Fir {
-                name: format!("{}_fir", main.role),
+                name: reserve_fir_name(&mut fir_names, format!("{}_fir", main.role))?,
                 taps: main.fir.clone(),
                 fixed: false,
             });
@@ -506,7 +517,10 @@ pub(crate) fn make(
                         fixed: false,
                     },
                     Op::Fir {
-                        name: format!("mimo_{}_{}", path.input, path.support),
+                        name: reserve_fir_name(
+                            &mut fir_names,
+                            format!("mimo_{}_{}", path.input, path.support),
+                        )?,
                         taps: taps_48k.clone(),
                         fixed: false,
                     },
@@ -522,7 +536,10 @@ pub(crate) fn make(
                         fixed: false,
                     },
                     Op::FirLowRate {
-                        name: format!("mimo_{}_{}", path.input, path.support),
+                        name: reserve_fir_name(
+                            &mut fir_names,
+                            format!("mimo_{}_{}", path.input, path.support),
+                        )?,
                         taps_low: taps_low.clone(),
                         fs_low: *fs_low,
                         fixed: false,
@@ -578,7 +595,7 @@ pub(crate) fn make(
             });
         }
     }
-    plan
+    Ok(plan)
 }
 
 fn multiply(out: &mut [Complex64], values: impl IntoIterator<Item = Complex64>) {

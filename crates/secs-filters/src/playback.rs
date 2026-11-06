@@ -776,10 +776,13 @@ mod tests {
 
     #[test]
     fn playback_groups_match_per_path_reference_and_reset() {
-        let chain = chain();
+        let mut chain = chain();
+        let mut center = chain.mains[0].clone();
+        center.role = "C".into();
+        chain.mains.push(center);
         let paths = MimoPaths {
             fsiso: 150.0,
-            paths: [("L", 40.12345, 2.5), ("R", 40.12345, 2.5), ("L", 55.0, 5.5)]
+            paths: [("L", 40.12345, 2.5), ("R", 40.12345, 2.5), ("C", 55.0, 5.5)]
                 .iter()
                 .map(|&(input, low_hz, samples)| MimoPath {
                     input: input.into(),
@@ -795,8 +798,8 @@ mod tests {
         let mut renderer =
             MimoFirPlayback::new(&chain, &paths, PlaybackMode::FullRate { block_size: 32 })
                 .unwrap();
-        assert_eq!(renderer.transforms_per_block(), (2, 2));
-        let input: Vec<Vec<f64>> = (0..2)
+        assert_eq!(renderer.transforms_per_block(), (3, 2));
+        let input: Vec<Vec<f64>> = (0..3)
             .map(|c| {
                 (0..1024)
                     .map(|n| ((n * (c + 1)) as f64 / 13.0).sin() * 0.5)
@@ -808,7 +811,10 @@ mod tests {
             let MimoFilter::Fir { taps_48k } = &path.filter else {
                 unreachable!()
             };
-            let index = usize::from(path.input == "R");
+            let index = ["L", "R", "C"]
+                .iter()
+                .position(|role| *role == path.input)
+                .unwrap();
             let mut response = direct(&input[index], taps_48k);
             let hp = butter(
                 2,
@@ -832,13 +838,20 @@ mod tests {
         for pass in 0..2 {
             let mut rendered = Vec::new();
             for n in (0..1024).step_by(32) {
-                let mut outputs = [vec![0.0; 32], vec![0.0; 32], vec![0.0; 32]];
+                let mut outputs = [vec![0.0; 32], vec![0.0; 32], vec![0.0; 32], vec![0.0; 32]];
                 let mut views: Vec<_> = outputs.iter_mut().map(Vec::as_mut_slice).collect();
                 renderer
-                    .process(&[&input[0][n..n + 32], &input[1][n..n + 32]], &mut views)
+                    .process(
+                        &[
+                            &input[0][n..n + 32],
+                            &input[1][n..n + 32],
+                            &input[2][n..n + 32],
+                        ],
+                        &mut views,
+                    )
                     .unwrap();
-                assert!(outputs[..2].iter().flatten().all(|x| *x == 0.0));
-                rendered.extend_from_slice(&outputs[2]);
+                assert!(outputs[..3].iter().flatten().all(|x| *x == 0.0));
+                rendered.extend_from_slice(&outputs[3]);
             }
             for (a, b) in rendered.iter().zip(&expected) {
                 assert!((a - b).abs() < 2e-12, "{a} != {b}");

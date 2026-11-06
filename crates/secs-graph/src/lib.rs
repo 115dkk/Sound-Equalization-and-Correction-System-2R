@@ -139,7 +139,7 @@ impl ExportGraph {
         lfe: LfeChoice,
     ) -> Result<Self, GraphError> {
         validate::graph(chain, mimo, lfe)?;
-        let plan = plan::make(chain, mimo, lfe);
+        let plan = plan::make(chain, mimo, lfe)?;
         let support_groups = support_groups(&plan.outputs, mimo);
         Ok(Self {
             chain: chain.clone(),
