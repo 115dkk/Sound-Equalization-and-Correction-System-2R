@@ -165,6 +165,37 @@ The base already exports in `bindings/rules.ts`: `ENGINE_KEY_FIELDS`,
    each deleted test name). The gallery's review issue will show the specimens
    with recorded notes; mention that in the report.
 
+### X-15 · ADR 0056 · one table of project replacement rules
+
+Read `docs/adr/0056-project-replacement-rules-table.md` in full; it is the
+specification. This is a deepening item: write the tests at the new module's
+interface first, then move the behaviour behind it, then delete the hand-written
+key lists the new tests cover.
+
+1. Red: `apps/secs2r/ui/src/state/projectScope.test.ts` as ADR 0056's `## 시험`
+   describes: after `replaceProject(session, "request")` and after
+   `replaceProject(session, "external")`, every store named in
+   `PROJECT_RESOURCES` is `null`, every field of `ProjectHostState` equals
+   `PROJECT_HOST_DEFAULTS` (iterate the table; the literal defaults come from
+   the ADR's list), `opened` rose by one, and the `AppHostState` fields
+   (`current`, `tab`, `camillaDevices`, `extraRates`) kept their values. The
+   external case also asserts `designName === ""` (the drift the ADR names).
+2. Green: `state/projectScope.ts` with `ProjectHostState`, `AppHostState`,
+   `HostState = ProjectHostState & AppHostState`, `PROJECT_HOST_DEFAULTS`,
+   `PROJECT_RESOURCES`, `APP_RESOURCES` as the computed complement, and
+   `replaceProject(session, source)`; the effect rule `project.replace`, the
+   closure in `session.ts` and `refreshExternal` call it. `external` also
+   invalidates the stores that have `invalidate`. What is reloaded afterwards
+   stays with `effectsOf(...)` (unchanged).
+3. Tidy and delete: `effects.test.ts` and `externalChanges.test.ts` use the
+   table instead of their hand-written key lists; the `satisfies` type check
+   makes a `HostState` field that belongs to neither type a `tsc` error.
+
+Two commits: `refactor(audit): X-15 프로젝트 교체 규칙을 projectScope 표 하나로 모읍니다 (#186 A15)`
+(step 1 and 2 together, since the Red test needs the module to compile) and
+`refactor(audit): X-15 교체 시험이 표를 읽고 손으로 적은 키 목록을 지웁니다 (#186 A15)`.
+Gate: `npm run typecheck && npm test`.
+
 ### B-5 · TD-175 · export screen effect depends on the results object
 
 `src/screens/export/useExportScreen.ts:44-68` and `src/state/effects.ts:38`:
