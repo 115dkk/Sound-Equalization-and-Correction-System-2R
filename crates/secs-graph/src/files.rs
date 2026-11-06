@@ -66,6 +66,53 @@ fn safe_bundle_path(path: &Path) -> bool {
             .all(|component| matches!(component, Component::Normal(_)))
 }
 
+fn is_link_or_reparse(metadata: &fs::Metadata) -> bool {
+    if metadata.file_type().is_symlink() {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt as _;
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+        metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
+}
+
+fn reject_linked_parents(root: &Path, destination: &Path) -> Result<(), std::io::Error> {
+    let relative = destination.strip_prefix(root).map_err(|_| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!(
+                "bundle destination is outside its root: {}",
+                destination.display()
+            ),
+        )
+    })?;
+    let Some(parent) = relative.parent() else {
+        return Ok(());
+    };
+    let mut current = root.to_path_buf();
+    for component in parent.components() {
+        current.push(component);
+        match fs::symlink_metadata(&current) {
+            Ok(metadata) if is_link_or_reparse(&metadata) => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    format!("bundle parent is a link: {}", current.display()),
+                ));
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => break,
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(())
+}
+
 /// Stage a complete bundle beside its destination, then install its entry file last.
 #[doc(hidden)]
 pub fn write_bundle_observed(
@@ -137,6 +184,10 @@ pub fn write_bundle_observed(
     }
     for (relative, _) in files {
         let destination = root.join(relative);
+        if let Err(error) = reject_linked_parents(root, &destination) {
+            let _ = fs::remove_dir_all(&staging);
+            return Err(error);
+        }
         match fs::symlink_metadata(&destination) {
             Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {
                 let _ = fs::remove_dir_all(&staging);
@@ -189,6 +240,7 @@ pub fn write_bundle_observed(
     let result = (|| {
         for (index, relative) in install_order.enumerate() {
             let destination = root.join(relative);
+            reject_linked_parents(root, &destination)?;
             if let Some(parent) = destination.parent() {
                 fs::create_dir_all(parent)?;
             }
@@ -267,6 +319,28 @@ mod tests {
                     .contains(needle)
             })
             .collect()
+    }
+
+    #[cfg(windows)]
+    fn link_directory(target: &Path, link: &Path) {
+        if let Err(symlink_error) = std::os::windows::fs::symlink_dir(target, link) {
+            let output = std::process::Command::new("cmd")
+                .args(["/C", "mklink", "/J"])
+                .arg(link)
+                .arg(target)
+                .output()
+                .expect("run mklink /J after symlink_dir failed");
+            assert!(
+                output.status.success(),
+                "symlink_dir failed ({symlink_error}); mklink /J failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    fn link_directory(target: &Path, link: &Path) {
+        std::os::unix::fs::symlink(target, link).unwrap();
     }
 
     #[test]
@@ -421,6 +495,37 @@ mod tests {
             b"old coefficient"
         );
         assert_eq!(fs::read(root.join("config.txt")).unwrap(), b"old config");
+        fs::remove_dir_all(parent).unwrap();
+    }
+
+    #[test]
+    fn symlinked_bundle_parent_is_refused_td270() {
+        let parent = temp_dir("symlink-parent");
+        let root = parent.join("bundle");
+        let outside = parent.join("outside");
+        fs::create_dir_all(&root).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        let linked = root.join("coeffs");
+        link_directory(&outside, &linked);
+        let files = vec![
+            (PathBuf::from("coeffs/L.wav"), b"coefficient".to_vec()),
+            (PathBuf::from("config.txt"), b"config".to_vec()),
+        ];
+
+        let error = write_bundle_observed(
+            &root,
+            &files,
+            Path::new("config.txt"),
+            &|_, _| Ok(()),
+            &|_, _| Ok(()),
+        )
+        .unwrap_err();
+
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+        assert!(error.to_string().contains(&linked.display().to_string()));
+        assert!(!outside.join("L.wav").exists());
+        assert!(leftovers(&parent, ".stage-").is_empty());
+        fs::remove_dir(&linked).unwrap();
         fs::remove_dir_all(parent).unwrap();
     }
 }
