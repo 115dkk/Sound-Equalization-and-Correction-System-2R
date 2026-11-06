@@ -118,6 +118,7 @@ pub struct Config {
     pub yaml: String,
     /// Coefficient paths and complete WAV bytes.
     pub coeffs: Vec<(PathBuf, Vec<u8>)>,
+    n_in: usize,
 }
 
 /// Labels needed by the calibration-level export wrapper.
@@ -1449,6 +1450,7 @@ pub fn make_config_observed(
     let config = Config {
         yaml: lines.join("\n") + "\n",
         coeffs,
+        n_in,
     };
     boundary("serialize");
     Ok(config)
@@ -1494,12 +1496,7 @@ pub fn write_config_observed(
     after_stage_write: &dyn Fn(usize, &Path) -> std::io::Result<()>,
     before_install: &dyn Fn(usize, &Path) -> std::io::Result<()>,
 ) -> Result<Vec<PathBuf>, CamillaError> {
-    let safe = safe_name(name);
-    if safe == "." || safe == ".." {
-        return Err(CamillaError::Invalid(format!(
-            "unsafe output name {name:?}"
-        )));
-    }
+    let safe = guard::safe_component(name)?;
     let config_dir = out.join(CONFIG_DIR);
     let config = make_config(chain, out, &config_dir, &format!("{safe}_"), options, mimo)?;
     let bypass = if options.bypass {
@@ -1520,15 +1517,12 @@ pub fn write_config_observed(
     } else {
         None
     };
-    let n_in =
-        chain.mains.len() + usize::from(!chain.subs.is_empty() && options.lfe_gain_db.is_some());
-
     // All validation and pure construction have completed before the first write.
     let config_relative = PathBuf::from(CONFIG_DIR).join(format!("{safe}.yml"));
     let bypass_relative = PathBuf::from(CONFIG_DIR).join(format!("{safe}_bypass.yml"));
     let mut bundle = Vec::new();
     if options.capture.is_none() && !out.join("in.raw").exists() {
-        bundle.push((PathBuf::from("in.raw"), vec![0_u8; 1024 * n_in * 4]));
+        bundle.push((PathBuf::from("in.raw"), vec![0_u8; 1024 * config.n_in * 4]));
     }
     for (path, bytes) in &config.coeffs {
         let relative = path.strip_prefix(out).map_err(|_| {

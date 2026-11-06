@@ -4,6 +4,7 @@
 //! `headroom_db`), moved here from `secs-filters` so every writer reads one
 //! plan (#92 C11).
 
+use crate::emit::guard::find_ops;
 use crate::{GraphError, LfeChoice, SAMPLE_RATE};
 use secs_dsp::Complex64;
 use secs_dsp::fft;
@@ -199,7 +200,18 @@ impl<'a> FirView<'a> {
         }
     }
 
+    /// Materialize this FIR at an output sample rate.
+    pub fn materialize_at(self, rate: u32) -> Result<Vec<f64>, GraphError> {
+        self.validate()?;
+        match self {
+            Self::Full(taps) => secs_dsp::rate::fir_to_rate(taps, rate),
+            Self::LowRate(taps, fs_low) => secs_dsp::rate::lowrate_to_rate(taps, fs_low, rate),
+        }
+        .map_err(|error| GraphError::Invalid(error.to_string()))
+    }
+
     /// The 48 kHz taps, expanding a low-rate recipe.
+    #[deprecated(since = "0.22.0", note = "use FirView::materialize_at")]
     pub fn materialize(self) -> Cow<'a, [f64]> {
         match self {
             Self::Full(taps) => Cow::Borrowed(taps),
@@ -306,13 +318,6 @@ impl FilterPlan {
         }
         Ok(())
     }
-}
-
-fn find_ops<'a>(items: &'a [(String, Vec<Op>)], role: &str) -> Option<&'a [Op]> {
-    items
-        .iter()
-        .find(|(key, _)| key == role)
-        .map(|(_, value)| value.as_slice())
 }
 
 fn reserve_fir_name(names: &mut Vec<String>, name: String) -> Result<String, GraphError> {

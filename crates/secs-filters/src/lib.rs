@@ -17,9 +17,10 @@ pub use render::{
 };
 
 use secs_dsp::Complex64;
+use secs_graph::emit::guard::find_ops;
 use secs_graph::emit::pyfmt::{format_fixed, round_ndigits};
 use secs_graph::emit::{grouped, guard};
-use secs_graph::files::{safe_name, wav_bytes, write_bundle_observed};
+use secs_graph::files::{wav_bytes, write_bundle_observed};
 use secs_graph::{
     ExportGraph, GraphError, LFE_GAIN_DB, LFE_LP_HZ, LfeChoice, SAMPLE_RATE, is_negative_delay,
 };
@@ -160,13 +161,6 @@ fn validate_options(options: &Options, convolution: bool) -> Result<(), FiltersE
         }
     }
     Ok(())
-}
-
-fn find_ops<'a>(items: &'a [(String, Vec<Op>)], role: &str) -> Option<&'a [Op]> {
-    items
-        .iter()
-        .find(|(key, _)| key == role)
-        .map(|(_, value)| value.as_slice())
 }
 
 /// Convert a signal-chain value into the upstream filter plan, with
@@ -1260,14 +1254,7 @@ fn utf8_bom(text: &str) -> Vec<u8> {
     bytes
 }
 fn ensure_safe_component(name: &str) -> Result<String, FiltersError> {
-    let safe = safe_name(name);
-    if safe == "." || safe == ".." {
-        Err(FiltersError::Invalid(format!(
-            "unsafe output name {name:?}"
-        )))
-    } else {
-        Ok(safe)
-    }
+    guard::safe_component(name).map_err(|error| FiltersError::Invalid(error.to_string()))
 }
 
 /// Write a filter-value text file and its FIR WAV files.

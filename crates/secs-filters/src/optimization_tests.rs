@@ -208,7 +208,12 @@ fn apo_factoring_preserves_rendered_transfer_and_gain_rounding() {
             let taps = plan
                 .firs()
                 .into_iter()
-                .map(|(name, taps)| (format!("{name}.wav"), taps.materialize().into_owned()))
+                .map(|(name, taps)| {
+                    (
+                        format!("{name}.wav"),
+                        taps.materialize_at(SAMPLE_RATE).unwrap(),
+                    )
+                })
                 .collect();
             let text = eqapo_filters(&plan, &names, "").unwrap();
             assert_eq!(text.matches("Filter: ON LPQ Fc 80.12 Hz").count(), 2);
@@ -319,7 +324,12 @@ fn input_hp_eqapo_precedes_raw_copies_and_cuts_every_input() {
     let taps = on
         .firs()
         .into_iter()
-        .map(|(name, taps)| (format!("{name}.wav"), taps.materialize().into_owned()))
+        .map(|(name, taps)| {
+            (
+                format!("{name}.wav"),
+                taps.materialize_at(SAMPLE_RATE).unwrap(),
+            )
+        })
         .collect();
     let off_text = eqapo_filters(&off, &names, "").unwrap();
     let on_text = eqapo_filters(&on, &names, "").unwrap();

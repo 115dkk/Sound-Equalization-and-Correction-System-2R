@@ -1,9 +1,8 @@
 //! Time-domain rendering of complete export-plan input-to-output paths.
 
 use crate::{FiltersError, SECTION_Q};
-use secs_dsp::rate::{
-    DESIGN_RATE, delay_samples, fir_to_rate, is_output_rate, lowrate_to_rate, taps_at,
-};
+use secs_dsp::rate::{DESIGN_RATE, delay_samples, is_output_rate, taps_at};
+use secs_graph::emit::guard::find_ops;
 use secs_graph::{FilterPlan, FirView, Op};
 use std::f64::consts::PI;
 
@@ -182,17 +181,13 @@ impl Route {
                     .biquads
                     .push(Biquad::peaking(*frequency, *q, *gain_db, rate)?),
                 Op::Fir { taps, .. } => {
-                    let taps = fir_to_rate(taps, rate)
-                        .map_err(|error| FiltersError::Invalid(error.to_string()))?;
+                    let taps = FirView::Full(taps).materialize_at(rate)?;
                     route.fir = convolve(&route.fir, &taps, max_len, input, output, cancelled)?;
                 }
                 Op::FirLowRate {
                     taps_low, fs_low, ..
                 } => {
-                    let view = FirView::LowRate(taps_low, *fs_low);
-                    view.validate()?;
-                    let taps = lowrate_to_rate(taps_low, *fs_low, rate)
-                        .map_err(|error| FiltersError::Invalid(error.to_string()))?;
+                    let taps = FirView::LowRate(taps_low, *fs_low).materialize_at(rate)?;
                     route.fir = convolve(&route.fir, &taps, max_len, input, output, cancelled)?;
                 }
                 Op::Gain { db, .. } => route.gain *= 10_f64.powf(db / 20.0),
@@ -333,13 +328,6 @@ struct PairRoutes {
     input: String,
     output: String,
     routes: Vec<Route>,
-}
-
-fn find_ops<'a>(items: &'a [(String, Vec<Op>)], role: &str) -> Option<&'a [Op]> {
-    items
-        .iter()
-        .find(|(name, _)| name == role)
-        .map(|(_, ops)| ops.as_slice())
 }
 
 fn collect_routes(

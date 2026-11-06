@@ -1,7 +1,7 @@
 //! FIR materialization and WAV emission shared by export writers.
 
 use crate::files::wav_bytes;
-use crate::{FilterPlan, FirView, GraphError};
+use crate::{FilterPlan, GraphError};
 
 /// Materialize every FIR in plan order and return its prefixed WAV filename
 /// with complete IEEE-float WAV bytes at `rate`.
@@ -13,14 +13,9 @@ pub fn fir_files(
     plan.firs()
         .into_iter()
         .map(|(stem, taps)| {
-            taps.validate().map_err(|error| with_stem(stem, error))?;
-            let materialized = match taps {
-                FirView::Full(taps) => secs_dsp::rate::fir_to_rate(taps, rate),
-                FirView::LowRate(taps, fs_low) => {
-                    secs_dsp::rate::lowrate_to_rate(taps, fs_low, rate)
-                }
-            }
-            .map_err(|error| GraphError::Invalid(format!("{stem}: {error}")))?;
+            let materialized = taps
+                .materialize_at(rate)
+                .map_err(|error| with_stem(stem, error))?;
             let bytes = wav_bytes(&materialized, rate).map_err(|error| with_stem(stem, error))?;
             Ok((format!("{prefix}{stem}.wav"), bytes))
         })
