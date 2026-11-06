@@ -1161,8 +1161,8 @@ fn mimo_preparation_budget_refuses_before_spectra() {
         &ctx,
     );
     assert!(
-        matches!(&result, Err(crate::EngineError::Input(message))
-            if message.contains("exceeds memory budget")),
+        matches!(&result, Err(crate::EngineError::Memory { requested, total })
+            if requested > total),
         "{result:?}"
     );
     assert_eq!(

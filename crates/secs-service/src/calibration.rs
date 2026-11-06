@@ -1283,6 +1283,13 @@ pub(crate) fn engine_error(error: secs_engine::EngineError) -> IpcError {
         EngineError::Dsp(detail) => {
             IpcError::new(ErrorCode::Internal, detail.to_string()).with_param("reason", "dsp")
         }
+        EngineError::Memory { requested, total } => failure
+            .with_param("reason", "memory_budget")
+            .with_param("requested", requested.to_string())
+            .with_param("total", total.to_string()),
+        EngineError::Solver(detail) => {
+            IpcError::new(ErrorCode::Internal, detail).with_param("reason", "solver")
+        }
         EngineError::Input(_) => failure,
     }
 }
@@ -1599,6 +1606,22 @@ mod tests {
         assert_eq!(
             serde_json::to_value(dsp.params).unwrap(),
             json!({"reason":"dsp"})
+        );
+        let memory = engine_error(EngineError::Memory {
+            requested: 2048,
+            total: 1024,
+        });
+        assert_eq!(memory.code, ErrorCode::EngineInput);
+        assert_eq!(
+            serde_json::to_value(memory.params).unwrap(),
+            json!({"reason":"memory_budget","requested":"2048","total":"1024"})
+        );
+        let solver = engine_error(EngineError::Solver("singular ridge system".into()));
+        assert_eq!(solver.code, ErrorCode::Internal);
+        assert_eq!(solver.detail, "singular ridge system");
+        assert_eq!(
+            serde_json::to_value(solver.params).unwrap(),
+            json!({"reason":"solver"})
         );
         let cancelled = engine_error(EngineError::Cancelled);
         assert_eq!(cancelled.code, ErrorCode::Cancelled);

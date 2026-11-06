@@ -1381,13 +1381,10 @@ pub(crate) fn design_mimo_prepared_accelerated(
     let retained = prepared.reserved.saturating_add(shared_bytes);
     let needed = retained.saturating_add(largest_input.max(scratch_bytes));
     if needed > ctx.budget().total() {
-        return Err(EngineError::Input(
-            MemoryError::TooLarge {
-                requested: needed,
-                total: ctx.budget().total(),
-            }
-            .to_string(),
-        ));
+        return Err(EngineError::Memory {
+            requested: needed,
+            total: ctx.budget().total(),
+        });
     }
     let _shared_permit = ctx
         .budget()
@@ -1503,7 +1500,7 @@ fn validate_request(req: &MimoRequest) -> Result<(), EngineError> {
 fn memory_error(error: MemoryError) -> EngineError {
     match error {
         MemoryError::Cancelled => EngineError::Cancelled,
-        other => EngineError::Input(other.to_string()),
+        MemoryError::TooLarge { requested, total } => EngineError::Memory { requested, total },
     }
 }
 
@@ -1616,7 +1613,9 @@ pub(crate) fn design_mimo_before(
                         .acquire(bytes as u64, ctx.cancel())
                         .map_err(|e| match e {
                             MemoryError::Cancelled => EngineError::Cancelled,
-                            other => EngineError::Input(other.to_string()),
+                            MemoryError::TooLarge { requested, total } => {
+                                EngineError::Memory { requested, total }
+                            }
                         })?;
                 let mut xs = Vec::new();
                 let mut paths = Vec::new();

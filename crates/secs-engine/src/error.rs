@@ -14,6 +14,12 @@ pub enum EngineError {
     /// An input failure without a structured measurement diagnostic.
     #[error("invalid input: {0}")]
     Input(String),
+    /// A reservation exceeded the computation's memory budget.
+    #[error("request of {requested} bytes exceeds memory budget of {total} bytes")]
+    Memory { requested: u64, total: u64 },
+    /// The CPU solver failed after any accelerator fallback.
+    #[error("solver failed: {0}")]
+    Solver(String),
     /// A channel's measurement does not use the engine sample rate.
     #[error(
         "invalid input: position {position} {role}: sample rate {actual_hz} (expected {expected_hz})"

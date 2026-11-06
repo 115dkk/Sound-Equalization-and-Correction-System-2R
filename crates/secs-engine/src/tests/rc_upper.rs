@@ -81,7 +81,13 @@ fn schroeder_reserves_the_actual_ir_length_before_analysis() {
         config.rc_hi_basis = basis;
         let result = levels::Schroeder::analyze(&set, &config, &ctx);
         assert!(
-            matches!(result, Err(EngineError::Input(ref message)) if message.contains("3072000") && message.contains("131072")),
+            matches!(
+                result,
+                Err(EngineError::Memory {
+                    requested: 3_072_000,
+                    total: 131_072
+                })
+            ),
             "{basis:?}: long IR must exceed the analysis budget, got {:?}",
             result.err()
         );

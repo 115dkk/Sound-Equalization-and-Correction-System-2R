@@ -346,7 +346,7 @@ pub(crate) fn run_sweep(
         .and_then(|mut system| search(&problem, &mut *system, cancel))
         .map_err(|error| match error {
             AccelerationError::Cancelled => EngineError::Cancelled,
-            AccelerationError::Failed { detail, .. } => EngineError::Input(detail),
+            AccelerationError::Failed { detail, .. } => EngineError::Solver(detail),
         })?;
     if let Some(run) = acceleration {
         run.completed(

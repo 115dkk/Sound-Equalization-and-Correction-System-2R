@@ -1829,7 +1829,7 @@ fn mimo_shared_paths_reject_combined_budget() {
             &MimoRequest::default(),
             &ctx
         ),
-        Err(crate::EngineError::Input(_))
+        Err(crate::EngineError::Memory { requested, total }) if requested > total && total == budget
     ));
     assert_eq!(ctx.budget().available(), budget);
 }

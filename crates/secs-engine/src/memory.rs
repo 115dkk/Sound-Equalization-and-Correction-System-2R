@@ -7,7 +7,7 @@ use crate::EngineError;
 pub(crate) fn memory_error(error: MemoryError) -> EngineError {
     match error {
         MemoryError::Cancelled => EngineError::Cancelled,
-        other => EngineError::Input(other.to_string()),
+        MemoryError::TooLarge { requested, total } => EngineError::Memory { requested, total },
     }
 }
 

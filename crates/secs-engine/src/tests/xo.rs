@@ -337,8 +337,8 @@ fn xo_candidates_share_the_job_budget() {
         &ctx,
     );
     assert!(
-        matches!(&result, Err(crate::EngineError::Input(message))
-            if message.contains("exceeds memory budget")),
+        matches!(&result, Err(crate::EngineError::Memory { requested, total })
+            if requested > total),
         "{result:?}"
     );
     assert_eq!(

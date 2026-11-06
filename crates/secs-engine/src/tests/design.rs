@@ -466,8 +466,8 @@ fn design_reserves_preparation_and_one_channel_before_allocating() {
         &*fitters,
     );
     assert!(
-        matches!(&result, Err(crate::EngineError::Input(message))
-            if message.contains("exceeds memory budget")),
+        matches!(&result, Err(crate::EngineError::Memory { requested, total })
+            if requested > total),
         "{:?}",
         result.err()
     );
@@ -1160,4 +1160,32 @@ fn simulator_matches_recorded_stages() {
         }
         assert!(crate::chain::stage_responses(&d, "missing", &h, 1).is_none());
     }
+}
+
+#[test]
+fn design_memory_refusal_preserves_requested_and_total_bytes() {
+    use secs_compute::{CancelToken, MemoryBudget, NoProgress};
+    let case = cases::load("room_dba");
+    let ctx = Context::new(
+        1,
+        MemoryBudget::new(1024),
+        Arc::new(NoProgress),
+        CancelToken::new(),
+    );
+    let error = crate::design(
+        &DesignRequest {
+            measurements: &case.measurements,
+            config: &case.config,
+            tuning: &case.tuning,
+            subs_only: false,
+            adapter_notes: &[],
+        },
+        &ctx,
+        &*design::production_fitters(ctx.cancel()),
+    )
+    .unwrap_err();
+    assert!(
+        matches!(error, crate::EngineError::Memory { requested, total: 1024 } if requested > 1024),
+        "a 1024-byte budget must return structured requested and total bytes: {error:?}"
+    );
 }
