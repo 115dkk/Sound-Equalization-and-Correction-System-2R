@@ -211,13 +211,21 @@ impl RemovedPosition {
 
 impl MeasurementStore {
     pub fn open(path: impl Into<PathBuf>) -> Result<Self, ProjectError> {
+        Self::open_with_source_budget(path, MAX_PROJECT_SOURCE_BYTES)
+    }
+
+    fn open_with_source_budget(
+        path: impl Into<PathBuf>,
+        source_budget: usize,
+    ) -> Result<Self, ProjectError> {
         let path = path.into();
         let bytes = crate::irs::read_bounded(&path, MAX_PROJECT_BYTES, "project")?;
         let text = String::from_utf8(bytes).map_err(|error| {
             ProjectError::Invalid(format!("project {} is not UTF-8: {error}", path.display()))
         })?;
-        let (mut project, warnings) = Project::from_json_with_warnings(loads(&text)?)?;
-        for (pos, roles) in load_project_sources(&project, &path) {
+        let (mut project, mut warnings) = Project::from_json_with_warnings(loads(&text)?)?;
+        let sources = load_project_sources_within(&project, &path, source_budget);
+        for (pos, roles) in sources.values {
             for (role, info) in roles {
                 if let Some(fingerprint) = calibration_fingerprint(&info) {
                     project
@@ -226,6 +234,7 @@ impl MeasurementStore {
                 }
             }
         }
+        warnings.extend(sources.warnings);
         let mut store = Self::new(path, project);
         store.warnings.extend(warnings);
         Ok(store)
@@ -672,18 +681,18 @@ fn load_source_checked(wav: &Path) -> Result<Option<SourceInfo>, ProjectError> {
     let path = source_path(wav);
     let bytes = match crate::irs::read_bounded(&path, MAX_SOURCE_BYTES, "measurement source") {
         Ok(bytes) => bytes,
-        Err(error @ ProjectError::Invalid(_)) => return Err(error),
-        Err(_) => return Ok(None),
+        Err(ProjectError::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(None);
+        }
+        Err(error) => return Err(error),
     };
-    let text = match String::from_utf8(bytes) {
-        Ok(text) => text,
-        Err(_) => return Ok(None),
-    };
-    let value = match loads(&text) {
-        Ok(value) => value,
-        Err(_) => return Ok(None),
-    };
-    Ok(source_from_json(&value))
+    let text = String::from_utf8(bytes).map_err(|error| {
+        ProjectError::Invalid(format!(
+            "measurement source {} is not UTF-8: {error}",
+            path.display()
+        ))
+    })?;
+    Ok(source_from_json(&loads(&text)?))
 }
 
 const MAX_PROJECT_SOURCE_BYTES: usize = 64 * 1024 * 1024;
@@ -733,19 +742,36 @@ pub fn load_project_sources(
     project: &Project,
     project_path: &Path,
 ) -> BTreeMap<u32, BTreeMap<String, SourceInfo>> {
-    load_project_sources_within(project, project_path, MAX_PROJECT_SOURCE_BYTES)
+    load_project_sources_within(project, project_path, MAX_PROJECT_SOURCE_BYTES).values
+}
+
+struct LoadedProjectSources {
+    values: BTreeMap<u32, BTreeMap<String, SourceInfo>>,
+    warnings: Vec<MigrationWarning>,
+}
+
+fn source_warning(code: &'static str, path: &Path) -> MigrationWarning {
+    MigrationWarning {
+        code,
+        entry: path
+            .components()
+            .collect::<PathBuf>()
+            .to_string_lossy()
+            .into_owned(),
+    }
 }
 
 fn load_project_sources_within(
     project: &Project,
     project_path: &Path,
     budget: usize,
-) -> BTreeMap<u32, BTreeMap<String, SourceInfo>> {
+) -> LoadedProjectSources {
     let base = project_path.parent().unwrap_or_else(|| Path::new("."));
     let mut loaded: HashMap<PathBuf, Option<(Arc<SourceInfo>, usize)>> = HashMap::new();
     let mut remaining = budget;
     let mut exhausted = false;
-    let mut out = BTreeMap::new();
+    let mut values = BTreeMap::new();
+    let mut warnings = Vec::new();
     for record in measurement_values(project)
         .iter()
         .filter_map(MeasurementRecord::from_json)
@@ -766,6 +792,7 @@ fn load_project_sources_within(
             let sidecar = source_path(&path);
             // F5: neither the IR nor its sidecar may lead outside the `.irs`.
             if !path.is_file()
+                || !sidecar.is_file()
                 || confined_ir_path(project_path, &path).is_err()
                 || confined_ir_path(project_path, &sidecar).is_err()
             {
@@ -783,19 +810,29 @@ fn load_project_sources_within(
                             .saturating_add(key.as_os_str().len());
                     if entry_bytes > remaining {
                         exhausted = true;
+                        warnings.push(source_warning("measurement.source.budget", &sidecar));
                         continue;
                     }
                     remaining -= entry_bytes;
-                    let info = load_source_checked(&path).ok().flatten().and_then(|info| {
-                        let bytes = source_info_bytes(&info);
-                        if bytes > remaining {
-                            exhausted = true;
-                            None
-                        } else {
-                            remaining -= bytes;
-                            Some((Arc::new(info), bytes))
+                    let info = match load_source_checked(&path) {
+                        Ok(Some(info)) => {
+                            let bytes = source_info_bytes(&info);
+                            if bytes > remaining {
+                                exhausted = true;
+                                warnings
+                                    .push(source_warning("measurement.source.budget", &sidecar));
+                                None
+                            } else {
+                                remaining -= bytes;
+                                Some((Arc::new(info), bytes))
+                            }
                         }
-                    });
+                        Ok(None) => None,
+                        Err(_) => {
+                            warnings.push(source_warning("measurement.source.skipped", &sidecar));
+                            None
+                        }
+                    };
                     loaded.insert(key, info.clone());
                     info
                 }
@@ -803,16 +840,18 @@ fn load_project_sources_within(
             if let Some((info, bytes)) = info {
                 if bytes > remaining {
                     exhausted = true;
+                    warnings.push(source_warning("measurement.source.budget", &sidecar));
                     continue;
                 }
                 remaining -= bytes;
-                out.entry(pos)
+                values
+                    .entry(pos)
                     .or_insert_with(BTreeMap::new)
                     .insert(role, info.as_ref().clone());
             }
         }
     }
-    out
+    LoadedProjectSources { values, warnings }
 }
 
 pub fn load_project_irs(
@@ -1531,6 +1570,61 @@ mod source_budget_tests {
         ])
     }
 
+    fn sidecar_project(name: &str, sidecar: &[u8]) -> (PathBuf, PathBuf, PathBuf) {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "secs-project-sidecar-warning-{}-{unique}",
+            std::process::id()
+        ));
+        let project_path = root.join(format!("{name}.secs"));
+        let irs = project_path.with_extension("irs");
+        fs::create_dir_all(&irs).unwrap();
+        let wav = irs.join("L_P1.wav");
+        fs::write(&wav, []).unwrap();
+        let sidecar_path = source_path(&wav);
+        fs::write(&sidecar_path, sidecar).unwrap();
+        let mut project = Project::from_preset("2.0").unwrap();
+        project.measurements = PyJson::Array(vec![entry(1, format!("{name}.irs/L_P1.wav"))]);
+        fs::write(&project_path, project.save_text()).unwrap();
+        (root, project_path, sidecar_path)
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "uses temporary files")]
+    fn unreadable_sidecar_is_reported_as_a_migration_warning_td183() {
+        let (root, project_path, sidecar) = sidecar_project("malformed", b"{not json");
+
+        let store = MeasurementStore::open(&project_path).unwrap();
+
+        assert!(
+            store.warnings().iter().any(|warning| {
+                warning.code == "measurement.source.skipped"
+                    && warning.entry == sidecar.to_string_lossy()
+            }),
+            "warnings: {:?}, sidecar: {}",
+            store.warnings(),
+            sidecar.display()
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "uses temporary files")]
+    fn budget_exhaustion_is_reported_td183() {
+        let (root, project_path, sidecar) = sidecar_project("budget", b"[]");
+
+        let store = MeasurementStore::open_with_source_budget(&project_path, 1).unwrap();
+
+        assert!(store.warnings().iter().any(|warning| {
+            warning.code == "measurement.source.budget"
+                && warning.entry == sidecar.to_string_lossy()
+        }));
+        fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     #[cfg_attr(miri, ignore = "uses temporary files")]
     fn distinct_large_sidecars_stop_parsing_at_the_project_budget_td112() {
@@ -1598,7 +1692,7 @@ mod source_budget_tests {
         project.measurements = PyJson::Array(entries);
 
         SOURCE_PARSE_COUNT.store(0, Ordering::Relaxed);
-        let sources = load_project_sources_within(&project, &project_path, 4096);
+        let sources = load_project_sources_within(&project, &project_path, 4096).values;
         let parsed = SOURCE_PARSE_COUNT.load(Ordering::Relaxed);
         assert!(sources.is_empty());
         assert!(parsed > 0);

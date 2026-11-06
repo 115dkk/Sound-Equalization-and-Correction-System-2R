@@ -140,6 +140,46 @@ fn call_ok(service: &Service, request: Request, events: Arc<dyn EventSink>) -> R
 }
 
 #[test]
+fn project_open_surfaces_sidecar_warnings_td183() {
+    let root = temp_root("sidecar-warning");
+    let path = root.join("warning.secs");
+    let irs = path.with_extension("irs");
+    fs::create_dir_all(&irs).unwrap();
+    let wav = irs.join("L_P1.wav");
+    fs::write(&wav, []).unwrap();
+    let sidecar = secs_project::source_path(&wav);
+    fs::write(&sidecar, b"{not json").unwrap();
+    let mut project = Project::from_preset("2.0").unwrap();
+    project.measurements = secs_project::PyJson::Array(vec![secs_project::PyJson::Object(vec![
+        ("pos".into(), secs_project::PyJson::Int("1".into())),
+        (
+            "ir".into(),
+            secs_project::PyJson::Object(vec![(
+                "L".into(),
+                secs_project::PyJson::Str("warning.irs/L_P1.wav".into()),
+            )]),
+        ),
+    ])]);
+    fs::write(&path, project.save_text()).unwrap();
+    let service = service();
+
+    let Response::ProjectOpen(info) = call_ok(
+        &service,
+        Request::ProjectOpen(secs_types::ipc::ProjectPathParams {
+            path: path.to_string_lossy().into_owned(),
+        }),
+        Arc::new(NoEvents),
+    ) else {
+        panic!();
+    };
+
+    assert!(info.migration_warnings.iter().any(|warning| {
+        warning.code == "measurement.source.skipped" && warning.entry == sidecar.to_string_lossy()
+    }));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn damaged_settings_file_is_reported_and_not_overwritten_until_set_td169() {
     let root = temp_root("damaged-settings");
     fs::create_dir_all(&root).unwrap();
