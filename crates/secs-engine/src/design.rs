@@ -90,6 +90,59 @@ pub struct Design {
     #[cfg(test)]
     pub timings: Vec<(String, std::time::Duration)>,
 }
+
+impl Design {
+    pub fn config(&self) -> &EngineConfig {
+        self.replay.config()
+    }
+
+    pub fn main_position(&self) -> u32 {
+        self.config().main_position
+    }
+
+    pub fn latency_ms(&self) -> f64 {
+        self.chain.latency_ms
+    }
+
+    pub fn rc_hi(&self) -> f64 {
+        self.rc_hi
+    }
+
+    pub fn measured(&self, position: u32, role: &str) -> Option<&crate::Measurement> {
+        self.replay.measurements().get(position, role)
+    }
+
+    pub fn main_roles(&self) -> impl Iterator<Item = &str> {
+        self.chain.mains.iter().map(|main| main.role.as_str())
+    }
+
+    pub fn sub_roles(&self) -> impl Iterator<Item = &str> {
+        self.chain.subs.iter().map(|sub| sub.role.as_str())
+    }
+
+    pub fn fir(&self, role: &str) -> Option<&[f64]> {
+        self.chain
+            .mains
+            .iter()
+            .find(|main| main.role == role)
+            .map(|main| main.fir.as_slice())
+    }
+
+    pub fn stage(&self, role: &str, position: u32) -> Result<crate::StageResponses, EngineError> {
+        let view = self.replay.export_view(self)?;
+        crate::chain::stage_responses(self, role, &view.spectra, position)
+            .ok_or_else(|| EngineError::Input(format!("missing stage response {position}/{role}")))
+    }
+
+    pub fn export_ir(&self, spectrum: &[C], axis: crate::ExportAxis) -> (Vec<f32>, f64) {
+        let (samples, t0) = self.replay.export_ir(self, spectrum, axis);
+        (
+            samples.into_iter().map(|sample| sample as f32).collect(),
+            t0,
+        )
+    }
+}
+
 #[derive(Debug)]
 pub struct DesignSpectra {
     pub raw: Arc<Spectra>,
