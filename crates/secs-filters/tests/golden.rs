@@ -189,6 +189,33 @@ fn plan(fixture: &Fixture, chain: &SignalChain, mimo: Option<&MimoPaths>) -> Fil
     .unwrap()
 }
 
+#[test]
+fn malformed_plans_return_errors_instead_of_panicking_td180() {
+    let fixture = Fixture::load("filters", "rc_mixed");
+    let chain = chain(&fixture);
+    let mut plan = plan(&fixture, &chain, None);
+    let missing = plan.inputs[0].clone();
+    plan.main_ops.retain(|(role, _)| role != &missing);
+    let firs = plan
+        .firs()
+        .into_iter()
+        .map(|(name, _)| (name.to_owned(), format!("{name}.wav")))
+        .collect::<Vec<_>>();
+
+    assert!(matches!(
+        eqapo_filters(&plan, &firs, ""),
+        Err(FiltersError::Invalid(message)) if message.contains(&missing)
+    ));
+    assert!(matches!(
+        filter_text(&plan, &firs, "test", &[]),
+        Err(FiltersError::Invalid(message)) if message.contains(&missing)
+    ));
+    assert!(matches!(
+        render_paths(&plan, 1 << 16),
+        Err(FiltersError::Invalid(message)) if message.contains(&missing)
+    ));
+}
+
 fn assert_op(fixture: &Fixture, id: &str, got: &Op, expected: &Value) {
     assert_eq!(got.fixed(), expected["fixed"].as_bool().unwrap(), "{id}");
     match (got, expected["kind"].as_str().unwrap()) {
@@ -1190,7 +1217,8 @@ fn eqapo_disabled_and_case_sensitive_mapping_f11() {
         &[("Tml".into(), 0), ("Tmr".into(), 12)],
         &[("Tml".into(), 11), ("Tmr".into(), 0)],
         None,
-    );
+    )
+    .unwrap();
     assert_f11_assignments(
         &config,
         &[
@@ -1218,7 +1246,7 @@ fn plans_and_windows_channels_match_oracle() {
         let mimo = mimo(&fixture);
         let plan = plan(&fixture, &chain, mimo.as_ref());
         assert_plan(&fixture, &plan);
-        let (inputs, outputs) = windows_channels(&plan);
+        let (inputs, outputs) = windows_channels(&plan).unwrap();
         let expected = &fixture.outputs()["windows_channels"];
         let pairs = |value: &Value| {
             value
@@ -1247,10 +1275,10 @@ fn serializers_match_oracle_text_exactly() {
         let plan = plan(&fixture, &chain, mimo.as_ref());
         let direct = &fixture.outputs()["direct"];
         let firs = fir_names(&plan, "edge_");
-        let (inputs, outputs) = windows_channels(&plan);
+        let (inputs, outputs) = windows_channels(&plan).unwrap();
         let preamp = (headroom_db(&plan).unwrap() * 2.0).ceil() / 2.0;
         let run = &fixture.inputs()["run"];
-        let got_body = eqapo_filters(&plan, &firs, "ASCII before / 한글 / after");
+        let got_body = eqapo_filters(&plan, &firs, "ASCII before / 한글 / after").unwrap();
         let expected_body = direct["eqapo_filters"].as_str().unwrap();
         let got_config = eqapo_config(
             &plan,
@@ -1259,7 +1287,8 @@ fn serializers_match_oracle_text_exactly() {
             &inputs,
             &outputs,
             Some(number(&run["latency_ms"])),
-        );
+        )
+        .unwrap();
         let expected_config = f11_config(direct["eqapo_config"].as_str().unwrap());
         let wav = |name: &str| {
             let key = firs
@@ -1324,7 +1353,8 @@ fn serializers_match_oracle_text_exactly() {
                 &firs,
                 &format!("SECS 2 보정 필터 — {}", run["label"].as_str().unwrap()),
                 &info,
-            ),
+            )
+            .unwrap(),
             direct["filter_text"].as_str().unwrap(),
             "{case} text"
         );
@@ -1545,7 +1575,7 @@ fn public_wrappers_match_oracle_and_eqapo_carries_mimo_f12() {
     let body = fs::read_to_string(eqapo.join("secs_mixed/secs_mixed.txt")).unwrap();
     assert!(body.contains("MIMO IIR support paths"));
     let plan = secs_filters::make_plan(&chain, Some(&mimo)).unwrap();
-    let (_, outputs) = windows_channels(&plan);
+    let (_, outputs) = windows_channels(&plan).unwrap();
     // F13 preserves the serialized APO transfer, not the unrounded analog
     // response from plan_responses. The direct fixture retains the unfactored
     // MIMO body, including the fixed sub filter on both contributing paths.

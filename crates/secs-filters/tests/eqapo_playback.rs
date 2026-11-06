@@ -820,7 +820,7 @@ fn assert_benchmark_matches_plan(
     let preamp = preamp_gain(generation_config);
     let plan = make_plan(chain, None).unwrap();
     let reference_plan = as_written(&plan);
-    let (inputs, outputs) = windows_channels(&plan);
+    let (inputs, outputs) = windows_channels(&plan).unwrap();
     let channels = inputs
         .iter()
         .chain(&outputs)
@@ -996,7 +996,7 @@ fn exported_configs_play_as_designed() {
         let preamp = preamp_gain(&config.join("config.txt"));
         let plan = make_plan(&case.chain, case.mimo.as_ref()).unwrap();
         let reference_plan = as_written(&plan);
-        let (inputs, outputs) = windows_channels(&plan);
+        let (inputs, outputs) = windows_channels(&plan).unwrap();
         let channels = inputs
             .iter()
             .chain(&outputs)

@@ -210,17 +210,18 @@ fn apo_factoring_preserves_rendered_transfer_and_gain_rounding() {
                 .into_iter()
                 .map(|(name, taps)| (format!("{name}.wav"), taps.materialize().into_owned()))
                 .collect();
-            let text = eqapo_filters(&plan, &names, "");
+            let text = eqapo_filters(&plan, &names, "").unwrap();
             assert_eq!(text.matches("Filter: ON LPQ Fc 80.12 Hz").count(), 2);
             assert_eq!(text.matches("Filter: ON PK Fc 45.12 Hz").count(), 1);
             assert_eq!(text.matches("Filter: ON HPQ Fc 22.00 Hz").count(), 2);
-            let (inputs, outputs) = windows_channels(&plan);
-            let config = eqapo_config(&plan, "filters.txt", 0.0, &inputs, &outputs, None);
+            let (inputs, outputs) = windows_channels(&plan).unwrap();
+            let config = eqapo_config(&plan, "filters.txt", 0.0, &inputs, &outputs, None).unwrap();
             assert!(!config.contains("+VP"));
             for source in &plan.inputs {
                 for f in [11.0, 25.0, 40.0, 80.0, 150.0, 311.0, 1000.0, 17000.0] {
                     let response = |ops: &[Op]| {
                         eqapo_ops(ops, "V", &names)
+                            .unwrap()
                             .iter()
                             .map(|line| line_response(line, f, &taps))
                             .product::<C>()
@@ -320,10 +321,10 @@ fn input_hp_eqapo_precedes_raw_copies_and_cuts_every_input() {
         .into_iter()
         .map(|(name, taps)| (format!("{name}.wav"), taps.materialize().into_owned()))
         .collect();
-    let off_text = eqapo_filters(&off, &names, "");
-    let on_text = eqapo_filters(&on, &names, "");
+    let off_text = eqapo_filters(&off, &names, "").unwrap();
+    let on_text = eqapo_filters(&on, &names, "").unwrap();
     let before_fork = on_text.split("# Raw input copies").next().unwrap();
-    let qs = q_values(BandType::Bw48);
+    let qs = q_values(BandType::Bw48).unwrap();
     assert_eq!(
         before_fork.matches("Filter: ON HPQ Fc 27.00 Hz").count(),
         4 * on.inputs.len()
@@ -373,14 +374,18 @@ fn input_hp_eqapo_precedes_raw_copies_and_cuts_every_input() {
         // as every exported crossover does; ADR 0031 allows 0.5°.
         assert!(deg < 0.5);
     }
-    let text = filter_text(&on, &names, "test", &[]);
+    let text = filter_text(&on, &names, "test", &[]).unwrap();
     let hp_line = text.find("극저역 보호(수동, 모든 입력").unwrap();
     assert!(
         text[hp_line..]
             .starts_with("극저역 보호(수동, 모든 입력, LFE 포함)  27.00 Hz · 버터워스 48 dB/oct")
     );
     assert!(hp_line < text.find("== 메인").unwrap());
-    assert!(!filter_text(&off, &names, "test", &[]).contains("극저역 보호(수동, 모든 입력"));
+    assert!(
+        !filter_text(&off, &names, "test", &[])
+            .unwrap()
+            .contains("극저역 보호(수동, 모든 입력")
+    );
 }
 
 fn polarity_plans() -> (FilterPlan, FilterPlan) {
@@ -408,11 +413,11 @@ fn inverted_main_copies_negative_after_the_support_merge_and_lists_the_inversion
         .iter()
         .map(|(name, _)| (name.to_string(), format!("{name}.wav")))
         .collect::<Vec<_>>();
-    let eqapo = eqapo_filters(&inverted, &names, "");
+    let eqapo = eqapo_filters(&inverted, &names, "").unwrap();
     let merge = eqapo.find("Copy: VMR=VMR+VG").unwrap();
     let polarity = eqapo.find("Copy: VMR=-1.0*VMR").unwrap();
     assert!(merge < polarity);
-    let text = filter_text(&inverted, &names, "test", &[]);
+    let text = filter_text(&inverted, &names, "test", &[]).unwrap();
     let section = text.split("== 메인 R").nth(1).unwrap();
     assert!(section.contains("극성     반전"));
 }

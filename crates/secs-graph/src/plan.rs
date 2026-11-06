@@ -239,6 +239,73 @@ impl FilterPlan {
         }
         out
     }
+
+    /// Check the references a hand-built or revived plan needs before a writer
+    /// traverses it.
+    pub fn check_structure(&self) -> Result<(), GraphError> {
+        for input in self.inputs.iter().filter(|input| input.as_str() != "LFE") {
+            if find_ops(&self.input_ops, input).is_none() {
+                return Err(GraphError::Invalid(format!(
+                    "missing input operations for input {input}"
+                )));
+            }
+            if find_ops(&self.main_ops, input).is_none() {
+                return Err(GraphError::Invalid(format!(
+                    "missing main operations for input {input}"
+                )));
+            }
+            if !self.outputs.contains(input) {
+                return Err(GraphError::Invalid(format!(
+                    "input {input} is not an output"
+                )));
+            }
+        }
+        for (role, _) in &self.send_ops {
+            if !self.outputs.contains(role) {
+                return Err(GraphError::Invalid(format!(
+                    "send role {role} is not an output"
+                )));
+            }
+        }
+        for (role, _) in &self.subs {
+            if !self.outputs.contains(role) {
+                return Err(GraphError::Invalid(format!(
+                    "sub role {role} is not an output"
+                )));
+            }
+        }
+        for feed in &self.mimo {
+            if !self.outputs.contains(&feed.support) {
+                return Err(GraphError::Invalid(format!(
+                    "MIMO support {} is not an output",
+                    feed.support
+                )));
+            }
+        }
+
+        let firs = self
+            .firs()
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect::<Vec<_>>();
+        let operations = std::iter::once(self.pre_ops.as_slice())
+            .chain(self.input_ops.iter().map(|(_, ops)| ops.as_slice()))
+            .chain(self.main_ops.iter().map(|(_, ops)| ops.as_slice()))
+            .chain(self.send_ops.iter().map(|(_, ops)| ops.as_slice()))
+            .chain(std::iter::once(self.lfe_ops.as_slice()))
+            .chain(self.subs.iter().map(|(_, feed)| feed.ops.as_slice()))
+            .chain(self.mimo.iter().map(|feed| feed.ops.as_slice()));
+        for op in operations.flatten() {
+            if let Op::Fir { name, .. } | Op::FirLowRate { name, .. } = op
+                && !firs.contains(&name.as_str())
+            {
+                return Err(GraphError::Invalid(format!(
+                    "FIR {name} is missing from plan FIRs"
+                )));
+            }
+        }
+        Ok(())
+    }
 }
 
 fn find_ops<'a>(items: &'a [(String, Vec<Op>)], role: &str) -> Option<&'a [Op]> {
@@ -605,6 +672,7 @@ pub fn plan_responses(
     source: &str,
     skip_fixed: bool,
 ) -> Result<Vec<(String, Vec<Complex64>)>, GraphError> {
+    plan.check_structure()?;
     if !plan.firs().is_empty() {
         check_rfft_grid(f)?;
     }
@@ -653,7 +721,9 @@ fn plan_responses_prepared(
         multiply(
             &mut main,
             response_chain(
-                find_ops(&plan.main_ops, source).expect("plan main"),
+                find_ops(&plan.main_ops, source).ok_or_else(|| {
+                    GraphError::Invalid(format!("missing main operations for input {source}"))
+                })?,
                 f,
                 skip_fixed,
             )?,
@@ -704,6 +774,7 @@ fn plan_responses_prepared(
 
 /// Largest non-LFE output boost from 20 Hz through 20 kHz.
 pub fn headroom_db(plan: &FilterPlan) -> Result<f64, GraphError> {
+    plan.check_structure()?;
     let firs = plan.firs();
     for (_, taps) in &firs {
         taps.validate()?;
@@ -740,4 +811,70 @@ pub fn headroom_db(plan: &FilterPlan) -> Result<f64, GraphError> {
     } else {
         0.0
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{ExportGraph, LfeChoice};
+    use secs_types::chain::{MainChannel, SignalChain};
+
+    fn plan() -> FilterPlan {
+        let chain = SignalChain {
+            sample_rate: SAMPLE_RATE,
+            mains: vec![MainChannel {
+                role: "L".into(),
+                input_peq: Vec::new(),
+                fir: vec![1.0, 0.5],
+                gain_db: 0.0,
+                polarity: None,
+                delay_ms: 0.0,
+                xo_hz: None,
+                top_peq: Vec::new(),
+                align_delay_ms: 0.0,
+            }],
+            subs: Vec::new(),
+            sub_bus_peq: Vec::new(),
+            main_extra_ms: 0.0,
+            lift_ms: 0.0,
+            latency_ms: 0.0,
+            input_hp_hz: None,
+        };
+        ExportGraph::build(&chain, None, LfeChoice::Omit)
+            .unwrap()
+            .plan()
+            .clone()
+    }
+
+    #[test]
+    fn check_structure_rejects_missing_paths_firs_and_outputs_td180() {
+        let mut missing_main = plan();
+        missing_main.main_ops.clear();
+        assert!(matches!(
+            missing_main.check_structure(),
+            Err(GraphError::Invalid(message)) if message.contains("L")
+        ));
+
+        let mut missing_fir = plan();
+        missing_fir.main_ops[0].1.push(Op::Fir {
+            name: "missing_fir".into(),
+            taps: vec![1.0],
+            fixed: false,
+        });
+        assert!(matches!(
+            missing_fir.check_structure(),
+            Err(GraphError::Invalid(message)) if message.contains("missing_fir")
+        ));
+
+        let mut missing_support = plan();
+        missing_support.mimo.push(MimoFeed {
+            input: "L".into(),
+            support: "missing_support".into(),
+            ops: Vec::new(),
+        });
+        assert!(matches!(
+            missing_support.check_structure(),
+            Err(GraphError::Invalid(message)) if message.contains("missing_support")
+        ));
+    }
 }

@@ -1164,7 +1164,7 @@ id = "export.filter_text"
 kind = "export"
 milestone = "M5"
 status = "implemented"
-tests = ["secs-filters::filter_text_files_match_oracle_bytes", "secs-filters::public_wrappers_match_oracle_and_eqapo_carries_mimo_f12", "secs-filters::computed_public_wrappers_match_oracle_files", "secs-filters::computed_subwoofer_text_scope_matches_oracle"]
+tests = ["secs-filters::filter_text_files_match_oracle_bytes", "secs-filters::public_wrappers_match_oracle_and_eqapo_carries_mimo_f12", "secs-filters::computed_public_wrappers_match_oracle_files", "secs-filters::computed_subwoofer_text_scope_matches_oracle", "secs-graph::check_structure_rejects_missing_paths_firs_and_outputs_td180", "secs-filters::malformed_plans_return_errors_instead_of_panicking_td180"]
 upstream = "calibration.py export_filter_text; export_filters.py"
 
 [[feature]]
@@ -1172,7 +1172,7 @@ id = "export.eqapo"
 kind = "export"
 milestone = "M5"
 status = "implemented"
-tests = ["secs-filters::equalizer_apo_files_match_oracle_bytes", "secs-filters::public_wrappers_match_oracle_and_eqapo_carries_mimo_f12", "secs-filters::computed_public_wrappers_match_oracle_files", "secs-filters::eqapo_public_exports_use_single_assignments_f11", "secs-filters::eqapo_disabled_and_case_sensitive_mapping_f11", "secs-filters::exported_configs_play_as_designed", "secs-filters::fir_taps_that_overflow_f32_write_nothing_td45", "secs-filters::negative_delays_write_nothing_td94", "secs-filters::fir_responses_require_the_rfft_grid_td94", "secs-filters::uses_a_relative_nested_include_with_crlf", "secs-filters::generation_entry_plays_from_unrelated_working_directory_across_two_applies"]
+tests = ["secs-filters::equalizer_apo_files_match_oracle_bytes", "secs-filters::public_wrappers_match_oracle_and_eqapo_carries_mimo_f12", "secs-filters::computed_public_wrappers_match_oracle_files", "secs-filters::eqapo_public_exports_use_single_assignments_f11", "secs-filters::eqapo_disabled_and_case_sensitive_mapping_f11", "secs-filters::exported_configs_play_as_designed", "secs-filters::fir_taps_that_overflow_f32_write_nothing_td45", "secs-filters::negative_delays_write_nothing_td94", "secs-filters::fir_responses_require_the_rfft_grid_td94", "secs-filters::uses_a_relative_nested_include_with_crlf", "secs-filters::generation_entry_plays_from_unrelated_working_directory_across_two_applies", "secs-graph::check_structure_rejects_missing_paths_firs_and_outputs_td180", "secs-filters::malformed_plans_return_errors_instead_of_panicking_td180"]
 upstream = "calibration.py export_eqapo; export_filters.py"
 
 [[feature]]
@@ -1188,6 +1188,8 @@ tests = [
   "secs-service::convolution_export_with_subs_and_mimo_reopens_byte_identically",
   "secs-service::cancelled_convolution_compute_installs_no_files",
   "secs-filters::convolution_cancel_inside_the_first_rate_finishes_before_rate_progress",
+  "secs-graph::check_structure_rejects_missing_paths_firs_and_outputs_td180",
+  "secs-filters::malformed_plans_return_errors_instead_of_panicking_td180",
 ]
 note = "New: complete f32 convolution IRs fold FIR, PEQ, crossovers, all-pass, gain, polarity and delay into one WAV and exact-DTFT CSV per reachable input/output pair, with routing metadata and shared headroom. Additional output rates are written into rate-named subfolders."
 

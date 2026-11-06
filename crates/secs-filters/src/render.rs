@@ -369,7 +369,7 @@ fn collect_routes(
             .outputs
             .iter()
             .position(|candidate| candidate == output)
-            .expect("plan output");
+            .ok_or_else(|| FiltersError::Invalid(format!("missing plan output {output}")))?;
         let pair = &mut pairs[input_index * output_count + output_index];
         pair.routes.push(Route::from_parts_cancellable(
             parts,
@@ -459,6 +459,7 @@ pub fn render_paths_at_cancellable(
     rate: u32,
     cancelled: &dyn Fn() -> bool,
 ) -> Result<RenderedPaths, FiltersError> {
+    plan.check_structure()?;
     if !is_output_rate(rate) {
         return Err(FiltersError::Invalid(
             "unsupported output sample rate".into(),
