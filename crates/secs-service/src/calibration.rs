@@ -601,7 +601,7 @@ fn measured_ir_with_curve_status(
         return Ok(((samples, sample_rate), invalid_curve));
     }
     let corrected = correction.apply(&samples, sample_rate).map_err(|error| {
-        crate::ServiceError::Project(format!("measurement response correction: {error}"))
+        crate::ServiceError::ProjectMessage(format!("measurement response correction: {error}"))
     })?;
     Ok(((corrected, sample_rate), invalid_curve))
 }

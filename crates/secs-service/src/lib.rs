@@ -550,32 +550,60 @@ pub(crate) enum ServiceError {
     #[error("{0}")]
     InvalidRequest(String),
     #[error("project I/O: {0}")]
-    Project(String),
+    Project(#[from] secs_project::ProjectError),
+    #[error("project I/O: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("project I/O: {0}")]
+    ProjectMessage(String),
+    #[error("project I/O at {path:?}: {source}")]
+    ProjectOpen {
+        path: PathBuf,
+        #[source]
+        source: secs_project::ProjectError,
+    },
 }
 
-impl From<secs_project::ProjectError> for ServiceError {
-    fn from(value: secs_project::ProjectError) -> Self {
-        Self::Project(value.to_string())
-    }
+fn project_open_ipc(path: PathBuf, source: secs_project::ProjectError) -> IpcError {
+    let (code, reason) = match &source {
+        secs_project::ProjectError::Io(error)
+            if error.kind() == std::io::ErrorKind::PermissionDenied =>
+        {
+            (ErrorCode::PermissionDenied, "permission_denied")
+        }
+        secs_project::ProjectError::Io(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            (ErrorCode::ProjectIo, "not_found")
+        }
+        secs_project::ProjectError::Io(_) => (ErrorCode::ProjectIo, "io"),
+        secs_project::ProjectError::Json(_) => (ErrorCode::ProjectIo, "json"),
+        secs_project::ProjectError::Invalid(_) => (ErrorCode::ProjectIo, "invalid"),
+        secs_project::ProjectError::Wav(_) => (ErrorCode::ProjectIo, "wav"),
+        secs_project::ProjectError::IrPath { .. } => (ErrorCode::ProjectIo, "ir_path"),
+    };
+    // TD-208: use IpcError::io once P184 lands.
+    IpcError::new(code, source.to_string())
+        .with_param("path", path.to_string_lossy().into_owned())
+        .with_param("reason", reason)
 }
-impl From<std::io::Error> for ServiceError {
-    fn from(value: std::io::Error) -> Self {
-        Self::Project(value.to_string())
-    }
-}
+
 impl From<ServiceError> for IpcError {
     fn from(value: ServiceError) -> Self {
         match value {
             ServiceError::ProjectNotOpen => {
-                IpcError::new(ErrorCode::ProjectNotOpen, value.to_string())
+                IpcError::new(ErrorCode::ProjectNotOpen, "project is not open")
             }
-            ServiceError::TutorialBlocked => {
-                IpcError::new(ErrorCode::TutorialBlocked, value.to_string())
+            ServiceError::TutorialBlocked => IpcError::new(
+                ErrorCode::TutorialBlocked,
+                "tutorial sessions cannot write project data",
+            ),
+            ServiceError::InvalidRequest(detail) => {
+                IpcError::new(ErrorCode::InvalidRequest, detail)
             }
-            ServiceError::InvalidRequest(_) => {
-                IpcError::new(ErrorCode::InvalidRequest, value.to_string())
+            ServiceError::Project(source) => {
+                IpcError::new(ErrorCode::ProjectIo, source.to_string())
             }
-            ServiceError::Project(_) => IpcError::new(ErrorCode::ProjectIo, value.to_string()),
+            ServiceError::Io(source) => IpcError::new(ErrorCode::ProjectIo, source.to_string()),
+            ServiceError::ProjectMessage(detail) => IpcError::new(ErrorCode::ProjectIo, detail),
+            ServiceError::ProjectOpen { path, source } => project_open_ipc(path, source),
         }
     }
 }

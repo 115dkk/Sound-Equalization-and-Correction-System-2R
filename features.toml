@@ -1427,7 +1427,7 @@ id = "ipc.project_open"
 kind = "ipc"
 milestone = "M4"
 status = "implemented"
-tests = ["secs-types::every_method_name_is_listed_and_parses", "secs-service::exports_after_reopening_match_pre_close_bytes", "secs-service::old_cache_without_run_key_keeps_calibration_but_marks_mimo_stale", "secs-service::project_open_surfaces_sidecar_warnings_td183"]
+tests = ["secs-types::every_method_name_is_listed_and_parses", "secs-service::exports_after_reopening_match_pre_close_bytes", "secs-service::old_cache_without_run_key_keeps_calibration_but_marks_mimo_stale", "secs-service::project_open_surfaces_sidecar_warnings_td183", "secs-service::opening_a_missing_project_names_the_path_td208", "secs-service::opening_an_unreadable_project_is_a_permission_error_td208"]
 
 [[feature]]
 id = "ipc.project_save"

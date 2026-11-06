@@ -140,6 +140,101 @@ fn call_ok(service: &Service, request: Request, events: Arc<dyn EventSink>) -> R
 }
 
 #[test]
+fn opening_a_missing_project_names_the_path_td208() {
+    let root = temp_root("missing-project-open");
+    fs::create_dir_all(&root).unwrap();
+    let path = root.join("missing.secs");
+    let service = service();
+
+    let Envelope::Err(error) = service.call(
+        Request::ProjectOpen(secs_types::ipc::ProjectPathParams {
+            path: path.to_string_lossy().into_owned(),
+        }),
+        Arc::new(NoEvents),
+    ) else {
+        panic!("opening a missing project must fail")
+    };
+    assert_eq!(error.code, ErrorCode::ProjectIo);
+    assert_eq!(
+        error.params.get("path").map(String::as_str),
+        Some(path.to_string_lossy().as_ref())
+    );
+    assert_eq!(
+        error.params.get("reason").map(String::as_str),
+        Some("not_found")
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(windows)]
+struct ReadDenyAcl {
+    path: PathBuf,
+    user: String,
+}
+
+#[cfg(windows)]
+impl Drop for ReadDenyAcl {
+    fn drop(&mut self) {
+        let _ = std::process::Command::new("icacls")
+            .arg(&self.path)
+            .arg("/remove:d")
+            .arg(&self.user)
+            .output();
+        let _ = std::process::Command::new("icacls")
+            .arg(&self.path)
+            .arg("/inheritance:e")
+            .output();
+    }
+}
+
+#[test]
+#[cfg(windows)]
+fn opening_an_unreadable_project_is_a_permission_error_td208() {
+    let root = temp_root("unreadable-project-open");
+    fs::create_dir_all(&root).unwrap();
+    let path = root.join("unreadable.secs");
+    fs::write(&path, Project::from_preset("2.0").unwrap().save_text()).unwrap();
+    let user = format!(
+        "{}\\{}",
+        std::env::var("USERDOMAIN").unwrap(),
+        std::env::var("USERNAME").unwrap()
+    );
+    let denied = std::process::Command::new("icacls")
+        .arg(&path)
+        .arg("/inheritance:r")
+        .arg("/deny")
+        .arg(format!("{user}:(R)"))
+        .output()
+        .unwrap();
+    assert!(
+        denied.status.success(),
+        "icacls failed: {}",
+        String::from_utf8_lossy(&denied.stderr)
+    );
+    let acl = ReadDenyAcl {
+        path: path.clone(),
+        user,
+    };
+    let service = service();
+
+    let Envelope::Err(error) = service.call(
+        Request::ProjectOpen(secs_types::ipc::ProjectPathParams {
+            path: path.to_string_lossy().into_owned(),
+        }),
+        Arc::new(NoEvents),
+    ) else {
+        panic!("opening an unreadable project must fail")
+    };
+    assert_eq!(error.code, ErrorCode::PermissionDenied);
+    assert_eq!(
+        error.params.get("path").map(String::as_str),
+        Some(path.to_string_lossy().as_ref())
+    );
+    drop(acl);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn project_open_surfaces_sidecar_warnings_td183() {
     let root = temp_root("sidecar-warning");
     let path = root.join("warning.secs");

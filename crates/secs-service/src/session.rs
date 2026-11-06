@@ -166,7 +166,10 @@ impl Session {
     }
 
     pub fn open(&mut self, path: PathBuf) -> Result<ProjectInfo, ServiceError> {
-        let store = MeasurementStore::open(&path)?;
+        let store = MeasurementStore::open(&path).map_err(|source| ServiceError::ProjectOpen {
+            path: path.clone(),
+            source,
+        })?;
         let cached = crate::cache::load(&path);
         self.open = Some(OpenProject {
             path,
@@ -497,22 +500,21 @@ fn normalised_path(path: &Path) -> Result<PathBuf, ServiceError> {
     // ancestor, then append the missing components without following links.
     let mut existing = path;
     let mut rest = Vec::new();
-    let resolved =
-        loop {
-            match existing.canonicalize() {
-                Ok(path) => break path,
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                    rest.push(existing.file_name().ok_or_else(|| {
-                        ServiceError::Project("invalid measurement folder".into())
-                    })?);
-                    existing = existing
-                        .parent()
-                        .filter(|parent| !parent.as_os_str().is_empty())
-                        .unwrap_or(Path::new("."));
-                }
-                Err(error) => return Err(error.into()),
+    let resolved = loop {
+        match existing.canonicalize() {
+            Ok(path) => break path,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                rest.push(existing.file_name().ok_or_else(|| {
+                    ServiceError::ProjectMessage("invalid measurement folder".into())
+                })?);
+                existing = existing
+                    .parent()
+                    .filter(|parent| !parent.as_os_str().is_empty())
+                    .unwrap_or(Path::new("."));
             }
-        };
+            Err(error) => return Err(error.into()),
+        }
+    };
     Ok(rest
         .iter()
         .rev()
