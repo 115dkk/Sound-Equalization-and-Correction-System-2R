@@ -106,6 +106,7 @@ namespace Secs2R
 
         /// <summary>
         ///  Frees an event-subscription handle. Unknown handles are ignored.
+        ///  A concurrent poll can defer closing its socket by up to that poll's timeout.
         /// </summary>
         [DllImport(__DllName, EntryPoint = "secs_events_free", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
         internal static extern void secs_events_free(ulong subscription);
