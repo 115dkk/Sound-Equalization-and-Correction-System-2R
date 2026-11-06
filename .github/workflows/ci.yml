@@ -30,9 +30,11 @@ name: CI
 #   bundle    the installers of every OS built as on release day, kept as run
 #             artifacts so a pull request can be installed and tried; the
 #             macOS dmg must open and calibrate (.github/scripts/
-#             macos_app_check.py: bundle signature, microphone permission,
-#             and a mock-room calibration through the app's own screen on
-#             Apple Silicon and under Rosetta)
+#             macos_app_check.py: a certificate signature as on release day,
+#             a throwaway certificate standing in for the release one
+#             (docs/adr/0041), microphone permission, and a mock-room
+#             calibration through the app's own screen on Apple Silicon and
+#             under Rosetta)
 #   docs      rustdoc with warnings denied
 #   deny      cargo-deny: advisories, GPL-compatible licenses, bans, sources
 #   miri      the parsers of untrusted files (secs-jos, secs-mdat, secs-dirac)
@@ -1121,6 +1123,17 @@ jobs:
             echo "SECS2R_UPDATER_PUBKEY=$(cat "$key.pub")"
           } >> "$GITHUB_ENV"
 
+      # Nor can they read the release certificate (docs/adr/0041). Each run
+      # makes a throwaway certificate and puts it into a keychain through
+      # the same script as release.yml, so tauri build signs the app as on
+      # release day and the app check below proves that signature.
+      - name: Temporary macOS signing certificate
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          python -I -u .github/scripts/macos_codesign.py make-certificate --name "SECS 2R (CI throwaway)" --days 2 --out-dir "$RUNNER_TEMP/codesign" --stem ci
+          python -I -u .github/scripts/macos_codesign.py prepare-keychain --p12 "$RUNNER_TEMP/codesign/ci.p12" --password-file "$RUNNER_TEMP/codesign/ci.p12.password" --certificate "$RUNNER_TEMP/codesign/ci.pem" --keychain "$RUNNER_TEMP/codesign/ci.keychain-db" --github-env "$GITHUB_ENV"
+
       # As release.yml: built before tauri build, packed and run by
       # collect_bundles.py.
       - name: Build companion binaries
@@ -1214,7 +1227,7 @@ jobs:
 
       - name: The macOS app opens and calibrates
         if: runner.os == 'macOS'
-        run: python -I -u .github/scripts/macos_app_check.py --dmg dist/*.dmg --work "$RUNNER_TEMP/app-check" --audio-device "BlackHole 2ch"
+        run: python -I -u .github/scripts/macos_app_check.py --dmg dist/*.dmg --work "$RUNNER_TEMP/app-check" --audio-device "BlackHole 2ch" --signing-certificate "$RUNNER_TEMP/codesign/ci.pem"
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always() && runner.os == 'macOS'

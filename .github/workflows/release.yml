@@ -13,14 +13,16 @@ name: Release
 #            stable names (.github/scripts/collect_bundles.py):
 #              Windows  NSIS installer and a portable zip (GUI-subsystem check),
 #                       both carrying secs2r-cli.exe, and a CLI zip
-#              macOS    universal dmg, which must open and calibrate before
-#                       it is uploaded (.github/scripts/macos_app_check.py),
-#                       and a universal CLI tar.gz
+#              macOS    universal dmg signed with the project's self-signed
+#                       certificate (docs/adr/0041), which must open and
+#                       calibrate before it is uploaded (.github/scripts/
+#                       macos_app_check.py), and a universal CLI tar.gz
 #              Linux    AppImage and deb (built on 22.04 for an older glibc)
 #                       and a CLI tar.gz
 #            every CLI that ships is run once and must report the version;
 #            the updater bundles and the service manifest are signed with the
-#            key in the updater-signing environment (docs/adr/0020)
+#            key in the updater-signing environment (docs/adr/0020), the
+#            macOS app with the certificate kept there (docs/adr/0041)
 #   publish  latest.json for the updater, SHA256SUMS.txt, notes from
 #            CHANGELOG.md, and the release itself (assets replaced when the
 #            tag exists); then latest.json on the fixed `updater` release
@@ -196,6 +198,24 @@ jobs:
         with:
           python-version: "3.13"
 
+      # The macOS app is signed with the project's self-signed certificate
+      # (docs/adr/0041): its private half is the MACOS_CODESIGN_P12 secret of
+      # the updater-signing environment, its public half
+      # apps/secs2r/macos/codesign.pem. The script puts the identity into a
+      # keychain on the runner, checks that the p12 holds that certificate,
+      # and exports APPLE_SIGNING_IDENTITY, which tauri build takes over the
+      # ad-hoc signingIdentity of tauri.conf.json and signs with through the
+      # keychain search list. Without the secret the step fails: a release
+      # must not ship ad-hoc signed by mistake, since macOS would then ask
+      # for the microphone again.
+      - name: macOS signing identity
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          MACOS_CODESIGN_P12: ${{ secrets.MACOS_CODESIGN_P12 }}
+          MACOS_CODESIGN_P12_PASSWORD: ${{ secrets.MACOS_CODESIGN_P12_PASSWORD }}
+        run: python -I -u .github/scripts/macos_codesign.py prepare-keychain --p12-env MACOS_CODESIGN_P12 --password-env MACOS_CODESIGN_P12_PASSWORD --certificate apps/secs2r/macos/codesign.pem --keychain "$RUNNER_TEMP/codesign/release.keychain-db" --github-env "$GITHUB_ENV"
+
       # The service replaces itself only with a copy whose hash this signed
       # manifest names (ADR 0020).
       - name: Signed service manifest
@@ -257,7 +277,7 @@ jobs:
 
       - name: The macOS app opens and calibrates
         if: runner.os == 'macOS'
-        run: python -I -u .github/scripts/macos_app_check.py --dmg dist/*.dmg --work "$RUNNER_TEMP/app-check" --audio-device "BlackHole 2ch"
+        run: python -I -u .github/scripts/macos_app_check.py --dmg dist/*.dmg --work "$RUNNER_TEMP/app-check" --audio-device "BlackHole 2ch" --signing-certificate apps/secs2r/macos/codesign.pem
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always() && runner.os == 'macOS'
