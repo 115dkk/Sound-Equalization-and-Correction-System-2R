@@ -1408,7 +1408,7 @@ fn write_eqapo_observed_at(
     let (firs, wavs) = fir_files(plan, &format!("{safe}_"), output_rate)?;
     let body = eqapo_filters(plan, &firs, note)?.into_bytes();
     let (inputs, outputs) = windows_channels(plan)?;
-    let preamp = (headroom_db(plan)? * 2.0).ceil() / 2.0;
+    let preamp = secs_graph::headroom_db_half_db(plan)?;
     let config = eqapo_config_at(
         plan,
         &format!("{safe}\\{safe}.txt"),
@@ -1810,7 +1810,7 @@ pub fn prepare_convolution_named_with_options(
     validate_run(run)?;
     let graph = ExportGraph::build(run.chain, run.mimo, LfeChoice::DOLBY)?;
     let plan = graph.plan();
-    let headroom_db = (headroom_db(plan)? * 2.0).ceil() / 2.0;
+    let headroom_db = secs_graph::headroom_db_half_db(plan)?;
     let attenuation = 10_f64.powf(-headroom_db / 20.0);
     let total = 1 + options.extra_rates.len() as u64;
     progress(0, total);

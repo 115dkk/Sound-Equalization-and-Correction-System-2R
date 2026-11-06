@@ -20,7 +20,7 @@ use secs_dsp::{
     multirate::MultirateMatrixConvolver,
 };
 use secs_graph::emit::pyfmt::round_ndigits;
-use secs_graph::{ExportGraph, LfeChoice, round_ties_even_i64};
+use secs_graph::{ExportGraph, LfeChoice};
 use secs_types::chain::{BandType, MimoFilter, MimoPaths, SignalChain};
 use std::f64::consts::PI;
 
@@ -275,8 +275,9 @@ impl MimoFirPlayback {
         // CamillaDSP writer emits it, and one whole-sample delay per group: it
         // joins graph groups whose rounded cutoff coincides and splits them by
         // each path's rounded delay, in path order.
+        let rounded_groups = graph.support_groups_rounded();
         let mut support_group = vec![0; mimo.paths.len()];
-        for (index, group) in graph.support_groups().iter().enumerate() {
+        for (index, group) in rounded_groups.iter().enumerate() {
             for &member in &group.members {
                 support_group[member] = index;
             }
@@ -284,7 +285,7 @@ impl MimoFirPlayback {
         let mut groups: Vec<Group> = Vec::new();
         let mut routes = Vec::with_capacity(mimo.paths.len());
         for (path_index, path) in mimo.paths.iter().enumerate() {
-            let shared = &graph.support_groups()[support_group[path_index]];
+            let shared = &rounded_groups[support_group[path_index]];
             let input = inputs
                 .iter()
                 .position(|r| r == &path.input)
@@ -296,9 +297,9 @@ impl MimoFirPlayback {
                 return Err(invalid("invalid playback high-pass or output delay"));
             }
             let output = shared.output;
-            let low_hz = round_ndigits(shared.low_hz, 3);
+            let low_hz = shared.low_hz;
             // Preserve the writer's floating-point evaluation order at half samples.
-            let delay_samples = round_ties_even_i64(path.delay_ms * SAMPLE_RATE / 1000.0) as usize;
+            let delay_samples = (path.delay_ms * SAMPLE_RATE / 1000.0).round_ties_even() as usize;
             let group = if let Some(index) = groups.iter().position(|g| {
                 g.output == output && g.low_hz == low_hz && g.delay_samples == delay_samples
             }) {
@@ -824,7 +825,7 @@ mod tests {
             )
             .unwrap();
             response = sosfilt(&hp, &sosfilt(&hp, &response).unwrap()).unwrap();
-            let delay = round_ties_even_i64(path.delay_ms * SAMPLE_RATE / 1000.0) as usize;
+            let delay = (path.delay_ms * SAMPLE_RATE / 1000.0).round_ties_even() as usize;
             for n in delay..expected.len() {
                 expected[n] += response[n - delay];
             }

@@ -746,7 +746,7 @@ pub fn make_config_observed(
     let mut filters: Vec<(String, Json)> = Vec::new();
     let mut pipeline = Vec::new();
     if options.headroom {
-        let headroom = (secs_graph::headroom_db(graph.plan())? * 2.0).ceil() / 2.0;
+        let headroom = secs_graph::headroom_db_half_db(graph.plan())?;
         filters.push((
             "secs_headroom".into(),
             filter_spec(
@@ -1022,7 +1022,7 @@ pub fn make_config_observed(
         pipeline.push(pipeline_filter(n_main + sub_index, names));
     }
 
-    struct SupportGroup {
+    struct CamillaSupportGroup {
         output: usize,
         low_hz: f64,
         fir: bool,
@@ -1047,23 +1047,17 @@ pub fn make_config_observed(
     // rounded to whole samples once, the group carries the smallest and each
     // path the rest, so no path's delay is rounded twice. Equalizer APO keeps
     // the identical rendered milliseconds instead.
-    let mut groups: Vec<SupportGroup> = Vec::new();
-    for shared in graph.support_groups() {
-        let low_hz = round_ndigits(shared.low_hz, 3);
-        if let Some(group) = groups.iter_mut().find(|group| {
-            group.output == shared.output && group.low_hz == low_hz && group.fir == shared.fir
-        }) {
-            group.members.extend_from_slice(&shared.members);
-        } else {
-            groups.push(SupportGroup {
-                output: shared.output,
-                low_hz,
-                fir: shared.fir,
-                delay_samples: 0,
-                members: shared.members.clone(),
-            });
-        }
-    }
+    let mut groups = graph
+        .support_groups_rounded()
+        .into_iter()
+        .map(|group| CamillaSupportGroup {
+            output: group.output,
+            low_hz: group.low_hz,
+            fir: group.fir,
+            delay_samples: 0,
+            members: group.members,
+        })
+        .collect::<Vec<_>>();
     let mut path_groups = vec![0; n_paths];
     for (index, group) in groups.iter_mut().enumerate() {
         group.members.sort_unstable();

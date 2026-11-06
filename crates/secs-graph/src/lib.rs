@@ -33,25 +33,19 @@ pub const LFE_LP_HZ: f64 = 120.0;
 
 /// Python/NumPy half-even rounding to an integer.
 pub fn round_ties_even_i64(value: f64) -> i64 {
-    let floor = value.floor();
-    let fraction = value - floor;
-    let rounded = if fraction < 0.5 {
-        floor
-    } else if fraction > 0.5 {
-        floor + 1.0
-    } else if (floor as i64) & 1 == 0 {
-        floor
-    } else {
-        floor + 1.0
-    };
-    rounded as i64
+    value.round_ties_even() as i64
+}
+
+/// Round the plan's required headroom upward to a half-decibel boundary.
+pub fn headroom_db_half_db(plan: &FilterPlan) -> Result<f64, GraphError> {
+    Ok((headroom_db(plan)? * 2.0).ceil() / 2.0)
 }
 
 /// Whether a delay is negative at the writers' resolution: below zero after
 /// the half-to-even rounding to whole 48 kHz samples. A smaller negative
 /// value is float noise that every writer emits as no delay (#92 TD-94).
 pub fn is_negative_delay(milliseconds: f64) -> bool {
-    round_ties_even_i64(milliseconds * f64::from(SAMPLE_RATE) / 1000.0) < 0
+    ((milliseconds * f64::from(SAMPLE_RATE) / 1000.0).round_ties_even() as i64) < 0
 }
 
 /// The LFE input the export includes, as upstream's `make_plan` takes it.
@@ -169,6 +163,28 @@ impl ExportGraph {
     /// The MIMO support groups, in order of their first path.
     pub fn support_groups(&self) -> &[SupportGroup] {
         &self.support_groups
+    }
+
+    /// Support groups after rounding their low edge to the writers' three
+    /// decimal places, still ordered by the first path in each group.
+    pub fn support_groups_rounded(&self) -> Vec<SupportGroup> {
+        let mut groups: Vec<SupportGroup> = Vec::new();
+        for shared in &self.support_groups {
+            let low_hz = emit::pyfmt::round_ndigits(shared.low_hz, 3);
+            if let Some(group) = groups.iter_mut().find(|group| {
+                group.output == shared.output && group.fir == shared.fir && group.low_hz == low_hz
+            }) {
+                group.members.extend_from_slice(&shared.members);
+            } else {
+                groups.push(SupportGroup {
+                    output: shared.output,
+                    fir: shared.fir,
+                    low_hz,
+                    members: shared.members.clone(),
+                });
+            }
+        }
+        groups
     }
 }
 
