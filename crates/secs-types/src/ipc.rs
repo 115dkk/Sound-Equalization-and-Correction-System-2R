@@ -2029,7 +2029,7 @@ pub struct DspFields {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct DspPreset {
-    /// Preset key (`camilla`, `tesira`, `qsys`, `minidsp`, `custom`).
+    /// Preset key (`camilla`, `tesira`, `tesira_forte`, `qsys`, `minidsp`, `custom`).
     pub key: String,
     /// Device name shown in the device list.
     pub name: String,

@@ -614,6 +614,7 @@
   "notice.unknown": "구성에 알 수 없는 문제({code})가 있습니다.",
   "system.dsp.preset.camilla": "CamillaDSP · BruteFIR",
   "system.dsp.preset.tesira": "Tesira SERVER-IO",
+  "system.dsp.preset.tesira_forte": "TesiraFORTÉ VI / VT",
   "system.dsp.preset.qsys": "Q-SYS Core",
   "system.dsp.preset.minidsp": "miniDSP",
   "system.dsp.preset.custom": "사용자 지정",

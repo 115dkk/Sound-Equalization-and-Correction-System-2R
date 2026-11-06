@@ -2,6 +2,15 @@
 
 SECS 2R의 변경 기록입니다. 번호는 major.minor.patch이고, 0.x는 모두 사전 출시판이며 정식 출시는 1.0.0부터입니다(docs/adr/0006). 각 절의 내용이 그 버전의 릴리스 본문이 됩니다. 업스트림 SECS 2의 변경 기록은 [`docs/upstream/CHANGELOG.md`](docs/upstream/CHANGELOG.md)에 있습니다.
 
+## 0.55.0 - 2026-11-06
+
+DSP 프로파일에 TesiraFORTÉ VI / VT 프리셋을 추가한 판입니다. 다른 프리셋의 계산 결과와 내보낸 파일은 0.54.0과 같습니다.
+
+### 추가한 것
+
+- 시스템 화면의 '내보낼 DSP'에 'TesiraFORTÉ VI / VT' 프리셋을 Tesira SERVER-IO 다음에 추가했습니다. FIR 블록 2,048탭에 예산 12,288탭(2,048탭 블록 6개), PEQ 16밴드, 올패스 16밴드, 출력 레이트 48 kHz 고정입니다. 예산은 TesiraFORTÉ VI에서 Tesira 5.7.0으로 컴파일해 잰 값으로, 2,048탭 FIR 블록이 6개까지 컴파일되고 7개째부터 DSP 할당에 실패합니다(docs/DEVIATIONS.md U18). 기존 Tesira SERVER-IO 프리셋(51,200탭)은 그대로이고, VT는 VI와 같다고 가정했습니다.
+- 공개 크레이트와 `secs2r`, `Secs2R`의 판이 함께 0.22.0으로 오릅니다.
+
 ## 0.54.0 - 2026-11-06
 
 macOS 앱을 프로젝트의 자체 서명 인증서로 서명한 판입니다. 계산 결과와 내보낸 파일은 0.53.0과 같습니다.
