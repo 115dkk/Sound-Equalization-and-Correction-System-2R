@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
-use secs_service::{Deps, EventSink, LocalTime, NoEvents, Service};
+use secs_service::{Deps, EventSink, LocalTime, LogLevel, NoEvents, Service};
 use secs_types::ipc::{Envelope, ErrorCode, JobEvent, ProjectNewParams, Request};
 use sha2::{Digest, Sha256};
 
@@ -21,8 +21,9 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 use secs_project::{MeasurementResult, MeasurementStore, Project};
 use secs_types::calibration::CalibrationSettings;
 use secs_types::ipc::{
-    CalibrateParams, DspSetParams, ExportKind, ExportParams, JobCancelParams, JobId, JobKind,
-    JobResult, JobStatus, MdatScope, MimoParams, OutputRateChoice, Response, TargetPresetParams,
+    AppSettings, AppSettingsParams, CalibrateParams, DspSetParams, ExportKind, ExportParams,
+    JobCancelParams, JobId, JobKind, JobResult, JobStatus, MdatScope, MimoParams, OutputRateChoice,
+    Response, TargetPresetParams,
 };
 
 static TEMP: AtomicU64 = AtomicU64::new(0);
@@ -136,6 +137,90 @@ fn call_ok(service: &Service, request: Request, events: Arc<dyn EventSink>) -> R
         panic!("request must succeed");
     };
     *response
+}
+
+#[test]
+fn damaged_settings_file_is_reported_and_not_overwritten_until_set_td169() {
+    let root = temp_root("damaged-settings");
+    fs::create_dir_all(&root).unwrap();
+    let path = root.join("settings.json");
+    let damaged = b"{not json";
+    fs::write(&path, damaged).unwrap();
+    let lines = Arc::new(Mutex::new(Vec::new()));
+    let sink = lines.clone();
+    let service = Service::new(Deps {
+        app_settings_path: Some(path.clone()),
+        log: Arc::new(move |level, scope, line| {
+            lock(&sink).push((level, scope.to_owned(), line.to_owned()));
+        }),
+        ..Deps::default()
+    });
+
+    assert!(matches!(
+        call_ok(&service, Request::AppSettingsGet, Arc::new(NoEvents)),
+        Response::AppSettingsGet(settings) if settings == AppSettings::default()
+    ));
+    assert_eq!(fs::read(&path).unwrap(), damaged);
+    let lines = lock(&lines);
+    assert_eq!(lines.len(), 1);
+    assert_eq!(lines[0].0, LogLevel::Warn);
+    assert_eq!(lines[0].1, "settings");
+    assert!(lines[0].2.contains(&path.to_string_lossy().into_owned()));
+    drop(lines);
+
+    let replacement = AppSettings {
+        language: "en".into(),
+        ..AppSettings::default()
+    };
+    assert!(matches!(
+        call_ok(
+            &service,
+            Request::AppSettingsSet(AppSettingsParams {
+                settings: replacement,
+            }),
+            Arc::new(NoEvents),
+        ),
+        Response::AppSettingsSet(_)
+    ));
+    assert_ne!(fs::read(&path).unwrap(), damaged);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn newer_settings_file_is_never_overwritten_td169() {
+    let root = temp_root("newer-settings");
+    fs::create_dir_all(&root).unwrap();
+    let path = root.join("settings.json");
+    let newer_settings = AppSettings {
+        language: "newer".into(),
+        ..AppSettings::default()
+    };
+    let original = serde_json::to_vec(&serde_json::json!({
+        "version": 2,
+        "settings": newer_settings,
+    }))
+    .unwrap();
+    fs::write(&path, &original).unwrap();
+    let service = Service::new(Deps {
+        app_settings_path: Some(path.clone()),
+        ..Deps::default()
+    });
+
+    let Envelope::Err(error) = service.call(
+        Request::AppSettingsSet(AppSettingsParams {
+            settings: AppSettings::default(),
+        }),
+        Arc::new(NoEvents),
+    ) else {
+        panic!("a newer settings file must not be overwritten")
+    };
+    assert_eq!(error.code, ErrorCode::Unsupported);
+    assert_eq!(
+        error.params.get("reason").map(String::as_str),
+        Some("newer_version")
+    );
+    assert_eq!(fs::read(&path).unwrap(), original);
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]

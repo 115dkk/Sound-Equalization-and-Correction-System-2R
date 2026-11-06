@@ -806,6 +806,9 @@ impl Service {
         if bytes.len() as u64 > FILE_LIMIT {
             return Err(invalid("settings", "settings exceed 1 MiB"));
         }
+        if let Some(path) = self.deps.app_settings_path.as_deref() {
+            refuse_newer_app_settings(path)?;
+        }
         // One critical section for the file and memory, so what is read now
         // is what a restart restores even when requests run in parallel (TD-39).
         let mut current = lock(&self.app_settings);
@@ -860,22 +863,76 @@ struct AppSettingsFile {
     settings: AppSettings,
 }
 
-pub(crate) fn load_app_settings(path: Option<&Path>) -> AppSettings {
-    let Some(path) = path else {
-        return AppSettings::default();
-    };
+#[derive(Deserialize)]
+struct AppSettingsVersion {
+    version: u32,
+}
+
+fn refuse_newer_app_settings(path: &Path) -> Result<(), IpcError> {
     let Ok(bytes) = read_bounded(path) else {
-        return AppSettings::default();
+        return Ok(());
     };
-    let Ok(file) = serde_json::from_slice::<AppSettingsFile>(&bytes) else {
-        return AppSettings::default();
+    let Ok(file) = serde_json::from_slice::<AppSettingsVersion>(&bytes) else {
+        return Ok(());
+    };
+    if file.version > APP_SETTINGS_VERSION {
+        return Err(IpcError::new(
+            ErrorCode::Unsupported,
+            "settings were written by a newer app version",
+        )
+        .with_param("path", path.to_string_lossy())
+        .with_param("reason", "newer_version")
+        .with_param("version", file.version.to_string()));
+    }
+    Ok(())
+}
+
+pub(crate) fn load_app_settings(path: Option<&Path>) -> (AppSettings, Option<String>) {
+    let Some(path) = path else {
+        return (AppSettings::default(), None);
+    };
+    if !path.exists() {
+        return (AppSettings::default(), None);
+    }
+    let bytes = match read_bounded(path) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            return (
+                AppSettings::default(),
+                Some(format!(
+                    "could not read settings file {}: {}",
+                    path.display(),
+                    error.detail
+                )),
+            );
+        }
+    };
+    let file = match serde_json::from_slice::<AppSettingsFile>(&bytes) {
+        Ok(file) => file,
+        Err(error) => {
+            return (
+                AppSettings::default(),
+                Some(format!(
+                    "could not parse settings file {}: {error}",
+                    path.display()
+                )),
+            );
+        }
     };
     if file.version != APP_SETTINGS_VERSION {
-        return AppSettings::default();
+        return (
+            AppSettings::default(),
+            Some(format!(
+                "unsupported settings version {} in {} (supported version {})",
+                file.version,
+                path.display(),
+                APP_SETTINGS_VERSION
+            )),
+        );
     }
     let mut settings = file.settings;
     settings.recent_projects.truncate(RECENT_PROJECTS_MAX);
-    settings
+    (settings, None)
 }
 
 /// `MAJOR.MINOR.PATCH`, optionally followed by `-` and dot-separated

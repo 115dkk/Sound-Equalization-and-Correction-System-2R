@@ -677,10 +677,11 @@ pub struct Service {
 impl Service {
     /// Creates a service from platform dependency factories.
     pub fn new(deps: Deps) -> Self {
-        let app_settings = project_edit::load_app_settings(deps.app_settings_path.as_deref());
+        let (app_settings, settings_warning) =
+            project_edit::load_app_settings(deps.app_settings_path.as_deref());
         let app_effects = AppEffects::new(1, app_settings.clone());
         let rew = measure::RewLink::new(&deps);
-        Self {
+        let service = Self {
             deps,
             session: Arc::new(Mutex::new(Session::default())),
             app_settings: Arc::new(Mutex::new(app_settings)),
@@ -691,10 +692,13 @@ impl Service {
             level: monitor::LevelState::default(),
             status_watch: watch::WatchState::default(),
             rew,
+        };
+        if let Some(line) = settings_warning {
+            service.log(LogLevel::Warn, "settings", &line);
         }
+        service
     }
 
-    #[allow(dead_code)]
     pub(crate) fn log(&self, level: LogLevel, scope: &'static str, line: &str) {
         (self.deps.log)(level, scope, line);
     }
