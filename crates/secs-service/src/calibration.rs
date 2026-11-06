@@ -1280,7 +1280,10 @@ pub(crate) fn engine_error(error: secs_engine::EngineError) -> IpcError {
         EngineError::MissingMainMeasurement { position } => failure
             .with_param("reason", "missing_main_measurement")
             .with_param("position", position.to_string()),
-        EngineError::Input(_) | EngineError::Dsp(_) => failure,
+        EngineError::Dsp(detail) => {
+            IpcError::new(ErrorCode::Internal, detail.to_string()).with_param("reason", "dsp")
+        }
+        EngineError::Input(_) => failure,
     }
 }
 
@@ -1587,6 +1590,15 @@ mod tests {
         assert_eq!(
             legacy.detail,
             "invalid input: position 3 L: sample rate 44100 (expected 48000)"
+        );
+        let dsp = engine_error(EngineError::Dsp(secs_dsp::DspError::InvalidArgument(
+            "invalid FFT length".into(),
+        )));
+        assert_eq!(dsp.code, ErrorCode::Internal);
+        assert_eq!(dsp.detail, "invalid FFT length");
+        assert_eq!(
+            serde_json::to_value(dsp.params).unwrap(),
+            json!({"reason":"dsp"})
         );
         let cancelled = engine_error(EngineError::Cancelled);
         assert_eq!(cancelled.code, ErrorCode::Cancelled);
