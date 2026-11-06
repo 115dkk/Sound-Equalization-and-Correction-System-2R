@@ -1460,10 +1460,12 @@ pub fn make_config_observed(
     Ok(config)
 }
 
-/// Atomically replace one export file through a sibling temporary file.
-pub fn atomic_write(destination: &Path, bytes: &[u8]) -> Result<(), std::io::Error> {
-    secs_types::fs::write_atomic_bytes(destination, bytes)
-}
+/// Deprecated compatibility name for the shared atomic byte writer.
+#[deprecated(
+    since = "0.22.0",
+    note = "use secs_types::fs::write_atomic_bytes (ADR 0045)"
+)]
+pub use secs_types::fs::write_atomic_bytes as atomic_write;
 
 fn without_correction(chain: &SignalChain) -> SignalChain {
     let mut chain = chain.clone();

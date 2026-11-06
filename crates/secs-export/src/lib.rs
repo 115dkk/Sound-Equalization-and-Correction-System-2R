@@ -14,6 +14,7 @@ use secs_engine::{
 use secs_graph::emit::grouped;
 use secs_graph::emit::pyfmt::{format_fixed, format_g};
 use secs_mdat::{MdatError, MeasurementInput, SourceInfo, TEMPLATE};
+use secs_types::fs::write_atomic_bytes as atomic_replace;
 use secs_types::{
     calibration::{CalibrationSettings, Mode, RcBand},
     chain::{MimoPaths, SubChannel},
@@ -21,7 +22,7 @@ use secs_types::{
 
 pub use secs_types::ipc::MdatScope;
 
-const SR: u32 = 48_000;
+const SR: u32 = secs_dsp::rate::DESIGN_RATE;
 const SUB_GAIN_WARN_DB: f64 = 12.0;
 
 pub type Sources = BTreeMap<u32, BTreeMap<String, SourceInfo>>;
@@ -976,10 +977,6 @@ fn random_uuid() -> Result<u128, getrandom::Error> {
     value &= !(0x3_u128 << 62);
     value |= 0x2_u128 << 62;
     Ok(value)
-}
-
-fn atomic_replace(destination: &Path, bytes: &[u8]) -> Result<(), std::io::Error> {
-    secs_types::fs::write_atomic_bytes(destination, bytes)
 }
 
 #[cfg(test)]

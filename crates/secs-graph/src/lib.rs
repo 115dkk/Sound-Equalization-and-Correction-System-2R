@@ -24,8 +24,8 @@ pub use plan::{FilterPlan, FirView, MimoFeed, Op, SubFeed, headroom_db, plan_res
 
 use secs_types::chain::{MimoPaths, SignalChain};
 
-/// Sample rate of every exported FIR and delay.
-pub const SAMPLE_RATE: u32 = 48_000;
+/// Sample rate used to design the signal chain.
+pub const SAMPLE_RATE: u32 = secs_dsp::rate::DESIGN_RATE;
 /// Upstream Dolby LFE playback gain.
 pub const LFE_GAIN_DB: f64 = 10.0;
 /// Upstream Dolby LFE content low-pass frequency.

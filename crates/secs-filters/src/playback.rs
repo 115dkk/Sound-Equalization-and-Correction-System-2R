@@ -24,7 +24,7 @@ use secs_graph::{ExportGraph, LfeChoice, round_ties_even_i64};
 use secs_types::chain::{BandType, MimoFilter, MimoPaths, SignalChain};
 use std::f64::consts::PI;
 
-const SAMPLE_RATE: f64 = 48_000.0;
+const SAMPLE_RATE: f64 = secs_dsp::rate::DESIGN_RATE as f64;
 /// The reference renderer accepts output delays up to one minute.
 pub const MAX_OUTPUT_DELAY_SAMPLES: usize = 60 * 48_000;
 
