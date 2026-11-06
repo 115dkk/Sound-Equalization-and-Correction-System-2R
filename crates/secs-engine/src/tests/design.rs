@@ -1,6 +1,6 @@
 use super::cases;
 use crate::notes::MimoOracleText;
-pub(super) use crate::test_support::{replay, replay_with_context};
+pub(super) use crate::testkit::{replay, replay_with_context};
 use crate::{
     C,
     design::{self, DesignRequest},
@@ -205,7 +205,7 @@ fn complex(fx: &Fixture, name: &str, h: &[C], expected: &Value, gate: bool) {
 #[test]
 fn replay_case_linear_matches_checked_engine_replay() {
     let case = cases::load("dolby_linear");
-    let replay = crate::test_support::Replay::for_case("dolby_linear");
+    let replay = crate::testkit::Replay::for_case("dolby_linear");
     let expected = design::design(
         &DesignRequest {
             measurements: &case.measurements,
@@ -219,7 +219,7 @@ fn replay_case_linear_matches_checked_engine_replay() {
     )
     .unwrap();
     replay.finish();
-    let actual = crate::test_support::replay_case("dolby_linear").design;
+    let actual = crate::testkit::replay_case("dolby_linear").design;
     assert_eq!(actual.chain, expected.chain);
     assert_eq!(actual.notes, expected.notes);
     assert_eq!(actual.adapter_notes, expected.adapter_notes);

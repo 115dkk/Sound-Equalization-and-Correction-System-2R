@@ -597,7 +597,7 @@ pub fn mimo_acoustic_metrics(
     run: &secs_engine::mimo::MimoRun,
     ctx: &Context,
 ) -> Result<Vec<MimoAcousticMetrics>, secs_engine::EngineError> {
-    secs_engine::testkit::mimo_acoustic_metrics(
+    secs_engine::testkit::mimo_acoustic_metrics_parts(
         &case.design,
         &case.measurements,
         &case.config,

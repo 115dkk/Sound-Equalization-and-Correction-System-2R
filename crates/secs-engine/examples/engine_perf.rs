@@ -7,9 +7,9 @@
 mod ba;
 #[path = "../src/calibration.rs"]
 mod calibration;
-#[path = "../src/test_support.rs"]
-mod test_support;
-use test_support as cases;
+#[path = "../src/testkit.rs"]
+mod testkit;
+use testkit as cases;
 #[path = "../src/chain.rs"]
 mod chain;
 #[path = "../src/decay.rs"]

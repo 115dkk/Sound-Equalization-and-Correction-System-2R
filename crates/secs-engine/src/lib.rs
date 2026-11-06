@@ -79,10 +79,7 @@ mod setup;
 pub mod xo;
 
 mod error;
-#[cfg(test)]
-pub mod test_support;
-#[cfg(feature = "test-support")]
-#[doc(hidden)]
+#[cfg(any(test, feature = "test-support"))]
 pub mod testkit;
 #[cfg(test)]
 mod tests;

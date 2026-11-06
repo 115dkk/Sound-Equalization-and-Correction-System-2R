@@ -4,7 +4,7 @@ use crate::{fit::*, measurement, setup::Setup};
 use secs_dsp::optimize;
 use secs_oracle::{Fixture, assert_same, errors, integer, number, oracle_libm};
 
-pub(crate) use crate::test_support::{read_recorded_fit, same_recorded_fit};
+pub(crate) use crate::testkit::{read_recorded_fit, same_recorded_fit};
 
 fn recorded(fx: &Fixture) -> RecordedFit {
     read_recorded_fit(fx, fx.inputs(), &fx.outputs()["result"])

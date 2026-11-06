@@ -1,20 +1,20 @@
 use std::sync::Arc;
 
-use crate::{C, Samples, Spectra, measurement, setup::Setup, test_support};
+use crate::{C, Samples, Spectra, measurement, setup::Setup, testkit};
 
 #[test]
 fn design_replay_xo_preview_matches_fresh_preparation_bits() {
     for name in ["dolby", "room_filters"] {
-        let case = test_support::replay_case(name);
+        let case = testkit::replay_case(name);
         let prepared =
             measurement::prepare(&case.measurements, &case.config, &Setup::new(&case.config))
                 .unwrap();
-        let fitters = test_support::Replay::for_case(name);
+        let fitters = testkit::Replay::for_case(name);
         let fresh = crate::design::design_prepared(
             &crate::DesignRequest {
                 measurements: &case.measurements,
                 config: &case.config,
-                tuning: &test_support::load(name).tuning,
+                tuning: &testkit::load(name).tuning,
                 subs_only: false,
                 adapter_notes: &[],
             },
@@ -54,7 +54,7 @@ fn design_replay_xo_preview_matches_fresh_preparation_bits() {
 fn design_replay_mimo_responses_match_fresh_preparation_bits() {
     use crate::mimo::run::{self, Support};
     for name in ["room_dba", "room_filters"] {
-        let case = test_support::replay_case(name);
+        let case = testkit::replay_case(name);
         let ctx = secs_compute::Context::serial();
         let prepared = crate::mimo::prepared::Prepared::new(
             &case.design,
@@ -121,7 +121,7 @@ fn design_replay_mimo_responses_match_fresh_preparation_bits() {
 #[test]
 fn design_replay_export_ir_matches_fresh_preparation_bits() {
     for name in ["dolby", "room_filters"] {
-        let case = test_support::replay_case(name);
+        let case = testkit::replay_case(name);
         let design = &case.design;
         let fresh =
             measurement::prepare(&case.measurements, &case.config, &Setup::new(&case.config))
@@ -198,7 +198,7 @@ fn spectra_bits(actual: &Spectra, expected: &Spectra) {
 #[test]
 fn design_replay_export_matches_fresh_preparation_bits() {
     for name in ["dolby", "room_filters"] {
-        let case = test_support::replay_case(name);
+        let case = testkit::replay_case(name);
         let design = &case.design;
         let replay = &design.replay;
         let fresh =

@@ -440,7 +440,7 @@ mod perf_tests {
     #[test]
     fn xo_replay_scores_match_fresh_preparation_bits() {
         for name in ["dolby", "room_filters"] {
-            let case = crate::test_support::replay_case(name);
+            let case = crate::testkit::replay_case(name);
             let prepared =
                 measurement::prepare(&case.measurements, &case.config, &Setup::new(&case.config))
                     .unwrap();
