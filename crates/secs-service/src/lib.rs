@@ -709,33 +709,6 @@ impl Service {
 
     /// Parses and handles an untyped request. Malformed input cannot cross the seam.
     pub fn call_value(&self, request: serde_json::Value, events: Arc<dyn EventSink>) -> Envelope {
-        if request.get("method").and_then(serde_json::Value::as_str) == Some("recommend_xo") {
-            let params = match request.get("params") {
-                None | Some(serde_json::Value::Null) => {
-                    Ok(secs_types::ipc::RecommendXoParams::default())
-                }
-                Some(value) => {
-                    serde_json::from_value::<secs_types::ipc::RecommendXoParams>(value.clone())
-                }
-            };
-            return match params {
-                Ok(params) => {
-                    let events = Arc::new(ObservedEvents {
-                        caller: events,
-                        observer: self.deps.observer.clone(),
-                    });
-                    match self.start_xo(params.background, events) {
-                        Ok(started) => {
-                            Envelope::Ok(Box::new(secs_types::ipc::Response::RecommendXo(started)))
-                        }
-                        Err(error) => Envelope::Err(error),
-                    }
-                }
-                Err(error) => {
-                    Envelope::Err(IpcError::new(ErrorCode::InvalidRequest, error.to_string()))
-                }
-            };
-        }
         match serde_json::from_value::<Request>(request) {
             Ok(request) => self.call(request, events),
             Err(error) => {

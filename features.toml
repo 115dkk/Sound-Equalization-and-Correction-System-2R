@@ -1439,7 +1439,7 @@ id = "ipc.recommend_xo"
 kind = "ipc"
 milestone = "M4"
 status = "implemented"
-tests = ["secs-types::every_method_name_is_listed_and_parses", "secs-service::oracle_project_calibrates_recommends_xo_and_exports", "secs-service::recommend_xo_preserves_xo_edits_made_while_the_job_runs"]
+tests = ["secs-types::recommend_xo_accepts_absent_null_and_background_params", "secs-service::typed_recommend_xo_can_ask_for_a_background_job_td157", "secs-service::recommend_xo_accepts_absent_null_and_background_params", "secs2r-cli::recommend_xo_parses_background_flag_td157", "secs-types::every_method_name_is_listed_and_parses", "secs-service::oracle_project_calibrates_recommends_xo_and_exports", "secs-service::recommend_xo_preserves_xo_edits_made_while_the_job_runs"]
 
 [[feature]]
 id = "ipc.mimo"

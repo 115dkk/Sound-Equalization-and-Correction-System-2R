@@ -1074,7 +1074,8 @@ fn resampled_calibration_and_cached_mdat_export_preserve_original_ir() {
     let labels: serde_json::Value = cached_field(&path, "labels");
     assert_eq!(labels["sample_rate_policy"], "resample");
     let xo_events = Arc::new(Events::default());
-    let Response::RecommendXo(xo) = call_ok(&service, Request::RecommendXo, xo_events.clone())
+    let Response::RecommendXo(xo) =
+        call_ok(&service, Request::RecommendXo(None), xo_events.clone())
     else {
         panic!("XO recommendation must start with the resampling policy")
     };
@@ -1546,7 +1547,7 @@ fn oracle_project_calibrates_recommends_xo_and_exports() {
 
     let xo_events = Arc::new(Events::default());
     let Response::RecommendXo(xo_started) =
-        call_ok(&service, Request::RecommendXo, xo_events.clone())
+        call_ok(&service, Request::RecommendXo(None), xo_events.clone())
     else {
         panic!("XO recommendation must start");
     };
@@ -3735,7 +3736,7 @@ fn recommend_xo_preserves_xo_edits_made_while_the_job_runs() {
         open(&service, &path);
         let events = Arc::new(PausedProgress::default());
         let Response::RecommendXo(started) =
-            call_ok(&service, Request::RecommendXo, events.clone())
+            call_ok(&service, Request::RecommendXo(None), events.clone())
         else {
             panic!("XO recommendation must start");
         };
@@ -4630,7 +4631,7 @@ fn calibration_reads_measurements_inside_its_job_outside_the_session_lock() {
     );
     for request in [
         Request::Calibrate(CalibrateParams::default()),
-        Request::RecommendXo,
+        Request::RecommendXo(None),
     ] {
         let method = request.method();
         match call_within(&service, request, Duration::from_secs(5)) {
@@ -4872,5 +4873,33 @@ fn rc_upper_edits_mark_calibration_stale() {
         );
         assert!(!read_results(&service).calibration.unwrap().stale);
     }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn typed_recommend_xo_can_ask_for_a_background_job_td157() {
+    let request = Request::RecommendXo(Some(secs_types::ipc::RecommendXoParams {
+        background: true,
+    }));
+    let root = temp_root("typed-background-xo");
+    fs::create_dir_all(&root).unwrap();
+    let (path, _) = write_case(&root, "room");
+    let service = service();
+    open(&service, &path);
+    let events = Arc::new(Events::default());
+    let Response::RecommendXo(started) = call_ok(&service, request, events.clone()) else {
+        panic!("expected recommend_xo response");
+    };
+    events.wait(started.job, Duration::from_secs(120));
+    let values = lock(&events.values);
+    let started = values
+        .iter()
+        .find(|event| matches!(event, JobEvent::Started { .. }))
+        .unwrap();
+    assert_eq!(
+        serde_json::to_value(started).unwrap()["kind"],
+        "recommend_xo"
+    );
+    drop(values);
     fs::remove_dir_all(root).unwrap();
 }

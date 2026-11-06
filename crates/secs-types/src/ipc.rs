@@ -46,7 +46,8 @@ pub enum Request {
     /// The `Calibrate` Request variant.
     Calibrate(CalibrateParams),
     /// The `RecommendXo` Request variant.
-    RecommendXo,
+    #[ts(untagged)]
+    RecommendXo(#[ts(as = "RecommendXoRequest")] Option<RecommendXoParams>),
     /// The `Mimo` Request variant.
     Mimo(MimoParams),
     /// The `Results` Request variant.
@@ -817,6 +818,17 @@ pub struct RecommendXoParams {
     #[ts(as = "Option<bool>", optional)]
     pub background: bool,
 }
+// ts-rs 12 requires content for adjacent newtypes even when serde accepts an
+// absent Option. Describe just that variant with an optional named field.
+#[derive(TS)]
+#[allow(dead_code)]
+struct RecommendXoRequest {
+    #[ts(type = "\"recommend_xo\"")]
+    method: String,
+    #[ts(optional = nullable)]
+    params: Option<RecommendXoParams>,
+}
+
 /// Optional settings for a MIMO run.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS, Default)]
 #[ts(export)]
@@ -2917,6 +2929,32 @@ impl Serialize for Envelope {
 mod tests {
     use super::*;
 
+    #[test]
+    fn recommend_xo_accepts_absent_null_and_background_params() {
+        for (value, background) in [
+            (serde_json::json!({"method": "recommend_xo"}), false),
+            (
+                serde_json::json!({"method": "recommend_xo", "params": null}),
+                false,
+            ),
+            (
+                serde_json::json!({"method": "recommend_xo", "params": {"background": true}}),
+                true,
+            ),
+        ] {
+            let request = serde_json::from_value::<Request>(value);
+            assert!(
+                request.is_ok(),
+                "typed recommend_xo must accept optional params: {request:?}"
+            );
+            let encoded = serde_json::to_value(request.unwrap()).unwrap();
+            assert_eq!(
+                encoded["params"]["background"].as_bool().unwrap_or(false),
+                background
+            );
+        }
+    }
+
     /// One value of every variant. A new variant fails to compile here until
     /// it gets an example, which `method_names_match_the_wire` then checks.
     fn examples() -> Vec<Request> {
@@ -2936,7 +2974,7 @@ mod tests {
             Request::ProjectInfo,
             Request::SampleLoad(SampleLoadParams::default()),
             Request::Calibrate(CalibrateParams::default()),
-            Request::RecommendXo,
+            Request::RecommendXo(None),
             Request::Mimo(MimoParams::default()),
             Request::Results,
             Request::Export(ExportParams {

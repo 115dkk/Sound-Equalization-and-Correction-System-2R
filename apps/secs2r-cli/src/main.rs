@@ -73,7 +73,12 @@ enum Action {
         mimo: bool,
     },
     /// Recommend crossover frequencies.
-    RecommendXo { project: PathBuf },
+    RecommendXo {
+        project: PathBuf,
+        /// Use reduced CPU resources for the recommendation.
+        #[arg(long)]
+        background: bool,
+    },
     /// Calibrate first, then compute MIMO support paths.
     Mimo { project: PathBuf },
     /// Write one export bundle.
@@ -801,9 +806,14 @@ fn run(action: Action, runner: &mut Runner) {
             runner.calibrate(None, mimo);
             runner.call(Request::Results);
         }
-        Action::RecommendXo { project } => {
+        Action::RecommendXo {
+            project,
+            background,
+        } => {
             runner.open(&project);
-            runner.call(Request::RecommendXo);
+            runner.call(Request::RecommendXo(Some(
+                secs_types::ipc::RecommendXoParams { background },
+            )));
         }
         Action::Mimo { project } => {
             runner.open(&project);
@@ -1210,6 +1220,27 @@ mod tests {
                 .contains("Include: SECS2R\\SECS.txt")
         );
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn recommend_xo_parses_background_flag_td157() {
+        let cli = Cli::try_parse_from(["secs2r-cli", "recommend-xo", "room.secs", "--background"])
+            .unwrap();
+        assert!(matches!(
+            cli.action,
+            Action::RecommendXo {
+                background: true,
+                ..
+            }
+        ));
+        let cli = Cli::try_parse_from(["secs2r-cli", "recommend-xo", "room.secs"]).unwrap();
+        assert!(matches!(
+            cli.action,
+            Action::RecommendXo {
+                background: false,
+                ..
+            }
+        ));
     }
 
     #[test]
