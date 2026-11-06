@@ -147,6 +147,15 @@ fn decimal_exponent(value: f64) -> i32 {
 
 /// Python's default-precision `g` format, with an optional positive sign.
 pub fn format_g(value: f64, plus: bool) -> String {
+    if value.is_nan() {
+        return "nan".into();
+    }
+    if value == f64::INFINITY {
+        return if plus { "+inf".into() } else { "inf".into() };
+    }
+    if value == f64::NEG_INFINITY {
+        return "-inf".into();
+    }
     if value == 0.0 {
         return format!(
             "{}0",
@@ -205,6 +214,15 @@ pub fn format_g(value: f64, plus: bool) -> String {
 
 /// Python fixed-point format (`.1f`, `.2f`, `.3f`) with optional positive sign.
 pub fn format_fixed(value: f64, places: usize, plus: bool) -> String {
+    if value.is_nan() {
+        return "nan".into();
+    }
+    if value == f64::INFINITY {
+        return if plus { "+inf".into() } else { "inf".into() };
+    }
+    if value == f64::NEG_INFINITY {
+        return "-inf".into();
+    }
     let sign = if value.is_sign_negative() {
         "-"
     } else if plus {
@@ -247,5 +265,14 @@ mod tests {
     fn refused_oracle_edge_keeps_its_fixed_format_bytes_td182() {
         // oracle/goldens/filters/ba_edges.json serialises this edge literally.
         assert_eq!(format_fixed(1e16, 2, false), "10000000000000000.00");
+    }
+
+    #[test]
+    fn nonfinite_formats_match_python_td267() {
+        // Verified with Python's format(float(...), '.2f' / '+.1f' / '.3f' / 'g').
+        assert_eq!(format_fixed(f64::NAN, 2, false), "nan");
+        assert_eq!(format_fixed(f64::INFINITY, 1, true), "+inf");
+        assert_eq!(format_fixed(f64::NEG_INFINITY, 3, false), "-inf");
+        assert_eq!(format_g(f64::NAN, false), "nan");
     }
 }
