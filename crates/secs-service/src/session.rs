@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 
 use secs_project::{
     DspProfile, MeasurementStore, Project, PyJson, RemovedPosition, load_project_sources,
@@ -10,7 +10,7 @@ use secs_project::{
 use secs_types::ipc::{ErrorCode, IpcError, MigrationWarning, ProjectInfo};
 
 use crate::jobs::JobContext;
-use crate::{LogLevel, LogSink, ServiceError, UuidSource, lock};
+use crate::{EventSink, Service, ServiceError, lock};
 
 #[derive(Debug, Default)]
 pub(crate) struct Session {
@@ -175,13 +175,7 @@ impl Session {
         self.info()
     }
 
-    pub fn save(
-        &mut self,
-        path: Option<PathBuf>,
-        uuid: &UuidSource,
-        now_ms: i64,
-        log: &LogSink,
-    ) -> Result<ProjectInfo, ServiceError> {
+    pub fn save(&mut self, path: Option<PathBuf>) -> Result<ProjectInfo, ServiceError> {
         let open = self.require_mut()?;
         if open.tutorial {
             return Err(ServiceError::TutorialBlocked);
@@ -194,16 +188,6 @@ impl Session {
             open.store = next.finish();
         } else {
             open.store.save()?;
-        }
-        if let Err(error) = write_side_mdat(open, uuid, now_ms) {
-            log(
-                LogLevel::Warn,
-                "session",
-                &format!(
-                    "could not save side mdat {}: {error}",
-                    open.path.with_extension("mdat").display()
-                ),
-            );
         }
         open.dirty = false;
         self.info()
@@ -244,6 +228,44 @@ impl Session {
             ));
         }
         Ok(open)
+    }
+}
+
+impl Service {
+    pub(crate) fn project_save(
+        &self,
+        params: secs_types::ipc::ProjectSaveParams,
+        events: Arc<dyn EventSink>,
+    ) -> Result<ProjectInfo, IpcError> {
+        let mut session = lock(&self.session);
+        let info = session
+            .save(params.path.map(Into::into))
+            .map_err(IpcError::from)?;
+        let open = session.require().map_err(IpcError::from)?;
+        let originals = original_snapshot(open);
+        let destination = open.path.with_extension("mdat");
+        let memory = self.deps.memory.available_bytes();
+        let uuid = self.deps.uuid.clone();
+        let now_ms = (self.deps.unix_ms)();
+        let revisions = self.side_mdat_revision.clone();
+        let revision = {
+            let mut current = lock(&revisions);
+            *current = current.saturating_add(1);
+            *current
+        };
+        drop(session);
+
+        let work = SideMdatWork {
+            originals,
+            destination,
+            uuid,
+            now_ms,
+            revisions,
+            revision,
+        };
+        self.jobs
+            .start_side_mdat(events, move |job| write_side_mdat_job(work, job, memory))?;
+        Ok(info)
     }
 }
 
@@ -731,91 +753,103 @@ impl OriginalSnapshot {
     }
 }
 
-pub(crate) fn original_measurements(
-    open: &mut OpenProject,
-) -> Result<Vec<secs_export::Original>, ServiceError> {
-    let mut records = open.store.records();
-    records.sort_by_key(|record| record.pos);
-    let project = open.store.project().clone();
-    let plan_roles = plan_from_project(&project, std::iter::empty()).roles;
-    let sources = load_project_sources(&project, &open.path);
-    let mut originals = Vec::new();
-    for record in records {
-        let position = u32::try_from(record.pos).map_err(|_| {
-            ServiceError::Project(format!("invalid measurement position {}", record.pos))
-        })?;
-        let mut roles = record.ir.keys().cloned().collect::<Vec<_>>();
-        roles.sort_by_key(|role| {
-            plan_roles
-                .iter()
-                .position(|planned| planned == role)
-                .unwrap_or(plan_roles.len())
-        });
-        for role in roles {
-            let (samples, sample_rate) = open.store.ir_of(&role, record.pos)?;
-            let source_info = sources
-                .get(&position)
-                .and_then(|by_role| by_role.get(&role))
-                .cloned();
-            originals.push(secs_export::Original {
-                position,
-                role: role.clone(),
-                item: secs_mdat::MeasurementInput {
-                    title: format!("{role}_P{}", record.pos),
-                    notes: format!("SECS · 위치 {} · 원 측정", record.pos),
-                    sample_rate_hz: sample_rate,
-                    samples: samples.into_iter().map(f64::from).collect(),
-                    start_time_s: record.t0.get(&role).copied().unwrap_or(0.0),
-                    spl_offset_db: record.spl_offset.get(&role).copied(),
-                    source_info,
-                    computed: false,
-                },
-            });
-        }
-    }
-    Ok(originals)
-}
-
-fn write_side_mdat(
-    open: &mut OpenProject,
-    uuid: &UuidSource,
+struct SideMdatWork {
+    originals: OriginalSnapshot,
+    destination: PathBuf,
+    uuid: crate::UuidSource,
     now_ms: i64,
-) -> Result<(), ServiceError> {
-    let originals = original_measurements(open)?;
-    let inputs = originals
-        .iter()
-        .map(|original| original.item.clone())
-        .collect::<Vec<_>>();
-    let destination = open.path.with_extension("mdat");
-    if inputs.is_empty() {
-        match fs::remove_file(destination) {
-            Ok(()) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error.into()),
-        }
-        return Ok(());
-    }
-    let uuids = {
-        let mut uuid = lock(uuid);
-        (0..inputs.len())
-            .map(|_| uuid.as_mut()())
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|error| ServiceError::Project(error.to_string()))?
-    };
-    let mut uuids = uuids.into_iter();
-    // `secs_mdat::build` consumes exactly one UUID for each validated input.
-    let bytes = secs_mdat::build(&inputs, secs_mdat::TEMPLATE, None, now_ms, &mut || {
-        uuids.next().unwrap_or_default()
-    })
-    .map_err(|error| ServiceError::Project(error.to_string()))?;
-    atomic_replace(&destination, &bytes)?;
-    Ok(())
+    revisions: Arc<Mutex<u64>>,
+    revision: u64,
 }
 
-fn atomic_replace(destination: &Path, bytes: &[u8]) -> Result<(), std::io::Error> {
-    let parent = destination.parent().unwrap_or_else(|| Path::new("."));
-    fs::create_dir_all(parent)?;
-    secs_types::fs::write_atomic_bytes(destination, bytes)
+fn write_side_mdat_job(
+    work: SideMdatWork,
+    job: JobContext,
+    memory: u64,
+) -> Result<secs_types::ipc::JobResult, IpcError> {
+    let SideMdatWork {
+        originals,
+        destination,
+        uuid,
+        now_ms,
+        revisions,
+        revision,
+    } = work;
+    let context = super::calibration::compute_context(&job, memory, false);
+    let originals = originals.load(&job, context.budget())?;
+    let LoadedOriginals { values, _permit } = originals;
+    let inputs = values
+        .into_iter()
+        .map(|original| original.item)
+        .collect::<Vec<_>>();
+    let bytes = if inputs.is_empty() {
+        None
+    } else {
+        let uuids = {
+            let mut uuid = lock(&uuid);
+            (0..inputs.len())
+                .map(|_| uuid.as_mut()())
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|error| side_mdat_error(&destination, error))?
+        };
+        let mut uuids = uuids.into_iter();
+        // `secs_mdat::build` consumes exactly one UUID for each validated input.
+        Some(
+            secs_mdat::build(&inputs, secs_mdat::TEMPLATE, None, now_ms, &mut || {
+                uuids.next().unwrap_or_default()
+            })
+            .map_err(|error| side_mdat_error(&destination, error))?,
+        )
+    };
+    let revision_guard = lock(&revisions);
+    if *revision_guard != revision {
+        return Ok(side_mdat_result(&destination, Vec::new()));
+    }
+    job.begin_commit()?;
+    let files = match bytes {
+        Some(bytes) => {
+            let parent = destination.parent().unwrap_or_else(|| Path::new("."));
+            fs::create_dir_all(parent).map_err(|error| side_mdat_error(&destination, error))?;
+            secs_types::fs::write_atomic_bytes(&destination, &bytes)
+                .map_err(|error| side_mdat_error(&destination, error))?;
+            vec![destination.to_string_lossy().into_owned()]
+        }
+        None => {
+            match fs::remove_file(&destination) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(side_mdat_error(&destination, error)),
+            }
+            Vec::new()
+        }
+    };
+    drop(revision_guard);
+    Ok(side_mdat_result(&destination, files))
+}
+
+fn side_mdat_result(destination: &Path, files: Vec<String>) -> secs_types::ipc::JobResult {
+    secs_types::ipc::JobResult::Export(secs_types::ipc::ExportResult {
+        files,
+        folder: destination
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .to_string_lossy()
+            .into_owned(),
+        stale: false,
+        output_rate: 48_000,
+        notes: Vec::new(),
+    })
+}
+
+fn side_mdat_error(destination: &Path, error: impl std::fmt::Display) -> IpcError {
+    IpcError::new(
+        ErrorCode::ProjectIo,
+        format!(
+            "could not save side mdat {}: {error}",
+            destination.display()
+        ),
+    )
+    .with_param("path", destination.to_string_lossy())
 }
 
 fn rewrite_ir_directory(project: &mut Project, old: &Path, new: &Path) {
@@ -914,64 +948,20 @@ mod tests {
             }
         }
         open.dirty = true;
-        let uuid = crate::Deps::default().uuid;
-        let saved = session
-            .save(Some(target.clone()), &uuid, 0, &crate::Deps::default().log)
-            .unwrap();
+        let saved = session.save(Some(target.clone())).unwrap();
         assert_eq!(saved.path, target.to_string_lossy());
         assert!(!saved.dirty);
         assert!(target.exists());
         assert!(target.with_extension("irs").is_dir());
-        assert!(target.with_extension("mdat").exists());
         assert!(target.with_extension("irs").join("L_P1.src.json").exists());
         assert!(!target.with_extension("irs").join("R_P1.src.json").exists());
-        let side = secs_mdat::load_mdat_project(
-            &fs::read(target.with_extension("mdat")).unwrap(),
-            &secs_jos::Limits::default(),
-        )
-        .unwrap();
-        let titles = side
-            .measurements
-            .iter()
-            .map(|measurement| measurement.title.as_str())
-            .collect::<Vec<_>>();
-        assert_eq!(
-            titles,
-            [
-                "L_P1", "R_P1", "SW1_P1", "Z_P1", "L_P2", "R_P2", "SW1_P2", "Z_P2"
-            ]
-        );
-        assert_eq!(side.measurements[0].start_time_s, -0.001);
-        assert_eq!(
-            side.mdat.measurements[0].impulse_response.spl_offset_db,
-            116.25
-        );
-        assert_eq!(
-            side.measurements[0]
-                .source_info
-                .strings
-                .iter()
-                .find(|(key, _)| key == "outputName"),
-            Some(&("outputName".into(), "장치, out 1".into()))
-        );
-        assert_eq!(
-            side.measurements[1]
-                .source_info
-                .strings
-                .iter()
-                .find(|(key, _)| key == "outputName")
-                .map(|(_, value)| value.as_str()),
-            Some("")
-        );
 
         let reopened = session.open(target.clone()).unwrap();
         assert_eq!(reopened.positions, vec![1, 2]);
 
         session.require_mut().unwrap().store.clear_position(1);
         session.require_mut().unwrap().store.clear_position(2);
-        session
-            .save(None, &uuid, 0, &crate::Deps::default().log)
-            .unwrap();
+        session.save(None).unwrap();
         assert!(!target.with_extension("mdat").exists());
         fs::remove_dir_all(root).unwrap();
     }

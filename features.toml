@@ -1116,6 +1116,8 @@ tests = [
   "secs-service::mdat_scope_is_refused_for_other_kinds",
   "secs-service::measurement_mdat_reads_outside_session_lock_and_cancels_during_read",
   "secs-service::measurement_mdat_rejects_all_originals_that_exceed_one_budget_td130",
+  "secs-service::project_save_returns_before_the_side_mdat_exists_and_a_job_writes_it_td149",
+  "secs-service::side_mdat_failure_is_a_job_error_not_a_silent_save_td149",
 ]
 upstream = "calibration.py export_before_after_mdat (deviation F19)"
 note = "new: the REW mdat carries all (default), the original measurements of every position without a result, or the computed responses; file names say which. Original items use the stored WAV and its curves, computed items carry no curves (fixes the 0.29.0 double removal)."

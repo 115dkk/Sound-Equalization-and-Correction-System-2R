@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
-use secs_service::{Deps, EventSink, LocalTime, LogLevel, NoEvents, Service};
+use secs_service::{Deps, EventSink, LocalTime, NoEvents, Service};
 use secs_types::ipc::{Envelope, ErrorCode, JobEvent, ProjectNewParams, Request};
 use sha2::{Digest, Sha256};
 
@@ -21,8 +21,8 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 use secs_project::{MeasurementResult, MeasurementStore, Project};
 use secs_types::calibration::CalibrationSettings;
 use secs_types::ipc::{
-    CalibrateParams, DspSetParams, ExportKind, ExportParams, JobCancelParams, JobId, JobResult,
-    JobStatus, MdatScope, MimoParams, OutputRateChoice, Response, TargetPresetParams,
+    CalibrateParams, DspSetParams, ExportKind, ExportParams, JobCancelParams, JobId, JobKind,
+    JobResult, JobStatus, MdatScope, MimoParams, OutputRateChoice, Response, TargetPresetParams,
 };
 
 static TEMP: AtomicU64 = AtomicU64::new(0);
@@ -53,16 +53,53 @@ const FIXED_MS: i64 = 1_704_164_645_000;
 struct Events {
     values: Mutex<Vec<JobEvent>>,
     changed: Condvar,
+    hold_progress: Mutex<bool>,
+    progress_released: Condvar,
 }
 
 impl EventSink for Events {
     fn send(&self, event: JobEvent) {
+        let progress = matches!(event, JobEvent::Progress { .. });
         lock(&self.values).push(event);
         self.changed.notify_all();
+        if progress {
+            let mut held = lock(&self.hold_progress);
+            while *held {
+                held = self.progress_released.wait(held).unwrap();
+            }
+        }
     }
 }
 
 impl Events {
+    fn holding_progress() -> Self {
+        Self {
+            hold_progress: Mutex::new(true),
+            ..Self::default()
+        }
+    }
+
+    fn wait_started(&self, kind: JobKind, timeout: Duration) -> JobId {
+        let deadline = Instant::now() + timeout;
+        let mut values = lock(&self.values);
+        loop {
+            if let Some(JobEvent::Started { job, .. }) = values
+                .iter()
+                .find(|event| matches!(event, JobEvent::Started { kind: event_kind, .. } if *event_kind == kind))
+            {
+                return *job;
+            }
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            assert!(!remaining.is_zero(), "{kind:?} job did not start");
+            values = self.changed.wait_timeout(values, remaining).unwrap().0;
+        }
+    }
+
+    fn release_progress(&self) {
+        *lock(&self.hold_progress) = false;
+        self.progress_released.notify_all();
+    }
+
     fn wait(&self, job: JobId, timeout: Duration) -> JobEvent {
         self.try_wait(job, timeout)
             .unwrap_or_else(|| panic!("job {job:?} did not finish"))
@@ -102,6 +139,77 @@ fn call_ok(service: &Service, request: Request, events: Arc<dyn EventSink>) -> R
 }
 
 #[test]
+fn project_save_returns_before_the_side_mdat_exists_and_a_job_writes_it_td149() {
+    let root = temp_root("side-mdat-job");
+    fs::create_dir_all(&root).unwrap();
+    let (path, _) = write_case(&root, "room");
+    let side_mdat = path.with_extension("mdat");
+    let service = deterministic_service();
+    open(&service, &path);
+    let events = Arc::new(Events::holding_progress());
+
+    let response = service.call(
+        Request::ProjectSave(secs_types::ipc::ProjectSaveParams { path: None }),
+        events.clone(),
+    );
+    assert!(
+        matches!(response, Envelope::Ok(response) if matches!(*response, Response::ProjectSave(_)))
+    );
+    assert!(!side_mdat.exists());
+    let job = events.wait_started(JobKind::Export, Duration::from_secs(2));
+    events.release_progress();
+    assert!(matches!(
+        events.wait(job, Duration::from_secs(30)),
+        JobEvent::Finished {
+            status: JobStatus::Succeeded,
+            error: None,
+            ..
+        }
+    ));
+    assert!(side_mdat.is_file());
+    secs_mdat::load_mdat_project(&fs::read(&side_mdat).unwrap(), &secs_jos::Limits::default())
+        .unwrap();
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn side_mdat_failure_is_a_job_error_not_a_silent_save_td149() {
+    let root = temp_root("side-mdat-job-error");
+    fs::create_dir_all(&root).unwrap();
+    let (path, _) = write_case(&root, "room");
+    let side_mdat = path.with_extension("mdat");
+    fs::create_dir(&side_mdat).unwrap();
+    let service = service();
+    open(&service, &path);
+    let events = Arc::new(Events::default());
+
+    let response = service.call(
+        Request::ProjectSave(secs_types::ipc::ProjectSaveParams { path: None }),
+        events.clone(),
+    );
+    assert!(
+        matches!(response, Envelope::Ok(response) if matches!(*response, Response::ProjectSave(_)))
+    );
+    let job = events.wait_started(JobKind::Export, Duration::from_secs(2));
+    let JobEvent::Finished {
+        status: JobStatus::Failed,
+        error: Some(error),
+        ..
+    } = events.wait(job, Duration::from_secs(30))
+    else {
+        panic!("side mdat failure must finish the export job with an error")
+    };
+    assert!(
+        error
+            .detail
+            .contains(&side_mdat.to_string_lossy().into_owned())
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn side_mdat_failure_reaches_the_log_sink_td151() {
     let root = temp_root("side-mdat-log");
     fs::create_dir_all(&root).unwrap();
@@ -118,23 +226,24 @@ fn side_mdat_failure_reaches_the_log_sink_td151() {
     });
     open(&service, &path);
 
+    let events = Arc::new(Events::default());
     let response = service.call(
         Request::ProjectSave(secs_types::ipc::ProjectSaveParams { path: None }),
-        Arc::new(NoEvents),
+        events.clone(),
     );
     assert!(
         matches!(response, Envelope::Ok(response) if matches!(*response, Response::ProjectSave(_)))
     );
-    let lines = lock(&lines);
-    assert_eq!(lines.len(), 1);
-    assert_eq!(lines[0].0, LogLevel::Warn);
-    assert_eq!(lines[0].1, "session");
-    assert!(
-        lines[0]
-            .2
-            .contains(&side_mdat.to_string_lossy().into_owned())
-    );
-    drop(lines);
+    let job = events.wait_started(JobKind::Export, Duration::from_secs(2));
+    assert!(matches!(
+        events.wait(job, Duration::from_secs(30)),
+        JobEvent::Finished {
+            status: JobStatus::Failed,
+            error: Some(_),
+            ..
+        }
+    ));
+    assert!(lock(&lines).is_empty());
 
     fs::remove_dir_all(root).unwrap();
 }

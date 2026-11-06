@@ -26,15 +26,9 @@ pub(crate) fn dispatch(
             .open(params.path.into())
             .map(Response::ProjectOpen)
             .map_err(IpcError::from),
-        Request::ProjectSave(params) => lock(&service.session)
-            .save(
-                params.path.map(Into::into),
-                &service.deps.uuid,
-                (service.deps.unix_ms)(),
-                &service.deps.log,
-            )
-            .map(Response::ProjectSave)
-            .map_err(IpcError::from),
+        Request::ProjectSave(params) => service
+            .project_save(params, events)
+            .map(Response::ProjectSave),
         Request::ProjectInfo => lock(&service.session)
             .info()
             .map(Response::ProjectInfo)

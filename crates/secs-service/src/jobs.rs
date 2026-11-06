@@ -22,6 +22,7 @@ enum JobGroup {
     Device,
     Compute,
     Export,
+    SideMdat,
     StatusWatch,
 }
 fn group(kind: JobKind) -> JobGroup {
@@ -168,16 +169,34 @@ impl JobRegistry {
         events: Arc<dyn EventSink>,
         body: impl FnOnce(JobContext) -> Result<JobResult, IpcError> + Send + 'static,
     ) -> Result<JobStarted, IpcError> {
-        let job_group = group(kind);
+        self.start_in_group(kind, group(kind), events, body)
+    }
+
+    pub fn start_side_mdat(
+        &self,
+        events: Arc<dyn EventSink>,
+        body: impl FnOnce(JobContext) -> Result<JobResult, IpcError> + Send + 'static,
+    ) -> Result<JobStarted, IpcError> {
+        self.start_in_group(JobKind::Export, JobGroup::SideMdat, events, body)
+    }
+
+    fn start_in_group(
+        &self,
+        kind: JobKind,
+        job_group: JobGroup,
+        events: Arc<dyn EventSink>,
+        body: impl FnOnce(JobContext) -> Result<JobResult, IpcError> + Send + 'static,
+    ) -> Result<JobStarted, IpcError> {
         let id = JobId(self.next_id.fetch_add(1, Ordering::Relaxed));
         let cancel = CancelToken::new();
         let measurement_cancel = crate::measure::CancelToken::default();
         {
             let mut inner = lock(&self.inner);
-            if inner
-                .jobs
-                .iter()
-                .any(|job| job.group == job_group && !job.snapshot.status.is_terminal())
+            if job_group != JobGroup::SideMdat
+                && inner
+                    .jobs
+                    .iter()
+                    .any(|job| job.group == job_group && !job.snapshot.status.is_terminal())
             {
                 return Err(IpcError::new(
                     ErrorCode::JobBusy,
