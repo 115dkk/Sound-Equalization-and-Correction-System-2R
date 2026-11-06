@@ -63,6 +63,7 @@ oracle/                   골든 내보내기 스크립트와 골든 (oracle/REA
 ```text
 ui ──IPC──> secs2r ─┬─> secs-service ─┬─> secs-engine ─┬─> secs-dsp
                     │                 │                ├─> secs-compute
+                    │                 │                ├─> secs-graph (출력 규약)
                     │                 │                └─> secs-types
                     │                 ├─> secs-project ──> secs-mdat (출처 정보), secs-types
                     │                 ├─> secs-rew
