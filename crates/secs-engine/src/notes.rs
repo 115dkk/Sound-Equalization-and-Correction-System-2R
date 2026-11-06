@@ -206,18 +206,10 @@ impl MimoNote {
                 support_count,
                 taps_total,
             } => {
-                let digits = taps_total.to_string();
-                let grouped = digits
-                    .chars()
-                    .enumerate()
-                    .fold(String::new(), |mut out, (i, ch)| {
-                        if i > 0 && (digits.len() - i).is_multiple_of(3) {
-                            out.push(',');
-                        }
-                        out.push(ch);
-                        out
-                    });
-                format!("FIR 서포트 {support_count}개 · 총 {grouped}탭(48 kHz)")
+                format!(
+                    "FIR 서포트 {support_count}개 · 총 {}탭(48 kHz)",
+                    secs_graph::emit::grouped(*taps_total)
+                )
             }
         }
     }

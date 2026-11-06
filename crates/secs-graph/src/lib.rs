@@ -141,6 +141,7 @@ impl ExportGraph {
     ) -> Result<Self, GraphError> {
         validate::graph(chain, mimo, lfe)?;
         let plan = plan::make(chain, mimo, lfe)?;
+        emit::guard::distinct_outputs(&plan.outputs)?;
         let support_groups = support_groups(&plan.outputs, mimo);
         Ok(Self {
             chain: chain.clone(),

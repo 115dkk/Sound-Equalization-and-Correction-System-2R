@@ -18,6 +18,7 @@ pub use render::{
 
 use secs_dsp::Complex64;
 use secs_graph::emit::pyfmt::{format_fixed, round_ndigits};
+use secs_graph::emit::{grouped, guard};
 use secs_graph::files::{safe_name, wav_bytes, write_bundle_observed};
 use secs_graph::{
     ExportGraph, FirView, GraphError, LFE_GAIN_DB, LFE_LP_HZ, LfeChoice, SAMPLE_RATE,
@@ -998,17 +999,6 @@ fn db(value: f64) -> String {
     let rounded = round_ndigits(value, 2) + 0.0;
     format_fixed(rounded, 2, true)
 }
-fn comma(value: usize) -> String {
-    let text = value.to_string();
-    let mut out = String::new();
-    for (index, ch) in text.chars().enumerate() {
-        if index > 0 && (text.len() - index).is_multiple_of(3) {
-            out.push(',');
-        }
-        out.push(ch);
-    }
-    out
-}
 fn format_rate_khz(rate: u32) -> String {
     if rate.is_multiple_of(1000) {
         (rate / 1000).to_string()
@@ -1046,7 +1036,7 @@ fn text_ops(
                     .find(|(key, _)| key == name)
                     .ok_or_else(|| FiltersError::Invalid(format!("missing FIR {name}")))?
                     .1,
-                comma(secs_dsp::rate::taps_at(taps.len(), output_rate)),
+                grouped(secs_dsp::rate::taps_at(taps.len(), output_rate)),
                 format_rate_khz(output_rate)
             )),
             Op::FirLowRate {
@@ -1060,7 +1050,9 @@ fn text_ops(
                     .find(|(key, _)| key == name)
                     .ok_or_else(|| FiltersError::Invalid(format!("missing FIR {name}")))?
                     .1,
-                comma((taps_low.len() as f64 * (f64::from(output_rate) / fs_low)).ceil() as usize),
+                grouped(
+                    (taps_low.len() as f64 * (f64::from(output_rate) / fs_low)).ceil() as usize
+                ),
                 format_rate_khz(output_rate)
             )),
             Op::Gain { db: value, .. } => lines.push(format!("  게인     {} dB", db(*value))),
@@ -1938,12 +1930,9 @@ pub fn export_convolution_named_with_options(
 }
 
 fn finite(name: &str, value: f64) -> Result<(), FiltersError> {
-    if value.is_finite() {
-        Ok(())
-    } else {
-        Err(FiltersError::Invalid(format!("non-finite {name}")))
-    }
+    guard::finite(name, value).map_err(|_| FiltersError::Invalid(format!("non-finite {name}")))
 }
+
 /// A delay the writers emit: finite and not negative, by the export graph's
 /// rule ([`is_negative_delay`], #92 TD-94).
 fn emitted_delay(name: &str, channel: &str, ms: f64) -> Result<(), FiltersError> {
@@ -1992,12 +1981,10 @@ fn validate_plan_delays(plan: &FilterPlan) -> Result<(), FiltersError> {
 }
 /// A run's mode names the export files.
 fn identifier(name: &str, value: &str) -> Result<(), FiltersError> {
-    if value.is_empty() || !value.chars().all(|ch| ch.is_ascii_alphanumeric()) {
-        Err(FiltersError::Invalid(format!("unsafe {name} {value:?}")))
-    } else {
-        Ok(())
-    }
+    guard::identifier(name, value, b"")
+        .map_err(|_| FiltersError::Invalid(format!("unsafe {name} {value:?}")))
 }
+
 /// The text and Equalizer APO formats take roles as plain names: letters and
 /// digits only, stricter than the export graph's rule (`_` and `-`), which
 /// the CamillaDSP writer shares.
@@ -2018,9 +2005,8 @@ fn validate_run(run: &FilterRun<'_>) -> Result<(), FiltersError> {
     identifier("mode", run.mode)?;
     plain_roles(run.chain, run.mimo)?;
     finite("latency_ms", run.latency_ms)?;
-    if run.note.contains(['\n', '\r']) {
-        return Err(FiltersError::Invalid(format!("unsafe note {:?}", run.note)));
-    }
+    guard::no_line_breaks("note", run.note)
+        .map_err(|_| FiltersError::Invalid(format!("unsafe note {:?}", run.note)))?;
     if run.label.contains(['\0', '/', '\\']) {
         return Err(FiltersError::Invalid(format!(
             "unsafe label {:?}",

@@ -3,6 +3,7 @@
 
 use secs_compute::Context;
 use secs_dsp::response::lr4;
+use secs_graph::emit::grouped;
 use secs_types::{
     calibration::CalibrationSettings,
     chain::{MimoFilter, MimoPath, MimoPaths},
@@ -166,18 +167,6 @@ pub fn availability(positions: usize) -> (bool, String) {
 
 pub fn kind_text(fir: bool) -> &'static str {
     if fir { "FIR" } else { "IIR" }
-}
-
-fn grouped(n: usize) -> String {
-    let s = n.to_string();
-    let mut out = String::new();
-    for (i, c) in s.chars().enumerate() {
-        if i != 0 && (s.len() - i).is_multiple_of(3) {
-            out.push(',');
-        }
-        out.push(c);
-    }
-    out
 }
 
 pub fn fir_budget_text(run: &MimoRun, budget: usize) -> String {

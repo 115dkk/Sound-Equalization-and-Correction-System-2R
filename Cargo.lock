@@ -4401,6 +4401,7 @@ dependencies = [
  "faer",
  "secs-compute",
  "secs-dsp",
+ "secs-graph",
  "secs-oracle",
  "secs-types",
  "serde_json",

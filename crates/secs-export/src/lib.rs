@@ -11,6 +11,7 @@ use std::{
 use secs_engine::{
     Design, EngineError, ExportAxis, StageResponses, input::LayoutKind, stage_responses,
 };
+use secs_graph::emit::grouped;
 use secs_graph::emit::pyfmt::{format_fixed, format_g};
 use secs_mdat::{MdatError, MeasurementInput, SourceInfo, TEMPLATE};
 use secs_types::{
@@ -121,18 +122,6 @@ fn chain_text(run: &ExportRun<'_>) -> String {
     } else {
         format!("PEQ {peq}")
     }
-}
-
-fn grouped(value: usize) -> String {
-    let digits = value.to_string();
-    let mut out = String::new();
-    for (index, ch) in digits.chars().enumerate() {
-        if index > 0 && (digits.len() - index).is_multiple_of(3) {
-            out.push(',');
-        }
-        out.push(ch);
-    }
-    out
 }
 
 fn sub_mode_text(mode: &str) -> String {

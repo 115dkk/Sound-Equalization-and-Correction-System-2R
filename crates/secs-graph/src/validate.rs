@@ -5,17 +5,10 @@
 //! filter writers' letters-and-digits identifiers, P77's duplicate-role
 //! (TD-46) and negative-delay (TD-94) rules, and one low-rate FIR rule.
 
+use crate::emit::guard::{finite, identifier, no_line_breaks};
 use crate::plan::lowrate_fits;
 use crate::{GraphError, LfeChoice, SAMPLE_RATE, is_negative_delay};
 use secs_types::chain::{MainChannel, MimoFilter, MimoPaths, Peq, SignalChain, SubChannel};
-
-fn finite(name: &str, value: f64) -> Result<(), GraphError> {
-    if value.is_finite() {
-        Ok(())
-    } else {
-        Err(GraphError::NonFinite(name.into()))
-    }
-}
 
 fn frequency(name: &str, hz: f64) -> Result<(), GraphError> {
     finite(name, hz)?;
@@ -56,22 +49,6 @@ fn non_negative_delay(name: &str, channel: &str, milliseconds: f64) -> Result<()
 /// writer's rule, which upstream's writer also accepts. The text and
 /// Equalizer APO writers allow letters and digits only and check that
 /// themselves.
-fn identifier(name: &str, value: &str) -> Result<(), GraphError> {
-    if !value.is_ascii() {
-        return Err(GraphError::NonAscii(format!("{name} = {value:?}")));
-    }
-    if value.is_empty()
-        || !value
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
-    {
-        return Err(GraphError::Invalid(format!(
-            "unsafe identifier {name} = {value:?}"
-        )));
-    }
-    Ok(())
-}
-
 /// Each role is unique and none is `LFE`, which names the LFE input (#92 TD-46).
 fn reserve_role<'a>(roles: &mut Vec<&'a str>, name: &str, role: &'a str) -> Result<(), GraphError> {
     if roles.contains(&role) || role == "LFE" {
@@ -142,7 +119,7 @@ pub(crate) fn graph(
         },
     ) in chain.mains.iter().enumerate()
     {
-        identifier(&format!("main[{index}].role"), role)?;
+        identifier(&format!("main[{index}].role"), role, b"_-")?;
         peqs(&format!("main.{role}.input_peq"), input_peq)?;
         peqs(&format!("main.{role}.top_peq"), top_peq)?;
         finite(&format!("main.{role}.gain_db"), *gain_db)?;
@@ -176,7 +153,7 @@ pub(crate) fn graph(
         },
     ) in chain.subs.iter().enumerate()
     {
-        identifier(&format!("sub[{index}].role"), role)?;
+        identifier(&format!("sub[{index}].role"), role, b"_-")?;
         reserve_role(&mut roles, &format!("sub[{index}].role"), role)?;
         finite(&format!("sub.{role}.gain_db"), *gain_db)?;
         non_negative_delay(&format!("sub.{role}.delay_ms"), role, *delay_ms)?;
@@ -190,11 +167,7 @@ pub(crate) fn graph(
         if !mode.is_ascii() {
             return Err(GraphError::NonAscii(format!("sub.{role}.mode = {mode:?}")));
         }
-        if mode.contains(['\n', '\r']) {
-            return Err(GraphError::Invalid(format!(
-                "unsafe sub.{role}.mode = {mode:?}"
-            )));
-        }
+        no_line_breaks(&format!("sub.{role}.mode"), mode)?;
         allpasses(&format!("sub.{role}.allpass"), allpass)?;
         peqs(&format!("sub.{role}.peq"), peq)?;
     }
@@ -213,8 +186,8 @@ fn validate_mimo(chain: &SignalChain, mimo: &MimoPaths) -> Result<(), GraphError
     frequency("mimo.fsiso", mimo.fsiso)?;
     for (index, path) in mimo.paths.iter().enumerate() {
         let field = format!("mimo.paths[{index}]");
-        identifier(&format!("{field}.input"), &path.input)?;
-        identifier(&format!("{field}.support"), &path.support)?;
+        identifier(&format!("{field}.input"), &path.input, b"_-")?;
+        identifier(&format!("{field}.support"), &path.support, b"_-")?;
         if !chain.mains.iter().any(|main| main.role == path.input) {
             return Err(GraphError::Invalid(format!(
                 "{field}.input {} is not a main channel",

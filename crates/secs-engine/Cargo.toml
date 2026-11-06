@@ -27,6 +27,7 @@ faer.workspace = true
 secs-types.workspace = true
 secs-compute.workspace = true
 secs-dsp.workspace = true
+secs-graph.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]

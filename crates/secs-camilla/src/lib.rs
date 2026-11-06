@@ -15,6 +15,7 @@ pub mod note;
 pub mod pyfmt;
 
 use pyfmt::{format_fixed, format_g, format_i3, format_s30, repr_f64, round_ndigits};
+use secs_graph::emit::guard;
 use secs_graph::{ExportGraph, GraphError, LfeChoice};
 use secs_types::chain::{BandType, MimoFilter, MimoPath, MimoPaths, SignalChain, SubChannel};
 use std::fmt::Write as _;
@@ -417,29 +418,6 @@ fn file_devices(out: &Path, n_in: usize, n_out: usize) -> Result<(Device, Device
     ))
 }
 
-/// The coefficient filename prefix (`secs_mixed_`), the writer's own identifier.
-fn check_ascii_identifier(name: &str) -> Result<(), CamillaError> {
-    if !name.is_ascii() {
-        return Err(CamillaError::NonAscii(name.into()));
-    }
-    if name.is_empty()
-        || !name
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
-    {
-        return Err(CamillaError::Invalid(format!("unsafe identifier {name:?}")));
-    }
-    Ok(())
-}
-
-fn finite(name: &str, value: f64) -> Result<(), CamillaError> {
-    if value.is_finite() {
-        Ok(())
-    } else {
-        Err(CamillaError::NonFinite(name.into()))
-    }
-}
-
 /// The writer's own options; the chain and its MIMO paths are the export
 /// graph's to check.
 fn validate_options(options: &Options) -> Result<(), CamillaError> {
@@ -448,27 +426,17 @@ fn validate_options(options: &Options) -> Result<(), CamillaError> {
             "unsupported output sample rate".into(),
         ));
     }
-    finite("options.lfe_lp_hz", options.lfe_lp_hz)?;
-    if options.note.contains(['\n', '\r']) {
-        return Err(CamillaError::Invalid(format!(
-            "unsafe options.note {:?}",
-            options.note
-        )));
-    }
+    guard::finite("options.lfe_lp_hz", options.lfe_lp_hz)?;
+    guard::no_line_breaks("options.note", &options.note)?;
     if !options.mode.is_ascii() {
         return Err(CamillaError::NonAscii(options.mode.clone()));
     }
-    if options.mode.contains(['\n', '\r']) {
-        return Err(CamillaError::Invalid(format!(
-            "unsafe mode identifier {:?}",
-            options.mode
-        )));
-    }
+    guard::no_line_breaks("mode identifier", &options.mode)?;
     if let Some(value) = options.lfe_gain_db {
-        finite("options.lfe_gain_db", value)?;
+        guard::finite("options.lfe_gain_db", value)?;
     }
     if let Some(value) = options.latency_ms {
-        finite("options.latency_ms", value)?;
+        guard::finite("options.latency_ms", value)?;
     }
     if let Some(design) = &options.design {
         if design.design_name.chars().any(char::is_control)
@@ -496,7 +464,7 @@ fn validate_options(options: &Options) -> Result<(), CamillaError> {
                 return Err(CamillaError::NonAscii(key.clone()));
             }
             if let DeviceValue::Float(number) = value {
-                finite(&format!("device.{key}"), *number)?;
+                guard::finite(&format!("device.{key}"), *number)?;
             }
         }
     }
@@ -734,7 +702,7 @@ pub fn make_config_observed(
         });
     let graph = ExportGraph::build(chain, mimo, lfe_choice)?;
     if !fir_prefix.is_empty() {
-        check_ascii_identifier(fir_prefix)?;
+        guard::identifier("coefficient filename prefix", fir_prefix, b"_-")?;
     }
     let chain = graph.chain();
     let mimo = graph.mimo();
@@ -1623,7 +1591,7 @@ pub fn export_with_options(
     mimo: Option<&MimoPaths>,
     mut options: Options,
 ) -> Result<Vec<PathBuf>, CamillaError> {
-    finite("labels.latency_ms", labels.latency_ms)?;
+    guard::finite("labels.latency_ms", labels.latency_ms)?;
     options.note = labels.note.clone();
     options.latency_ms = Some(labels.latency_ms);
     options.mode = labels.mode.clone();
