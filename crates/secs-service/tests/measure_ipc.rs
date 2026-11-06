@@ -918,6 +918,89 @@ fn rew_configures_once_per_position_td172() {
 }
 
 #[test]
+fn subscribe_failure_is_noticed_td215() {
+    let root = root("rew-subscribe-failure");
+    let path = root.join("room.secs");
+    let mut script = rew_script();
+    let subscribe = script
+        .iter()
+        .position(|exchange| exchange.request.path == "/measure/subscribe")
+        .unwrap();
+    script[subscribe].response = Ok(secs_rew::Response {
+        status: 500,
+        body: json!({"message":"subscribe failed"}),
+    });
+    let unsubscribe = script
+        .iter()
+        .enumerate()
+        .skip(subscribe + 1)
+        .find(|(_, exchange)| exchange.request.path == "/measure/unsubscribe")
+        .unwrap()
+        .0;
+    script.remove(unsubscribe);
+    let transport = secs_rew::RecordedTransport::new(script);
+    let copy = transport.clone();
+    let service = Service::new(Deps {
+        rew_transport: Arc::new(move || Box::new(StableCallbackTransport(copy.clone()))),
+        ..Deps::default()
+    });
+    new(&service, &path);
+    configure(&service, "rew");
+    call(&service, Request::MeasureMethods);
+    let events = Arc::new(Events::default());
+    let job = measure(&service, 1, events.clone());
+    succeeded(&events, job);
+    transport.assert_finished();
+
+    let values = events.values.lock().unwrap();
+    assert!(values.iter().any(|event| {
+        matches!(event, JobEvent::Log { code, params, .. }
+            if code == "measurement_subscribe_failed" && params["role"] == "L")
+    }));
+    drop(values);
+    let mut store = secs_project::MeasurementStore::open(&path).unwrap();
+    assert!(store.ir_of("L", 1).is_ok());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn sidecar_build_failure_is_noticed_td215() {
+    let root = root("rew-sidecar-failure");
+    let path = root.join("room.secs");
+    let cal = root.join("invalid-sensitivity.cal");
+    fs::write(
+        &cal,
+        b"Sens Factor = 1.2.3
+",
+    )
+    .unwrap();
+    let transport = secs_rew::RecordedTransport::new(rew_script_with_cal(&cal.to_string_lossy()));
+    let copy = transport.clone();
+    let service = Service::new(Deps {
+        rew_transport: Arc::new(move || Box::new(StableCallbackTransport(copy.clone()))),
+        ..Deps::default()
+    });
+    new(&service, &path);
+    configure(&service, "rew");
+    call(&service, Request::MeasureMethods);
+    let events = Arc::new(Events::default());
+    let job = measure(&service, 1, events.clone());
+    succeeded(&events, job);
+    transport.assert_finished();
+
+    let values = events.values.lock().unwrap();
+    assert!(values.iter().any(|event| {
+        matches!(event, JobEvent::Log { code, params, .. }
+            if code == "measurement_source_missing" && params["role"] == "L")
+    }));
+    drop(values);
+    let mut store = secs_project::MeasurementStore::open(&path).unwrap();
+    assert!(store.ir_of("L", 1).is_ok());
+    assert_eq!(store.source_of("L", 1), None);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn oversized_input_cal_file_is_refused_with_a_notice_and_read_once_td170() {
     let root = root("rew-cal-limit");
     let path = root.join("room.secs");

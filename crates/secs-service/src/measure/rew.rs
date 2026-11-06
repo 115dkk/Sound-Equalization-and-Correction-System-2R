@@ -116,6 +116,53 @@ impl<R> RewMeasurer<R> {
         }
         result
     }
+
+    fn source_info(
+        &mut self,
+        calibration: Option<&secs_mdat::CalFile>,
+        output_device: &str,
+        input_device: &str,
+        output_channel: &str,
+        role: &str,
+        position: u32,
+    ) -> Option<secs_mdat::SourceInfo> {
+        match secs_mdat::from_rew_measurement(
+            calibration,
+            output_device,
+            input_device,
+            output_channel,
+            (self.unix_ms)(),
+        ) {
+            Ok(Some(info)) => Some(info),
+            Ok(None) => {
+                self.notices.push(secs_types::ipc::Notice {
+                    code: "measurement_source_missing".into(),
+                    params: [
+                        ("role".into(), role.to_owned()),
+                        ("position".into(), position.to_string()),
+                        (
+                            "detail".into(),
+                            "measurement source has no device or calibration data".into(),
+                        ),
+                    ]
+                    .into(),
+                });
+                None
+            }
+            Err(error) => {
+                self.notices.push(secs_types::ipc::Notice {
+                    code: "measurement_source_missing".into(),
+                    params: [
+                        ("role".into(), role.to_owned()),
+                        ("position".into(), position.to_string()),
+                        ("detail".into(), error.to_string()),
+                    ]
+                    .into(),
+                });
+                None
+            }
+        }
+    }
 }
 
 impl<R: secs_rew::MeasurementEnvironment> RewMeasurer<R> {
@@ -167,6 +214,11 @@ fn read_calibration(path: &str) -> Result<Vec<u8>, (&'static str, String)> {
     Ok(bytes)
 }
 
+struct RecordedRole {
+    result: Option<secs_rew::MeasurementResult>,
+    subscribe_error: Option<String>,
+}
+
 trait RoleRecorder {
     fn configure_position(
         &mut self,
@@ -180,7 +232,7 @@ trait RoleRecorder {
         pos: u32,
         progress: Option<secs_rew::ProgressCallback>,
         cancel: &secs_rew::CancelToken,
-    ) -> Result<Option<secs_rew::MeasurementResult>, secs_rew::RewError>;
+    ) -> Result<RecordedRole, secs_rew::RewError>;
 }
 
 impl RoleRecorder for secs_rew::RewClient<Transport> {
@@ -198,7 +250,7 @@ impl RoleRecorder for secs_rew::RewClient<Transport> {
         pos: u32,
         progress: Option<secs_rew::ProgressCallback>,
         cancel: &secs_rew::CancelToken,
-    ) -> Result<Option<secs_rew::MeasurementResult>, secs_rew::RewError> {
+    ) -> Result<RecordedRole, secs_rew::RewError> {
         if cancel.is_cancelled() {
             if let Some(callback) = &progress {
                 callback(secs_rew::progress(
@@ -209,11 +261,14 @@ impl RoleRecorder for secs_rew::RewClient<Transport> {
                     "측정을 취소했습니다",
                 ));
             }
-            return Ok(None);
+            return Ok(RecordedRole {
+                result: None,
+                subscribe_error: None,
+            });
         }
-        let own_progress = if let Some(callback) = progress.clone() {
+        let (own_progress, subscribe_error) = if let Some(callback) = progress.clone() {
             let role = role.to_owned();
-            self.subscribe_progress(SyncArc::new(move |body| {
+            match self.subscribe_progress(SyncArc::new(move |body| {
                 let (percent, message) = secs_rew::parse_progress(&body);
                 if let Some(percent) = percent {
                     callback(secs_rew::progress(
@@ -224,10 +279,12 @@ impl RoleRecorder for secs_rew::RewClient<Transport> {
                         &message,
                     ));
                 }
-            }))
-            .is_ok()
+            })) {
+                Ok(_) => (true, None),
+                Err(error) => (false, Some(error.to_string())),
+            }
         } else {
-            false
+            (false, None)
         };
         let result = (|| {
             if cancel.is_cancelled() {
@@ -330,7 +387,10 @@ impl RoleRecorder for secs_rew::RewClient<Transport> {
         if own_progress {
             self.unsubscribe_progress();
         }
-        result
+        result.map(|result| RecordedRole {
+            result,
+            subscribe_error,
+        })
     }
 }
 
@@ -349,13 +409,16 @@ impl<S: secs_rew::IrSource> RoleRecorder for secs_rew::FakeRew<S> {
         pos: u32,
         progress: Option<secs_rew::ProgressCallback>,
         cancel: &secs_rew::CancelToken,
-    ) -> Result<Option<secs_rew::MeasurementResult>, secs_rew::RewError> {
+    ) -> Result<RecordedRole, secs_rew::RewError> {
         let mut single = plan.clone();
         single.roles = vec![role.to_owned()];
-        Ok(self
-            .run_position(&single, pos, progress, cancel)?
-            .into_iter()
-            .next())
+        Ok(RecordedRole {
+            result: self
+                .run_position(&single, pos, progress, cancel)?
+                .into_iter()
+                .next(),
+            subscribe_error: None,
+        })
     }
 }
 
@@ -447,14 +510,20 @@ where
             let mut calibration_loaded = false;
             let mut calibration = None;
             for role in &plan.roles {
-                let Some(result) = self.client.record_role(
+                let recorded = self.client.record_role(
                     &rew_plan,
                     role,
                     position,
                     progress.clone(),
                     &cancel.rew,
-                )?
-                else {
+                )?;
+                if let Some(detail) = recorded.subscribe_error {
+                    self.notices.push(secs_types::ipc::Notice {
+                        code: "measurement_subscribe_failed".into(),
+                        params: [("role".into(), role.clone()), ("detail".into(), detail)].into(),
+                    });
+                }
+                let Some(result) = recorded.result else {
                     break;
                 };
                 if !calibration_loaded {
@@ -462,15 +531,14 @@ where
                     calibration_loaded = true;
                 }
                 let output_channel = format!("out {}", plan.output_for(&result.role));
-                let source_info = secs_mdat::from_rew_measurement(
+                let source_info = self.source_info(
                     calibration.as_ref(),
                     &output_device,
                     &input_device,
                     &output_channel,
-                    (self.unix_ms)(),
-                )
-                .ok()
-                .flatten();
+                    &result.role,
+                    result.pos,
+                );
                 record(MeasurementResult {
                     role: result.role,
                     pos: i64::from(result.pos),
@@ -537,15 +605,14 @@ where
                 .into_iter()
                 .map(|r| {
                     let output_channel = format!("out {}", plan.output_for(&r.role));
-                    let source_info = secs_mdat::from_rew_measurement(
+                    let source_info = self.source_info(
                         cal.as_ref(),
                         &output_device,
                         &input_device,
                         &output_channel,
-                        (self.unix_ms)(),
-                    )
-                    .ok()
-                    .flatten();
+                        &r.role,
+                        r.pos,
+                    );
                     MeasurementResult {
                         role: r.role,
                         pos: i64::from(r.pos),
