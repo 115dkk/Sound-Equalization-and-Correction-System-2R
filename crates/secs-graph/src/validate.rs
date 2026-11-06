@@ -17,6 +17,28 @@ fn finite(name: &str, value: f64) -> Result<(), GraphError> {
     }
 }
 
+fn frequency(name: &str, hz: f64) -> Result<(), GraphError> {
+    finite(name, hz)?;
+    if 0.0 < hz && hz < f64::from(SAMPLE_RATE) / 2.0 {
+        Ok(())
+    } else {
+        Err(GraphError::Invalid(format!(
+            "{name} = {hz} Hz must be greater than 0 and less than 24000"
+        )))
+    }
+}
+
+fn positive_q(name: &str, q: f64) -> Result<(), GraphError> {
+    finite(name, q)?;
+    if q > 0.0 {
+        Ok(())
+    } else {
+        Err(GraphError::Invalid(format!(
+            "{name} = {q} must be positive"
+        )))
+    }
+}
+
 /// A delay the writers emit: finite and not negative (#92 TD-94). The
 /// message names the field and, as the filter writers did, the channel.
 fn non_negative_delay(name: &str, channel: &str, milliseconds: f64) -> Result<(), GraphError> {
@@ -72,18 +94,18 @@ fn polarity(name: &str, value: i8) -> Result<(), GraphError> {
 }
 
 fn peqs(prefix: &str, bands: &[Peq]) -> Result<(), GraphError> {
-    for (index, (frequency, q, gain)) in bands.iter().enumerate() {
-        finite(&format!("{prefix}[{index}].frequency"), *frequency)?;
-        finite(&format!("{prefix}[{index}].q"), *q)?;
+    for (index, (hz, q, gain)) in bands.iter().enumerate() {
+        frequency(&format!("{prefix}[{index}].frequency"), *hz)?;
+        positive_q(&format!("{prefix}[{index}].q"), *q)?;
         finite(&format!("{prefix}[{index}].gain"), *gain)?;
     }
     Ok(())
 }
 
 fn allpasses(prefix: &str, bands: &[(f64, f64)]) -> Result<(), GraphError> {
-    for (index, (frequency, q)) in bands.iter().enumerate() {
-        finite(&format!("{prefix}[{index}].frequency"), *frequency)?;
-        finite(&format!("{prefix}[{index}].q"), *q)?;
+    for (index, (hz, q)) in bands.iter().enumerate() {
+        frequency(&format!("{prefix}[{index}].frequency"), *hz)?;
+        positive_q(&format!("{prefix}[{index}].q"), *q)?;
     }
     Ok(())
 }
@@ -103,7 +125,7 @@ pub(crate) fn graph(
     finite("chain.lift_ms", chain.lift_ms)?;
     finite("chain.latency_ms", chain.latency_ms)?;
     if let Some(hz) = chain.input_hp_hz {
-        finite("chain.input_hp_hz", hz)?;
+        frequency("chain.input_hp_hz", hz)?;
     }
     for (
         index,
@@ -128,7 +150,7 @@ pub(crate) fn graph(
         non_negative_delay(&format!("main.{role}.delay_ms"), role, *delay_ms)?;
         finite(&format!("main.{role}.align_delay_ms"), *align_delay_ms)?;
         if let Some(value) = xo_hz {
-            finite(&format!("main.{role}.xo_hz"), *value)?;
+            frequency(&format!("main.{role}.xo_hz"), *value)?;
         }
         for (tap, value) in fir.iter().enumerate() {
             finite(&format!("main.{role}.fir[{tap}]"), *value)?;
@@ -158,8 +180,12 @@ pub(crate) fn graph(
         reserve_role(&mut roles, &format!("sub[{index}].role"), role)?;
         finite(&format!("sub.{role}.gain_db"), *gain_db)?;
         non_negative_delay(&format!("sub.{role}.delay_ms"), role, *delay_ms)?;
-        finite(&format!("sub.{role}.hp_hz"), *hp_hz)?;
-        finite(&format!("sub.{role}.lp_hz"), *lp_hz)?;
+        if *hp_hz != 0.0 {
+            frequency(&format!("sub.{role}.hp_hz"), *hp_hz)?;
+        }
+        if *lp_hz != 0.0 {
+            frequency(&format!("sub.{role}.lp_hz"), *lp_hz)?;
+        }
         polarity(&format!("sub.{role}.polarity"), *sign)?;
         if !mode.is_ascii() {
             return Err(GraphError::NonAscii(format!("sub.{role}.mode = {mode:?}")));
@@ -173,13 +199,13 @@ pub(crate) fn graph(
     }
     if let LfeChoice::Include { gain_db, lp_hz } = lfe {
         finite("lfe.gain_db", gain_db)?;
-        finite("lfe.lp_hz", lp_hz)?;
+        frequency("lfe.lp_hz", lp_hz)?;
     }
     Ok(())
 }
 
 fn validate_mimo(chain: &SignalChain, mimo: &MimoPaths) -> Result<(), GraphError> {
-    finite("mimo.fsiso", mimo.fsiso)?;
+    frequency("mimo.fsiso", mimo.fsiso)?;
     for (index, path) in mimo.paths.iter().enumerate() {
         let field = format!("mimo.paths[{index}]");
         identifier(&format!("{field}.input"), &path.input)?;
@@ -199,7 +225,9 @@ fn validate_mimo(chain: &SignalChain, mimo: &MimoPaths) -> Result<(), GraphError
             )));
         }
         let channel = format!("{}->{}", path.input, path.support);
-        finite(&format!("{field}.low_hz"), path.low_hz)?;
+        if path.low_hz != 0.0 {
+            frequency(&format!("{field}.low_hz"), path.low_hz)?;
+        }
         non_negative_delay(&format!("{field}.delay_ms"), &channel, path.delay_ms)?;
         match &path.filter {
             MimoFilter::Iir {

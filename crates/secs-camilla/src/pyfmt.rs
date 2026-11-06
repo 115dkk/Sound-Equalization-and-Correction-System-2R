@@ -242,4 +242,10 @@ mod tests {
         assert_eq!(repr_f64(round_ndigits(-0.000_01, 4)), "-0.0");
         assert_eq!(format_g(5e-324, false), "4.94066e-324");
     }
+
+    #[test]
+    fn refused_oracle_edge_keeps_its_fixed_format_bytes_td182() {
+        // oracle/goldens/filters/ba_edges.json serialises this edge literally.
+        assert_eq!(format_fixed(1e16, 2, false), "10000000000000000.00");
+    }
 }

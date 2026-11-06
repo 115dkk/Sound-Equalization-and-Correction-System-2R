@@ -20,6 +20,8 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 static TEMP_ID: AtomicU64 = AtomicU64::new(0);
+const EXPECTED_GRAPH_REFUSALS: [(&str, &str); 1] =
+    [("camilla/direct_rounding", "main.L.top_peq[0].frequency")];
 
 struct TempDir(PathBuf);
 
@@ -556,15 +558,21 @@ fn make_config_matches_oracle() {
         let temp = TempDir::new(&fixture.id.replace('/', "_"));
         let options = direct_options(&fixture);
         let config_dir = temp.0.join("where/configs");
-        let config = make_config(
-            &chain(&fixture),
-            &temp.0,
-            &config_dir,
-            "edge_",
-            &options,
-            None,
-        )
-        .unwrap();
+        let chain = chain(&fixture);
+        if let Some((_, field)) = EXPECTED_GRAPH_REFUSALS
+            .iter()
+            .find(|(expected, _)| *expected == fixture.id.as_str())
+        {
+            let error =
+                make_config(&chain, &temp.0, &config_dir, "edge_", &options, None).unwrap_err();
+            assert!(
+                matches!(&error, CamillaError::Invalid(message) if message.contains(field)),
+                "{}: {error}",
+                fixture.id
+            );
+            continue;
+        }
+        let config = make_config(&chain, &temp.0, &config_dir, "edge_", &options, None).unwrap();
         let got_yaml = replace_folder(&config.yaml, &temp.0);
         let expected_yaml = fixture.outputs()["yaml"].as_str().unwrap();
         assert_yaml_transfer(

@@ -11,6 +11,7 @@ use secs_filters::{
     plan_responses, prepare_convolution_named_with_options, render_paths, windows_channels,
     write_eqapo, write_eqapo_observed, write_text, write_text_observed,
 };
+use secs_graph::{ExportGraph, GraphError, LfeChoice};
 use secs_oracle::{Fixture, assert_close, goldens, rtol};
 use secs_types::calibration::RcBand;
 use secs_types::chain::{
@@ -41,6 +42,7 @@ const COMPUTED_CASES: [&str; 5] = [
     "computed_room_rc_mixed",
     "computed_room_rc_zero",
 ];
+const EXPECTED_GRAPH_REFUSALS: [(&str, &str); 1] = [("ba_edges", "main.L.top_peq[0].frequency")];
 
 struct TempDir(PathBuf);
 
@@ -187,6 +189,32 @@ fn plan(fixture: &Fixture, chain: &SignalChain, mimo: Option<&MimoPaths>) -> Fil
         number(&fixture.inputs()["lfe_lp_hz"]),
     )
     .unwrap()
+}
+
+fn assert_expected_graph_refusal(
+    case: &str,
+    fixture: &Fixture,
+    chain: &SignalChain,
+    mimo: Option<&MimoPaths>,
+) -> bool {
+    let Some((_, field)) = EXPECTED_GRAPH_REFUSALS
+        .iter()
+        .find(|(expected, _)| *expected == case)
+    else {
+        return false;
+    };
+    let lfe = fixture.inputs()["lfe_gain_db"]
+        .as_f64()
+        .map_or(LfeChoice::Omit, |gain_db| LfeChoice::Include {
+            gain_db,
+            lp_hz: number(&fixture.inputs()["lfe_lp_hz"]),
+        });
+    let error = ExportGraph::build(chain, mimo, lfe).unwrap_err();
+    assert!(
+        matches!(&error, GraphError::Invalid(message) if message.contains(field)),
+        "{case}: {error}"
+    );
+    true
 }
 
 #[test]
@@ -1247,6 +1275,9 @@ fn plans_and_windows_channels_match_oracle() {
         let fixture = Fixture::load("filters", case);
         let chain = chain(&fixture);
         let mimo = mimo(&fixture);
+        if assert_expected_graph_refusal(case, &fixture, &chain, mimo.as_ref()) {
+            continue;
+        }
         let plan = plan(&fixture, &chain, mimo.as_ref());
         assert_plan(&fixture, &plan);
         let (inputs, outputs) = windows_channels(&plan).unwrap();
@@ -1275,6 +1306,9 @@ fn serializers_match_oracle_text_exactly() {
         let fixture = Fixture::load("filters", case);
         let chain = chain(&fixture);
         let mimo = mimo(&fixture);
+        if assert_expected_graph_refusal(case, &fixture, &chain, mimo.as_ref()) {
+            continue;
+        }
         let plan = plan(&fixture, &chain, mimo.as_ref());
         let direct = &fixture.outputs()["direct"];
         let firs = fir_names(&plan, "edge_");
@@ -1370,6 +1404,9 @@ fn responses_and_headroom_match_oracle() {
         let fixture = Fixture::load("filters", case);
         let chain = chain(&fixture);
         let mimo = mimo(&fixture);
+        if assert_expected_graph_refusal(case, &fixture, &chain, mimo.as_ref()) {
+            continue;
+        }
         let plan = plan(&fixture, &chain, mimo.as_ref());
         let response = &fixture.outputs()["response"];
         let indices = fixture.f64s(&response["indices"]);
@@ -1465,6 +1502,9 @@ fn equalizer_apo_files_match_oracle_bytes() {
     ] {
         let fixture = Fixture::load("filters", case);
         let chain = chain(&fixture);
+        if assert_expected_graph_refusal(case, &fixture, &chain, None) {
+            continue;
+        }
         let plan = plan(&fixture, &chain, None);
         let root = TempDir::new(case);
         let run = &fixture.inputs()["run"];

@@ -138,6 +138,13 @@ fn every_rule_rejects_its_input_and_names_the_field() {
     assert!(is_negative_delay(-0.51 / 48.0));
     assert!(is_negative_delay(-1.0));
     ExportGraph::build(&chain(), Some(&mimo()), LfeChoice::DOLBY).unwrap();
+    let mut disabled_sub_edges = chain();
+    disabled_sub_edges.subs[0].hp_hz = 0.0;
+    disabled_sub_edges.subs[0].lp_hz = 0.0;
+    ExportGraph::build(&disabled_sub_edges, None, LfeChoice::Omit).unwrap();
+    let mut disabled_mimo_edge = mimo();
+    disabled_mimo_edge.paths[0].low_hz = 0.0;
+    ExportGraph::build(&chain(), Some(&disabled_mimo_edge), LfeChoice::Omit).unwrap();
 
     let rows: &[(&str, Edit, Kind, &str)] = &[
         // 48 kHz.
@@ -238,6 +245,55 @@ fn every_rule_rejects_its_input_and_names_the_field() {
             },
             NON_FINITE,
             "lfe.lp_hz",
+        ),
+        // Active frequencies are strictly inside the design band and Q is positive.
+        (
+            "PEQ at zero hertz",
+            |c, _, _| c.mains[0].top_peq[0].0 = 0.0,
+            INVALID,
+            "main.L.top_peq[0].frequency",
+        ),
+        (
+            "PEQ at Nyquist",
+            |c, _, _| c.mains[0].top_peq[0].0 = 24_000.0,
+            INVALID,
+            "main.L.top_peq[0].frequency",
+        ),
+        (
+            "PEQ with zero Q",
+            |c, _, _| c.mains[0].top_peq[0].1 = 0.0,
+            INVALID,
+            "main.L.top_peq[0].q",
+        ),
+        (
+            "all-pass with negative Q",
+            |c, _, _| c.subs[0].allpass[0].1 = -1.0,
+            INVALID,
+            "sub.SW1.allpass[0].q",
+        ),
+        (
+            "negative sub high-pass",
+            |c, _, _| c.subs[0].hp_hz = -20.0,
+            INVALID,
+            "sub.SW1.hp_hz",
+        ),
+        (
+            "sub low-pass above Nyquist",
+            |c, _, _| c.subs[0].lp_hz = 30_000.0,
+            INVALID,
+            "sub.SW1.lp_hz",
+        ),
+        (
+            "main crossover at zero hertz",
+            |c, _, _| c.mains[0].xo_hz = Some(0.0),
+            INVALID,
+            "main.L.xo_hz",
+        ),
+        (
+            "MIMO low edge above Nyquist",
+            |_, m, _| m.paths[0].low_hz = 48_000.0,
+            INVALID,
+            "mimo.paths[0].low_hz",
         ),
         // Identifiers ASCII and safe.
         (
