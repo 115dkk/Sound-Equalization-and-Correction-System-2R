@@ -869,9 +869,20 @@ struct AppSettingsVersion {
 }
 
 fn refuse_newer_app_settings(path: &Path) -> Result<(), IpcError> {
-    let Ok(bytes) = read_bounded(path) else {
+    if !path.exists() {
         return Ok(());
-    };
+    }
+    // A file this app cannot read (denied, or over the size bound) may well be
+    // a newer version's; refuse to replace it. Damaged JSON is the one case an
+    // explicit set may overwrite (TD-169, audit #186 A-14).
+    let bytes = read_bounded(path).map_err(|error| {
+        IpcError::new(
+            ErrorCode::Unsupported,
+            format!("existing settings could not be read: {}", error.detail),
+        )
+        .with_param("path", path.to_string_lossy())
+        .with_param("reason", "settings_unreadable")
+    })?;
     let Ok(file) = serde_json::from_slice::<AppSettingsVersion>(&bytes) else {
         return Ok(());
     };

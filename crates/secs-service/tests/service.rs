@@ -411,6 +411,43 @@ fn newer_settings_file_is_never_overwritten_td169() {
 }
 
 #[test]
+fn unreadable_settings_file_is_never_overwritten_td169() {
+    // A valid file over the 1 MiB read bound: this app cannot tell which
+    // version wrote it, so an explicit set must not replace it (audit #186 A-14).
+    let root = temp_root("unreadable-settings");
+    fs::create_dir_all(&root).unwrap();
+    let path = root.join("settings.json");
+    let mut original = serde_json::to_vec(&serde_json::json!({
+        "version": 2,
+        "settings": AppSettings::default(),
+        "padding": "x".repeat(1024 * 1024 + 16),
+    }))
+    .unwrap();
+    original.push(b'\n');
+    fs::write(&path, &original).unwrap();
+    let service = Service::new(Deps {
+        app_settings_path: Some(path.clone()),
+        ..Deps::default()
+    });
+
+    let Envelope::Err(error) = service.call(
+        Request::AppSettingsSet(AppSettingsParams {
+            settings: AppSettings::default(),
+        }),
+        Arc::new(NoEvents),
+    ) else {
+        panic!("a settings file this app cannot read must not be overwritten")
+    };
+    assert_eq!(error.code, ErrorCode::Unsupported);
+    assert_eq!(
+        error.params.get("reason").map(String::as_str),
+        Some("settings_unreadable")
+    );
+    assert_eq!(fs::read(&path).unwrap(), original);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn project_save_returns_before_the_side_mdat_exists_and_a_job_writes_it_td149() {
     let root = temp_root("side-mdat-job");
     fs::create_dir_all(&root).unwrap();
