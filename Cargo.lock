@@ -4336,10 +4336,6 @@ dependencies = [
 name = "secs-camilla"
 version = "0.21.0"
 dependencies = [
- "num-bigint",
- "num-integer",
- "num-traits",
- "ryu",
  "secs-apply",
  "secs-dsp",
  "secs-filters",
@@ -4471,6 +4467,10 @@ dependencies = [
 name = "secs-graph"
 version = "0.21.0"
 dependencies = [
+ "num-bigint",
+ "num-integer",
+ "num-traits",
+ "ryu",
  "secs-dsp",
  "secs-types",
  "serde",

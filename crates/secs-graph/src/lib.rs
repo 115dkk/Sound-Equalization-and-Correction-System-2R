@@ -15,6 +15,7 @@
 //! assumed without checking.
 
 pub mod design;
+pub mod emit;
 pub mod files;
 mod plan;
 mod validate;
