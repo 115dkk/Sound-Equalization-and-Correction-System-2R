@@ -49,9 +49,9 @@ SECS 2R은 룸 보정 설계 프로그램 [SECS 2](https://github.com/Kim-O-O/So
 | Linux (x86_64) | `SECS2R-<버전>-linux-x86_64.AppImage`, `SECS2R-<버전>-linux-amd64.deb` | AppImage는 필요한 라이브러리를 함께 담고, deb는 WebKitGTK 4.1 패키지를 씁니다. |
 | CLI (화면 없이 쓰는 명령줄 도구) | `SECS2R-<버전>-windows-x64-cli.zip`, `SECS2R-<버전>-macos-universal-cli.tar.gz`, `SECS2R-<버전>-linux-x86_64-cli.tar.gz` | 앱과 같은 판의 `secs2r-cli`입니다. Windows 설치본과 포터블 zip에도 `SECS 2R.exe` 옆에 들어 있습니다. |
 
-코드 서명 인증서가 아직 없습니다. Windows에서 '알 수 없는 게시자' 경고가 뜨면 **추가 정보 → 실행**을 누르세요.
+Windows 설치본에는 코드 서명 인증서가 아직 없습니다. '알 수 없는 게시자' 경고가 뜨면 **추가 정보 → 실행**을 누르세요.
 
-macOS 앱은 Apple 개발자 인증서 없이 임시 서명(ad-hoc)만 되어 있어, 처음 열면 Apple이 악성 코드 여부를 확인할 수 없다는 경고가 뜹니다. 경고 창을 닫은 뒤 **시스템 설정 → 개인정보 보호 및 보안**에서 **그래도 열기**를 누르고 암호를 넣으세요. macOS 14 이하에서는 앱을 Control 키를 누른 채 클릭하고 **열기**를 골라도 됩니다. 처음 측정할 때는 마이크 사용을 허락할지 묻습니다. 0.27.1까지의 macOS 판은 앱 번들에 서명이 없어 이 방법으로도 열리지 않으니 새 판을 받으세요.
+macOS 앱은 0.54.0부터 프로젝트가 스스로 발급한 인증서 `SECS 2R (self-signed)`로 서명합니다(docs/adr/0041). Apple이 공증한 앱은 아니어서, 처음 열면 Apple이 악성 코드 여부를 확인할 수 없다는 경고가 뜹니다. 경고 창을 닫은 뒤 **시스템 설정 → 개인정보 보호 및 보안**에서 **그래도 열기**를 누르고 암호를 넣으세요. macOS 14 이하에서는 앱을 Control 키를 누른 채 클릭하고 **열기**를 골라도 됩니다. 처음 측정할 때 마이크 사용 허락 창이 열립니다. macOS는 이 허락을 서명 인증서와 함께 기억하므로, 0.54.0으로 올릴 때 한 번 더 허락한 뒤로는 판을 올려도 허락 창이 다시 열리지 않습니다. 0.53.0까지는 임시 서명(ad-hoc)이라 판마다 다시 열렸고, 0.27.1까지는 서명이 없어 위 방법으로도 열리지 않으니 새 판을 받으세요. 서명을 확인하려면 터미널에서 `codesign -dvv "/Applications/SECS 2R.app"`을 실행해 `Authority=SECS 2R (self-signed)`가 나오는지 보세요. 인증서의 공개 절반은 `apps/secs2r/macos/codesign.pem`에 있습니다.
 
 ## 책임의 한계
 

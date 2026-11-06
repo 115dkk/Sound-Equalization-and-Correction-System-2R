@@ -9,6 +9,12 @@ bundle job, release.yml's build job, before the release is published):
    every architecture must carry a real signature, not only the one the
    linker adds. Apple Silicon calls a downloaded app with an unsigned bundle
    damaged and will not open it, whatever System Settings allows (0.27.1).
+   With --signing-certificate, every slice must be signed with that
+   certificate under the hardened runtime, not ad-hoc, and the designated
+   requirement must name the bundle identifier and the certificate's hash.
+   macOS keeps that requirement with a microphone grant, so such a build
+   keeps the grant across versions where an ad-hoc build, whose requirement
+   is its cdhash, asks again (docs/adr/0041).
 3. Info.plist: NSMicrophoneUsageDescription, in English and Korean. macOS
    ends an app that opens the microphone without one, so measuring would
    close SECS 2R.
@@ -28,6 +34,8 @@ The pure functions are unit-tested in ``test_macos_app_check.py``.
 from __future__ import annotations
 
 import argparse
+import base64
+import hashlib
 import json
 import math
 import os
@@ -61,13 +69,53 @@ def code_directory_flags(details: str) -> set[str] | None:
     return {name for name in match.group(1).split(",") if name and name != "none"}
 
 
-def signature_problems(arch: str, details: str) -> list[str]:
+def signature_problems(arch: str, details: str, certificate: bool = False) -> list[str]:
+    """`certificate`: the slice must be signed with a certificate under the
+    hardened runtime, so an ad-hoc signature is a problem."""
     flags = code_directory_flags(details)
     if flags is None:
         return [f"the {arch} slice is not signed"]
     if "linker-signed" in flags:
         return [f"the {arch} slice carries only the linker's signature (bundle not signed)"]
-    return []
+    problems = []
+    if certificate and "adhoc" in flags:
+        problems.append(f"the {arch} slice is ad-hoc signed, not signed with the certificate")
+    if certificate and "runtime" not in flags:
+        problems.append(f"the {arch} slice does not run under the hardened runtime")
+    return problems
+
+
+def certificate_sha1(pem: str) -> str:
+    """Lowercase hex SHA-1 of the DER of the first CERTIFICATE block: the hash
+    a code signing requirement writes as `certificate leaf = H"..."`."""
+    match = re.search(r"-----BEGIN CERTIFICATE-----(.*?)-----END CERTIFICATE-----", pem, re.DOTALL)
+    if match is None:
+        raise ValueError("no CERTIFICATE block in the PEM")
+    return hashlib.sha1(base64.b64decode("".join(match.group(1).split()))).hexdigest()
+
+
+def authorities(details: str) -> list[str]:
+    """The certificate names `codesign -dv` prints, leaf first; none when
+    the signature is ad-hoc."""
+    return re.findall(r"^Authority=(.*)$", details, re.MULTILINE)
+
+
+def requirement_problems(requirements: str, identifier: str, sha1: str) -> list[str]:
+    """`requirements` is `codesign -d -r -` output. The designated requirement
+    must name the bundle identifier and the signing certificate's hash, not a
+    cdhash, which changes with every build."""
+    match = re.search(r"^designated => (.*)$", requirements, re.MULTILINE)
+    if match is None:
+        return ["the bundle has no designated requirement"]
+    designated = match.group(1).strip()
+    problems = []
+    if f'identifier "{identifier}"' not in designated:
+        problems.append(f'the designated requirement does not name identifier "{identifier}": {designated}')
+    if "cdhash" in designated:
+        problems.append(f"the designated requirement is a cdhash, which changes with every build: {designated}")
+    if re.search(rf'= H"{sha1}"', designated, re.IGNORECASE) is None:
+        problems.append(f"the designated requirement is not anchored to the certificate {sha1}: {designated}")
+    return problems
 
 
 def info_plist_problems(info: dict) -> list[str]:
@@ -292,9 +340,16 @@ def executable(app: Path) -> Path:
     return app / "Contents" / "MacOS" / info["CFBundleExecutable"]
 
 
-def check_signature(app: Path) -> tuple[list[str], bool]:
+def bundle_identifier(app: Path) -> str:
+    with open(app / "Contents" / "Info.plist", "rb") as handle:
+        return plistlib.load(handle)["CFBundleIdentifier"]
+
+
+def check_signature(app: Path, certificate: str | None = None) -> tuple[list[str], bool]:
     """Problems with the bundle's signature, and whether the main executable
-    runs under the hardened runtime."""
+    runs under the hardened runtime. `certificate` is the SHA-1 of the
+    certificate the bundle must be signed with, None to accept any real
+    signature, ad-hoc included."""
     problems = []
     if run(["codesign", "--verify", "--deep", "--strict", "--verbose=2", str(app)]).returncode != 0:
         problems.append("codesign --verify --deep --strict rejects the bundle")
@@ -302,8 +357,12 @@ def check_signature(app: Path) -> tuple[list[str], bool]:
     hardened = False
     for arch in archs:
         details = run(["codesign", "-dv", "--verbose=4", "--arch", arch, str(app)]).stderr
-        problems += signature_problems(arch, details)
+        problems += signature_problems(arch, details, certificate is not None)
         hardened |= "runtime" in (code_directory_flags(details) or set())
+        print(f"{arch} signed by: {authorities(details) or 'no certificate (ad-hoc)'}")
+    if certificate is not None:
+        shown = run(["codesign", "-d", "-r", "-", str(app)])
+        problems += requirement_problems(shown.stdout + shown.stderr, bundle_identifier(app), certificate)
     # Gatekeeper's own verdict, for the log: every build that is not
     # notarized is rejected, so it is no gate.
     run(["spctl", "--status"])
@@ -394,11 +453,12 @@ def crash_reports(since: float, work: Path) -> None:
             print("::endgroup::")
 
 
-def check(dmg: Path, work: Path, timeout: int, audio_device: str | None = None) -> list[str]:
+def check(dmg: Path, work: Path, timeout: int, audio_device: str | None = None,
+          certificate: str | None = None) -> list[str]:
     started = time.time()
     work.mkdir(parents=True, exist_ok=True)
     app = copy_app(dmg, work)
-    problems, hardened = check_signature(app)
+    problems, hardened = check_signature(app, certificate)
     problems += check_info_plist(app)
     problems += check_entitlements(app, hardened)
     problems += self_test(app, "arm64", work, timeout, audio_device)
@@ -418,10 +478,16 @@ def main(argv: list[str] | None = None) -> int:
                         help="folder for the copied app, the reports and the logs")
     parser.add_argument("--timeout", type=int, default=600, help="seconds per launch")
     parser.add_argument("--audio-device", help="also play and record through this native loopback device")
+    parser.add_argument("--signing-certificate", type=Path,
+                        help="PEM of the certificate the bundle must be signed with (docs/adr/0041)")
     args = parser.parse_args(argv)
     if sys.platform != "darwin":
         raise SystemExit("macos_app_check.py runs on macOS")
-    problems = check(args.dmg.resolve(), args.work.resolve(), args.timeout, args.audio_device)
+    certificate = None
+    if args.signing_certificate is not None:
+        certificate = certificate_sha1(args.signing_certificate.read_text(encoding="utf-8"))
+        print(f"the bundle must be signed with certificate {certificate}")
+    problems = check(args.dmg.resolve(), args.work.resolve(), args.timeout, args.audio_device, certificate)
     for problem in problems:
         print(f"::error::{problem}")
     print("the app opens and calibrates" if not problems else f"{len(problems)} problem(s)")

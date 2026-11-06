@@ -3,6 +3,7 @@ import json
 import struct
 import tempfile
 import unittest
+from subprocess import CompletedProcess
 from unittest.mock import patch
 from pathlib import Path
 
@@ -20,6 +21,43 @@ CodeDirectory v=20500 size=187900 flags=0x10002(adhoc,runtime) hashes=5864+7 loc
 Signature=adhoc
 """
 UNSIGNED = "/tmp/SECS 2R.app: code object is not signed at all\n"
+CERTIFICATE = """Executable=/tmp/SECS 2R.app/Contents/MacOS/secs2r
+Identifier=io.github.115dkk.secs2r
+Format=app bundle with Mach-O universal (x86_64 arm64)
+CodeDirectory v=20500 size=187900 flags=0x10000(runtime) hashes=5864+7 location=embedded
+Signature size=1773
+Authority=SECS 2R (self-signed)
+Signed Time=6 Nov 2026 at 12:00:00
+TeamIdentifier=not set
+"""
+# A throwaway certificate (one day, 2026-11-06); its hash is what the
+# designated requirement of a bundle signed with it carries.
+FIXTURE_PEM = """-----BEGIN CERTIFICATE-----
+MIIDXTCCAkWgAwIBAgIUWe0vuEUONzJbk8mvUtH5m8DeZ3cwDQYJKoZIhvcNAQEL
+BQAwPjEdMBsGA1UEAwwUU0VDUyAyUiB0ZXN0IGZpeHR1cmUxHTAbBgNVBAoMFFNF
+Q1MgMlIgY29udHJpYnV0b3JzMB4XDTI2MTEwNjAyMzMwN1oXDTI2MTEwNzAyMzMw
+N1owPjEdMBsGA1UEAwwUU0VDUyAyUiB0ZXN0IGZpeHR1cmUxHTAbBgNVBAoMFFNF
+Q1MgMlIgY29udHJpYnV0b3JzMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKC
+AQEAt+ORZF4OWhdIJwVlM5mZ/2f1WChsMGjNdhGz/sGGm1ao8XTQxkZVHoAWJf4U
+a+CAB/xfe2WEtdyFT5l5+O2uX0bOMqkq+4adBHd0GQc2Cd0OLRr9f24AIwVMyANZ
+HXAHsGt8vmcSSZPDj5xj9uMKj7EjhYp4Dn2FXcXm72B2yYPqXY0PpnWHqfFTKq/O
+PYPtgim16MlX0/ZjuESnXs5yt5RN92yEuHVfIKndRCYZbQwuMJm6eGuGccvjMIDf
+IEmRtutdujE1obyYoQWa6NV4zM9j3Dg+AzFRgFyWBT3Em0UV5jq1mfb2vTRVd35c
+mtQ7N4lWl7+SKw6WzlE77deWnQIDAQABo1MwUTAdBgNVHQ4EFgQUSo4wrkAL2x4S
+q4Pkwo7bk/KgG3gwHwYDVR0jBBgwFoAUSo4wrkAL2x4Sq4Pkwo7bk/KgG3gwDwYD
+VR0TAQH/BAUwAwEB/zANBgkqhkiG9w0BAQsFAAOCAQEArzPKiZgvpS3Um9WEkPq3
+bL04B8+8Ff1qtQEWNsnDbWrsi0JDjjfQICfpktoQF1z4jh0Ga3H+Ntp/lFPNCisU
+4j/AlqLfesQD//fk/AWZmK0NufbMjzre3cnWYogr6KWAfE0mD/gV++vUJdYQlf+J
+pfTTpzr64xElKi6QOzpyEruqo0mHzjm1oElqcC4X8Slz/bmR2+SDUfGNuADVNLx3
+AZzBprGbWzgDjXoJOfnJhFcjFhHxw5t3jxLh5cKogFnRG0CQfroFFLzdqX4oPKY/
+rax7Sq+/rs1IGmzOTogTgKQcIeljMOk4JdYO0Vyq9nGd6NZdNOvvyCQCKVCIZrND
+ew==
+-----END CERTIFICATE-----
+"""
+FIXTURE_SHA1 = "249bedcecc0f837de3a26280d27b2714563b483b"
+IDENTIFIER = "io.github.115dkk.secs2r"
+DESIGNATED = ('designated => identifier "io.github.115dkk.secs2r" and certificate leaf = '
+              'H"249BEDCECC0F837DE3A26280D27B2714563B483B"\n')
 
 
 class SignatureTest(unittest.TestCase):
@@ -34,6 +72,64 @@ class SignatureTest(unittest.TestCase):
         self.assertEqual(m.signature_problems("arm64", LINKER_SIGNED),
                          ["the arm64 slice carries only the linker's signature (bundle not signed)"])
         self.assertEqual(m.signature_problems("x86_64", UNSIGNED), ["the x86_64 slice is not signed"])
+
+    def test_a_certificate_signature_is_neither_ad_hoc_nor_outside_the_hardened_runtime(self):
+        self.assertEqual(m.signature_problems("arm64", CERTIFICATE, certificate=True), [])
+        self.assertEqual(m.signature_problems("arm64", CERTIFICATE), [])
+        self.assertEqual(m.signature_problems("arm64", AD_HOC, certificate=True),
+                         ["the arm64 slice is ad-hoc signed, not signed with the certificate"])
+        no_runtime = CERTIFICATE.replace("flags=0x10000(runtime)", "flags=0x0(none)")
+        self.assertEqual(m.signature_problems("x86_64", no_runtime, certificate=True),
+                         ["the x86_64 slice does not run under the hardened runtime"])
+        self.assertEqual(m.signature_problems("x86_64", UNSIGNED, certificate=True),
+                         ["the x86_64 slice is not signed"])
+        self.assertEqual(m.authorities(CERTIFICATE), ["SECS 2R (self-signed)"])
+        self.assertEqual(m.authorities(AD_HOC), [])
+
+    def test_the_certificate_hash_is_the_requirement_hash(self):
+        self.assertEqual(m.certificate_sha1(FIXTURE_PEM), FIXTURE_SHA1)
+        self.assertEqual(m.certificate_sha1("key material\n" + FIXTURE_PEM + "trailer"), FIXTURE_SHA1)
+        with self.assertRaises(ValueError):
+            m.certificate_sha1("not a certificate")
+
+    def test_the_designated_requirement_names_the_identifier_and_the_certificate(self):
+        self.assertEqual(m.requirement_problems("Executable=/tmp/x\n" + DESIGNATED, IDENTIFIER, FIXTURE_SHA1), [])
+        root = DESIGNATED.replace("certificate leaf", "certificate root")
+        self.assertEqual(m.requirement_problems(root, IDENTIFIER, FIXTURE_SHA1), [])
+        cdhash = 'designated => cdhash H"0f0f0f" or cdhash H"1e1e1e"\n'
+        problems = m.requirement_problems(cdhash, IDENTIFIER, FIXTURE_SHA1)
+        self.assertEqual(len(problems), 3)
+        self.assertTrue(any("cdhash" in problem for problem in problems))
+        other = DESIGNATED.replace(FIXTURE_SHA1.upper(), "0" * 40)
+        self.assertEqual(len(m.requirement_problems(other, IDENTIFIER, FIXTURE_SHA1)), 1)
+        self.assertEqual(len(m.requirement_problems(DESIGNATED, "io.example.other", FIXTURE_SHA1)), 1)
+        self.assertEqual(m.requirement_problems("Executable=/tmp/x\n", IDENTIFIER, FIXTURE_SHA1),
+                         ["the bundle has no designated requirement"])
+
+    def test_the_requirement_is_read_only_when_a_certificate_is_required(self):
+        def fake_run(cmd, **kwargs):
+            if cmd[:2] == ["codesign", "--verify"]:
+                return CompletedProcess(cmd, 0, "", "")
+            if cmd[0] == "lipo":
+                return CompletedProcess(cmd, 0, "arm64\n", "")
+            if cmd[:2] == ["codesign", "-dv"]:
+                return CompletedProcess(cmd, 0, "", CERTIFICATE)
+            if cmd[:3] == ["codesign", "-d", "-r"]:
+                return CompletedProcess(cmd, 0, DESIGNATED, "Executable=/tmp/x\n")
+            return CompletedProcess(cmd, 0, "", "")
+
+        with patch.object(m, "run", side_effect=fake_run) as run, \
+                patch.object(m, "executable", return_value=Path("/tmp/x")), \
+                patch.object(m, "bundle_identifier", return_value=IDENTIFIER):
+            self.assertEqual(m.check_signature(Path("/tmp/SECS 2R.app"), FIXTURE_SHA1), ([], True))
+            self.assertIn(["codesign", "-d", "-r"], [call.args[0][:3] for call in run.call_args_list])
+            run.reset_mock()
+            self.assertEqual(m.check_signature(Path("/tmp/SECS 2R.app")), ([], True))
+            self.assertNotIn(["codesign", "-d", "-r"], [call.args[0][:3] for call in run.call_args_list])
+            run.reset_mock()
+            problems, _ = m.check_signature(Path("/tmp/SECS 2R.app"), "0" * 40)
+            self.assertEqual(len(problems), 1)
+            self.assertIn("not anchored", problems[0])
 
 
 class BundleTest(unittest.TestCase):
