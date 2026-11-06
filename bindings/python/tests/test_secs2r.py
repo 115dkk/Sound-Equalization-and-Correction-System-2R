@@ -106,3 +106,102 @@ def test_python_error_carries_params_and_retryable_td160() -> None:
     assert getattr(error, "params", None) == {}
     assert getattr(error, "retryable", None) is False
     assert error.message.startswith("project_not_open: ")
+
+
+def _run_event_probe(source: str, client: bool) -> None:
+    import subprocess
+    import sys
+    import textwrap
+
+    source = textwrap.dedent(source)
+    if client:
+        source = source.replace("engine = secs2r.Engine()", "engine = secs2r.Client(port=port, token='test')")
+        source = textwrap.dedent(r"""
+            import base64, hashlib, socket, threading
+            listener = socket.socket()
+            listener.bind(("127.0.0.1", 0))
+            listener.listen(1)
+            port = listener.getsockname()[1]
+            disconnected = threading.Event()
+            def serve():
+                connection, _ = listener.accept()
+                with connection:
+                    request = b""
+                    while b"\r\n\r\n" not in request:
+                        request += connection.recv(4096)
+                    key = next(line.split(b":", 1)[1].strip() for line in request.split(b"\r\n") if line.lower().startswith(b"sec-websocket-key:"))
+                    accept = base64.b64encode(hashlib.sha1(key + b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11").digest())
+                    connection.sendall(b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: " + accept + b"\r\n\r\n")
+                    try:
+                        while connection.recv(4096):
+                            pass
+                    except ConnectionError:
+                        pass
+                disconnected.set()
+                listener.close()
+            threading.Thread(target=serve, daemon=True).start()
+        """) + source + "\nassert disconnected.wait(1), 'client socket must close'\n"
+    try:
+        result = subprocess.run(
+            [sys.executable, "-c", textwrap.dedent(source)],
+            capture_output=True, text=True, timeout=3,
+        )
+    except subprocess.TimeoutExpired:
+        pytest.fail("blocked next() did not return within three seconds")
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("client", [False, True])
+def test_events_close_ends_iteration_td150(client: bool) -> None:
+    _run_event_probe('''
+        import threading, time, secs2r
+        engine = secs2r.Engine()
+        events = engine.events()
+        ended = threading.Event()
+        def read():
+            assert next(events, None) is None
+            ended.set()
+        worker = threading.Thread(target=read, daemon=True)
+        worker.start()
+        time.sleep(0.1)
+        assert callable(getattr(events, "close", None)), "events need close()"
+        events.close()
+        assert ended.wait(1), "close must end a blocked next"
+        assert events.closed
+        assert next(events, None) is None
+        events.close()
+    ''', client)
+
+
+@pytest.mark.parametrize("client", [False, True])
+def test_events_timeout_returns_td150(client: bool) -> None:
+    _run_event_probe('''
+        import time, secs2r
+        engine = secs2r.Engine()
+        started = time.monotonic()
+        events = engine.events(timeout=0.2)
+        assert next(events, None) is None
+        assert 0.15 <= time.monotonic() - started < 1
+        assert events.closed
+    ''', client)
+
+
+@pytest.mark.parametrize("client", [False, True])
+def test_keyboard_interrupt_reaches_a_blocked_next_td150(client: bool) -> None:
+    _run_event_probe('''
+        import _thread, threading, time, secs2r
+        engine = secs2r.Engine()
+        events = engine.events()
+        timer = threading.Timer(0.2, _thread.interrupt_main)
+        timer.start()
+        started = time.monotonic()
+        try:
+            next(events)
+        except KeyboardInterrupt:
+            assert time.monotonic() - started < 1
+        else:
+            raise AssertionError("KeyboardInterrupt must propagate")
+        finally:
+            timer.join()
+            events.close()
+    ''', client)

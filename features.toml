@@ -1812,7 +1812,7 @@ kind = "api"
 milestone = "M6"
 status = "implemented"
 tests = ["sound-equalization-and-correction-system-rust-api::engine_bootstrap_and_invalid_json", "secs-py::dropped_event_count_does_not_lock_the_blocking_receiver_td127"]
-note = "ADR 0019: PyPI package secs2r exposes the embedded engine and authenticated local API client. bindings/python/tests/test_secs2r.py::test_python_error_carries_params_and_retryable_td160 verifies params and retryable. bindings/python/tests/test_secs2r.py verifies the installed wheel, structured errors, closed-port failure and an optional oracle-project round trip."
+note = "ADR 0019: PyPI package secs2r exposes the embedded engine and authenticated local API client. bindings/python/tests/test_secs2r.py::test_python_error_carries_params_and_retryable_td160 verifies params and retryable; test_events_close_ends_iteration_td150, test_events_timeout_returns_td150 and test_keyboard_interrupt_reaches_a_blocked_next_td150 verify interruptible iteration. bindings/python/tests/test_secs2r.py verifies the installed wheel, structured errors, closed-port failure and an optional oracle-project round trip."
 
 [[feature]]
 id = "api.dotnet"

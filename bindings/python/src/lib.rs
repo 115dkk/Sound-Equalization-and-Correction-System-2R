@@ -1,8 +1,9 @@
 #![forbid(unsafe_code)]
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, mpsc};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use pyo3::create_exception;
 use pyo3::exceptions::{PyException, PyValueError};
@@ -60,18 +61,20 @@ impl Engine {
         rust_to_python!(py, event)
     }
 
-    fn events(&self) -> EngineEvents {
+    #[pyo3(signature = (timeout=None))]
+    fn events(&self, timeout: Option<f64>) -> PyResult<EngineEvents> {
+        let timeout = event_timeout(timeout)?;
         let (receiver, dropped) = self.inner.subscribe_with_drop_count();
-        EngineEvents {
-            receiver: Mutex::new(receiver),
+        Ok(EngineEvents {
+            receiver: EventReceiver::new(receiver, timeout),
             dropped,
-        }
+        })
     }
 }
 
 #[pyclass(name = "_EngineEvents", module = "secs2r._secs2r")]
 struct EngineEvents {
-    receiver: Mutex<mpsc::Receiver<JobEvent>>,
+    receiver: EventReceiver<JobEvent>,
     dropped: DroppedEventCount,
 }
 
@@ -86,15 +89,19 @@ impl EngineEvents {
     }
 
     fn __next__(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
-        match py.detach(|| {
-            self.receiver
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
-                .recv()
-        }) {
-            Ok(event) => rust_to_python!(py, event).map(Some),
-            Err(_) => Ok(None),
-        }
+        self.receiver
+            .next(py)?
+            .map(|event| rust_to_python!(py, event))
+            .transpose()
+    }
+
+    fn close(&self) {
+        self.receiver.close();
+    }
+
+    #[getter]
+    fn closed(&self) -> bool {
+        self.receiver.closed.load(Ordering::Acquire)
     }
 }
 
@@ -143,17 +150,32 @@ impl Client {
         rust_to_python!(py, status)
     }
 
-    fn events(&self, py: Python<'_>) -> PyResult<ClientEvents> {
+    #[pyo3(signature = (timeout=None))]
+    fn events(&self, py: Python<'_>, timeout: Option<f64>) -> PyResult<ClientEvents> {
+        let timeout = event_timeout(timeout)?;
         let events = py
             .detach(|| self.inner.events())
             .map_err(|error| secs_error(py, error))?;
-        Ok(ClientEvents { inner: events })
+        let closer = events.closer().map_err(|error| secs_error(py, error))?;
+        let (sender, receiver) = mpsc::sync_channel(1024);
+        std::thread::spawn(move || {
+            for event in events {
+                if sender.send(event).is_err() {
+                    break;
+                }
+            }
+        });
+        Ok(ClientEvents {
+            receiver: EventReceiver::new(receiver, timeout),
+            closer,
+        })
     }
 }
 
 #[pyclass(name = "_ClientEvents", module = "secs2r._secs2r")]
 struct ClientEvents {
-    inner: secs::Events,
+    receiver: EventReceiver<secs::Result<secs::types::local_api::ServerEvent>>,
+    closer: secs::EventsCloser,
 }
 
 #[pymethods]
@@ -162,11 +184,110 @@ impl ClientEvents {
         slf
     }
 
-    fn __next__(&mut self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
-        match py.detach(|| self.inner.next()) {
+    fn __next__(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
+        match self.receiver.next(py)? {
             Some(Ok(event)) => rust_to_python!(py, event).map(Some),
-            Some(Err(error)) => Err(secs_error(py, error)),
-            None => Ok(None),
+            Some(Err(error)) => {
+                self.close();
+                Err(secs_error(py, error))
+            }
+            None => {
+                self.close();
+                Ok(None)
+            }
+        }
+    }
+
+    fn close(&self) {
+        self.closer.close();
+        self.receiver.close();
+    }
+
+    #[getter]
+    fn closed(&self) -> bool {
+        self.receiver.closed.load(Ordering::Acquire)
+    }
+}
+
+impl Drop for ClientEvents {
+    fn drop(&mut self) {
+        self.close();
+    }
+}
+
+fn event_timeout(timeout: Option<f64>) -> PyResult<Option<Duration>> {
+    timeout
+        .map(|seconds| {
+            let duration = Duration::try_from_secs_f64(seconds)
+                .map_err(|error| PyValueError::new_err(format!("invalid timeout: {error}")))?;
+            if Instant::now().checked_add(duration).is_none() {
+                return Err(PyValueError::new_err("timeout is out of range"));
+            }
+            Ok(duration)
+        })
+        .transpose()
+}
+
+struct EventReceiver<T> {
+    receiver: Mutex<Option<mpsc::Receiver<T>>>,
+    closed: AtomicBool,
+    timeout: Option<Duration>,
+}
+
+impl<T: Send> EventReceiver<T> {
+    fn new(receiver: mpsc::Receiver<T>, timeout: Option<Duration>) -> Self {
+        Self {
+            receiver: Mutex::new(Some(receiver)),
+            closed: AtomicBool::new(false),
+            timeout,
+        }
+    }
+
+    fn close(&self) {
+        self.closed.store(true, Ordering::Release);
+        self.receiver
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .take();
+    }
+
+    fn next(&self, py: Python<'_>) -> PyResult<Option<T>> {
+        let started = Instant::now();
+        loop {
+            py.check_signals()?;
+            if self.closed.load(Ordering::Acquire) {
+                return Ok(None);
+            }
+            let remaining = self
+                .timeout
+                .map(|timeout| timeout.saturating_sub(started.elapsed()));
+            let poll = remaining
+                .unwrap_or(Duration::from_millis(100))
+                .min(Duration::from_millis(100));
+            let result = py.detach(|| {
+                let receiver = self
+                    .receiver
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                receiver
+                    .as_ref()
+                    .map(|receiver| receiver.recv_timeout(poll))
+            });
+            py.check_signals()?;
+            if self.closed.load(Ordering::Acquire) {
+                return Ok(None);
+            }
+            match result {
+                Some(Ok(event)) => return Ok(Some(event)),
+                Some(Err(mpsc::RecvTimeoutError::Timeout))
+                    if self
+                        .timeout
+                        .is_none_or(|timeout| started.elapsed() < timeout) => {}
+                _ => {
+                    self.close();
+                    return Ok(None);
+                }
+            }
         }
     }
 }
@@ -232,10 +353,11 @@ mod tests {
     fn dropped_event_count_does_not_lock_the_blocking_receiver_td127() {
         let (_sender, receiver) = mpsc::channel();
         let events = EngineEvents {
-            receiver: Mutex::new(receiver),
+            receiver: EventReceiver::new(receiver, None),
             dropped: DroppedEventCount::default(),
         };
         let _receiver = events
+            .receiver
             .receiver
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());

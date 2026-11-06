@@ -36,6 +36,10 @@ print(status["app_name"], status["app_version"])
 
 You may pass `token` directly or use `token_path` for another token file.
 
+## Stopping event iteration
+
+Both `Engine.events(timeout=None)` and `Client.events(timeout=None)` return iterators with `close()` and a `closed` property. Call `close()` from another thread to end a blocked `next()`. A finite, nonnegative timeout ends iteration with `StopIteration` after that many seconds without an event and sets `closed` to `True`; open a new iterator to resume. `None` waits indefinitely. Waiting checks Python signals every 100 ms, so `KeyboardInterrupt` can interrupt an idle iterator. Close a client iterator when finished to release its socket and reader thread.
+
 ## Licence
 
 `secs2r` is licensed under AGPL-3.0-only (GNU Affero General Public License v3), like the Rust crates it is built from. If you modify it and offer it to users over a network, you must offer those users the corresponding source. The SECS 2R desktop application remains GPL-3.0-only. Repository: <https://github.com/115dkk/Sound-Equalization-and-Correction-System-2R>.
