@@ -399,72 +399,34 @@ fn eqapo_ops<'a>(
     Ok(lines)
 }
 
-/// Build the ASCII Equalizer APO filter body.
-pub fn eqapo_filters(
-    plan: &FilterPlan,
-    firs: &[(String, String)],
-    note: &str,
-) -> Result<String, FiltersError> {
-    plan.check_structure()?;
-    let mut lines = vec![
-        "# SECS 2 calibration filters for Equalizer APO (generated - do not edit).".into(),
-        "# Included by config.txt between the input Copy and the output Copy.".into(),
-    ];
-    if !note.is_empty() {
-        lines.push(format!(
-            "# {}",
-            note.chars().filter(char::is_ascii).collect::<String>()
-        ));
-    }
-    if !plan.pre_ops.is_empty() {
-        lines.extend([
-            String::new(),
-            "# Common input high-pass (before MIMO copies)".into(),
-        ]);
-        for role in &plan.inputs {
-            let channel = input_channel(role);
-            lines.push(format!("Channel: {channel}"));
-            lines.extend(eqapo_ops(&plan.pre_ops, &channel, firs)?);
-        }
-    }
-    if !plan.mimo.is_empty() {
-        lines.extend([
-            String::new(),
-            "# Raw input copies for MIMO support".into(),
-            format!(
-                "Copy: {}",
-                plan.mimo
-                    .iter()
-                    .enumerate()
-                    .map(|(index, path)| format!(
-                        "{}={}",
-                        path_channel(index),
-                        virtual_channel("main", &path.input)
-                    ))
-                    .collect::<Vec<_>>()
-                    .join(" ")
-            ),
-        ]);
-    }
-    lines.extend([String::new(), "# 1) input correction (PEQ -> FIR)".into()]);
-    for (role, ops) in &plan.input_ops {
-        let channel = virtual_channel("main", role);
-        let body = eqapo_ops(ops, &channel, firs)?;
-        if !body.is_empty() {
-            lines.push(format!("Channel: {channel}"));
-            lines.extend(body);
-        }
-    }
+struct SendGroup<'a> {
+    ops: &'a [Op],
+    signature: Vec<String>,
+    members: Vec<&'a str>,
+    membership: Vec<usize>,
+}
 
+struct BassGroup {
+    sources: Vec<String>,
+    signature: Vec<String>,
+    channel: String,
+}
+
+struct ApoSupportGroup {
+    support: String,
+    common: Vec<Op>,
+    signature: Vec<String>,
+    members: Vec<usize>,
+}
+
+fn send_groups<'a>(
+    plan: &'a FilterPlan,
+    firs: &[(String, String)],
+    lines: &mut Vec<String>,
+) -> Result<Vec<SendGroup<'a>>, FiltersError> {
     // Compare rendered coefficients, so merging cannot change the writer's
     // existing Fc/Q rounding. Membership also guards hand-constructed plans
     // in which different sub outputs use different subsets of the inputs.
-    struct SendGroup<'a> {
-        ops: &'a [Op],
-        signature: Vec<String>,
-        members: Vec<&'a str>,
-        membership: Vec<usize>,
-    }
     let mut sends: Vec<SendGroup<'_>> = Vec::new();
     for (role, ops) in &plan.send_ops {
         let signature = eqapo_ops(ops, "VX", firs)?;
@@ -507,72 +469,16 @@ pub fn eqapo_filters(
         lines.push(format!("Channel: {channel}"));
         lines.extend(eqapo_ops(group.ops, &channel, firs)?);
     }
-    let main_fixed = plan
-        .main_ops
-        .iter()
-        .map(|(role, ops)| {
-            (
-                role.as_str(),
-                ops.iter()
-                    .filter(|op| op.is_fixed())
-                    .cloned()
-                    .collect::<Vec<_>>(),
-            )
-        })
-        .collect::<Vec<_>>();
-    lines.extend([String::new(), "# 3) main output paths".into()]);
-    for (role, ops) in &plan.main_ops {
-        let channel = virtual_channel("main", role);
-        let body = eqapo_ops(ops.iter().filter(|op| !op.is_fixed()), &channel, firs)?;
-        if !body.is_empty() {
-            lines.push(format!("Channel: {channel}"));
-            lines.extend(body);
-        }
-    }
-    if !plan.lfe_ops.is_empty() {
-        lines.extend([
-            String::new(),
-            "# 4) LFE input".into(),
-            "Channel: VLFE".into(),
-        ]);
-        lines.extend(eqapo_ops(&plan.lfe_ops, "VLFE", firs)?);
-    }
+    Ok(sends)
+}
 
-    // Fixed sub filters can move past the final sum only if every contributing
-    // support uses the same filters. make_plan establishes this invariant;
-    // the check keeps the public writer safe for independently built plans.
-    let fixed: Vec<Vec<Op>> = plan
-        .subs
-        .iter()
-        .map(|(role, feed)| {
-            let filters = feed
-                .ops
-                .iter()
-                .filter(|op| op.is_fixed())
-                .cloned()
-                .collect::<Vec<_>>();
-            if plan
-                .mimo
-                .iter()
-                .filter(|path| path.support == *role)
-                .all(|path| {
-                    path.ops
-                        .iter()
-                        .filter(|op| op.is_fixed())
-                        .eq(filters.iter())
-                })
-            {
-                filters
-            } else {
-                Vec::new()
-            }
-        })
-        .collect();
-    struct BassGroup {
-        sources: Vec<String>,
-        signature: Vec<String>,
-        channel: String,
-    }
+fn bass_buses(
+    plan: &FilterPlan,
+    firs: &[(String, String)],
+    sends: &[SendGroup<'_>],
+    fixed: &[Vec<Op>],
+    lines: &mut Vec<String>,
+) -> Result<(), FiltersError> {
     let mut buses: Vec<BassGroup> = Vec::new();
     for (sub_index, (role, feed)) in plan.subs.iter().enumerate() {
         let prefix = feed
@@ -640,6 +546,56 @@ pub fn eqapo_filters(
         lines.extend(eqapo_ops(&ops, &channel, firs)?);
     }
 
+    Ok(())
+}
+
+fn share_delay(
+    plan: &FilterPlan,
+    members: &[usize],
+    firs: &[(String, String)],
+) -> Result<(bool, Vec<Op>), FiltersError> {
+    let delays = |index: usize| {
+        plan.mimo[index]
+            .ops
+            .iter()
+            .filter(|op| matches!(op, Op::Delay { fixed: false, .. }))
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+    let common_delays = delays(members[0]);
+    let delay_key = eqapo_ops(&common_delays, "VG", firs)?;
+    for &index in members {
+        if eqapo_ops(&delays(index), "VG", firs)? != delay_key {
+            return Ok((false, common_delays));
+        }
+    }
+    Ok((true, common_delays))
+}
+
+fn move_fixed(
+    plan: &FilterPlan,
+    path: &MimoFeed,
+    main_fixed: &[(&str, Vec<Op>)],
+    fixed: &[Vec<Op>],
+) -> bool {
+    main_fixed
+        .iter()
+        .find(|(role, _)| *role == path.support)
+        .is_some_and(|(_, ops)| !ops.is_empty())
+        || plan
+            .subs
+            .iter()
+            .position(|(role, _)| *role == path.support)
+            .is_some_and(|sub_index| !fixed[sub_index].is_empty())
+}
+
+fn support_groups_apo(
+    plan: &FilterPlan,
+    firs: &[(String, String)],
+    main_fixed: &[(&str, Vec<Op>)],
+    fixed: &[Vec<Op>],
+    lines: &mut Vec<String>,
+) -> Result<(), FiltersError> {
     // The export graph's support groups key on output, family and exact low
     // edge. This writer renders the shared HP (and an IIR path's Fsiso LP) at
     // two decimals and shares one VG channel among the paths of one support
@@ -648,13 +604,7 @@ pub fn eqapo_filters(
     // buckets the plan's MIMO feeds by that rendered text itself; for a plan
     // from `ExportGraph::build` the buckets are the graph's groups joined by
     // rendered text.
-    struct SupportGroup {
-        support: String,
-        common: Vec<Op>,
-        signature: Vec<String>,
-        members: Vec<usize>,
-    }
-    let mut groups: Vec<SupportGroup> = Vec::new();
+    let mut groups: Vec<ApoSupportGroup> = Vec::new();
     for (index, path) in plan.mimo.iter().enumerate() {
         let common = path
             .ops
@@ -674,7 +624,7 @@ pub fn eqapo_filters(
         {
             group.members.push(index);
         } else {
-            groups.push(SupportGroup {
+            groups.push(ApoSupportGroup {
                 support: path.support.clone(),
                 common,
                 signature,
@@ -683,38 +633,11 @@ pub fn eqapo_filters(
         }
     }
     for (group_index, group) in groups.iter().enumerate() {
-        // Equalizer APO receives millisecond delays rounded to three places.
-        // Share an identical rendered delay without assuming the host's
-        // ms-to-sample tie rule or rounding two split pieces independently.
-        let delays = |index: usize| {
-            plan.mimo[index]
-                .ops
-                .iter()
-                .filter(|op| matches!(op, Op::Delay { fixed: false, .. }))
-                .cloned()
-                .collect::<Vec<_>>()
-        };
-        let common_delays = delays(group.members[0]);
-        let delay_key = eqapo_ops(&common_delays, "VG", firs)?;
-        let mut share_delay = true;
-        for &index in &group.members {
-            if eqapo_ops(&delays(index), "VG", firs)? != delay_key {
-                share_delay = false;
-                break;
-            }
-        }
+        let (share_delay, common_delays) = share_delay(plan, &group.members, firs)?;
         for &index in &group.members {
             let path = &plan.mimo[index];
             let channel = path_channel(index);
-            let move_fixed = main_fixed
-                .iter()
-                .find(|(role, _)| *role == path.support)
-                .is_some_and(|(_, ops)| !ops.is_empty())
-                || plan
-                    .subs
-                    .iter()
-                    .position(|(role, _)| *role == path.support)
-                    .is_some_and(|sub_index| !fixed[sub_index].is_empty());
+            let move_fixed = move_fixed(plan, path, main_fixed, fixed);
             let private = path
                 .ops
                 .iter()
@@ -780,6 +703,131 @@ pub fn eqapo_filters(
             lines.extend(eqapo_ops(ops, &channel, firs)?);
         }
     }
+    Ok(())
+}
+
+/// Build the ASCII Equalizer APO filter body.
+pub fn eqapo_filters(
+    plan: &FilterPlan,
+    firs: &[(String, String)],
+    note: &str,
+) -> Result<String, FiltersError> {
+    plan.check_structure()?;
+    let mut lines = vec![
+        "# SECS 2 calibration filters for Equalizer APO (generated - do not edit).".into(),
+        "# Included by config.txt between the input Copy and the output Copy.".into(),
+    ];
+    if !note.is_empty() {
+        lines.push(format!(
+            "# {}",
+            note.chars().filter(char::is_ascii).collect::<String>()
+        ));
+    }
+    if !plan.pre_ops.is_empty() {
+        lines.extend([
+            String::new(),
+            "# Common input high-pass (before MIMO copies)".into(),
+        ]);
+        for role in &plan.inputs {
+            let channel = input_channel(role);
+            lines.push(format!("Channel: {channel}"));
+            lines.extend(eqapo_ops(&plan.pre_ops, &channel, firs)?);
+        }
+    }
+    if !plan.mimo.is_empty() {
+        lines.extend([
+            String::new(),
+            "# Raw input copies for MIMO support".into(),
+            format!(
+                "Copy: {}",
+                plan.mimo
+                    .iter()
+                    .enumerate()
+                    .map(|(index, path)| format!(
+                        "{}={}",
+                        path_channel(index),
+                        virtual_channel("main", &path.input)
+                    ))
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            ),
+        ]);
+    }
+    lines.extend([String::new(), "# 1) input correction (PEQ -> FIR)".into()]);
+    for (role, ops) in &plan.input_ops {
+        let channel = virtual_channel("main", role);
+        let body = eqapo_ops(ops, &channel, firs)?;
+        if !body.is_empty() {
+            lines.push(format!("Channel: {channel}"));
+            lines.extend(body);
+        }
+    }
+
+    let sends = send_groups(plan, firs, &mut lines)?;
+    let main_fixed = plan
+        .main_ops
+        .iter()
+        .map(|(role, ops)| {
+            (
+                role.as_str(),
+                ops.iter()
+                    .filter(|op| op.is_fixed())
+                    .cloned()
+                    .collect::<Vec<_>>(),
+            )
+        })
+        .collect::<Vec<_>>();
+    lines.extend([String::new(), "# 3) main output paths".into()]);
+    for (role, ops) in &plan.main_ops {
+        let channel = virtual_channel("main", role);
+        let body = eqapo_ops(ops.iter().filter(|op| !op.is_fixed()), &channel, firs)?;
+        if !body.is_empty() {
+            lines.push(format!("Channel: {channel}"));
+            lines.extend(body);
+        }
+    }
+    if !plan.lfe_ops.is_empty() {
+        lines.extend([
+            String::new(),
+            "# 4) LFE input".into(),
+            "Channel: VLFE".into(),
+        ]);
+        lines.extend(eqapo_ops(&plan.lfe_ops, "VLFE", firs)?);
+    }
+
+    // Fixed sub filters can move past the final sum only if every contributing
+    // support uses the same filters. make_plan establishes this invariant;
+    // the check keeps the public writer safe for independently built plans.
+    let fixed: Vec<Vec<Op>> = plan
+        .subs
+        .iter()
+        .map(|(role, feed)| {
+            let filters = feed
+                .ops
+                .iter()
+                .filter(|op| op.is_fixed())
+                .cloned()
+                .collect::<Vec<_>>();
+            if plan
+                .mimo
+                .iter()
+                .filter(|path| path.support == *role)
+                .all(|path| {
+                    path.ops
+                        .iter()
+                        .filter(|op| op.is_fixed())
+                        .eq(filters.iter())
+                })
+            {
+                filters
+            } else {
+                Vec::new()
+            }
+        })
+        .collect();
+    bass_buses(plan, firs, &sends, &fixed, &mut lines)?;
+
+    support_groups_apo(plan, firs, &main_fixed, &fixed, &mut lines)?;
     lines.extend([String::new(), "Channel: all".into()]);
     Ok(lines.join("\n") + "\n")
 }
