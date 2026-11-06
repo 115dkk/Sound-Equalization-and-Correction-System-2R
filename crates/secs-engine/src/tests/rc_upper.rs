@@ -1,6 +1,9 @@
-use std::{f64::consts::PI, sync::Arc};
+use std::{
+    f64::consts::PI,
+    sync::{Arc, atomic::Ordering},
+};
 
-use secs_compute::Context;
+use secs_compute::{CancelToken, Context, MemoryBudget, NoProgress};
 use secs_types::{
     calibration::{CalibrationSettings, Mode, RcHiBasis},
     target::TargetCurve,
@@ -111,26 +114,25 @@ fn schroeder_reserves_the_actual_ir_length_before_analysis() {
 
 #[test]
 fn schroeder_cancels_during_sample_processing() {
-    use std::cell::Cell;
     let set = room(0.8, 0.12, 2);
-    let ctx = Context::serial();
     for basis in [RcHiBasis::Strict, RcHiBasis::Lenient] {
         let mut config = config(&set);
         config.rc_hi_basis = basis;
-        let polls = Cell::new(0);
-        let result = levels::Schroeder::analyze_until(&set, &config, &ctx, &|| {
-            let n = polls.get();
-            polls.set(n + 1);
-            n >= 10
-        });
+        let (cancel, polls) = CancelToken::probe(11);
+        let ctx = Context::new(1, MemoryBudget::new(u64::MAX), Arc::new(NoProgress), cancel);
+        let result = levels::Schroeder::analyze_until(&set, &config, &ctx);
         assert!(
             matches!(result, Err(EngineError::Cancelled)),
             "{basis:?}: analysis finished instead of cancelling during samples ({} polls)",
-            polls.get()
+            polls.load(Ordering::SeqCst)
         );
-        assert_eq!(polls.get(), 11, "must return at the first cancelled poll");
-        super::cancel::assert_cancels("Schroeder", 1, |cancelled| {
-            levels::Schroeder::analyze_until(&set, &config, &ctx, cancelled)
+        assert_eq!(
+            polls.load(Ordering::SeqCst),
+            11,
+            "must return at the first cancelled poll"
+        );
+        super::cancel::assert_cancels("Schroeder", 1, |ctx| {
+            levels::Schroeder::analyze_until(&set, &config, ctx)
         });
     }
 }
@@ -153,7 +155,7 @@ fn schroeder_chunked_filter_preserves_sosfilt_bits() {
     for (fc, width) in bands {
         let sos = butter(4, &[fc / width, fc * width], BType::Bandpass, SR_F).unwrap();
         let original = sosfilt(&sos, &samples).unwrap();
-        let chunked = levels::filter_band(&samples, &sos, &|| false).unwrap();
+        let chunked = levels::filter_band(&samples, &sos, &Context::serial()).unwrap();
         assert_eq!(original.len(), chunked.len());
         for (i, (original, chunked)) in original.iter().zip(chunked).enumerate() {
             assert_eq!(original.to_bits(), chunked.to_bits(), "{fc} Hz sample {i}");

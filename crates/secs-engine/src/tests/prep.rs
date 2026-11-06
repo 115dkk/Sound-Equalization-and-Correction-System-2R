@@ -341,8 +341,8 @@ fn preparation_stops_at_every_cancellation_check() {
         .iter()
         .map(|(_, roles)| roles.len())
         .sum::<usize>();
-    let (prepared, polls) = super::cancel::assert_cancels("prepare", 1, |cancelled| {
-        prepare_until(&case.measurements, &case.config, &setup, cancelled)
+    let (prepared, polls) = super::cancel::assert_cancels("prepare", 1, |ctx| {
+        prepare_until(&case.measurements, &case.config, &setup, ctx)
     });
     // validate and build_spectra once per cell, the onsets once per
     // reference cell.
@@ -352,8 +352,8 @@ fn preparation_stops_at_every_cancellation_check() {
     assert_eq!(prepared.align_delay_ms, plain.align_delay_ms);
     let filters = &setup.sub_filters;
     let long = long_spectra(&case.measurements, &plain, filters, 2000.0).unwrap();
-    let (cancellable, polls) = super::cancel::assert_cancels("long_spectra", 1, |cancelled| {
-        long_spectra_until(&case.measurements, &plain, filters, 2000.0, cancelled)
+    let (cancellable, polls) = super::cancel::assert_cancels("long_spectra", 1, |ctx| {
+        long_spectra_until(&case.measurements, &plain, filters, 2000.0, ctx)
     });
     assert_eq!(polls, 3 * cells);
     assert_eq!(bits(&cancellable), bits(&long));

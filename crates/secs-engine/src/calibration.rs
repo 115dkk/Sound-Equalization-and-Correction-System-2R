@@ -57,11 +57,7 @@ pub fn calibrate(
     } else {
         crate::PeqDerivatives::TwoPoint
     };
-    calibrate_with(
-        req,
-        ctx,
-        &*crate::production_fitters_with(ctx.cancel(), derivatives),
-    )
+    calibrate_with(req, ctx, &*crate::production_fitters_with(ctx, derivatives))
 }
 
 /// The calibration entry point with caller-supplied fitters (oracle replay).

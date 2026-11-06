@@ -164,11 +164,11 @@ impl ScoreWindows {
     fn new(
         measurements: &MeasurementSet,
         prepared: &measurement::Prepared,
-        cancelled: &dyn Fn() -> bool,
+        ctx: &secs_compute::Context,
     ) -> Result<Self, EngineError> {
         Ok(Self {
-            short: measurement::long_spectra_until(measurements, prepared, &[], 500.0, cancelled)?,
-            long: measurement::long_spectra_until(measurements, prepared, &[], 2000.0, cancelled)?,
+            short: measurement::long_spectra_until(measurements, prepared, &[], 500.0, ctx)?,
+            long: measurement::long_spectra_until(measurements, prepared, &[], 2000.0, ctx)?,
         })
     }
 }
@@ -297,7 +297,7 @@ pub fn recommend_xo(
     candidates: &[f64],
     ctx: &Context,
 ) -> Result<XoRecommendation, EngineError> {
-    ctx.cancel().check().map_err(|_| EngineError::Cancelled)?;
+    ctx.cancel().check()?;
     let mut inputs = engine_inputs(view, irs, settings)?;
     let groups = xo_groups(&inputs.config);
     if groups.is_empty() {
@@ -337,7 +337,7 @@ pub fn recommend_xo(
             &inputs.measurements,
             &inputs.config,
             &Setup::new(&inputs.config),
-            &|| ctx.cancel().is_cancelled(),
+            ctx,
         )?)
     };
     if prepared.is_some() {
@@ -348,13 +348,11 @@ pub fn recommend_xo(
     let windows = prepared
         .as_ref()
         .map(|prepared| {
-            ctx.cancel().check().map_err(|_| EngineError::Cancelled)?;
-            ScoreWindows::new(&inputs.measurements, prepared, &|| {
-                ctx.cancel().is_cancelled()
-            })
+            ctx.cancel().check()?;
+            ScoreWindows::new(&inputs.measurements, prepared, ctx)
         })
         .transpose()?;
-    ctx.cancel().check().map_err(|_| EngineError::Cancelled)?;
+    ctx.cancel().check()?;
     // A candidate's permit is taken on this thread for its whole batch, never
     // inside a pool task (TD-23); its design runs on a serial child of this
     // job, so it reserves nothing more and waits on no pool work.
@@ -380,7 +378,7 @@ pub fn recommend_xo(
                     adapter_notes: &inputs.notes,
                 },
                 &inner,
-                &*production_fitters_with(inner.cancel(), peq_derivatives),
+                &*production_fitters_with(&inner, peq_derivatives),
                 prepared,
                 schroeder,
             )?;
@@ -393,7 +391,7 @@ pub fn recommend_xo(
                 prepared,
                 windows.as_ref(),
             );
-            ctx.cancel().check().map_err(|_| EngineError::Cancelled)?;
+            ctx.cancel().check()?;
             progress.advance(1);
             Ok(scores)
         },
@@ -589,7 +587,7 @@ mod perf_tests {
                 subs_only: false,
                 adapter_notes: &[],
             };
-            let fitters = crate::design::production_fitters(ctx.cancel());
+            let fitters = crate::design::production_fitters(&ctx);
             let own = crate::design::design(&req, &ctx, &*fitters).unwrap();
             let shared =
                 crate::design::design_prepared(&req, &ctx, &*fitters, &prepared, &|_, _| {})
@@ -628,7 +626,12 @@ mod perf_tests {
                 }
             }
             let own_scores = xo_scores(&own, &case.measurements, &config);
-            let windows = ScoreWindows::new(&case.measurements, &prepared, &|| false).unwrap();
+            let windows = ScoreWindows::new(
+                &case.measurements,
+                &prepared,
+                &secs_compute::Context::serial(),
+            )
+            .unwrap();
             let shared_scores = xo_scores_prepared(
                 &shared,
                 &case.measurements,

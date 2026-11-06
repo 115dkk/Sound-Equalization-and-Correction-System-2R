@@ -446,7 +446,11 @@ fn analytic_peq_results_within_secs2_spread() {
         );
         let cost = band_cost(
             &req,
-            &fit_peq_with(&req, &|| false, PeqDerivatives::Analytic),
+            &fit_peq_with(
+                &req,
+                &secs_compute::Context::serial(),
+                PeqDerivatives::Analytic,
+            ),
         );
         let c0 = number(&o["final_cost"]);
         let costs: Vec<_> = o["environments"]

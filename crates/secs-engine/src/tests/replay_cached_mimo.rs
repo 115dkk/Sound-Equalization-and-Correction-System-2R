@@ -16,7 +16,7 @@ fn design_replay_cached_mimo_matches_fresh_service_bits() {
             design,
             &case.measurements,
             &prepared,
-            &|| false,
+            &secs_compute::Context::serial(),
         )
         .unwrap();
         for filter in [

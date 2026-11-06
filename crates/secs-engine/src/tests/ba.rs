@@ -483,7 +483,7 @@ fn ba_oracle_auto_manual_bus() {
                 &prep.align_delay_ms,
                 &xo,
                 number(&b["lo"]),
-                &|| false,
+                &secs_compute::Context::serial(),
                 &mut |p, d, c| candidates.extend([f64::from(p), d, c]),
             )
             .unwrap();
@@ -607,19 +607,17 @@ fn ba_bus_delay_stops_at_every_cancellation_check() {
         .iter()
         .map(|r| (r.clone(), 80.0))
         .collect();
-    let plain = bus_delay(&alignment, &mains, &prep.align_delay_ms, &xo, -5.0, &|| {
-        false
-    })
+    let plain = bus_delay(
+        &alignment,
+        &mains,
+        &prep.align_delay_ms,
+        &xo,
+        -5.0,
+        &secs_compute::Context::serial(),
+    )
     .unwrap();
-    let (delay, polls) = crate::tests::cancel::assert_cancels("bus_delay", 1, |cancelled| {
-        bus_delay(
-            &alignment,
-            &mains,
-            &prep.align_delay_ms,
-            &xo,
-            -5.0,
-            cancelled,
-        )
+    let (delay, polls) = crate::tests::cancel::assert_cancels("bus_delay", 1, |ctx| {
+        bus_delay(&alignment, &mains, &prep.align_delay_ms, &xo, -5.0, ctx)
     });
     assert_eq!(delay, plain);
     // Twelve main cells, then two polarities of the 81 delays -5..=15 ms.

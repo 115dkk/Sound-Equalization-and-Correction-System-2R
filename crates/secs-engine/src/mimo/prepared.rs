@@ -59,22 +59,17 @@ impl<'ctx> Prepared<'ctx> {
             Self::bytes(measurements, config)
         };
         let mut permit = crate::memory::reserve(ctx, peak, 0)?;
-        let cancelled = || ctx.cancel().is_cancelled();
         let (spectra, align_delay_ms) = if same {
             (
-                replay.export_view_until(design, &cancelled)?.spectra,
+                replay.export_view_until(design, ctx)?.spectra,
                 replay.prepared().align_delay_ms.clone(),
             )
         } else {
             let prepared =
-                measurement::prepare_until(measurements, config, &Setup::new(config), &cancelled)?;
-            let spectra = crate::export_view::export_view_prepared(
-                design,
-                measurements,
-                &prepared,
-                &cancelled,
-            )?
-            .spectra;
+                measurement::prepare_until(measurements, config, &Setup::new(config), ctx)?;
+            let spectra =
+                crate::export_view::export_view_prepared(design, measurements, &prepared, ctx)?
+                    .spectra;
             (spectra, prepared.align_delay_ms)
         };
         permit.shrink_to(held);
@@ -93,9 +88,13 @@ impl<'ctx> Prepared<'ctx> {
         config: &EngineConfig,
     ) -> Result<Self, EngineError> {
         let prepared = measurement::prepare(measurements, config, &Setup::new(config))?;
-        let spectra =
-            crate::export_view::export_view_prepared(design, measurements, &prepared, &|| false)?
-                .spectra;
+        let spectra = crate::export_view::export_view_prepared(
+            design,
+            measurements,
+            &prepared,
+            &Context::serial(),
+        )?
+        .spectra;
         Ok(Self {
             spectra,
             align_delay_ms: prepared.align_delay_ms,

@@ -20,7 +20,7 @@ name = "engine_perf"
 required-features = ["test-support"]
 
 [features]
-test-support = ["dep:secs-oracle", "dep:serde_json"]
+test-support = ["dep:secs-oracle", "dep:serde_json", "secs-compute/test-support"]
 
 [dependencies]
 faer.workspace = true
@@ -33,6 +33,7 @@ serde_json = { workspace = true, optional = true }
 thiserror.workspace = true
 
 [dev-dependencies]
+secs-compute = { workspace = true, features = ["test-support"] }
 secs-engine-testkit.workspace = true
 secs-oracle.workspace = true
 serde_json.workspace = true

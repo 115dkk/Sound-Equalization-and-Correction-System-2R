@@ -266,7 +266,7 @@ pub(crate) fn fit_one(
             f_max: None,
             bands: None,
         },
-        &|| ctx.cancel().is_cancelled(),
+        ctx,
         seed_peq_derivatives,
     );
     check(ctx)?;

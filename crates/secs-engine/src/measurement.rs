@@ -184,18 +184,7 @@ pub struct Prepared {
     pub h0: Spectra,
 }
 
-/// `Err(Cancelled)` once `cancelled()` reads true (TD-49). The preparation
-/// below polls it once per IR cell in every pass over the measurements and
-/// changes nothing else, so an uncancelled run keeps its arithmetic and order.
-fn check(cancelled: &dyn Fn() -> bool) -> Result<(), EngineError> {
-    if cancelled() {
-        Err(EngineError::Cancelled)
-    } else {
-        Ok(())
-    }
-}
-
-fn validate(set: &MeasurementSet, cancelled: &dyn Fn() -> bool) -> Result<(), EngineError> {
+fn validate(set: &MeasurementSet, ctx: &secs_compute::Context) -> Result<(), EngineError> {
     let mut previous = None;
     for (pos, roles) in &set.positions {
         if previous.is_some_and(|p| p >= *pos) {
@@ -205,7 +194,7 @@ fn validate(set: &MeasurementSet, cancelled: &dyn Fn() -> bool) -> Result<(), En
         }
         previous = Some(*pos);
         for (i, (role, m)) in roles.iter().enumerate() {
-            check(cancelled)?;
+            ctx.cancel().check()?;
             if m.sample_rate != SR {
                 return Err(EngineError::MeasurementSampleRate {
                     position: *pos,
@@ -240,7 +229,7 @@ fn build_spectra(
     filters: &[(String, SubFilter)],
     length: usize,
     taper: f64,
-    cancelled: &dyn Fn() -> bool,
+    ctx: &secs_compute::Context,
 ) -> Result<Spectra, EngineError> {
     #[cfg(test)]
     SPECTRA_BUILT.with(|built| built.set(built.get() + 1));
@@ -252,7 +241,7 @@ fn build_spectra(
     for (pos, roles) in &set.positions {
         out.ensure_position(*pos);
         for (role, m) in roles {
-            check(cancelled)?;
+            ctx.cancel().check()?;
             let (w, a) = window(&m.samples, onset_index(&m.samples), length, taper);
             let start_t = m.t0 + a as f64 / SR_F - base;
             let mut h = spectrum(&w);
@@ -276,19 +265,19 @@ pub fn prepare(
     config: &EngineConfig,
     setup: &Setup,
 ) -> Result<Prepared, EngineError> {
-    prepare_until(set, config, setup, &|| false)
+    prepare_until(set, config, setup, &secs_compute::Context::serial())
 }
 
 /// Validates the measurements and builds the 500 ms spectra on the internal
-/// axis, returning `Err(Cancelled)` at the next IR cell once `cancelled()`
+/// axis, returning `Err(Cancelled)` at the next IR cell when the context token
 /// reads true (validation, reference onsets and FFTs all poll it).
 pub fn prepare_until(
     set: &MeasurementSet,
     config: &EngineConfig,
     setup: &Setup,
-    cancelled: &dyn Fn() -> bool,
+    ctx: &secs_compute::Context,
 ) -> Result<Prepared, EngineError> {
-    validate(set, cancelled)?;
+    validate(set, ctx)?;
     let main = set
         .positions
         .iter()
@@ -318,7 +307,7 @@ pub fn prepare_until(
         .1
         .iter()
         .map(|(r, m)| {
-            check(cancelled)?;
+            ctx.cancel().check()?;
             Ok((r.clone(), m.t0 + onset_index(&m.samples) as f64 / SR_F))
         })
         .collect::<Result<Vec<_>, EngineError>>()?;
@@ -335,7 +324,7 @@ pub fn prepare_until(
         .iter()
         .map(|(r, a)| (r.clone(), 1000.0 * (latest - a)))
         .collect();
-    let h = build_spectra(set, base_s, &setup.sub_filters, 24000, 0.2, cancelled)?;
+    let h = build_spectra(set, base_s, &setup.sub_filters, 24000, 0.2, ctx)?;
     // Upstream copies the dictionaries *after* applying fixed sub filters.
     let h0 = h.clone();
     Ok(Prepared {
@@ -377,19 +366,25 @@ pub fn long_spectra(
     sub_filters: &[(String, SubFilter)],
     window_ms: f64,
 ) -> Result<Spectra, EngineError> {
-    long_spectra_until(set, prepared, sub_filters, window_ms, &|| false)
+    long_spectra_until(
+        set,
+        prepared,
+        sub_filters,
+        window_ms,
+        &secs_compute::Context::serial(),
+    )
 }
 
 /// `long_spectra`, returning `Err(Cancelled)` at the next IR cell once
-/// `cancelled()` reads true (validation, onsets and FFTs all poll it).
+/// the context token is cancelled (validation, onsets and FFTs all poll it).
 pub fn long_spectra_until(
     set: &MeasurementSet,
     prepared: &Prepared,
     sub_filters: &[(String, SubFilter)],
     window_ms: f64,
-    cancelled: &dyn Fn() -> bool,
+    ctx: &secs_compute::Context,
 ) -> Result<Spectra, EngineError> {
-    validate(set, cancelled)?;
+    validate(set, ctx)?;
     if !window_ms.is_finite() || window_ms <= 0.0 || !prepared.base_s.is_finite() {
         return Err(EngineError::Input(
             "invalid long window or spectral origin".into(),
@@ -398,7 +393,7 @@ pub fn long_spectra_until(
     let length = (window_ms / 1000.0 * SR_F) as usize;
     // Upstream's w[-0:] broadcasting fails for fewer than ten samples.
     for (_, m) in set.positions.iter().flat_map(|(_, rs)| rs) {
-        check(cancelled)?;
+        ctx.cancel().check()?;
         let a = onset_index(&m.samples).saturating_sub(96);
         if m.samples.len().saturating_sub(a).min(length) < 10 {
             return Err(EngineError::Input(
@@ -406,5 +401,5 @@ pub fn long_spectra_until(
             ));
         }
     }
-    build_spectra(set, prepared.base_s, sub_filters, length, 0.1, cancelled)
+    build_spectra(set, prepared.base_s, sub_filters, length, 0.1, ctx)
 }

@@ -126,9 +126,13 @@ fn design_replay_export_ir_matches_fresh_preparation_bits() {
         let fresh =
             measurement::prepare(&case.measurements, &case.config, &Setup::new(&case.config))
                 .unwrap();
-        let expected =
-            crate::export_view::export_view_prepared(design, &case.measurements, &fresh, &|| false)
-                .unwrap();
+        let expected = crate::export_view::export_view_prepared(
+            design,
+            &case.measurements,
+            &fresh,
+            &secs_compute::Context::serial(),
+        )
+        .unwrap();
         let actual = design.replay.export_view(design).unwrap();
         for &position in expected.spectra.positions() {
             for role in expected.spectra.roles_at(position) {
@@ -218,9 +222,13 @@ fn design_replay_export_matches_fresh_preparation_bits() {
                 }
             }
         }
-        let expected =
-            crate::export_view::export_view_prepared(design, &case.measurements, &fresh, &|| false)
-                .unwrap();
+        let expected = crate::export_view::export_view_prepared(
+            design,
+            &case.measurements,
+            &fresh,
+            &secs_compute::Context::serial(),
+        )
+        .unwrap();
         let builds = measurement::SPECTRA_BUILT.with(|count| count.get());
         let actual = replay.export_view(design).unwrap();
         assert_eq!(

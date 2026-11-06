@@ -12,7 +12,7 @@ fn engine_e2e_spread() {
         let started = Instant::now();
         let context = Context::serial();
         let longest_fit = std::sync::Mutex::new(std::time::Duration::ZERO);
-        let production = production_fitters(context.cancel());
+        let production = production_fitters(&context);
         let timed: Box<crate::design::FitterFactory<'_>> = Box::new(|stage| {
             let mut fitter = production(stage);
             let longest = &longest_fit;

@@ -236,7 +236,12 @@ fn low_protect_rc_realized_response_in_peq_and_fir_modes() {
             tuning: &tuning,
             positions: &[1],
         };
-        let out = rc::channel(&input, &mut crate::fit::fit_peq, &|| false).unwrap();
+        let out = rc::channel(
+            &input,
+            &mut crate::fit::fit_peq,
+            &secs_compute::Context::serial(),
+        )
+        .unwrap();
         let (hz, limited) = out
             .out
             .notes
@@ -480,10 +485,10 @@ fn low_protect_mains_use_the_bus_rolloff() {
             ..input
         },
         &mut fitter,
-        &|| false,
+        &secs_compute::Context::serial(),
     )
     .unwrap();
-    let protected = rc::channel(&input, &mut fitter, &|| false).unwrap();
+    let protected = rc::channel(&input, &mut fitter, &secs_compute::Context::serial()).unwrap();
     let before = max_below(&unprotected.response, bus);
     let after = max_below(&protected.response, bus);
     eprintln!(
@@ -545,7 +550,7 @@ fn low_protect_room_bass_survives() {
                 ..base.clone()
             };
             let inputs = engine_inputs(&view, &case.measurements, &settings).unwrap();
-            let cancel = secs_compute::CancelToken::new();
+            let ctx = Context::serial();
             crate::design(
                 &DesignRequest {
                     measurements: &inputs.measurements,
@@ -554,8 +559,8 @@ fn low_protect_room_bass_survives() {
                     subs_only: false,
                     adapter_notes: &[],
                 },
-                &Context::serial(),
-                &*crate::design::production_fitters(&cancel),
+                &ctx,
+                &*crate::design::production_fitters(&ctx),
             )
             .unwrap()
         };
@@ -748,7 +753,7 @@ fn low_protect_main_fit_floor_uses_the_protection_rolloff() {
                     floors.push(request.lo);
                     vec![]
                 },
-                &|| false,
+                &secs_compute::Context::serial(),
             )
             .unwrap();
             let expected = if low_protect {
@@ -877,7 +882,7 @@ fn low_protect_counts_unique_output_bands_across_passes() {
                 vec![(30.0, 1.0, 6.0)]
             }
         },
-        &|| false,
+        &secs_compute::Context::serial(),
     )
     .unwrap();
     assert_eq!(calls, 2);
@@ -962,7 +967,7 @@ fn low_protect_small_dc_correction_preserves_main_rolloff_band() {
             positions: &[1],
         },
         &mut crate::fit::fit_peq,
-        &|| false,
+        &secs_compute::Context::serial(),
     )
     .unwrap();
     let mut h = out.out.fir;

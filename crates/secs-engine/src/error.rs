@@ -52,3 +52,9 @@ pub enum EngineError {
     #[error("cancelled")]
     Cancelled,
 }
+
+impl From<secs_compute::Cancelled> for EngineError {
+    fn from(_: secs_compute::Cancelled) -> Self {
+        Self::Cancelled
+    }
+}

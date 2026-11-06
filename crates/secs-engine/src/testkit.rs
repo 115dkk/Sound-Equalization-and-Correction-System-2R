@@ -301,7 +301,7 @@ pub fn production_case(name: &str, threads: usize) -> ReplayCase {
             adapter_notes: &[],
         },
         &ctx,
-        &*crate::production_fitters(ctx.cancel()),
+        &*crate::production_fitters(&ctx),
     )
     .expect("benchmark design");
     ReplayCase {

@@ -374,9 +374,15 @@ fn rc_recorded_candidates_and_channel() {
             cases::peq(&v["result"])
         };
         let out = if tuning.gd_cuts {
-            rc::channel_with_cuts(&input, &mut fitter, &mut cuts, &|| false).unwrap()
+            rc::channel_with_cuts(
+                &input,
+                &mut fitter,
+                &mut cuts,
+                &secs_compute::Context::serial(),
+            )
+            .unwrap()
         } else {
-            rc::channel(&input, &mut fitter, &|| false).unwrap()
+            rc::channel(&input, &mut fitter, &secs_compute::Context::serial()).unwrap()
         };
         assert_eq!(seen, count);
         assert_eq!(gd_seen, usize::from(tuning.gd_cuts));
@@ -460,9 +466,9 @@ fn rc_channel_stops_at_every_cancellation_check() {
         positions: &positions,
     };
     let fit = |_: &crate::fit::FitRequest<'_>| vec![(67.0, 1.2, -2.0)];
-    let plain = rc::channel(&input, &mut { fit }, &|| false).unwrap();
-    let (out, polls) = super::cancel::assert_cancels("rc channel", 9, |cancelled| {
-        rc::channel(&input, &mut { fit }, cancelled)
+    let plain = rc::channel(&input, &mut { fit }, &secs_compute::Context::serial()).unwrap();
+    let (out, polls) = super::cancel::assert_cancels("rc channel", 9, |ctx| {
+        rc::channel(&input, &mut { fit }, ctx)
     });
     // The GD fits poll once per residual, so most polls are theirs.
     assert!(!plain.gd_cuts.is_empty() && polls > 600, "{polls} polls");
@@ -523,7 +529,7 @@ fn rc_phase_candidates_share_preparation() {
         shared_calls += 1;
         vec![(67.0, 1.2, -2.0)]
     };
-    let actual = rc::channel(&input, &mut fit, &|| false).unwrap();
+    let actual = rc::channel(&input, &mut fit, &secs_compute::Context::serial()).unwrap();
     assert_eq!(shared_calls, 3);
     assert_eq!(actual.out.fir, expected.fir);
     assert_eq!(actual.out.response, expected.response);

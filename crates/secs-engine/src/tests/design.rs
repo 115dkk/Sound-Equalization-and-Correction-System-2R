@@ -284,7 +284,7 @@ fn polarity_check_runs_once_on_the_final_pass() {
         }
     }
     let context = Context::serial();
-    let fitters = design::production_fitters(context.cancel());
+    let fitters = design::production_fitters(&context);
     let result = design::design(
         &DesignRequest {
             measurements: &case.measurements,
@@ -398,7 +398,7 @@ fn pair_phase_runs_once_on_the_final_pass_and_reports_dolby() {
     case.config.rc_range.1 = None;
     case.config.rc_hi_basis = secs_types::calibration::RcHiBasis::Agreement;
     let context = Context::serial();
-    let fitters = design::production_fitters(context.cancel());
+    let fitters = design::production_fitters(&context);
     let result = design::design_observed(
         &DesignRequest {
             measurements: &case.measurements,
@@ -476,7 +476,7 @@ fn design_reserves_preparation_and_one_channel_before_allocating() {
     // One byte less is refused before `measurement::prepare` allocates.
     let ctx = budget(needed - 1);
     let built = crate::measurement::SPECTRA_BUILT.with(std::cell::Cell::get);
-    let fitters = design::production_fitters(ctx.cancel());
+    let fitters = design::production_fitters(&ctx);
     let result = design::design(
         &DesignRequest {
             measurements: &case.measurements,
@@ -574,7 +574,7 @@ fn design_empty_subs_and_subs_only_keep_axes_and_shared_spectra() {
             adapter_notes: &notes,
         },
         &context,
-        &*design::production_fitters(context.cancel()),
+        &*design::production_fitters(&context),
     )
     .unwrap();
     assert!(run.mains.is_empty() && run.chain.mains.is_empty() && run.scores.is_empty());
@@ -612,7 +612,7 @@ fn design_rejects_taps_beyond_the_design_fft() {
                 adapter_notes: &[],
             },
             &context,
-            &*design::production_fitters(context.cancel()),
+            &*design::production_fitters(&context),
         );
         assert!(
             matches!(&result, Err(crate::EngineError::Input(message))
@@ -645,7 +645,7 @@ fn design_rejects_an_input_cut_outside_its_limits() {
                 adapter_notes: &[],
             },
             &context,
-            &*design::production_fitters(context.cancel()),
+            &*design::production_fitters(&context),
         );
         assert!(
             matches!(&result, Err(crate::EngineError::Input(message))
@@ -689,11 +689,11 @@ fn design_cancellation_returns_within_one_second() {
     // finished before its last mark), and cancelling 20 ms into a fit
     // exercises the in-flight path.
     fn counting<'c>(
-        cancel: &'c CancelToken,
+        ctx: &'c Context,
         calls: &'c AtomicUsize,
         signal: Option<(usize, mpsc::Sender<()>)>,
     ) -> Box<design::FitterFactory<'c>> {
-        let production = design::production_fitters(cancel);
+        let production = design::production_fitters(ctx);
         let signal = Arc::new(std::sync::Mutex::new(signal));
         Box::new(move |stage| {
             let mut fitter = production(stage);
@@ -712,7 +712,7 @@ fn design_cancellation_returns_within_one_second() {
     let calls = AtomicUsize::new(0);
     let total = {
         let context = two(CancelToken::new());
-        let factory = counting(context.cancel(), &calls, None);
+        let factory = counting(&context, &calls, None);
         let start = Instant::now();
         design::design(&request, &context, &*factory).expect("uncancelled design");
         eprintln!("MEASURE design uncancelled={:?}", start.elapsed());
@@ -726,7 +726,7 @@ fn design_cancellation_returns_within_one_second() {
         let token = CancelToken::new();
         let context = two(token.clone());
         let (tx, rx) = mpsc::channel();
-        let factory = counting(context.cancel(), &calls, Some((target, tx)));
+        let factory = counting(&context, &calls, Some((target, tx)));
         thread::scope(|scope| {
             let canceller = scope.spawn(move || {
                 rx.recv_timeout(Duration::from_secs(600)).ok()?;
@@ -1204,7 +1204,7 @@ fn design_memory_refusal_preserves_requested_and_total_bytes() {
             adapter_notes: &[],
         },
         &ctx,
-        &*design::production_fitters(ctx.cancel()),
+        &*design::production_fitters(&ctx),
     )
     .unwrap_err();
     assert!(
@@ -1235,7 +1235,7 @@ fn design_missing_reference_sub_returns_structured_error() {
             adapter_notes: &[],
         },
         &ctx,
-        &*design::production_fitters(ctx.cancel()),
+        &*design::production_fitters(&ctx),
     )
     .unwrap_err();
     assert!(matches!(error, crate::EngineError::MissingSubMeasurement {

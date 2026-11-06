@@ -225,7 +225,7 @@ fn inverted_main_designs_on_the_flipped_response() {
             adapter_notes: &[],
         },
         &context,
-        &*crate::production_fitters(context.cancel()),
+        &*crate::production_fitters(&context),
     )
     .unwrap();
     let manual_design = design(
@@ -237,7 +237,7 @@ fn inverted_main_designs_on_the_flipped_response() {
             adapter_notes: &[],
         },
         &context,
-        &*crate::production_fitters(context.cancel()),
+        &*crate::production_fitters(&context),
     )
     .unwrap();
     let mut configured_chain = configured_design.chain;

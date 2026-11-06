@@ -347,7 +347,7 @@ fn main() {
         subs_only: false,
         adapter_notes: &[],
     };
-    let run = || design(&request, &ctx, &*production_fitters(ctx.cancel())).unwrap();
+    let run = || design(&request, &ctx, &*production_fitters(&ctx)).unwrap();
     match op {
         "mimo_profile_design" | "mimo_sweep_candidates" => {
             let d = run();
@@ -596,7 +596,7 @@ fn main() {
                 let result = design::design_observed(
                     &request,
                     &ctx,
-                    &*production_fitters(ctx.cancel()),
+                    &*production_fitters(&ctx),
                     &|stage, elapsed| {
                         if iteration > 0 {
                             collected

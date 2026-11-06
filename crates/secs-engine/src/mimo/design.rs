@@ -1565,8 +1565,7 @@ pub(crate) fn design_mimo_before(
     let prepared =
         crate::measurement::prepare(measurements, config, &crate::setup::Setup::new(config))?;
     let spectra =
-        crate::export_view::export_view_prepared(design, measurements, &prepared, &|| false)?
-            .spectra;
+        crate::export_view::export_view_prepared(design, measurements, &prepared, ctx)?.spectra;
     out.ranges = support_ranges(design, &spectra, req.fsiso, positions)?;
     if let Some(low) = req.f_low.filter(|v| *v != 0.0) {
         for (_, range) in &mut out.ranges {

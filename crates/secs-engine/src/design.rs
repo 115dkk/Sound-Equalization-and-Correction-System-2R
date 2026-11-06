@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 
-use secs_compute::{CancelToken, Context};
+use secs_compute::Context;
 use secs_dsp::{
     interp, response,
     smooth::{self, Fraction},
@@ -36,20 +36,20 @@ pub enum FitStage<'a> {
     Rc(&'a str),
 }
 pub type FitterFactory<'f> = dyn Fn(FitStage<'_>) -> Box<Fitter<'f>> + Sync + 'f;
-pub fn production_fitters(cancel: &CancelToken) -> Box<FitterFactory<'_>> {
-    production_fitters_with(cancel, PeqDerivatives::TwoPoint)
+pub fn production_fitters(ctx: &Context) -> Box<FitterFactory<'_>> {
+    production_fitters_with(ctx, PeqDerivatives::TwoPoint)
 }
 
 pub fn production_fitters_with(
-    cancel: &CancelToken,
+    ctx: &Context,
     derivatives: PeqDerivatives,
 ) -> Box<FitterFactory<'_>> {
     Box::new(move |_| {
         Box::new(move |request| {
-            if cancel.is_cancelled() {
+            if ctx.cancel().is_cancelled() {
                 Vec::new()
             } else {
-                fit::fit_peq_with(request, &|| cancel.is_cancelled(), derivatives)
+                fit::fit_peq_with(request, ctx, derivatives)
             }
         })
     })
@@ -264,10 +264,6 @@ pub fn late_energy(design: &Design) -> Result<Vec<RoleLateEnergy>, EngineError> 
     Ok(rows)
 }
 
-fn check(ctx: &Context) -> Result<(), EngineError> {
-    ctx.cancel().check().map_err(|_| EngineError::Cancelled)
-}
-
 /// RC realizes each channel FIR on the `N_FFT`-point design grid and keeps
 /// its first `taps` samples, so more taps than that cannot be designed
 /// (TD-50); 0 selects the PEQ-only path. The modes use 0 and 2048–16384.
@@ -417,7 +413,7 @@ pub(crate) fn design_observed(
     fitters: &FitterFactory<'_>,
     observed: &(dyn Fn(&str, std::time::Duration) + Sync),
 ) -> Result<Design, EngineError> {
-    check(ctx)?;
+    ctx.cancel().check()?;
     check_taps(req.config)?;
     check_input_hp(req.config)?;
     let prep_started = std::time::Instant::now();
@@ -431,9 +427,7 @@ pub(crate) fn design_observed(
         measurement::preparation_bytes(req.measurements, &setup).saturating_add(bytes.retained);
     let schroeder = levels::Schroeder::analyze(req.measurements, config, ctx)?;
     let _permit = crate::memory::reserve(ctx, held, bytes.channel)?;
-    let prepared = measurement::prepare_until(req.measurements, config, &setup, &|| {
-        ctx.cancel().is_cancelled()
-    })?;
+    let prepared = measurement::prepare_until(req.measurements, config, &setup, ctx)?;
     observed("prepare", prep_started.elapsed());
     design_prepared_scored(
         req,
@@ -555,7 +549,7 @@ fn design_prepared_scored(
         )?;
         let limit = levels::median(limits).clamp(100.0, 2000.0);
         drop(probe);
-        check(ctx)?;
+        ctx.cancel().check()?;
         return design_pass(
             req,
             ctx,
@@ -613,7 +607,7 @@ fn design_pass(
     schroeder: levels::Schroeder,
     pass: RcPass,
 ) -> Result<(Design, Vec<f64>), EngineError> {
-    check(ctx)?;
+    ctx.cancel().check()?;
     check_taps(req.config)?;
     check_input_hp(req.config)?;
     let config = req.config;
@@ -748,7 +742,7 @@ fn design_pass(
     let ba_started = std::time::Instant::now();
     let mut ba_fitter = fitters(FitStage::Ba);
     let alignment = ba::align(&input, &mut *ba_fitter)?;
-    check(ctx)?;
+    ctx.cancel().check()?;
     #[cfg(test)]
     let mut timings = vec![("BA".into(), ba_started.elapsed())];
     notes.extend(alignment.notes.clone());
@@ -763,7 +757,7 @@ fn design_pass(
     let mut top_responses = Vec::new();
     if !config.subs.is_empty() && req.tuning.xo_stage {
         for (role, xo) in &xo_of {
-            check(ctx)?;
+            ctx.cancel().check()?;
             let lo = if config.xo_peq_lo_hz == 0.0 {
                 xo / 2.0
             } else {
@@ -803,7 +797,7 @@ fn design_pass(
                 Some(hi),
                 &mut *fitters(FitStage::Top(role)),
             );
-            check(ctx)?;
+            ctx.cancel().check()?;
             let response: Arc<[C]> = response::peq_response(design_freqs(), &peq).into();
             for &p in &positions {
                 if let Some(h) = used.get(p, role) {
@@ -851,10 +845,10 @@ fn design_pass(
             &prepared.align_delay_ms,
             &xo_of,
             lo.ceil() / 4.0,
-            &|| ctx.cancel().is_cancelled(),
+            ctx,
         )?
     };
-    check(ctx)?;
+    ctx.cancel().check()?;
     let rows = ba::fold(
         &alignment.rows,
         alignment.bus_gain,
@@ -886,7 +880,7 @@ fn design_pass(
         reserve.held,
         |_| reserve.channel,
         |role| {
-            check(ctx)?;
+            ctx.cancel().check()?;
             let Some(before) = prepared.h0.get(config.main_position, role) else {
                 progress.advance(1);
                 return Ok(None);
@@ -941,8 +935,8 @@ fn design_pass(
                     None
                 },
             };
-            let result = rc::channel(&rc_input, &mut *fitter, &|| ctx.cancel().is_cancelled())?;
-            check(ctx)?;
+            let result = rc::channel(&rc_input, &mut *fitter, ctx)?;
+            ctx.cancel().check()?;
             let agreement = matches!(pass, RcPass::Probe)
                 .then(|| rc::agreement_limit(&rc_input, &result.response));
             let combined = comb
@@ -1125,7 +1119,7 @@ fn design_pass(
             reserve.held,
             |_| reserve.channel,
             |main| {
-                check(ctx)?;
+                ctx.cancel().check()?;
                 Ok(RoleScores {
                     role: main.role.clone(),
                     before: scorecard::metrics(&main.before, f, &target, (100.0, 400.0)),
@@ -1169,7 +1163,7 @@ fn design_pass(
     if let Some(hz) = setup.input_hp_hz {
         notes.push(Note::InputHp { hz });
     }
-    check(ctx)?;
+    ctx.cancel().check()?;
     let mut design = Design {
         chain: SignalChain {
             input_hp_hz: setup.input_hp_hz,
@@ -1225,7 +1219,7 @@ fn design_pass(
         let band_f: Vec<f64> = kept.iter().map(|&i| f[i]).collect();
         let mut responses = Vec::with_capacity(design.mains.len());
         for main in &design.mains {
-            check(ctx)?;
+            ctx.cancel().check()?;
             let Some(stages) =
                 crate::stage_responses(&design, &main.role, &prepared.h, config.main_position)
             else {
@@ -1240,7 +1234,7 @@ fn design_pass(
         design
             .notes
             .extend(crate::pair_phase::check(&band_f, &responses));
-        check(ctx)?;
+        ctx.cancel().check()?;
         observed("pair_phase", pair_started.elapsed());
     }
     Ok((design, agreement_limits))
