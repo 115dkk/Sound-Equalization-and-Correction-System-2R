@@ -2,7 +2,7 @@
 
 use std::fs;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
@@ -567,6 +567,7 @@ impl secs_rew::Transport for RecordingRew {
 #[derive(Debug, Clone, Default)]
 struct FailingRew {
     calls: Arc<Mutex<Vec<secs_rew::Request>>>,
+    failed_play: Arc<AtomicBool>,
 }
 
 impl secs_rew::Transport for FailingRew {
@@ -580,6 +581,7 @@ impl secs_rew::Transport for FailingRew {
                 .body
                 .as_ref()
                 .is_some_and(|body| body["command"] == "Play")
+            && !self.failed_play.swap(true, Ordering::SeqCst)
         {
             return Err(secs_rew::RewError::Connection {
                 path: request.path.clone(),
@@ -591,7 +593,7 @@ impl secs_rew::Transport for FailingRew {
 }
 
 #[test]
-fn rew_monitor_cleans_up_after_loop_error() {
+fn rew_level_monitor_survives_a_failed_play_td265() {
     let root = root();
     let transport = FailingRew::default();
     let injected = transport.clone();
@@ -616,9 +618,63 @@ fn rew_monitor_cleans_up_after_loop_error() {
         }),
         Arc::new(NoEvents),
     );
+    events.wait_play_end(started.job, "L", "failed", Duration::from_secs(2));
+    assert!(events.values.lock().unwrap().iter().any(|event| {
+        matches!(event, JobEvent::Log { job, code, params }
+            if *job == started.job
+                && code == "level_play_end"
+                && params.get("role").is_some_and(|role| role == "L")
+                && params.contains_key("error_code"))
+    }));
+    assert!(
+        !events
+            .values
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|event| matches!(event, JobEvent::Finished { job, .. } if *job == started.job))
+    );
+
+    call(
+        &service,
+        Request::LevelPlay(LevelPlayParams {
+            role: "R".into(),
+            master_dbfs: -30.0,
+        }),
+        Arc::new(NoEvents),
+    );
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while transport
+        .calls
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|request| {
+            request.path == "/generator/command"
+                && request
+                    .body
+                    .as_ref()
+                    .is_some_and(|body| body["command"] == "Play")
+        })
+        .count()
+        < 2
+    {
+        assert!(Instant::now() < deadline, "second REW play did not start");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(
+        !events
+            .values
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|event| matches!(event, JobEvent::Finished { job, .. } if *job == started.job))
+    );
+
+    call(&service, Request::LevelMonitorStop, Arc::new(NoEvents));
     assert_eq!(
         events.wait_finished(started.job, Duration::from_secs(2)),
-        JobStatus::Failed
+        JobStatus::Cancelled
     );
     let calls = transport.calls.lock().unwrap();
     assert!(calls.iter().any(|call| {

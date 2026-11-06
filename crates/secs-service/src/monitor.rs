@@ -272,9 +272,9 @@ fn sampled_loop(
                 report.input_dbfs,
                 report.spl_db,
             )?;
-            send_play_end(job, &play.role, "done");
+            send_play_end(job, &play.role, "done", None);
         } else {
-            send_play_end(job, &play.role, "stopped");
+            send_play_end(job, &play.role, "stopped", None);
         }
         handled_generation = play.generation;
     }
@@ -316,14 +316,24 @@ fn send_meter(job: &crate::jobs::JobContext, report: secs_audio::LevelReport) {
     });
 }
 
-fn send_play_end(job: &crate::jobs::JobContext, role: &str, outcome: &str) {
+fn send_play_end(
+    job: &crate::jobs::JobContext,
+    role: &str,
+    outcome: &str,
+    error: Option<&IpcError>,
+) {
+    let mut params = BTreeMap::from([
+        ("role".into(), role.into()),
+        ("outcome".into(), outcome.into()),
+    ]);
+    if let Some(error) = error {
+        params.insert("error_code".into(), format!("{:?}", error.code));
+        params.insert("detail".into(), error.detail.clone());
+    }
     job.send(JobEvent::Log {
         job: job.id(),
         code: "level_play_end".into(),
-        params: BTreeMap::from([
-            ("role".into(), role.into()),
-            ("outcome".into(), outcome.into()),
-        ]),
+        params,
     });
 }
 
@@ -356,7 +366,7 @@ fn rew_loop(
             }) {
                 secs_rew::LevelMonitor::stop_generator(&mut rew);
                 if let Some((play, _, _)) = active.take() {
-                    send_play_end(job, &play.role, "stopped");
+                    send_play_end(job, &play.role, "stopped", None);
                     handled_generation = play.generation;
                 }
             }
@@ -370,9 +380,19 @@ fn rew_loop(
                     .ok()
                     .filter(|value| *value > 0)
                     .ok_or_else(|| input("role", "role has no output"))?;
-                secs_rew::LevelMonitor::play_pink(&mut rew, &play.role, output, play.master_dbfs)
-                    .map_err(|error| rew_error(error, link))?;
-                active = Some((play, std::time::Instant::now(), None));
+                match secs_rew::LevelMonitor::play_pink(
+                    &mut rew,
+                    &play.role,
+                    output,
+                    play.master_dbfs,
+                ) {
+                    Ok(()) => active = Some((play, std::time::Instant::now(), None)),
+                    Err(error) => {
+                        let error = rew_error(error, link);
+                        send_play_end(job, &play.role, "failed", Some(&error));
+                        handled_generation = play.generation;
+                    }
+                }
             }
             for level in std::mem::take(&mut *lock(&pending)) {
                 job.send(JobEvent::Meter {
@@ -395,7 +415,7 @@ fn rew_loop(
                     if let Some(level) = settled {
                         store_level(session, ticket, &play.role, level.input_dbfs, level.spl_db)?;
                     }
-                    send_play_end(job, &play.role, "done");
+                    send_play_end(job, &play.role, "done", None);
                     handled_generation = play.generation;
                 }
             }
@@ -405,7 +425,7 @@ fn rew_loop(
     })();
     secs_rew::LevelMonitor::stop_generator(&mut rew);
     if let Some((play, _, _)) = active.take() {
-        send_play_end(job, &play.role, "stopped");
+        send_play_end(job, &play.role, "stopped", None);
     }
     secs_rew::LevelMonitor::stop(&mut rew);
     result
