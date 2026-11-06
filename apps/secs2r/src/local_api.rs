@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use secs_local_api::{EventHub, ServerConfig, ServerHandle};
@@ -113,7 +113,12 @@ impl Manager {
     }
 
     pub(crate) fn regenerate_token(&self) -> Result<LocalApiStatus, IpcError> {
-        let token = secs_local_api::token::regenerate(&self.config_dir).map_err(local_error)?;
+        let token = secs_local_api::token::regenerate(&self.config_dir).map_err(|error| {
+            local_error(
+                &self.config_dir.join(secs_types::local_api::TOKEN_FILE),
+                error,
+            )
+        })?;
         let mut inner = lock(&self.inner);
         inner.token = Some(token);
         inner.error = None;
@@ -128,8 +133,14 @@ impl Manager {
 
     fn ensure_token(&self, inner: &mut Inner) -> Result<(), IpcError> {
         if inner.token.is_none() {
-            inner.token =
-                Some(secs_local_api::token::load_or_create(&self.config_dir).map_err(local_error)?);
+            inner.token = Some(
+                secs_local_api::token::load_or_create(&self.config_dir).map_err(|error| {
+                    local_error(
+                        &self.config_dir.join(secs_types::local_api::TOKEN_FILE),
+                        error,
+                    )
+                })?,
+            );
         }
         Ok(())
     }
@@ -201,8 +212,8 @@ impl Manager {
     }
 }
 
-fn local_error(error: impl std::fmt::Display) -> IpcError {
-    IpcError::new(ErrorCode::Internal, error.to_string())
+fn local_error(path: &Path, error: std::io::Error) -> IpcError {
+    IpcError::io(ErrorCode::ProjectIo, path, error)
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -214,6 +225,22 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn denied_token_folder_is_a_permission_error_td208() {
+        let error = local_error(
+            Path::new(r"C:\x\token"),
+            std::io::Error::from(std::io::ErrorKind::PermissionDenied),
+        );
+        assert_eq!(error.code, ErrorCode::PermissionDenied);
+        assert_eq!(error.params["path"], r"C:\x\token");
+        let error = local_error(
+            Path::new("missing/token"),
+            std::io::Error::from(std::io::ErrorKind::NotFound),
+        );
+        assert_eq!(error.code, ErrorCode::ProjectIo);
+        assert_eq!(error.params["path"], "missing/token");
+    }
 
     fn settings(enabled: bool, port: u16) -> LocalApiSettings {
         LocalApiSettings { enabled, port }

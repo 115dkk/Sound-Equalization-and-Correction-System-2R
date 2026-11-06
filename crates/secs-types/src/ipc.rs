@@ -2888,6 +2888,22 @@ impl IpcError {
             detail: detail.into(),
         }
     }
+    /// Creates an invalid-request error identifying the rejected field.
+    pub fn invalid(field: impl Into<String>, detail: impl Into<String>) -> Self {
+        Self::new(ErrorCode::InvalidRequest, detail).with_param("field", field)
+    }
+
+    /// Creates an I/O error with its path, distinguishing denied access.
+    pub fn io(code: ErrorCode, path: impl AsRef<std::path::Path>, error: std::io::Error) -> Self {
+        let code = if error.kind() == std::io::ErrorKind::PermissionDenied {
+            ErrorCode::PermissionDenied
+        } else {
+            code
+        };
+        Self::new(code, error.to_string())
+            .with_param("path", path.as_ref().to_string_lossy().into_owned())
+    }
+
     /// Adds one screen message-template parameter.
     pub fn with_param(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.params.insert(key.into(), value.into());
@@ -2953,6 +2969,28 @@ mod tests {
                 background
             );
         }
+    }
+
+    #[test]
+    fn io_error_preserves_path_and_permission_kind_td208() {
+        let error = IpcError::io(
+            ErrorCode::ProjectIo,
+            r"C:\x\token",
+            std::io::Error::from(std::io::ErrorKind::PermissionDenied),
+        );
+        assert_eq!(error.code, ErrorCode::PermissionDenied);
+        assert_eq!(error.params["path"], r"C:\x\token");
+        assert!(!error.retryable);
+        let missing = IpcError::io(
+            ErrorCode::ProjectIo,
+            "missing",
+            std::io::Error::from(std::io::ErrorKind::NotFound),
+        );
+        assert_eq!(missing.code, ErrorCode::ProjectIo);
+        assert_eq!(missing.params["path"], "missing");
+        let invalid = IpcError::invalid("field", "bad value");
+        assert_eq!(invalid.code, ErrorCode::InvalidRequest);
+        assert_eq!(invalid.params["field"], "field");
     }
 
     /// One value of every variant. A new variant fails to compile here until

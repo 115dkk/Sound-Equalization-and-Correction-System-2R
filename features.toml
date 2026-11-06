@@ -1790,7 +1790,7 @@ id = "ipc.local_api_token_regenerate"
 kind = "ipc"
 milestone = "M6"
 status = "implemented"
-tests = ["secs-service::null_host_reports_not_implemented", "secs-local-api::token_is_persistent_lowercase_hex_and_invalid_files_are_replaced", "secs-local-api::token_files_are_created_and_tightened_to_owner_only_td109"]
+tests = ["secs-types::io_error_preserves_path_and_permission_kind_td208", "secs2r::denied_token_folder_is_a_permission_error_td208", "secs-service::null_host_reports_not_implemented", "secs-local-api::token_is_persistent_lowercase_hex_and_invalid_files_are_replaced", "secs-local-api::token_files_are_created_and_tightened_to_owner_only_td109"]
 
 [[feature]]
 id = "api.public_crate"
