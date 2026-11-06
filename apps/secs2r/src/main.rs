@@ -177,6 +177,7 @@ fn main() {
                 first: Arc::new(hub.clone()),
                 second: Arc::new(log.clone()),
             });
+            let service_log = log.clone();
             let service = Arc::new(Service::new(Deps {
                 app_version: env!("CARGO_PKG_VERSION").into(),
                 acceleration: Arc::new(secs_gpu::select),
@@ -196,6 +197,13 @@ fn main() {
                 app_settings_path: Some(config_dir.join("settings.json")),
                 app_data_path: config_dir.clone(),
                 log_dir: Some(log_dir),
+                log: Arc::new(move |level, scope, text| {
+                    let level = match level {
+                        secs_service::LogLevel::Warn => applog::Level::Warn,
+                        secs_service::LogLevel::Error => applog::Level::Error,
+                    };
+                    service_log.line(level, scope, text);
+                }),
                 eqapo_install: Arc::new(secs_sys::eqapo_install),
                 apply: Arc::new(apply::NativeApply),
                 managed_host: Arc::new(apply::NativeManagedHost),

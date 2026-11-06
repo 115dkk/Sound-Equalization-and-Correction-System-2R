@@ -10,7 +10,7 @@ use secs_project::{
 use secs_types::ipc::{ErrorCode, IpcError, MigrationWarning, ProjectInfo};
 
 use crate::jobs::JobContext;
-use crate::{ServiceError, UuidSource, lock};
+use crate::{LogLevel, LogSink, ServiceError, UuidSource, lock};
 
 #[derive(Debug, Default)]
 pub(crate) struct Session {
@@ -180,6 +180,7 @@ impl Session {
         path: Option<PathBuf>,
         uuid: &UuidSource,
         now_ms: i64,
+        log: &LogSink,
     ) -> Result<ProjectInfo, ServiceError> {
         let open = self.require_mut()?;
         if open.tutorial {
@@ -195,7 +196,14 @@ impl Session {
             open.store.save()?;
         }
         if let Err(error) = write_side_mdat(open, uuid, now_ms) {
-            eprintln!("곁 mdat을 저장하지 못했습니다: {error}");
+            log(
+                LogLevel::Warn,
+                "session",
+                &format!(
+                    "could not save side mdat {}: {error}",
+                    open.path.with_extension("mdat").display()
+                ),
+            );
         }
         open.dirty = false;
         self.info()
@@ -907,7 +915,9 @@ mod tests {
         }
         open.dirty = true;
         let uuid = crate::Deps::default().uuid;
-        let saved = session.save(Some(target.clone()), &uuid, 0).unwrap();
+        let saved = session
+            .save(Some(target.clone()), &uuid, 0, &crate::Deps::default().log)
+            .unwrap();
         assert_eq!(saved.path, target.to_string_lossy());
         assert!(!saved.dirty);
         assert!(target.exists());
@@ -959,7 +969,9 @@ mod tests {
 
         session.require_mut().unwrap().store.clear_position(1);
         session.require_mut().unwrap().store.clear_position(2);
-        session.save(None, &uuid, 0).unwrap();
+        session
+            .save(None, &uuid, 0, &crate::Deps::default().log)
+            .unwrap();
         assert!(!target.with_extension("mdat").exists());
         fs::remove_dir_all(root).unwrap();
     }

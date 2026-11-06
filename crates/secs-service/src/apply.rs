@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use secs_types::ipc::*;
 
-use crate::{ApplyAdapter, EventSink, Service, lock, results::MimoView};
+use crate::{ApplyAdapter, EventSink, LogLevel, LogSink, Service, lock, results::MimoView};
 
 const TIMEOUT: Duration = Duration::from_secs(2);
 const EQAPO_FOLDER: &str = "SECS2R";
@@ -97,6 +97,7 @@ impl Service {
         let current_marker = final_folder.with_file_name(CAMILLA_CURRENT);
         let apply = self.deps.apply.clone();
         let managed_host = self.deps.managed_host.clone();
+        let log = self.deps.log.clone();
         self.start_export_with(
             ExportParams {
                 kind: ExportKind::CamillaDsp,
@@ -135,7 +136,17 @@ impl Service {
                 // name, so every attempt gets another generation even when the
                 // design id is unchanged.
                 if let Err(error) = apply.before_generation_install(&final_for_job, &stage) {
-                    let _ = remove_stage(&stage);
+                    if let Err(cleanup) = remove_stage(&stage) {
+                        log(
+                            LogLevel::Warn,
+                            "apply",
+                            &format!(
+                                "could not remove staging folder {}: {}",
+                                stage.display(),
+                                cleanup.detail
+                            ),
+                        );
+                    }
                     return Err(error);
                 }
                 let generation =
@@ -166,8 +177,8 @@ impl Service {
                             if let Some(previous) = reported_previous.as_deref() {
                                 retained.push(previous);
                             }
-                            remember_retained(&final_for_job, &retained);
-                            mark_generation_uncertain(&current_marker, &generation.name);
+                            remember_retained(&final_for_job, &retained, &log);
+                            mark_generation_uncertain(&current_marker, &generation.name, &log);
                             return Err(error);
                         }
                     };
@@ -177,7 +188,7 @@ impl Service {
                 if matches!(&outcome, ApplyOutcome::RolledBack { .. }) {
                     // Reload may have opened this generation before the old path was
                     // restored. Keep it through the next successful apply.
-                    remember_retained(&final_for_job, &[generation.name.as_str()]);
+                    remember_retained(&final_for_job, &[generation.name.as_str()], &log);
                 } else {
                     if let Err(error) =
                         apply
@@ -189,9 +200,13 @@ impl Service {
                                 )
                             })
                     {
-                        eprintln!(
-                            "could not record active CamillaDSP generation: {}",
-                            error.detail
+                        log(
+                            LogLevel::Error,
+                            "apply",
+                            &format!(
+                                "could not record active CamillaDSP generation {}: {}",
+                                generation.name, error.detail
+                            ),
                         );
                     }
                     if let Some(exe_path) = managed_exe
@@ -212,7 +227,7 @@ impl Service {
                         if let Some(previous) = reported_generation.as_deref() {
                             retained.push(previous);
                         }
-                        remember_retained(&final_for_job, &retained);
+                        remember_retained(&final_for_job, &retained, &log);
                         return Err(error);
                     }
                     // The marker is diagnostic only. Retirement follows the path
@@ -221,7 +236,12 @@ impl Service {
                     if let Some(previous) = reported_generation.as_deref() {
                         keep.push(previous);
                     }
-                    retire_after_success(&final_for_job, &keep, reported_generation.is_some());
+                    retire_after_success(
+                        &final_for_job,
+                        &keep,
+                        reported_generation.is_some(),
+                        &log,
+                    );
                 }
                 Ok(JobResult::Apply(ApplyResult {
                     outcome,
@@ -251,6 +271,7 @@ impl Service {
         let apply = self.deps.apply.clone();
         let managed = settings.level == ApplyLevel::Manage;
         let managed_host = self.deps.managed_host.clone();
+        let log = self.deps.log.clone();
         self.start_export_with(
             ExportParams {
                 kind: ExportKind::EqualizerApo,
@@ -277,7 +298,17 @@ impl Service {
                 };
                 let previous_generation = previous_entry.as_deref().and_then(entry_generation);
                 if let Err(error) = apply.before_generation_install(&final_for_job, &stage) {
-                    let _ = remove_stage(&stage);
+                    if let Err(cleanup) = remove_stage(&stage) {
+                        log(
+                            LogLevel::Warn,
+                            "apply",
+                            &format!(
+                                "could not remove staging folder {}: {}",
+                                stage.display(),
+                                cleanup.detail
+                            ),
+                        );
+                    }
                     return Err(error);
                 }
                 let generation =
@@ -299,7 +330,7 @@ impl Service {
                     if let Some(previous) = previous_generation.as_deref() {
                         retained.push(previous);
                     }
-                    remember_retained(&final_for_job, &retained);
+                    remember_retained(&final_for_job, &retained, &log);
                     if let Err(rollback) = restore {
                         return Err(IpcError::new(
                             ErrorCode::ApplyFailed,
@@ -318,7 +349,7 @@ impl Service {
                 if let Some(previous) = previous_generation.as_deref() {
                     keep.push(previous);
                 }
-                retire_after_success(&final_for_job, &keep, previous_generation.is_some());
+                retire_after_success(&final_for_job, &keep, previous_generation.is_some(), &log);
                 if managed {
                     expect_host_ok(managed_host.call(&HostRequest::SetManaged(HostManaged {
                         camilla: None,
@@ -563,12 +594,16 @@ fn applied_generation(root: &Path, config: &Path) -> Option<String> {
     name.to_str().map(str::to_owned)
 }
 
-fn mark_generation_uncertain(path: &Path, generation: &str) {
+fn mark_generation_uncertain(path: &Path, generation: &str, log: &LogSink) {
     let value = format!("?{generation}");
     if let Err(error) = crate::deploy::write_entry(path, value.as_bytes()) {
-        eprintln!(
-            "could not record uncertain CamillaDSP generation: {}",
-            error.detail
+        log(
+            LogLevel::Error,
+            "apply",
+            &format!(
+                "could not record uncertain CamillaDSP generation {generation}: {}",
+                error.detail
+            ),
         );
     }
 }
@@ -619,7 +654,7 @@ fn read_retained(root: &Path) -> Result<Vec<String>, IpcError> {
     Ok(names)
 }
 
-fn remember_retained(root: &Path, names: &[&str]) {
+fn remember_retained(root: &Path, names: &[&str], log: &LogSink) {
     if names.is_empty() {
         return;
     }
@@ -627,9 +662,13 @@ fn remember_retained(root: &Path, names: &[&str]) {
     let mut retained = match read_retained(root) {
         Ok(retained) => retained,
         Err(error) => {
-            eprintln!(
-                "could not retain applied generations [{requested}]; keeping the unreadable record: {}",
-                error.detail
+            log(
+                LogLevel::Error,
+                "apply",
+                &format!(
+                    "could not retain applied generations [{requested}]; keeping the unreadable record: {}",
+                    error.detail
+                ),
             );
             return;
         }
@@ -646,24 +685,32 @@ fn remember_retained(root: &Path, names: &[&str]) {
     bytes.push(b'\n');
     let path = root.join(RETAINED_GENERATIONS);
     if let Err(error) = crate::deploy::write_entry(&path, &bytes) {
-        eprintln!(
-            "could not record retained applied generations [{}]: {}",
-            retained.join(", "),
-            error.detail
+        log(
+            LogLevel::Error,
+            "apply",
+            &format!(
+                "could not record retained applied generations [{}]: {}",
+                retained.join(", "),
+                error.detail
+            ),
         );
     }
 }
 
-fn retire_after_success(root: &Path, keep: &[&str], has_previous: bool) {
+fn retire_after_success(root: &Path, keep: &[&str], has_previous: bool, log: &LogSink) {
     if !has_previous {
         return;
     }
     let retained = match read_retained(root) {
         Ok(retained) => retained,
         Err(error) => {
-            eprintln!(
-                "could not read retained applied generations; skipping retirement: {}",
-                error.detail
+            log(
+                LogLevel::Error,
+                "apply",
+                &format!(
+                    "could not read retained applied generations; skipping retirement: {}",
+                    error.detail
+                ),
             );
             return;
         }
@@ -678,16 +725,28 @@ fn retire_after_success(root: &Path, keep: &[&str], has_previous: bool) {
     keep.dedup();
     let keep_refs = keep.iter().map(String::as_str).collect::<Vec<_>>();
     if let Err(error) = crate::deploy::prune(root, &keep_refs) {
-        eprintln!("could not retire old applied generations: {}", error.detail);
+        log(
+            LogLevel::Error,
+            "apply",
+            &format!(
+                "could not retire old applied generations while keeping [{}]: {}",
+                keep.join(", "),
+                error.detail
+            ),
+        );
         return;
     }
     let path = root.join(RETAINED_GENERATIONS);
     match fs::remove_file(&path) {
         Ok(()) => {}
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => eprintln!(
-            "could not clear retained applied generations: {}",
-            io_error(&path, error).detail
+        Err(error) => log(
+            LogLevel::Error,
+            "apply",
+            &format!(
+                "could not clear retained applied generations: {}",
+                io_error(&path, error).detail
+            ),
         ),
     }
 }

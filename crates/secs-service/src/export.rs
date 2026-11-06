@@ -388,6 +388,7 @@ impl Service {
         .then(|| (export_chain.clone(), export_mimo.take()));
         // One export reads the clock once; every file in the bundle gets that date.
         let now_ms = (self.deps.unix_ms)();
+        let log = self.deps.log.clone();
         let is_filter_export = matches!(
             params.kind,
             ExportKind::CamillaDsp
@@ -703,10 +704,15 @@ impl Service {
             }
             if let Some(base) = &registry_base {
                 if explicit_unnamed {
-                    crate::design_export::rebuild_index_selected(base, &final_destination)
-                        .map_err(export_error)?;
+                    crate::design_export::rebuild_index_selected_with_log(
+                        base,
+                        &final_destination,
+                        &log,
+                    )
+                    .map_err(export_error)?;
                 } else {
-                    crate::design_export::rebuild_index(base).map_err(export_error)?;
+                    crate::design_export::rebuild_index_with_log(base, &log)
+                        .map_err(export_error)?;
                 }
             }
             let result = ExportResult {

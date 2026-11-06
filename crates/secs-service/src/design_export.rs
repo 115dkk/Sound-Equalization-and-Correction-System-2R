@@ -9,7 +9,7 @@ use secs_types::ipc::ExportKind;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::APP_NAME;
+use crate::{APP_NAME, LogLevel, LogSink};
 
 pub(crate) const MANIFEST_NAME: &str = "secs-design.json";
 const INDEX_NAME: &str = "designs.json";
@@ -316,32 +316,61 @@ fn collect_files(folder: &Path) -> Result<Vec<FileRecord>, DesignExportError> {
     Ok(out)
 }
 
+#[cfg(test)]
 pub(crate) fn rebuild_index(base: &Path) -> Result<PathBuf, DesignExportError> {
-    rebuild_index_from(base, None)
+    rebuild_index_with_log(base, &crate::Deps::default().log)
 }
 
+pub(crate) fn rebuild_index_with_log(
+    base: &Path,
+    log: &LogSink,
+) -> Result<PathBuf, DesignExportError> {
+    rebuild_index_from(base, None, log)
+}
+
+#[cfg(test)]
 pub(crate) fn rebuild_index_selected(
     base: &Path,
     selected: &Path,
 ) -> Result<PathBuf, DesignExportError> {
-    rebuild_index_from(base, Some(selected))
+    rebuild_index_selected_with_log(base, selected, &crate::Deps::default().log)
 }
 
-fn rebuild_index_from(base: &Path, selected: Option<&Path>) -> Result<PathBuf, DesignExportError> {
+pub(crate) fn rebuild_index_selected_with_log(
+    base: &Path,
+    selected: &Path,
+    log: &LogSink,
+) -> Result<PathBuf, DesignExportError> {
+    rebuild_index_from(base, Some(selected), log)
+}
+
+fn rebuild_index_from(
+    base: &Path,
+    selected: Option<&Path>,
+    log: &LogSink,
+) -> Result<PathBuf, DesignExportError> {
     const MAX_DEPTH: usize = 4;
+
+    fn warn(log: &LogSink, line: String) {
+        log(LogLevel::Warn, "export", &line);
+    }
 
     fn manifest_entry(
         base: &Path,
         at: &Path,
         skip_unreadable: bool,
+        log: &LogSink,
     ) -> Result<Option<DesignIndexEntry>, DesignExportError> {
         let metadata = match fs::symlink_metadata(at) {
             Ok(metadata) => metadata,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(error) if skip_unreadable => {
-                eprintln!(
-                    "could not inspect design index folder {}; skipping it: {error}",
-                    at.display()
+                warn(
+                    log,
+                    format!(
+                        "could not inspect design index folder {}; skipping it: {error}",
+                        at.display()
+                    ),
                 );
                 return Ok(None);
             }
@@ -355,9 +384,12 @@ fn rebuild_index_from(base: &Path, selected: Option<&Path>) -> Result<PathBuf, D
             Ok(metadata) => metadata,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(error) if skip_unreadable => {
-                eprintln!(
-                    "could not inspect design manifest {}; skipping it: {error}",
-                    manifest.display()
+                warn(
+                    log,
+                    format!(
+                        "could not inspect design manifest {}; skipping it: {error}",
+                        manifest.display()
+                    ),
                 );
                 return Ok(None);
             }
@@ -369,9 +401,12 @@ fn rebuild_index_from(base: &Path, selected: Option<&Path>) -> Result<PathBuf, D
         let bytes = match fs::read(&manifest) {
             Ok(bytes) => bytes,
             Err(error) if skip_unreadable => {
-                eprintln!(
-                    "could not read design manifest {}; skipping it: {error}",
-                    manifest.display()
+                warn(
+                    log,
+                    format!(
+                        "could not read design manifest {}; skipping it: {error}",
+                        manifest.display()
+                    ),
                 );
                 return Ok(None);
             }
@@ -380,9 +415,12 @@ fn rebuild_index_from(base: &Path, selected: Option<&Path>) -> Result<PathBuf, D
         let fields = match serde_json::from_slice::<ManifestIndexFields>(&bytes) {
             Ok(fields) => fields,
             Err(error) => {
-                eprintln!(
-                    "could not parse design manifest {}; skipping it: {error}",
-                    manifest.display()
+                warn(
+                    log,
+                    format!(
+                        "could not parse design manifest {}; skipping it: {error}",
+                        manifest.display()
+                    ),
                 );
                 return Ok(None);
             }
@@ -410,14 +448,18 @@ fn rebuild_index_from(base: &Path, selected: Option<&Path>) -> Result<PathBuf, D
         depth: usize,
         out: &mut Vec<DesignIndexEntry>,
         skip_unreadable: bool,
+        log: &LogSink,
     ) -> Result<(), DesignExportError> {
         let metadata = match fs::symlink_metadata(at) {
             Ok(metadata) => metadata,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
             Err(error) if skip_unreadable => {
-                eprintln!(
-                    "could not inspect design index folder {}; skipping it: {error}",
-                    at.display()
+                warn(
+                    log,
+                    format!(
+                        "could not inspect design index folder {}; skipping it: {error}",
+                        at.display()
+                    ),
                 );
                 return Ok(());
             }
@@ -426,7 +468,7 @@ fn rebuild_index_from(base: &Path, selected: Option<&Path>) -> Result<PathBuf, D
         if is_link_or_junction(&metadata) || !metadata.is_dir() {
             return Ok(());
         }
-        if let Some(entry) = manifest_entry(base, at, skip_unreadable)? {
+        if let Some(entry) = manifest_entry(base, at, skip_unreadable, log)? {
             out.push(entry);
             return Ok(());
         }
@@ -436,9 +478,12 @@ fn rebuild_index_from(base: &Path, selected: Option<&Path>) -> Result<PathBuf, D
         let children = match fs::read_dir(at) {
             Ok(children) => children,
             Err(error) if skip_unreadable => {
-                eprintln!(
-                    "could not read design index folder {}; skipping it: {error}",
-                    at.display()
+                warn(
+                    log,
+                    format!(
+                        "could not read design index folder {}; skipping it: {error}",
+                        at.display()
+                    ),
                 );
                 return Ok(());
             }
@@ -448,9 +493,12 @@ fn rebuild_index_from(base: &Path, selected: Option<&Path>) -> Result<PathBuf, D
             let child = match child {
                 Ok(child) => child,
                 Err(error) if skip_unreadable => {
-                    eprintln!(
-                        "could not read an entry under {}; skipping it: {error}",
-                        at.display()
+                    warn(
+                        log,
+                        format!(
+                            "could not read an entry under {}; skipping it: {error}",
+                            at.display()
+                        ),
                     );
                     continue;
                 }
@@ -464,7 +512,7 @@ fn rebuild_index_from(base: &Path, selected: Option<&Path>) -> Result<PathBuf, D
             {
                 continue;
             }
-            scan(base, &path, depth + 1, out, skip_unreadable)?;
+            scan(base, &path, depth + 1, out, skip_unreadable, log)?;
         }
         Ok(())
     }
@@ -585,9 +633,12 @@ fn rebuild_index_from(base: &Path, selected: Option<&Path>) -> Result<PathBuf, D
                 match indexed_manifest(base, &entry.folder) {
                     IndexedManifest::Current(current) => entries.push(current),
                     IndexedManifest::Unreadable(error) => {
-                        eprintln!(
-                            "could not refresh indexed design {}; keeping its existing entry: {error}",
-                            entry.folder
+                        warn(
+                            log,
+                            format!(
+                                "could not refresh indexed design {}; keeping its existing entry: {error}",
+                                entry.folder
+                            ),
                         );
                         entries.push(entry);
                     }
@@ -596,13 +647,13 @@ fn rebuild_index_from(base: &Path, selected: Option<&Path>) -> Result<PathBuf, D
             }
         }
         let mut selected_entries = Vec::new();
-        scan(base, selected, 0, &mut selected_entries, false)?;
+        scan(base, selected, 0, &mut selected_entries, false, log)?;
         for selected in selected_entries {
             entries.retain(|entry| entry.folder != selected.folder);
             entries.push(selected);
         }
     } else {
-        scan(base, base, 0, &mut entries, true)?;
+        scan(base, base, 0, &mut entries, true, log)?;
     }
     entries.sort_by(|left, right| {
         right

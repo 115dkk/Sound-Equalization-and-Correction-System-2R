@@ -580,7 +580,7 @@ mod tests {
         })
         .unwrap();
         assert!(summary.len() < 4096);
-        eprintln!(
+        println!(
             "132 x 8000 cache_bytes={bytes} summary_bytes={}",
             summary.len()
         );

@@ -73,6 +73,16 @@ pub fn upstream() -> &'static UpstreamBase {
     })
 }
 
+/// Severity of a line the service writes to the embedder's log (TD-151).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LogLevel {
+    Warn,
+    Error,
+}
+
+/// Receives one line: level, a short static scope, and the text.
+pub type LogSink = Arc<dyn Fn(LogLevel, &'static str, &str) + Send + Sync>;
+
 /// Receives pushed job events. Implementations must return quickly.
 pub trait EventSink: Send + Sync + Debug {
     /// Pushes one event.
@@ -408,6 +418,8 @@ pub struct Deps {
     pub app_data_path: PathBuf,
     /// App log directory exposed through bootstrap, or none when the embedder keeps no app log.
     pub log_dir: Option<PathBuf>,
+    /// Reports failures that do not fail the request.
+    pub log: LogSink,
     /// Detects the machine-wide Equalizer APO installation.
     pub eqapo_install: Arc<dyn Fn() -> Option<secs_types::ipc::EqApoInstall> + Send + Sync>,
     /// Connects the service to the unpublished application protocol crate.
@@ -442,6 +454,7 @@ impl Debug for Deps {
             .field("app_settings_path", &self.app_settings_path)
             .field("app_data_path", &self.app_data_path)
             .field("log_dir", &self.log_dir)
+            .field("log", &"sink")
             .field("eqapo_install", &"detector")
             .field("apply", &self.apply)
             .field("managed_host", &self.managed_host)
@@ -510,6 +523,13 @@ impl Default for Deps {
             app_settings_path: None,
             app_data_path: std::env::temp_dir().join("secs2r"),
             log_dir: None,
+            log: Arc::new(|level, scope, line| {
+                let level = match level {
+                    LogLevel::Warn => "warn",
+                    LogLevel::Error => "error",
+                };
+                eprintln!("[{level}] {scope}: {line}");
+            }),
             eqapo_install: Arc::new(|| None),
             apply: Arc::new(NoApplyAdapter),
             managed_host: Arc::new(NoManagedHost),
@@ -670,6 +690,17 @@ impl Service {
             status_watch: watch::WatchState::default(),
             rew,
         }
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn log(&self, level: LogLevel, scope: &'static str, line: &str) {
+        (self.deps.log)(level, scope, line);
+    }
+
+    /// Returns the embedder's best-effort log sink for an app-owned companion server.
+    #[doc(hidden)]
+    pub fn log_sink(&self) -> LogSink {
+        self.deps.log.clone()
     }
 
     /// Handles one parsed request. Long work starts a job and pushes events.

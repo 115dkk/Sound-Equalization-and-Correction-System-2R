@@ -436,7 +436,12 @@ id = "app.log"
 kind = "app"
 milestone = "M5"
 status = "implemented"
-tests = ["secs2r::rotation_keeps_five_files_and_newest_line_in_current", "secs2r::event_sink_writes_started_log_finished_and_skips_progress"]
+tests = [
+  "secs2r::rotation_keeps_five_files_and_newest_line_in_current",
+  "secs2r::event_sink_writes_started_log_finished_and_skips_progress",
+  "secs-service::retire_failure_reaches_the_log_sink_td151",
+  "secs-service::side_mdat_failure_reaches_the_log_sink_td151",
+]
 note = "ADR 0027: a bounded local app log records starts, job events, request failures, and panics without stopping the app on I/O errors"
 
 # ---- Oracle (M1) ----

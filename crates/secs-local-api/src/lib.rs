@@ -214,6 +214,7 @@ pub fn start(config: ServerConfig) -> Result<ServerHandle, LocalApiError> {
         })?
     };
     let shutdown_requested = Arc::new(AtomicBool::new(false));
+    let log = config.service.log_sink();
     let state = AppState {
         port,
         token: config.token.into(),
@@ -244,7 +245,11 @@ pub fn start(config: ServerConfig) -> Result<ServerHandle, LocalApiError> {
                         })
                         .await;
                     if let Err(error) = result {
-                        eprintln!("local API server stopped with an error: {error}");
+                        log(
+                            secs_service::LogLevel::Error,
+                            "local_api",
+                            &format!("local API server stopped with an error: {error}"),
+                        );
                     }
                 };
                 tokio::pin!(serve);

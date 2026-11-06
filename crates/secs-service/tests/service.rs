@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
-use secs_service::{Deps, EventSink, LocalTime, NoEvents, Service};
+use secs_service::{Deps, EventSink, LocalTime, LogLevel, NoEvents, Service};
 use secs_types::ipc::{Envelope, ErrorCode, JobEvent, ProjectNewParams, Request};
 use sha2::{Digest, Sha256};
 
@@ -99,6 +99,44 @@ fn call_ok(service: &Service, request: Request, events: Arc<dyn EventSink>) -> R
         panic!("request must succeed");
     };
     *response
+}
+
+#[test]
+fn side_mdat_failure_reaches_the_log_sink_td151() {
+    let root = temp_root("side-mdat-log");
+    fs::create_dir_all(&root).unwrap();
+    let (path, _) = write_case(&root, "room");
+    let side_mdat = path.with_extension("mdat");
+    fs::create_dir(&side_mdat).unwrap();
+    let lines = Arc::new(Mutex::new(Vec::new()));
+    let sink_lines = lines.clone();
+    let service = Service::new(Deps {
+        log: Arc::new(move |level, scope, line| {
+            lock(&sink_lines).push((level, scope.to_owned(), line.to_owned()));
+        }),
+        ..Deps::default()
+    });
+    open(&service, &path);
+
+    let response = service.call(
+        Request::ProjectSave(secs_types::ipc::ProjectSaveParams { path: None }),
+        Arc::new(NoEvents),
+    );
+    assert!(
+        matches!(response, Envelope::Ok(response) if matches!(*response, Response::ProjectSave(_)))
+    );
+    let lines = lock(&lines);
+    assert_eq!(lines.len(), 1);
+    assert_eq!(lines[0].0, LogLevel::Warn);
+    assert_eq!(lines[0].1, "session");
+    assert!(
+        lines[0]
+            .2
+            .contains(&side_mdat.to_string_lossy().into_owned())
+    );
+    drop(lines);
+
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]

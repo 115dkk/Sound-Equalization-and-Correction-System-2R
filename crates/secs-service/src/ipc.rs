@@ -31,6 +31,7 @@ pub(crate) fn dispatch(
                 params.path.map(Into::into),
                 &service.deps.uuid,
                 (service.deps.unix_ms)(),
+                &service.deps.log,
             )
             .map(Response::ProjectSave)
             .map_err(IpcError::from),

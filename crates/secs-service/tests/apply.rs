@@ -12,7 +12,7 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use secs_service::{
-    ApplyAdapter, Deps, EventSink, LocalTime, ManagedHostAdapter, NoEvents, Service,
+    ApplyAdapter, Deps, EventSink, LocalTime, LogLevel, ManagedHostAdapter, NoEvents, Service,
 };
 use secs_types::ipc::*;
 use sha2::{Digest, Sha256};
@@ -216,6 +216,70 @@ impl ApplyAdapter for DefaultReportApply {
         _timeout: Duration,
     ) -> Result<ApplyOutcome, IpcError> {
         Ok(self.outcomes.lock().unwrap().remove(0))
+    }
+
+    fn eqapo_include_state(&self, config_text: &str) -> IncludeState {
+        NativeApply.eqapo_include_state(config_text)
+    }
+
+    fn eqapo_with_include(&self, config_text: &str) -> Result<Option<String>, IpcError> {
+        NativeApply.eqapo_with_include(config_text)
+    }
+
+    fn eqapo_without_include(&self, config_text: &str) -> Result<Option<String>, IpcError> {
+        NativeApply.eqapo_without_include(config_text)
+    }
+}
+
+#[derive(Debug, Default)]
+struct BreakRetirement {
+    previous: Mutex<Option<String>>,
+    marker_writes: AtomicU64,
+    moved_root: Mutex<Option<PathBuf>>,
+}
+
+impl ApplyAdapter for BreakRetirement {
+    fn camilla_status(
+        &self,
+        _address: &str,
+        _timeout: Duration,
+    ) -> Result<CamillaStatus, IpcError> {
+        Err(IpcError::new(ErrorCode::NotImplemented, "unused status"))
+    }
+
+    fn camilla_apply(
+        &self,
+        _address: &str,
+        _config_path: &Path,
+        _config_text: &str,
+        _timeout: Duration,
+    ) -> Result<ApplyOutcome, IpcError> {
+        Ok(ApplyOutcome::Applied)
+    }
+
+    fn camilla_apply_report(
+        &self,
+        _address: &str,
+        config_path: &Path,
+        _config_text: &str,
+        _timeout: Duration,
+    ) -> Result<(ApplyOutcome, Option<String>), IpcError> {
+        let previous = lock(&self.previous).replace(config_path.to_string_lossy().into_owned());
+        Ok((ApplyOutcome::Applied, previous))
+    }
+
+    fn before_camilla_marker_write(&self, marker: &Path) -> Result<(), IpcError> {
+        if self.marker_writes.fetch_add(1, Ordering::SeqCst) == 2 {
+            let root = marker
+                .parent()
+                .expect("the marker has an applied folder")
+                .join("camilladsp");
+            let moved = root.with_file_name("camilladsp-retirement-held");
+            fs::rename(&root, &moved).unwrap();
+            fs::write(&root, b"blocks read_dir").unwrap();
+            *lock(&self.moved_root) = Some(moved);
+        }
+        Ok(())
     }
 
     fn eqapo_include_state(&self, config_text: &str) -> IncludeState {
@@ -1761,6 +1825,60 @@ fn apply_camilla_gives_each_design_its_own_folder_so_reload_reads_its_firs() {
     expected.sort();
     assert_eq!(left, expected);
 
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn retire_failure_reaches_the_log_sink_td151() {
+    let root = root("retire-log");
+    let lines = Arc::new(Mutex::new(Vec::new()));
+    let sink_lines = lines.clone();
+    let apply = Arc::new(BreakRetirement::default());
+    let service = calibrated_service_with_apply(
+        &root,
+        Deps {
+            log: Arc::new(move |level, scope, line| {
+                lock(&sink_lines).push((level, scope.to_owned(), line.to_owned()));
+            }),
+            ..Deps::default()
+        },
+        apply.clone(),
+    );
+    set_apply(
+        &service,
+        CamillaApply {
+            level: ApplyLevel::Apply,
+            address: "127.0.0.1:1234".into(),
+            exe_path: None,
+        },
+        EqApoApply::default(),
+    );
+
+    let mut folders = Vec::new();
+    for _ in 0..3 {
+        let events = Arc::new(Events::default());
+        let job = apply_camilla(&service, events.clone());
+        let JobResult::Apply(result) = succeeded(events.wait(job.job)) else {
+            panic!("apply result is absent")
+        };
+        folders.push(PathBuf::from(result.folder));
+    }
+    let previous_name = folders[1]
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    let lines = lock(&lines);
+    assert_eq!(lines.len(), 1);
+    assert_eq!(lines[0].0, LogLevel::Error);
+    assert_eq!(lines[0].1, "apply");
+    assert!(lines[0].2.contains(&previous_name));
+    assert!(lines[0].2.contains("retire"));
+    drop(lines);
+
+    let applied = root.join("app-data/applied/camilladsp");
+    fs::remove_file(&applied).unwrap();
+    fs::rename(lock(&apply.moved_root).take().unwrap(), &applied).unwrap();
     fs::remove_dir_all(root).unwrap();
 }
 
