@@ -5545,3 +5545,44 @@ fn typed_recommend_xo_can_ask_for_a_background_job_td157() {
     drop(values);
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn calibration_summary_notes_are_scalar_records_td162() {
+    let root = temp_root("scalar-note-records");
+    fs::create_dir_all(&root).unwrap();
+    let (path, mut settings) = write_case(&root, "room");
+    settings.dip_limit = true;
+    settings.rc_bands = vec![
+        secs_types::calibration::RcBand {
+            lo_hz: 1_000.0,
+            hi_hz: 1_200.0,
+        },
+        secs_types::calibration::RcBand {
+            lo_hz: 15_000.0,
+            hi_hz: 16_000.0,
+        },
+    ];
+    let service = service();
+    open(&service, &path);
+    let events = Arc::new(Events::default());
+    let job = start_calibration(&service, events.clone(), settings);
+    finished_result(events.wait(job, Duration::from_secs(120)));
+    let summary = read_results(&service).calibration.unwrap();
+    assert!(
+        summary
+            .notes
+            .iter()
+            .any(|notice| notice.code == "dip_limit")
+    );
+    assert!(summary.notes.iter().any(|notice| notice.code == "rc_bands"));
+    for notice in summary
+        .notes
+        .iter()
+        .filter(|notice| matches!(notice.code.as_str(), "dip_limit" | "rc_bands"))
+    {
+        for value in notice.params.values() {
+            assert!(!value.contains([',', ':']), "{}: {value}", notice.code);
+        }
+    }
+    fs::remove_dir_all(root).unwrap();
+}

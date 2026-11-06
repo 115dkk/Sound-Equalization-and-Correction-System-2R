@@ -122,7 +122,7 @@ tests = [
   "secs-engine::pair_phase_check_reports_only_cancelling_pairs_worst_first",
   "secs-engine::pair_phase_runs_once_on_the_final_pass_and_reports_dolby",
   "secs-engine::pair_phase_bands_skip_non_finite_and_include_the_top_edge",
-  "secs-engine::record_of_pair_phase_matches_the_service_literal",
+  "secs-engine::pair_phase_records_one_record_per_band_with_index",
 ]
 
 [[feature]]
@@ -1448,7 +1448,7 @@ id = "ipc.calibrate"
 kind = "ipc"
 milestone = "M4"
 status = "implemented"
-tests = ["secs-engine::record_of_sub_filters_mode_decay_and_mimo_guard_match_the_service_literals", "secs-service::engine_measurement_errors_preserve_context_and_diagnostic_details", "secs-types::every_method_name_is_listed_and_parses", "secs-types::calibrate_mimo_defaults_false_on_the_wire", "secs-service::oracle_project_calibrates_recommends_xo_and_exports", "secs-service::cancelled_calibration_preserves_previous_results", "secs-service::calibrate_with_mimo_matches_separate_runs_and_orders_progress", "secs-service::calibrate_with_mimo_refuses_disabled_and_too_few_positions_before_starting", "secs-service::cancelling_calibrate_during_mimo_keeps_only_the_new_calibration", "secs-service::mimo_failure_after_combined_calibration_keeps_calibration_and_marks_stage", "sound-equalization-and-correction-system-rust-api::engine_calibrate_passes_the_mimo_flag", "secs2r-cli::calibrate_parses_mimo_flag", "secs-engine::record_of_flat_notes_preserves_scalar_values_and_order", "secs-engine::every_note_variant_records_at_least_one_code", "secs-policy::engine_note_codes_are_catalog_keys"]
+tests = ["secs-engine::record_of_sub_filters_mode_decay_and_mimo_guard_match_the_service_literals", "secs-service::engine_measurement_errors_preserve_context_and_diagnostic_details", "secs-types::every_method_name_is_listed_and_parses", "secs-types::calibrate_mimo_defaults_false_on_the_wire", "secs-service::oracle_project_calibrates_recommends_xo_and_exports", "secs-service::cancelled_calibration_preserves_previous_results", "secs-service::calibrate_with_mimo_matches_separate_runs_and_orders_progress", "secs-service::calibrate_with_mimo_refuses_disabled_and_too_few_positions_before_starting", "secs-service::cancelling_calibrate_during_mimo_keeps_only_the_new_calibration", "secs-service::mimo_failure_after_combined_calibration_keeps_calibration_and_marks_stage", "sound-equalization-and-correction-system-rust-api::engine_calibrate_passes_the_mimo_flag", "secs2r-cli::calibrate_parses_mimo_flag", "secs-engine::record_of_flat_notes_preserves_scalar_values_and_order", "secs-engine::every_note_variant_records_at_least_one_code", "secs-policy::engine_note_codes_are_catalog_keys", "secs-service::calibration_summary_notes_are_scalar_records_td162"]
 
 [[feature]]
 id = "ipc.recommend_xo"
@@ -2087,7 +2087,7 @@ kind = "engine"
 milestone = "M5"
 status = "implemented"
 upstream = "new; ADR 0024 (D48)"
-tests = ["secs-engine::rc_band_set_sorts_merges_overlaps_and_touching_edges", "secs-engine::rc_bands_empty_masks_are_bit_identical_and_extra_ramps_use_max", "secs-engine::rc_bands_fir_corrects_high_bump_not_gap_and_retains_boost_cap", "secs-engine::rc_bands_zero_peq_centres_stay_in_the_union", "secs-engine::rc_bands_fir_excess_phase_moves_high_gd_toward_reference", "secs-project::rc_bands_round_trip_filter_sort_trim_and_clear", "secs-service::result_curves_use_stored_then_run_extra_rc_bands", "secs-engine::record_of_rc_limit_and_rc_bands_match_the_service_literals"]
+tests = ["secs-engine::rc_band_set_sorts_merges_overlaps_and_touching_edges", "secs-engine::rc_bands_empty_masks_are_bit_identical_and_extra_ramps_use_max", "secs-engine::rc_bands_fir_corrects_high_bump_not_gap_and_retains_boost_cap", "secs-engine::rc_bands_zero_peq_centres_stay_in_the_union", "secs-engine::rc_bands_fir_excess_phase_moves_high_gd_toward_reference", "secs-project::rc_bands_round_trip_filter_sort_trim_and_clear", "secs-service::result_curves_use_stored_then_run_extra_rc_bands", "secs-engine::rc_bands_records_one_record_per_band"]
 
 [[feature]]
 id = "calibration.edit_rc_bands"
@@ -2111,7 +2111,7 @@ kind = "engine"
 milestone = "M5"
 status = "implemented"
 upstream = "correction_engine.py schroeder_hz; ADR 0021 (D46)"
-tests = ["secs-engine::rc_lenient_synthetic_decay_bands_follow_room_treatment", "secs-engine::rc_lenient_uses_every_main_and_position_without_reference_weighting", "secs-engine::rc_agreement_stops_at_first_non_improving_band_and_weights_positions", "secs-engine::rc_agreement_design_runs_two_passes_and_preserves_manual_override", "secs-project::rc_upper_round_trip_and_legacy_unknown_defaults", "secs-service::rc_agreement_calibration_fails_with_typed_position_reason", "secs-engine::record_of_rc_limit_and_rc_bands_match_the_service_literals", "secs-engine::schroeder_reserves_the_actual_ir_length_before_analysis", "secs-engine::schroeder_cancels_during_sample_processing", "secs-engine::schroeder_chunked_filter_preserves_sosfilt_bits"]
+tests = ["secs-engine::rc_lenient_synthetic_decay_bands_follow_room_treatment", "secs-engine::rc_lenient_uses_every_main_and_position_without_reference_weighting", "secs-engine::rc_agreement_stops_at_first_non_improving_band_and_weights_positions", "secs-engine::rc_agreement_design_runs_two_passes_and_preserves_manual_override", "secs-project::rc_upper_round_trip_and_legacy_unknown_defaults", "secs-service::rc_agreement_calibration_fails_with_typed_position_reason", "secs-engine::record_of_rc_limit_matches_the_service_literals", "secs-engine::schroeder_reserves_the_actual_ir_length_before_analysis", "secs-engine::schroeder_cancels_during_sample_processing", "secs-engine::schroeder_chunked_filter_preserves_sosfilt_bits"]
 
 [[feature]]
 id = "engine.rc_hi_transition"

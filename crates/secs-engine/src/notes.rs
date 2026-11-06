@@ -251,23 +251,24 @@ impl Note {
                     ("confidence", confidence.to_string()),
                 ],
             )],
-            Self::PairPhase { a, b, bands } => vec![record(
-                "pair_phase",
-                vec![
-                    ("a", a.clone()),
-                    ("b", b.clone()),
-                    (
-                        "bands",
-                        bands
-                            .iter()
-                            .map(|(lo, hi, phase, loss)| {
-                                format!("{lo:.0}:{hi:.0}:{phase:.1}:{loss:.1}")
-                            })
-                            .collect::<Vec<_>>()
-                            .join(","),
-                    ),
-                ],
-            )],
+            Self::PairPhase { a, b, bands } => bands
+                .iter()
+                .enumerate()
+                .map(|(index, (lo, hi, phase, loss))| {
+                    record(
+                        "pair_phase",
+                        vec![
+                            ("a", a.clone()),
+                            ("b", b.clone()),
+                            ("index", index.to_string()),
+                            ("lo_hz", format!("{lo:.0}")),
+                            ("hi_hz", format!("{hi:.0}")),
+                            ("phase_deg", format!("{phase:.1}")),
+                            ("loss_db", format!("{loss:.1}")),
+                        ],
+                    )
+                })
+                .collect(),
             Self::LiftCapped {
                 from_ms,
                 taps,
@@ -358,17 +359,20 @@ impl Note {
                 }
                 vec![record("rc_limit", params)]
             }
-            Self::RcBands { bands } => vec![record(
-                "rc_bands",
-                vec![(
-                    "bands",
-                    bands
-                        .iter()
-                        .map(|(lo_hz, hi_hz)| format!("{lo_hz}-{hi_hz}"))
-                        .collect::<Vec<_>>()
-                        .join(","),
-                )],
-            )],
+            Self::RcBands { bands } => bands
+                .iter()
+                .enumerate()
+                .map(|(index, (lo_hz, hi_hz))| {
+                    record(
+                        "rc_bands",
+                        vec![
+                            ("index", index.to_string()),
+                            ("lo_hz", lo_hz.to_string()),
+                            ("hi_hz", hi_hz.to_string()),
+                        ],
+                    )
+                })
+                .collect(),
             Self::LfAlign {
                 role,
                 strength,
@@ -430,20 +434,22 @@ impl Note {
                 };
                 vec![record(code, params)]
             }
-            Self::DipLimit { role, dips } => vec![record(
-                "dip_limit",
-                vec![
-                    ("role", role.clone()),
-                    ("count", dips.len().to_string()),
-                    (
-                        "dips",
-                        dips.iter()
-                            .map(|(hz, depth, fill)| format!("{hz:.2}:{depth:.2}:{fill:.2}"))
-                            .collect::<Vec<_>>()
-                            .join(","),
-                    ),
-                ],
-            )],
+            Self::DipLimit { role, dips } => dips
+                .iter()
+                .enumerate()
+                .map(|(index, (hz, depth, fill))| {
+                    record(
+                        "dip_limit",
+                        vec![
+                            ("role", role.clone()),
+                            ("index", index.to_string()),
+                            ("hz", format!("{hz:.2}")),
+                            ("depth_db", format!("{depth:.2}")),
+                            ("fill_db", format!("{fill:.2}")),
+                        ],
+                    )
+                })
+                .collect(),
             Self::InputHp { hz } => vec![record(
                 "input_hp",
                 vec![("hz", hz.to_string()), ("order", "8".into())],
@@ -729,27 +735,7 @@ mod tests {
     }
 
     #[test]
-    fn record_of_pair_phase_matches_the_service_literal() {
-        assert_eq!(
-            Note::PairPhase {
-                a: "L".into(),
-                b: "Ls".into(),
-                bands: vec![(89.1, 112.2, 167.25, -20.04), (112.2, 141.4, 179.96, -30.0),],
-            }
-            .record(),
-            vec![record(
-                "pair_phase",
-                &[
-                    ("a", "L"),
-                    ("b", "Ls"),
-                    ("bands", "89:112:167.2:-20.0,112:141:180.0:-30.0"),
-                ],
-            )],
-        );
-    }
-
-    #[test]
-    fn record_of_rc_limit_and_rc_bands_match_the_service_literals() {
+    fn record_of_rc_limit_matches_the_service_literals() {
         assert_eq!(
             Note::RcLimit {
                 hz: 400.0,
@@ -797,13 +783,6 @@ mod tests {
                     ("positions", "9"),
                 ],
             )],
-        );
-        assert_eq!(
-            Note::RcBands {
-                bands: vec![(20.0, 300.0), (15_000.5, 20_000.0)],
-            }
-            .record(),
-            vec![record("rc_bands", &[("bands", "20-300,15000.5-20000")],)],
         );
     }
 
@@ -953,14 +932,6 @@ mod tests {
                 reduced: 2,
                 cuts: 1,
             },
-            Note::DipLimit {
-                role: "R".into(),
-                dips: vec![(94.123, 7.456, 4.728), (136.0, 9.2, 5.6)],
-            },
-            Note::DipLimit {
-                role: "L".into(),
-                dips: Vec::new(),
-            },
             Note::LfAlign {
                 role: "L".into(),
                 strength: 0.75,
@@ -1035,15 +1006,6 @@ mod tests {
                         ("limited", "false"),
                     ],
                 ),
-                record(
-                    "dip_limit",
-                    &[
-                        ("role", "R"),
-                        ("count", "2"),
-                        ("dips", "94.12:7.46:4.73,136.00:9.20:5.60"),
-                    ],
-                ),
-                record("dip_limit", &[("role", "L"), ("count", "0"), ("dips", "")],),
                 record(
                     "lf_align",
                     &[
@@ -1268,5 +1230,104 @@ mod tests {
                     .all(|record| RECORD_CODES.contains(&record.code))
             );
         }
+    }
+
+    #[test]
+    fn pair_phase_records_one_record_per_band_with_index() {
+        let note = Note::PairPhase {
+            a: "L".into(),
+            b: "Ls".into(),
+            bands: vec![(89.1, 112.2, 167.25, -20.04), (112.2, 141.4, 179.96, -30.0)],
+        };
+        assert_eq!(
+            note.record(),
+            vec![
+                record(
+                    "pair_phase",
+                    &[
+                        ("a", "L"),
+                        ("b", "Ls"),
+                        ("index", "0"),
+                        ("lo_hz", "89"),
+                        ("hi_hz", "112"),
+                        ("phase_deg", "167.2"),
+                        ("loss_db", "-20.0"),
+                    ],
+                ),
+                record(
+                    "pair_phase",
+                    &[
+                        ("a", "L"),
+                        ("b", "Ls"),
+                        ("index", "1"),
+                        ("lo_hz", "112"),
+                        ("hi_hz", "141"),
+                        ("phase_deg", "180.0"),
+                        ("loss_db", "-30.0"),
+                    ],
+                ),
+            ],
+        );
+    }
+
+    #[test]
+    fn dip_limit_records_one_record_per_dip() {
+        let note = Note::DipLimit {
+            role: "R".into(),
+            dips: vec![(94.123, 7.456, 4.728), (136.0, 9.2, 5.6)],
+        };
+        assert_eq!(
+            note.record(),
+            vec![
+                record(
+                    "dip_limit",
+                    &[
+                        ("role", "R"),
+                        ("index", "0"),
+                        ("hz", "94.12"),
+                        ("depth_db", "7.46"),
+                        ("fill_db", "4.73"),
+                    ],
+                ),
+                record(
+                    "dip_limit",
+                    &[
+                        ("role", "R"),
+                        ("index", "1"),
+                        ("hz", "136.00"),
+                        ("depth_db", "9.20"),
+                        ("fill_db", "5.60"),
+                    ],
+                ),
+            ],
+        );
+        assert!(
+            Note::DipLimit {
+                role: "L".into(),
+                dips: Vec::new(),
+            }
+            .record()
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn rc_bands_records_one_record_per_band() {
+        let note = Note::RcBands {
+            bands: vec![(20.0, 300.0), (15_000.5, 20_000.0)],
+        };
+        assert_eq!(
+            note.record(),
+            vec![
+                record(
+                    "rc_bands",
+                    &[("index", "0"), ("lo_hz", "20"), ("hi_hz", "300")],
+                ),
+                record(
+                    "rc_bands",
+                    &[("index", "1"), ("lo_hz", "15000.5"), ("hi_hz", "20000"),],
+                ),
+            ],
+        );
     }
 }
