@@ -1503,7 +1503,7 @@ id = "ipc.measure_methods"
 kind = "ipc"
 milestone = "M4"
 status = "implemented"
-tests = ["secs-service::rew_recorded_transport_records_each_role_and_warning", "secs-service::rew_license_observation_tracks_rejection_success_and_launch_reset"]
+tests = ["secs-service::rew_configures_once_per_position_td172", "secs-service::rew_license_observation_tracks_rejection_success_and_launch_reset"]
 
 [[feature]]
 id = "ipc.measure_configure"

@@ -785,26 +785,20 @@ fn rew_script_with_cal(input_cal: &str) -> Vec<secs_rew::RecordedExchange> {
                 get("/audio/java/inputs", json!(["1: Demo In 1"]), 5),
                 get("/audio/java/input-device", json!("Demo USB Mic"), 5),
             ]);
-        } else {
+        }
+        if i == 0 {
             script.extend([
-                get("/audio/java/input-device", json!("Demo USB Mic"), 5),
-                get("/audio/java/output-device", json!("Demo Speakers (2ch)"), 5),
-                get("/audio/java/input", json!("1: Demo In 1"), 5),
-                get("/audio/java/output-device", json!("Demo Speakers (2ch)"), 5),
-                get("/audio/java/input-device", json!("Demo USB Mic"), 5),
+                post("/application/blocking", json!(true)),
+                post("/audio/samplerate", json!({"value":48000.0,"unit":"Hz"})),
+                post(
+                    "/measure/sweep/configuration",
+                    json!({"startFrequency":20,"endFrequency":20000,"length":"64k"}),
+                ),
+                post("/measure/level", json!({"value":-20.0,"unit":"dBFS"})),
+                get("/measure/sweep/repetitions", json!(1), 5),
+                post("/measure/timing/reference", json!("None")),
             ]);
         }
-        script.extend([
-            post("/application/blocking", json!(true)),
-            post("/audio/samplerate", json!({"value":48000.0,"unit":"Hz"})),
-            post(
-                "/measure/sweep/configuration",
-                json!({"startFrequency":20,"endFrequency":20000,"length":"64k"}),
-            ),
-            post("/measure/level", json!({"value":-20.0,"unit":"dBFS"})),
-            get("/measure/sweep/repetitions", json!(1), 5),
-            post("/measure/timing/reference", json!("None")),
-        ]);
         script.push(post(
             "/measure/subscribe",
             json!({"url":"callback","parameters":{}}),
@@ -856,7 +850,7 @@ fn rew_script() -> Vec<secs_rew::RecordedExchange> {
 }
 
 #[test]
-fn rew_recorded_transport_records_each_role_and_warning() {
+fn rew_configures_once_per_position_td172() {
     let root = root("rew");
     let path = root.join("room.secs");
     let mut script = rew_script();
@@ -886,6 +880,21 @@ fn rew_recorded_transport_records_each_role_and_warning() {
     };
     assert_eq!(methods.rew.pro, Some(true));
     transport.assert_finished();
+    let calls = transport.calls();
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|request| request.path == "/measure/sweep/configuration")
+            .count(),
+        1
+    );
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|request| request.path == "/audio/java/output-channel")
+            .count(),
+        2
+    );
     let mut store = secs_project::MeasurementStore::open(&path).unwrap();
     for role in ["L", "R"] {
         assert_eq!(
@@ -1041,8 +1050,8 @@ fn rew_cancel_keeps_already_recorded_role() {
     let second = script
         .iter()
         .enumerate()
-        .filter(|(_, e)| e.request.path == "/audio/java/input-device")
-        .nth(2)
+        .filter(|(_, exchange)| exchange.request.path == "/measure/subscribe")
+        .nth(1)
         .unwrap()
         .0;
     script.truncate(second);

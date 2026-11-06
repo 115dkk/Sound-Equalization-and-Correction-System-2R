@@ -5,6 +5,7 @@ use std::{
     fs,
     io::Read,
     sync::{Arc as SyncArc, Mutex},
+    time::Duration,
 };
 
 const MAX_CALIBRATION_BYTES: u64 = 4 * 1024 * 1024;
@@ -75,8 +76,6 @@ pub struct RewMeasurer<R> {
     unix_ms: SyncArc<dyn Fn() -> i64 + Send + Sync>,
     link: Option<RewLink>,
     notices: Vec<secs_types::ipc::Notice>,
-    cache_calibration: bool,
-    position_calibration: Option<Option<secs_mdat::CalFile>>,
 }
 impl<R: std::fmt::Debug> std::fmt::Debug for RewMeasurer<R> {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -93,8 +92,6 @@ impl<R> RewMeasurer<R> {
             unix_ms,
             link: None,
             notices: Vec::new(),
-            cache_calibration: false,
-            position_calibration: None,
         }
     }
 
@@ -108,8 +105,6 @@ impl<R> RewMeasurer<R> {
             unix_ms,
             link: Some(link),
             notices: Vec::new(),
-            cache_calibration: false,
-            position_calibration: None,
         }
     }
 
@@ -172,6 +167,198 @@ fn read_calibration(path: &str) -> Result<Vec<u8>, (&'static str, String)> {
     Ok(bytes)
 }
 
+trait RoleRecorder {
+    fn configure_position(
+        &mut self,
+        plan: &secs_rew::MeasurementPlan,
+    ) -> Result<(), secs_rew::RewError>;
+
+    fn record_role(
+        &mut self,
+        plan: &secs_rew::MeasurementPlan,
+        role: &str,
+        pos: u32,
+        progress: Option<secs_rew::ProgressCallback>,
+        cancel: &secs_rew::CancelToken,
+    ) -> Result<Option<secs_rew::MeasurementResult>, secs_rew::RewError>;
+}
+
+impl RoleRecorder for secs_rew::RewClient<Transport> {
+    fn configure_position(
+        &mut self,
+        plan: &secs_rew::MeasurementPlan,
+    ) -> Result<(), secs_rew::RewError> {
+        self.configure(plan)
+    }
+
+    fn record_role(
+        &mut self,
+        plan: &secs_rew::MeasurementPlan,
+        role: &str,
+        pos: u32,
+        progress: Option<secs_rew::ProgressCallback>,
+        cancel: &secs_rew::CancelToken,
+    ) -> Result<Option<secs_rew::MeasurementResult>, secs_rew::RewError> {
+        if cancel.is_cancelled() {
+            if let Some(callback) = &progress {
+                callback(secs_rew::progress(
+                    role,
+                    pos,
+                    "cancelled",
+                    0.0,
+                    "측정을 취소했습니다",
+                ));
+            }
+            return Ok(None);
+        }
+        let own_progress = if let Some(callback) = progress.clone() {
+            let role = role.to_owned();
+            self.subscribe_progress(SyncArc::new(move |body| {
+                let (percent, message) = secs_rew::parse_progress(&body);
+                if let Some(percent) = percent {
+                    callback(secs_rew::progress(
+                        &role,
+                        pos,
+                        "running",
+                        percent.clamp(0.0, 100.0) * 0.9,
+                        &message,
+                    ));
+                }
+            }))
+            .is_ok()
+        } else {
+            false
+        };
+        let result = (|| {
+            if cancel.is_cancelled() {
+                if let Some(callback) = &progress {
+                    callback(secs_rew::progress(
+                        role,
+                        pos,
+                        "cancelled",
+                        0.0,
+                        "측정을 취소했습니다",
+                    ));
+                }
+                return Ok(None);
+            }
+            let name = plan.name_for(role, pos);
+            if let Some(callback) = &progress {
+                callback(secs_rew::progress(
+                    role,
+                    pos,
+                    "sweep",
+                    0.0,
+                    &format!("{role} 스윕 (위치 {pos})"),
+                ));
+            }
+            self.set_output_channel(plan.output_for(role))?;
+            self.set_naming(&name)?;
+            let (base, band) = secs_rew::split_role(role);
+            let suffix = band.map(|band| format!("/{band}")).unwrap_or_default();
+            self.set_notes(&format!(
+                "SECS {base}{suffix} P{pos} ({} timing)",
+                plan.timing_reference
+            ))?;
+            let before = self.measurement_ids()?;
+            if let Err(error) = self.start_sweep() {
+                if matches!(error, secs_rew::RewError::ProRequired { .. }) || !cancel.is_cancelled()
+                {
+                    return Err(error);
+                }
+                return Ok(None);
+            }
+            let id = if cancel.is_cancelled() {
+                None
+            } else {
+                self.wait_for_new_measurement(
+                    &before,
+                    Duration::from_secs_f64(Self::sweep_wait_s(plan)),
+                    cancel,
+                )?
+            };
+            if cancel.is_cancelled() {
+                self.abort();
+                if let Some(callback) = &progress {
+                    callback(secs_rew::progress(
+                        role,
+                        pos,
+                        "cancelled",
+                        0.0,
+                        "측정을 취소했습니다",
+                    ));
+                }
+                return Ok(None);
+            }
+            let id = id.ok_or_else(|| secs_rew::RewError::Schema {
+                path: "/measurements".into(),
+                message: format!("no new measurement: {name}"),
+            })?;
+            if let Some(callback) = &progress {
+                callback(secs_rew::progress(
+                    role,
+                    pos,
+                    "process",
+                    90.0,
+                    &format!("{role} 임펄스 응답 수신"),
+                ));
+            }
+            let ir = self.impulse_response(&id)?;
+            let result = secs_rew::MeasurementResult {
+                role: role.to_owned(),
+                pos,
+                uuid: Some(id.clone()),
+                ir: ir.ir,
+                sample_rate: ir.sample_rate,
+                name,
+                spl_db: self.spl(1),
+                t0_s: ir.t0_s,
+                snr_db: self.snr_db(&id),
+                spl_offset_db: self.spl_offset_db(&id),
+            };
+            if let Some(callback) = &progress {
+                callback(secs_rew::progress(
+                    role,
+                    pos,
+                    "done",
+                    100.0,
+                    &format!("{role} 완료"),
+                ));
+            }
+            Ok(Some(result))
+        })();
+        if own_progress {
+            self.unsubscribe_progress();
+        }
+        result
+    }
+}
+
+impl<S: secs_rew::IrSource> RoleRecorder for secs_rew::FakeRew<S> {
+    fn configure_position(
+        &mut self,
+        _plan: &secs_rew::MeasurementPlan,
+    ) -> Result<(), secs_rew::RewError> {
+        Ok(())
+    }
+
+    fn record_role(
+        &mut self,
+        plan: &secs_rew::MeasurementPlan,
+        role: &str,
+        pos: u32,
+        progress: Option<secs_rew::ProgressCallback>,
+        cancel: &secs_rew::CancelToken,
+    ) -> Result<Option<secs_rew::MeasurementResult>, secs_rew::RewError> {
+        let mut single = plan.clone();
+        single.roles = vec![role.to_owned()];
+        Ok(self
+            .run_position(&single, pos, progress, cancel)?
+            .into_iter()
+            .next())
+    }
+}
+
 impl<R> Measurer for RewMeasurer<R>
 where
     R: secs_rew::RewStatus
@@ -179,6 +366,7 @@ where
         + secs_rew::LevelMonitor
         + secs_rew::MeasurementEnvironment
         + secs_rew::Measurer
+        + RoleRecorder
         + Send,
 {
     fn commit_boundary(&self) -> CommitBoundary {
@@ -223,24 +411,83 @@ where
         cancel: &CancelToken,
         record: &mut dyn FnMut(MeasurementResult) -> Result<(), MeasureError>,
     ) -> Result<(), MeasureError> {
-        self.cache_calibration = true;
-        self.position_calibration = None;
         let measured = (|| {
+            let current_audio = self.client.current_audio();
+            let output_devices = self.client.output_devices();
+            let input_devices = self.client.input_devices();
+            let fallback = |stored: &str, devices: &[secs_rew::DeviceInfo]| {
+                if devices
+                    .iter()
+                    .any(|device| device.id == stored || device.name == stored)
+                {
+                    stored.to_owned()
+                } else {
+                    String::new()
+                }
+            };
+            let output_device = current_audio
+                .output_device
+                .unwrap_or_else(|| fallback(&plan.output_device, &output_devices));
+            let input_device = current_audio
+                .input_device
+                .unwrap_or_else(|| fallback(&plan.input_device, &input_devices));
+            let progress = progress.map(|sink| {
+                Arc::new(move |progress: secs_rew::Progress| {
+                    sink(Progress {
+                        role: progress.role,
+                        pos: i64::from(progress.pos),
+                        phase: progress.phase,
+                        percent: progress.percent,
+                    });
+                }) as secs_rew::ProgressCallback
+            });
+            let rew_plan = to_rew_plan(plan)?;
+            let position = positive(pos, "position")?;
+            self.client.configure_position(&rew_plan)?;
+            let mut calibration_loaded = false;
+            let mut calibration = None;
             for role in &plan.roles {
-                if cancel.is_cancelled() {
+                let Some(result) = self.client.record_role(
+                    &rew_plan,
+                    role,
+                    position,
+                    progress.clone(),
+                    &cancel.rew,
+                )?
+                else {
                     break;
+                };
+                if !calibration_loaded {
+                    calibration = self.input_calibration();
+                    calibration_loaded = true;
                 }
-                let mut single = plan.clone();
-                single.roles = vec![role.clone()];
-                for result in self.measure_position(&single, pos, progress.clone(), cancel)? {
-                    record(result)?;
-                }
+                let output_channel = format!("out {}", plan.output_for(&result.role));
+                let source_info = secs_mdat::from_rew_measurement(
+                    calibration.as_ref(),
+                    &output_device,
+                    &input_device,
+                    &output_channel,
+                    (self.unix_ms)(),
+                )
+                .ok()
+                .flatten();
+                record(MeasurementResult {
+                    role: result.role,
+                    pos: i64::from(result.pos),
+                    ir: result.ir,
+                    sample_rate: result.sample_rate,
+                    t0_s: result.t0_s,
+                    spl_db: result.spl_db,
+                    spl_offset_db: result.spl_offset_db,
+                    snr_db: result.snr_db,
+                    uuid: result.uuid,
+                    source: None,
+                    source_info,
+                })?;
             }
             Ok(())
         })();
-        self.cache_calibration = false;
-        self.position_calibration = None;
-        measured
+        self.observe(measured)
     }
     fn measure_position(
         &mut self,
@@ -285,18 +532,7 @@ where
                 progress,
                 &cancel.rew,
             )?;
-            let cal = if self.cache_calibration {
-                match self.position_calibration.clone() {
-                    Some(cal) => cal,
-                    None => {
-                        let cal = self.input_calibration();
-                        self.position_calibration = Some(cal.clone());
-                        cal
-                    }
-                }
-            } else {
-                self.input_calibration()
-            };
+            let cal = self.input_calibration();
             Ok(results
                 .into_iter()
                 .map(|r| {
