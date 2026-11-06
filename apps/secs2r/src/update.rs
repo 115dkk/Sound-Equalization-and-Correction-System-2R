@@ -9,7 +9,7 @@ use secs_types::ipc::{
     ErrorCode, IpcError, PendingUpdate, UpdateInstall, UpdateNotice, UpdatePhase, UpdatePolicy,
     UpdateStatus,
 };
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Manager, Runtime};
 use tauri_plugin_updater::{Update, UpdaterExt};
 
 const RELEASES: &str =
@@ -29,15 +29,33 @@ struct Shared {
     wake: Condvar,
 }
 
-#[derive(Clone)]
-pub(crate) struct TauriUpdates {
-    app: AppHandle,
+/// Receives the original cause of an update failure (TD-164). The screen
+/// keeps its fixed reason text; the app log gets the cause.
+pub(crate) type UpdateLog = Arc<dyn Fn(&str) + Send + Sync>;
+
+pub(crate) struct TauriUpdates<R: Runtime = tauri::Wry> {
+    app: AppHandle<R>,
     path: PathBuf,
     portable: bool,
+    endpoint: Option<String>,
+    log: UpdateLog,
     shared: Arc<Shared>,
 }
 
-impl std::fmt::Debug for TauriUpdates {
+impl<R: Runtime> Clone for TauriUpdates<R> {
+    fn clone(&self) -> Self {
+        Self {
+            app: self.app.clone(),
+            path: self.path.clone(),
+            portable: self.portable,
+            endpoint: self.endpoint.clone(),
+            log: self.log.clone(),
+            shared: self.shared.clone(),
+        }
+    }
+}
+
+impl<R: Runtime> std::fmt::Debug for TauriUpdates<R> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("TauriUpdates")
             .field("path", &self.path)
@@ -136,9 +154,9 @@ fn remove_pending(path: &Path) -> std::io::Result<()> {
     }
 }
 
-impl TauriUpdates {
+impl<R: Runtime> TauriUpdates<R> {
     /// Scheduling starts only after the service has loaded the stored policy.
-    pub(crate) fn new(app: AppHandle, config_dir: &Path) -> Self {
+    pub(crate) fn new(app: AppHandle<R>, config_dir: &Path, log: UpdateLog) -> Self {
         let path = config_dir.join("update.json");
         let current = app.package_info().version.to_string();
         let notice = std::fs::read(&path)
@@ -156,6 +174,9 @@ impl TauriUpdates {
             app,
             path,
             portable,
+            endpoint: endpoint_override(std::env::var("SECS2R_UPDATE_ENDPOINT").ok().as_deref())
+                .map(str::to_owned),
+            log,
             shared: Arc::new(Shared {
                 inner: Mutex::new(Inner {
                     status: UpdateStatus {
@@ -174,6 +195,18 @@ impl TauriUpdates {
                 wake: Condvar::new(),
             }),
         }
+    }
+
+    #[cfg(test)]
+    fn with_endpoint(mut self, endpoint: &str) -> Self {
+        self.endpoint = Some(endpoint.to_owned());
+        self
+    }
+
+    /// Logs the cause of a failure the screen only sees as a fixed reason
+    /// (audit #186 TD-164).
+    fn failure(&self, stage: &str, cause: &dyn std::fmt::Display) {
+        (self.log)(&format!("{stage} failed: {cause}"));
     }
 
     pub(crate) fn start(&self, policy: UpdatePolicy) {
@@ -238,20 +271,28 @@ impl TauriUpdates {
                     .updater_builder()
                     .restart_after_install(false)
                     .timeout(Duration::from_secs(60));
-                if let Some(endpoint) =
-                    endpoint_override(std::env::var("SECS2R_UPDATE_ENDPOINT").ok().as_deref())
-                {
-                    let url = endpoint.parse().map_err(|_| "Invalid update address")?;
-                    builder = builder
-                        .endpoints(vec![url])
-                        .map_err(|_| "Invalid update address")?;
+                if let Some(endpoint) = this.endpoint.as_deref() {
+                    let url = endpoint.parse().map_err(|error| {
+                        this.failure("update address", &format!("{endpoint:?}: {error}"));
+                        "Invalid update address"
+                    })?;
+                    builder = builder.endpoints(vec![url]).map_err(|error| {
+                        this.failure("update address", &error);
+                        "Invalid update address"
+                    })?;
                 }
                 builder
                     .build()
-                    .map_err(|_| "Could not configure updates")?
+                    .map_err(|error| {
+                        this.failure("update configuration", &error);
+                        "Could not configure updates"
+                    })?
                     .check()
                     .await
-                    .map_err(|_| "Could not check for updates")
+                    .map_err(|error| {
+                        this.failure("update check", &error);
+                        "Could not check for updates"
+                    })
             }
             .await;
             let download = {
@@ -342,7 +383,8 @@ impl TauriUpdates {
                         .and_then(serde_json::Value::as_str)
                         .map(str::to_owned),
                 };
-                if atomic_pending(&self.path, &pending).is_err() {
+                if let Err(error) = atomic_pending(&self.path, &pending) {
+                    self.failure("saving the update details", &error);
                     inner.status.phase = UpdatePhase::Failed {
                         reason: "Could not save update details".into(),
                     };
@@ -357,7 +399,8 @@ impl TauriUpdates {
                     )),
                 };
             }
-            Err(_) => {
+            Err(error) => {
+                self.failure("update download", &error);
                 inner.status.phase = UpdatePhase::Failed {
                     reason: "Could not download or verify the update".into(),
                 }
@@ -394,7 +437,8 @@ impl TauriUpdates {
         match update.restart_after_install(restart).install(bytes) {
             Ok(()) if restart => self.app.restart(),
             Ok(()) => {}
-            Err(_) => {
+            Err(error) => {
+                self.failure("update install", &error);
                 lock(&self.shared.inner).status.phase = UpdatePhase::Failed {
                     reason: "Could not install the update".into(),
                 };
@@ -427,7 +471,7 @@ impl TauriUpdates {
     }
 }
 
-impl UpdateAdapter for TauriUpdates {
+impl<R: Runtime> UpdateAdapter for TauriUpdates<R> {
     fn status(&self) -> UpdateStatus {
         lock(&self.shared.inner).status.clone()
     }
@@ -520,6 +564,69 @@ impl UpdateAdapter for TauriUpdates {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Instant;
+
+    /// The real updater, a mock app and a closed port: the connection error
+    /// reaches the log with its cause while the screen's reason stays fixed
+    /// (audit #186 TD-164).
+    #[test]
+    fn check_failure_logs_its_cause_td164() {
+        let config: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        // The mock context carries no plugin section; give the updater the
+        // app's own configuration (public key, endpoints).
+        let mut context = tauri::test::mock_context(tauri::test::noop_assets());
+        context
+            .config_mut()
+            .plugins
+            .0
+            .insert("updater".into(), config["plugins"]["updater"].clone());
+        let app = tauri::test::mock_builder()
+            .plugin(tauri_plugin_updater::Builder::new().build())
+            .build(context)
+            .expect("mock app");
+        let lines: Arc<Mutex<Vec<String>>> = Arc::default();
+        let sink = lines.clone();
+        let dir = std::env::temp_dir().join(format!(
+            "secs2r-update-td164-{}-{}",
+            std::process::id(),
+            Instant::now().elapsed().as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let updates = TauriUpdates::new(
+            app.handle().clone(),
+            &dir,
+            Arc::new(move |text| lock(&sink).push(text.to_owned())),
+        )
+        .with_endpoint("https://127.0.0.1:1/latest.json");
+
+        let status = updates.check().unwrap();
+        assert_eq!(status.phase, UpdatePhase::Checking);
+        let deadline = Instant::now() + Duration::from_secs(60);
+        let phase = loop {
+            let phase = updates.status().phase;
+            if !matches!(phase, UpdatePhase::Checking) {
+                break phase;
+            }
+            assert!(Instant::now() < deadline, "the check never settled");
+            std::thread::sleep(Duration::from_millis(50));
+        };
+        assert_eq!(
+            phase,
+            UpdatePhase::Failed {
+                reason: "Could not check for updates".into()
+            }
+        );
+        let lines = lock(&lines);
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.starts_with("update check failed: ") && line.contains("127.0.0.1")),
+            "the connection error must reach the log with its cause: {lines:?}"
+        );
+        drop(lines);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn updater_config_requires_signed_version() {

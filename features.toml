@@ -17,7 +17,7 @@ kind = "app"
 milestone = "M6"
 status = "implemented"
 upstream = "new; ADR 0020"
-tests = ["secs2r::update_policy_and_portable_decisions", "secs2r::update_endpoint_override_preserves_nonempty_address", "secs2r::update_notice_matches_running_version_and_tracks_skipped_releases", "secs2r::update_actions_reject_wrong_phases", "secs2r::updater_config_requires_signed_version"]
+tests = ["secs2r::update_policy_and_portable_decisions", "secs2r::update_endpoint_override_preserves_nonempty_address", "secs2r::update_notice_matches_running_version_and_tracks_skipped_releases", "secs2r::update_actions_reject_wrong_phases", "secs2r::updater_config_requires_signed_version", "secs2r::check_failure_logs_its_cause_td164"]
 note = "The managed service refuses an update source that is a link or junction (audit #155 TD-135); apps/secs2r-host/src/rules.rs pins it with Windows-only tests, update_source_refuses_an_existing_system_junction and update_source_refuses_an_existing_directory_symlink, that the Linux registry check cannot list."
 
 [[feature]]

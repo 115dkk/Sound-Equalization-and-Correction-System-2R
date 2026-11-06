@@ -167,7 +167,12 @@ fn main() {
                 );
                 previous_hook(info);
             }));
-            let updates = Arc::new(update::TauriUpdates::new(handle.clone(), &config_dir));
+            let update_log = log.clone();
+            let updates = Arc::new(update::TauriUpdates::new(
+                handle.clone(),
+                &config_dir,
+                Arc::new(move |text| update_log.line(applog::Level::Error, "update", text)),
+            ));
             let hub = secs_local_api::EventHub::default();
             let observer = Arc::new(applog::FanOut {
                 first: Arc::new(hub.clone()),

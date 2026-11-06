@@ -15,6 +15,10 @@ workspace = true
 name = "secs2r"
 path = "src/main.rs"
 
+[dev-dependencies]
+# The mock runtime drives the real updater in update.rs's tests (TD-164).
+tauri = { version = "2.12", features = ["test"] }
+
 [build-dependencies]
 tauri-build = { version = "2.7", features = [] }
 
