@@ -405,6 +405,50 @@ fn remove_old_host_copy(paths: &Paths) {
 }
 
 #[cfg(target_os = "windows")]
+#[derive(Debug)]
+enum HostWorkResult {
+    Takeover {
+        pending: transitions::PendingTakeover,
+        result: Result<TakeoverWorkResult, IpcError>,
+    },
+    Repair {
+        target: Option<secs_types::ipc::ManagedEqApo>,
+        result: Result<RepairWorkResult, IpcError>,
+    },
+}
+
+#[cfg(target_os = "windows")]
+#[derive(Debug)]
+enum TakeoverWorkResult {
+    Started {
+        child: secs_sys::host::ManagedChild,
+        pid: u32,
+        takeover: PortTakeover,
+    },
+    Busy {
+        reason: &'static str,
+        detail: String,
+    },
+    NoSession,
+}
+
+#[cfg(target_os = "windows")]
+#[derive(Debug)]
+struct RepairWorkResult {
+    include_state: IncludeState,
+    repaired: Option<RepairRecord>,
+}
+
+#[cfg(target_os = "windows")]
+#[derive(Debug)]
+struct RepairRecord {
+    path: String,
+    design_id: String,
+    timestamp: String,
+    helper_pid: u32,
+}
+
+#[cfg(target_os = "windows")]
 fn service_loop(
     paths: &Paths,
     service_events: &mpsc::Receiver<secs_sys::host::ServiceEvent>,
@@ -426,6 +470,7 @@ fn service_loop(
         core.record(line);
     }
     let (config_sender, config_events) = mpsc::channel();
+    let (work_sender, work_events) = mpsc::channel();
     let (mut watcher, watcher_failure) = match configure_watcher(&core, &config_sender) {
         Ok(watcher) => (watcher, None),
         Err(error) => (None, Some(error.detail)),
@@ -445,20 +490,28 @@ fn service_loop(
     // still check the owner through managing_session.
     let mut process_rules = ProcessRules::new(secs_sys::host::active_console_session().is_some());
     let mut restart_at = None;
-    if core.managed.camilla.is_some()
-        && let Some(session) = active_session
-    {
-        launch(
+    let mut transition_state = TransitionState::new(core.managed.clone(), None);
+    if core.managed.camilla.is_some() && active_session.is_some() {
+        let (next, effects) = transitions::decide(
+            &transition_state,
+            TransitionInput::RestartTick {
+                owner_session: active_session,
+            },
+        );
+        transition_state = next;
+        drive_transition(
+            &mut transition_state,
+            effects,
             &mut core,
             &mut child,
             &mut process_rules,
+            &mut watcher,
             &mut restart_at,
+            &config_sender,
+            &work_sender,
             paths,
-            session,
         )?;
     }
-    let mut transition_state =
-        TransitionState::new(core.managed.clone(), child.as_ref().and(active_session));
     if active_session.is_some() {
         let (next, effects) = transitions::decide(
             &transition_state,
@@ -476,6 +529,7 @@ fn service_loop(
             &mut watcher,
             &mut restart_at,
             &config_sender,
+            &work_sender,
             paths,
         )?;
     }
@@ -492,6 +546,7 @@ fn service_loop(
             &mut watcher,
             &mut restart_at,
             &config_sender,
+            &work_sender,
             paths,
         )?;
     }
@@ -540,6 +595,7 @@ fn service_loop(
                         &mut watcher,
                         &mut restart_at,
                         &config_sender,
+                        &work_sender,
                         paths,
                     )?;
                     if !owner_matches {
@@ -572,6 +628,7 @@ fn service_loop(
                         &mut watcher,
                         &mut restart_at,
                         &config_sender,
+                        &work_sender,
                         paths,
                     )?;
                     if child_session_ended || owner_session_ended {
@@ -580,6 +637,18 @@ fn service_loop(
                     }
                 }
             }
+        }
+
+        while let Ok(work) = work_events.try_recv() {
+            finish_host_work(
+                work,
+                &mut core,
+                &mut child,
+                &mut transition_state,
+                &mut process_rules,
+                &mut restart_at,
+                paths,
+            )?;
         }
 
         while config_events.try_recv().is_ok() {
@@ -598,6 +667,7 @@ fn service_loop(
                 &mut watcher,
                 &mut restart_at,
                 &config_sender,
+                &work_sender,
                 paths,
             )?;
         }
@@ -620,6 +690,7 @@ fn service_loop(
                 &mut watcher,
                 &mut restart_at,
                 &config_sender,
+                &work_sender,
                 paths,
             )?;
         }
@@ -709,6 +780,7 @@ fn service_loop(
                 &mut watcher,
                 &mut restart_at,
                 &config_sender,
+                &work_sender,
                 paths,
             )?;
         }
@@ -744,6 +816,7 @@ fn service_loop(
                         &mut watcher,
                         &mut restart_at,
                         &config_sender,
+                        &work_sender,
                         paths,
                         &mut stop_after_response,
                     )
@@ -776,10 +849,10 @@ fn service_loop(
 struct RealTransitionPlatform<'a> {
     core: &'a mut Core,
     child: &'a mut Option<secs_sys::host::ManagedChild>,
-    process_rules: &'a mut ProcessRules,
     watcher: &'a mut Option<secs_sys::host::ConfigWatcher>,
     restart_at: &'a mut Option<Instant>,
     config_sender: &'a mpsc::Sender<()>,
+    work_sender: &'a mpsc::Sender<HostWorkResult>,
     paths: &'a Paths,
 }
 
@@ -798,7 +871,13 @@ impl TransitionPlatform for RealTransitionPlatform<'_> {
     }
 
     fn repair_eqapo(&mut self, session: u32) -> Result<(), IpcError> {
-        repair_eqapo(self.core, self.paths, session)
+        let target = self.core.managed.eqapo.clone();
+        let work_target = target.clone();
+        let sender = self.work_sender.clone();
+        spawn_host_work("secs2r-host-repair", move || {
+            let result = repair_eqapo_work(work_target, session);
+            let _ = sender.send(HostWorkResult::Repair { target, result });
+        })
     }
 
     fn stop_child(&mut self) -> Result<(), IpcError> {
@@ -820,18 +899,19 @@ impl TransitionPlatform for RealTransitionPlatform<'_> {
     fn launch_child(
         &mut self,
         session: u32,
-        _target: &secs_types::ipc::ManagedCamilla,
-    ) -> Result<bool, IpcError> {
+        target: &secs_types::ipc::ManagedCamilla,
+    ) -> Result<(), IpcError> {
         *self.restart_at = None;
-        launch(
-            self.core,
-            self.child,
-            self.process_rules,
-            self.restart_at,
-            self.paths,
+        let pending = transitions::PendingTakeover {
             session,
-        )?;
-        Ok(self.child.is_some())
+            target: target.clone(),
+        };
+        let work = pending.clone();
+        let sender = self.work_sender.clone();
+        spawn_host_work("secs2r-host-takeover", move || {
+            let result = takeover_work(&work);
+            let _ = sender.send(HostWorkResult::Takeover { pending, result });
+        })
     }
 
     fn log(&mut self, line: &secs_types::ipc::HostLogLine) -> Result<(), IpcError> {
@@ -846,20 +926,21 @@ fn drive_transition(
     effects: Vec<transitions::Effect>,
     core: &mut Core,
     child: &mut Option<secs_sys::host::ManagedChild>,
-    process_rules: &mut ProcessRules,
+    _process_rules: &mut ProcessRules,
     watcher: &mut Option<secs_sys::host::ConfigWatcher>,
     restart_at: &mut Option<Instant>,
     config_sender: &mpsc::Sender<()>,
+    work_sender: &mpsc::Sender<HostWorkResult>,
     paths: &Paths,
 ) -> Result<transitions::DriveOutcome, IpcError> {
     core.managed = state.managed.clone();
     let mut platform = RealTransitionPlatform {
         core,
         child,
-        process_rules,
         watcher,
         restart_at,
         config_sender,
+        work_sender,
         paths,
     };
     let outcome = transitions::drive(state, effects, &mut platform)?;
@@ -881,6 +962,7 @@ fn handle_request(
     watcher: &mut Option<secs_sys::host::ConfigWatcher>,
     restart_at: &mut Option<Instant>,
     config_sender: &mpsc::Sender<()>,
+    work_sender: &mpsc::Sender<HostWorkResult>,
     paths: &Paths,
     stop_after_response: &mut bool,
 ) -> Result<HostResponse, IpcError> {
@@ -917,6 +999,7 @@ fn handle_request(
                 watcher,
                 restart_at,
                 config_sender,
+                work_sender,
                 paths,
             )?;
             Ok(outcome
@@ -939,6 +1022,7 @@ fn handle_request(
                 watcher,
                 restart_at,
                 config_sender,
+                work_sender,
                 paths,
             )?;
             Ok(HostResponse::Ok)
@@ -1226,101 +1310,151 @@ fn port_closes(port: u16, within: Duration) -> bool {
 }
 
 #[cfg(target_os = "windows")]
-fn launch(
+fn spawn_host_work(name: &str, work: impl FnOnce() + Send + 'static) -> Result<(), IpcError> {
+    std::thread::Builder::new()
+        .name(name.to_owned())
+        .spawn(work)
+        .map(|_| ())
+        .map_err(|error| {
+            IpcError::new(
+                ErrorCode::ApplyFailed,
+                format!("start managed-host worker {name}: {error}"),
+            )
+        })
+}
+
+#[cfg(target_os = "windows")]
+fn takeover_work(pending: &transitions::PendingTakeover) -> Result<TakeoverWorkResult, IpcError> {
+    let takeover = takeover_port(pending.target.port);
+    if let PortTakeover::Busy(reason, detail) = takeover {
+        return Ok(TakeoverWorkResult::Busy { reason, detail });
+    }
+    match secs_sys::host::launch_camilla(
+        Path::new(&pending.target.exe_path),
+        Path::new(&pending.target.config_path),
+        pending.target.port,
+        pending.session,
+    ) {
+        Ok(child) => {
+            let pid = child.pid()?;
+            Ok(TakeoverWorkResult::Started {
+                child,
+                pid,
+                takeover,
+            })
+        }
+        Err(error)
+            if error
+                .params
+                .get("reason")
+                .is_some_and(|value| value == "no_session") =>
+        {
+            Ok(TakeoverWorkResult::NoSession)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+#[cfg(target_os = "windows")]
+#[allow(clippy::too_many_arguments)]
+fn schedule_failed_launch(
+    reason: &str,
     core: &mut Core,
-    child: &mut Option<secs_sys::host::ManagedChild>,
+    transition_state: &mut TransitionState,
     process_rules: &mut ProcessRules,
     restart_at: &mut Option<Instant>,
     paths: &Paths,
-    session: u32,
 ) -> Result<(), IpcError> {
-    if rules::takeover_decision(child.is_some(), None) == rules::TakeoverDecision::KeepOwnChild {
-        return Ok(());
-    }
-    let Some(managed) = core.managed.camilla.clone() else {
-        core.camilla.state = ManagedProcessState::Stopped;
-        core.camilla.pid = None;
-        return Ok(());
-    };
-    match takeover_port(managed.port) {
-        PortTakeover::Free => {}
-        PortTakeover::TakenOver => {
-            record(
-                core,
-                paths,
-                rules::log_line("takeover", [("port".to_owned(), managed.port.to_string())]),
-            )?;
-        }
-        PortTakeover::Terminated(pid) => {
+    transition_state.running_child_session = None;
+    core.camilla.pid = None;
+    match process_rules.apply(ProcessEvent::Exit, Instant::now()) {
+        ProcessAction::RestartAfter(delay) => {
+            *restart_at = Some(Instant::now() + delay);
+            transition_state.restart_scheduled = true;
+            core.camilla.restarts_in_window += 1;
+            core.camilla.state = ManagedProcessState::BackingOff {
+                until: (chrono::Utc::now() + chrono::Duration::from_std(delay).unwrap_or_default())
+                    .to_rfc3339(),
+            };
             record(
                 core,
                 paths,
                 rules::log_line(
-                    "takeover_terminated",
+                    "restart",
                     [
-                        ("port".to_owned(), managed.port.to_string()),
-                        ("pid".to_owned(), pid.to_string()),
-                    ],
-                ),
-            )?;
-        }
-        PortTakeover::Busy(reason, detail) => {
-            record(
-                core,
-                paths,
-                rules::log_line(
-                    "port_busy",
-                    [
-                        ("port".to_owned(), managed.port.to_string()),
+                        ("after_ms".to_owned(), delay.as_millis().to_string()),
                         ("reason".to_owned(), reason.to_owned()),
-                        ("detail".to_owned(), detail),
                     ],
                 ),
             )?;
-            match process_rules.apply(ProcessEvent::Exit, Instant::now()) {
-                ProcessAction::RestartAfter(delay) => {
-                    *restart_at = Some(Instant::now() + delay);
-                    core.camilla.restarts_in_window += 1;
-                    core.camilla.state = ManagedProcessState::BackingOff {
-                        until: (chrono::Utc::now()
-                            + chrono::Duration::from_std(delay).unwrap_or_default())
-                        .to_rfc3339(),
-                    };
-                    record(
-                        core,
-                        paths,
-                        rules::log_line(
-                            "restart",
-                            [
-                                ("after_ms".to_owned(), delay.as_millis().to_string()),
-                                ("reason".to_owned(), "port_busy".to_owned()),
-                            ],
-                        ),
-                    )?;
-                }
-                ProcessAction::GiveUp => {
-                    *restart_at = None;
-                    core.camilla.state = ManagedProcessState::GivenUp {
-                        reason: "port_busy".into(),
-                    };
-                    record(core, paths, rules::given_up_line("port_busy"))?;
-                }
-                _ => {}
-            }
-            core.camilla.pid = None;
-            return Ok(());
         }
+        ProcessAction::GiveUp => {
+            *restart_at = None;
+            transition_state.restart_scheduled = false;
+            core.camilla.state = ManagedProcessState::GivenUp {
+                reason: reason.into(),
+            };
+            record(core, paths, rules::given_up_line(reason))?;
+        }
+        _ => {}
     }
+    Ok(())
+}
 
-    match secs_sys::host::launch_camilla(
-        Path::new(&managed.exe_path),
-        Path::new(&managed.config_path),
-        managed.port,
-        session,
-    ) {
-        Ok(running) => {
-            let pid = running.pid()?;
+#[cfg(target_os = "windows")]
+#[allow(clippy::too_many_arguments)]
+fn finish_takeover_work(
+    pending: transitions::PendingTakeover,
+    result: Result<TakeoverWorkResult, IpcError>,
+    core: &mut Core,
+    child: &mut Option<secs_sys::host::ManagedChild>,
+    transition_state: &mut TransitionState,
+    process_rules: &mut ProcessRules,
+    restart_at: &mut Option<Instant>,
+    paths: &Paths,
+) -> Result<(), IpcError> {
+    if transition_state.pending_takeover.as_ref() != Some(&pending) {
+        if let Ok(TakeoverWorkResult::Started { child, .. }) = result {
+            let _ = child.stop();
+        }
+        return Ok(());
+    }
+    transition_state.pending_takeover = None;
+
+    match result {
+        Ok(TakeoverWorkResult::Started {
+            child: running,
+            pid,
+            takeover,
+        }) => {
+            match takeover {
+                PortTakeover::TakenOver => record(
+                    core,
+                    paths,
+                    rules::log_line(
+                        "takeover",
+                        [("port".to_owned(), pending.target.port.to_string())],
+                    ),
+                )?,
+                PortTakeover::Terminated(terminated_pid) => record(
+                    core,
+                    paths,
+                    rules::log_line(
+                        "takeover_terminated",
+                        [
+                            ("port".to_owned(), pending.target.port.to_string()),
+                            ("pid".to_owned(), terminated_pid.to_string()),
+                        ],
+                    ),
+                )?,
+                PortTakeover::Free => {}
+                PortTakeover::Busy(..) => unreachable!("busy work does not launch"),
+            }
+            if let Some(previous) = child.replace(running) {
+                let _ = previous.stop();
+            }
             process_rules.launched();
+            transition_state.running_child_session = Some(pending.session);
             core.camilla.state = ManagedProcessState::Running;
             core.camilla.pid = Some(pid);
             record(
@@ -1330,32 +1464,127 @@ fn launch(
                     "launch",
                     [
                         ("pid".to_owned(), pid.to_string()),
-                        ("design_id".to_owned(), managed.design_id),
+                        ("design_id".to_owned(), pending.target.design_id),
+                    ],
+                ),
+            )
+        }
+        Ok(TakeoverWorkResult::Busy { reason, detail }) => {
+            record(
+                core,
+                paths,
+                rules::log_line(
+                    "port_busy",
+                    [
+                        ("port".to_owned(), pending.target.port.to_string()),
+                        ("reason".to_owned(), reason.to_owned()),
+                        ("detail".to_owned(), detail),
                     ],
                 ),
             )?;
-            *child = Some(running);
-            Ok(())
+            schedule_failed_launch(
+                "port_busy",
+                core,
+                transition_state,
+                process_rules,
+                restart_at,
+                paths,
+            )
         }
-        Err(error)
-            if error
-                .params
-                .get("reason")
-                .is_some_and(|value| value == "no_session") =>
-        {
+        Ok(TakeoverWorkResult::NoSession) => {
+            transition_state.running_child_session = None;
             core.camilla.state = ManagedProcessState::NoSession;
             core.camilla.pid = None;
             Ok(())
         }
-        Err(error) => Err(error),
+        Err(error) => {
+            record(
+                core,
+                paths,
+                rules::log_line("launch_failed", [("detail".to_owned(), error.detail)]),
+            )?;
+            schedule_failed_launch(
+                "launch_failed",
+                core,
+                transition_state,
+                process_rules,
+                restart_at,
+                paths,
+            )
+        }
     }
 }
 
 #[cfg(target_os = "windows")]
-fn repair_eqapo(core: &mut Core, paths: &Paths, session: u32) -> Result<(), IpcError> {
-    let Some(managed) = core.managed.eqapo.clone() else {
-        core.eqapo_include = IncludeState::Absent;
-        return Ok(());
+#[allow(clippy::too_many_arguments)]
+fn finish_host_work(
+    work: HostWorkResult,
+    core: &mut Core,
+    child: &mut Option<secs_sys::host::ManagedChild>,
+    transition_state: &mut TransitionState,
+    process_rules: &mut ProcessRules,
+    restart_at: &mut Option<Instant>,
+    paths: &Paths,
+) -> Result<(), IpcError> {
+    match work {
+        HostWorkResult::Takeover { pending, result } => finish_takeover_work(
+            pending,
+            result,
+            core,
+            child,
+            transition_state,
+            process_rules,
+            restart_at,
+            paths,
+        ),
+        HostWorkResult::Repair { target, result } => {
+            if transition_state.managed.eqapo != target {
+                return Ok(());
+            }
+            let transition_result = match result {
+                Ok(work) => {
+                    core.eqapo_include = work.include_state;
+                    if let Some(repaired) = work.repaired {
+                        core.last_repair = Some(repaired.timestamp.clone());
+                        record(
+                            core,
+                            paths,
+                            rules::log_line(
+                                "repair",
+                                [
+                                    ("path".to_owned(), repaired.path),
+                                    ("design_id".to_owned(), repaired.design_id),
+                                    ("timestamp".to_owned(), repaired.timestamp),
+                                    ("helper_pid".to_owned(), repaired.helper_pid.to_string()),
+                                ],
+                            ),
+                        )?;
+                    }
+                    Ok(())
+                }
+                Err(error) => {
+                    core.eqapo_include = IncludeState::Damaged;
+                    Err(error)
+                }
+            };
+            if let Some(line) = transitions::finish_repair(transition_state, &transition_result) {
+                record(core, paths, line)?;
+            }
+            Ok(())
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn repair_eqapo_work(
+    managed: Option<secs_types::ipc::ManagedEqApo>,
+    session: u32,
+) -> Result<RepairWorkResult, IpcError> {
+    let Some(managed) = managed else {
+        return Ok(RepairWorkResult {
+            include_state: IncludeState::Absent,
+            repaired: None,
+        });
     };
     let config_root = validate_eqapo_path(Path::new(&managed.config_path))?;
     let config = config_root.join("config.txt");
@@ -1365,9 +1594,12 @@ fn repair_eqapo(core: &mut Core, paths: &Paths, session: u32) -> Result<(), IpcE
             format!("read {}: {error}", config.display()),
         )
     })?;
-    core.eqapo_include = include_state(&text);
+    let state = include_state(&text);
     if rules::repair_text(&text).is_none() {
-        return Ok(());
+        return Ok(RepairWorkResult {
+            include_state: state,
+            repaired: None,
+        });
     }
 
     let host = std::env::current_exe().map_err(|error| {
@@ -1399,22 +1631,16 @@ fn repair_eqapo(core: &mut Core, paths: &Paths, session: u32) -> Result<(), IpcE
             format!("read repaired {}: {error}", config.display()),
         )
     })?;
-    core.eqapo_include = include_state(&repaired);
     let timestamp = chrono::Utc::now().to_rfc3339();
-    core.last_repair = Some(timestamp.clone());
-    record(
-        core,
-        paths,
-        rules::log_line(
-            "repair",
-            [
-                ("path".to_owned(), config.to_string_lossy().into_owned()),
-                ("design_id".to_owned(), managed.design_id),
-                ("timestamp".to_owned(), timestamp),
-                ("helper_pid".to_owned(), helper_pid.to_string()),
-            ],
-        ),
-    )
+    Ok(RepairWorkResult {
+        include_state: include_state(&repaired),
+        repaired: Some(RepairRecord {
+            path: config.to_string_lossy().into_owned(),
+            design_id: managed.design_id,
+            timestamp,
+            helper_pid,
+        }),
+    })
 }
 
 #[cfg(target_os = "windows")]

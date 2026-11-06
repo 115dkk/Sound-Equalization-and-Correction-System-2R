@@ -1312,7 +1312,7 @@ kind = "service"
 milestone = "M6"
 status = "implemented"
 upstream = "new"
-tests = ["secs2r-host::state_file_round_trip_missing_and_corrupt_handling", "secs2r-host::exit_logon_and_logoff_choose_supervision_actions", "secs2r-host::file_change_repairs_only_absent_or_damaged_pairs", "secs2r-host::log_rotates_once_at_the_size_cap", "secs2r-host::changing_owner_discards_the_previous_users_targets", "secs2r-host::same_owner_keeps_targets_omitted_from_an_update", "secs2r-host::failed_eqapo_repair_does_not_stop_camilla_or_the_driver", "secs2r-host::logoff_only_stops_a_child_running_in_that_session", "secs2r-host::core_keeps_one_thousand_logs_and_bounds_the_serialized_response", "secs2r-host::watcher_failure_damages_eqapo_and_still_accepts_stop_managing", "secs-sys::worker_error_reports_nonzero_service_exit", "secs-sys::real_pipe_slot_never_releases_name_between_accept_polls", "secs-sys::checked_pipe_call_rejects_a_test_process_server"]
+tests = ["secs2r-host::state_file_round_trip_missing_and_corrupt_handling", "secs2r-host::exit_logon_and_logoff_choose_supervision_actions", "secs2r-host::file_change_repairs_only_absent_or_damaged_pairs", "secs2r-host::log_rotates_once_at_the_size_cap", "secs2r-host::changing_owner_discards_the_previous_users_targets", "secs2r-host::same_owner_keeps_targets_omitted_from_an_update", "secs2r-host::failed_eqapo_repair_does_not_stop_camilla_or_the_driver", "secs2r-host::logoff_only_stops_a_child_running_in_that_session", "secs2r-host::core_keeps_one_thousand_logs_and_bounds_the_serialized_response", "secs2r-host::watcher_failure_damages_eqapo_and_still_accepts_stop_managing", "secs-sys::worker_error_reports_nonzero_service_exit", "secs-sys::real_pipe_slot_never_releases_name_between_accept_polls", "secs-sys::checked_pipe_call_rejects_a_test_process_server", "secs-sys::slow_handler_gets_a_response_with_a_fresh_write_deadline", "secs2r-host::set_managed_accepts_takeover_and_logoff_while_work_is_pending"]
 
 [[feature]]
 id = "host.shell"
@@ -2317,7 +2317,7 @@ kind = "apply"
 milestone = "M6"
 status = "implemented"
 upstream = "new"
-tests = ["secs-apply::supervise"]
+tests = ["secs-apply::supervise", "secs2r-host::set_managed_accepts_takeover_and_logoff_while_work_is_pending"]
 
 [[feature]]
 id = "engine.input_hp"

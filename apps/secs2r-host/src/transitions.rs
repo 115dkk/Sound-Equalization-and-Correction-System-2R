@@ -58,12 +58,19 @@ pub enum Effect {
     Log(HostLogLine),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingTakeover {
+    pub session: u32,
+    pub target: ManagedCamilla,
+}
+
 #[derive(Debug, Clone)]
 pub struct State {
     pub managed: HostManaged,
     pub running_child_session: Option<u32>,
     pub restart_scheduled: bool,
     pub eqapo_error: Option<String>,
+    pub pending_takeover: Option<PendingTakeover>,
     repair_attempts: u8,
     repair_retry_after: Option<Duration>,
     repair_retry_pending: bool,
@@ -76,6 +83,7 @@ impl State {
             running_child_session,
             restart_scheduled: false,
             eqapo_error: None,
+            pending_takeover: None,
             repair_attempts: 0,
             repair_retry_after: None,
             repair_retry_pending: false,
@@ -105,7 +113,7 @@ pub trait Platform {
     fn stop_child(&mut self) -> Result<(), IpcError>;
     fn clear_camilla_status(&mut self);
     fn clear_eqapo_status(&mut self);
-    fn launch_child(&mut self, session: u32, target: &ManagedCamilla) -> Result<bool, IpcError>;
+    fn launch_child(&mut self, session: u32, target: &ManagedCamilla) -> Result<(), IpcError>;
     fn log(&mut self, line: &HostLogLine) -> Result<(), IpcError>;
 }
 
@@ -130,6 +138,22 @@ pub fn managed_after_update(
     managed.owner_session_id = Some(requester_session);
     managed.owner_user_sid = Some(requester_sid.to_owned());
     managed
+}
+
+fn schedule_takeover(
+    state: &mut State,
+    effects: &mut Vec<Effect>,
+    session: u32,
+    target: ManagedCamilla,
+) {
+    let pending = PendingTakeover {
+        session,
+        target: target.clone(),
+    };
+    if state.pending_takeover.as_ref() != Some(&pending) {
+        state.pending_takeover = Some(pending);
+        effects.push(Effect::LaunchChild { session, target });
+    }
 }
 
 pub fn decide(state: &State, input: Input) -> (State, Vec<Effect>) {
@@ -161,24 +185,27 @@ pub fn decide(state: &State, input: Input) -> (State, Vec<Effect>) {
                     session: requester_session,
                 });
             }
-            if previous_camilla != next.managed.camilla && next.running_child_session.is_some() {
+            if previous_camilla != next.managed.camilla
+                && (next.running_child_session.is_some() || next.pending_takeover.is_some())
+            {
                 effects.push(Effect::StopChild);
+                next.pending_takeover = None;
             }
             if managing_session == Some(requester_session)
                 && let Some(target) = next.managed.camilla.clone()
                 && (next.running_child_session.is_none()
                     || previous_camilla != next.managed.camilla)
             {
-                effects.push(Effect::LaunchChild {
-                    session: requester_session,
-                    target,
-                });
+                schedule_takeover(&mut next, &mut effects, requester_session, target);
+            } else if managing_session != Some(requester_session) {
+                next.pending_takeover = None;
             }
         }
         Input::StopManaging => {
             next.managed = HostManaged::default();
             next.restart_scheduled = false;
             next.eqapo_error = None;
+            next.pending_takeover = None;
             next.repair_attempts = 0;
             next.clear_repair_retry();
             effects.push(Effect::SaveState(next.managed.clone()));
@@ -212,10 +239,7 @@ pub fn decide(state: &State, input: Input) -> (State, Vec<Effect>) {
                     if let Some(target) = next.managed.camilla.clone()
                         && next.running_child_session.is_none()
                     {
-                        effects.push(Effect::LaunchChild {
-                            session: session_id,
-                            target,
-                        });
+                        schedule_takeover(&mut next, &mut effects, session_id, target);
                     }
                     if next.managed.eqapo.is_some() {
                         effects.push(Effect::RepairEqapo {
@@ -224,20 +248,29 @@ pub fn decide(state: &State, input: Input) -> (State, Vec<Effect>) {
                     }
                 }
                 SessionEvent::Logon => {
-                    if next.running_child_session.is_some() {
+                    if next.running_child_session.is_some() || next.pending_takeover.is_some() {
                         effects.push(Effect::StopChild);
                     }
+                    next.pending_takeover = None;
                     next.restart_scheduled = false;
                 }
                 SessionEvent::Logoff if owner_matches => {
-                    if next.running_child_session.is_some() || next.restart_scheduled {
+                    if next.running_child_session.is_some()
+                        || next.restart_scheduled
+                        || next.pending_takeover.is_some()
+                    {
                         effects.push(Effect::StopChild);
                     }
+                    next.pending_takeover = None;
                     next.restart_scheduled = false;
                 }
                 SessionEvent::Logoff => {
-                    if next.running_child_session == Some(session_id) {
+                    if next.running_child_session == Some(session_id)
+                        || next.pending_takeover.as_ref().map(|work| work.session)
+                            == Some(session_id)
+                    {
                         effects.push(Effect::StopChild);
+                        next.pending_takeover = None;
                         next.restart_scheduled = false;
                     }
                 }
@@ -263,7 +296,7 @@ pub fn decide(state: &State, input: Input) -> (State, Vec<Effect>) {
         Input::RestartTick { owner_session } => {
             next.restart_scheduled = false;
             if let (Some(session), Some(target)) = (owner_session, next.managed.camilla.clone()) {
-                effects.push(Effect::LaunchChild { session, target });
+                schedule_takeover(&mut next, &mut effects, session, target);
             }
         }
         Input::RepairRetry { managing_session } => {
@@ -289,6 +322,28 @@ fn repair_failed_line(error: &IpcError, attempt: u8) -> HostLogLine {
     }
 }
 
+pub fn finish_repair(state: &mut State, result: &Result<(), IpcError>) -> Option<HostLogLine> {
+    match result {
+        Ok(()) => {
+            state.eqapo_error = None;
+            state.repair_attempts = 0;
+            state.clear_repair_retry();
+            None
+        }
+        Err(error) => {
+            state.repair_attempts = state.repair_attempts.saturating_add(1);
+            state.eqapo_error = Some(error.detail.clone());
+            state.repair_retry_after = if state.repair_attempts < MAX_REPAIR_ATTEMPTS {
+                Some(REPAIR_DELAYS[usize::from(state.repair_attempts - 1)])
+            } else {
+                None
+            };
+            state.repair_retry_pending = state.repair_retry_after.is_some();
+            Some(repair_failed_line(error, state.repair_attempts))
+        }
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct DriveOutcome {
     pub repair_error: Option<IpcError>,
@@ -299,31 +354,13 @@ pub fn drive(
     effects: Vec<Effect>,
     platform: &mut impl Platform,
 ) -> Result<DriveOutcome, IpcError> {
-    let mut outcome = DriveOutcome::default();
+    let outcome = DriveOutcome::default();
     let mut effects = VecDeque::from(effects);
     while let Some(effect) = effects.pop_front() {
         match effect {
             Effect::SaveState(managed) => platform.save_state(&managed)?,
             Effect::ReplaceWatcher(target) => platform.replace_watcher(target.as_ref())?,
-            Effect::RepairEqapo { session } => match platform.repair_eqapo(session) {
-                Ok(()) => {
-                    state.eqapo_error = None;
-                    state.repair_attempts = 0;
-                    state.clear_repair_retry();
-                }
-                Err(error) => {
-                    state.repair_attempts = state.repair_attempts.saturating_add(1);
-                    state.eqapo_error = Some(error.detail.clone());
-                    let _ = platform.log(&repair_failed_line(&error, state.repair_attempts));
-                    state.repair_retry_after = if state.repair_attempts < MAX_REPAIR_ATTEMPTS {
-                        Some(REPAIR_DELAYS[usize::from(state.repair_attempts - 1)])
-                    } else {
-                        None
-                    };
-                    state.repair_retry_pending = state.repair_retry_after.is_some();
-                    outcome.repair_error = Some(error);
-                }
-            },
+            Effect::RepairEqapo { session } => platform.repair_eqapo(session)?,
             Effect::StopChild => {
                 // The real adapter takes ownership of the child before stop can
                 // fail, so the transition must forget it on both outcomes.
@@ -333,8 +370,7 @@ pub fn drive(
             Effect::ClearCamillaStatus => platform.clear_camilla_status(),
             Effect::ClearEqapoStatus => platform.clear_eqapo_status(),
             Effect::LaunchChild { session, target } => {
-                state.running_child_session =
-                    platform.launch_child(session, &target)?.then_some(session);
+                platform.launch_child(session, &target)?;
             }
             Effect::Log(line) => platform.log(&line)?,
         }
@@ -344,38 +380,20 @@ pub fn drive(
 
 #[cfg(test)]
 mod tests {
-    use secs_types::ipc::{ErrorCode, ManagedCamilla, ManagedEqApo};
+    use secs_types::ipc::{ErrorCode, HostResponse, ManagedCamilla, ManagedEqApo};
 
     use super::*;
 
+    #[derive(Default)]
     struct FakePlatform {
         saved_states: Vec<HostManaged>,
         launches: Vec<(u32, String)>,
-        launch_starts_child: bool,
         repair_calls: usize,
         repair_sessions: Vec<u32>,
-        fail_repairs: bool,
         stops: usize,
         fail_stop: bool,
         camilla_status_clears: usize,
         eqapo_status_clears: usize,
-    }
-
-    impl Default for FakePlatform {
-        fn default() -> Self {
-            Self {
-                saved_states: Vec::new(),
-                launches: Vec::new(),
-                launch_starts_child: true,
-                repair_calls: 0,
-                repair_sessions: Vec::new(),
-                fail_repairs: false,
-                stops: 0,
-                fail_stop: false,
-                camilla_status_clears: 0,
-                eqapo_status_clears: 0,
-            }
-        }
     }
 
     impl Platform for FakePlatform {
@@ -391,11 +409,7 @@ mod tests {
         fn repair_eqapo(&mut self, session: u32) -> Result<(), IpcError> {
             self.repair_calls += 1;
             self.repair_sessions.push(session);
-            if self.fail_repairs {
-                Err(IpcError::new(ErrorCode::ApplyFailed, "repair failed"))
-            } else {
-                Ok(())
-            }
+            Ok(())
         }
 
         fn stop_child(&mut self) -> Result<(), IpcError> {
@@ -415,13 +429,9 @@ mod tests {
             self.eqapo_status_clears += 1;
         }
 
-        fn launch_child(
-            &mut self,
-            session: u32,
-            target: &ManagedCamilla,
-        ) -> Result<bool, IpcError> {
+        fn launch_child(&mut self, session: u32, target: &ManagedCamilla) -> Result<(), IpcError> {
             self.launches.push((session, target.exe_path.clone()));
-            Ok(self.launch_starts_child)
+            Ok(())
         }
 
         fn log(&mut self, _line: &HostLogLine) -> Result<(), IpcError> {
@@ -575,6 +585,63 @@ mod tests {
     }
 
     #[test]
+    fn set_managed_accepts_takeover_and_logoff_while_work_is_pending() {
+        let state = State::new(
+            HostManaged {
+                owner_session_id: Some(7),
+                owner_user_sid: Some("sid-a".into()),
+                ..HostManaged::default()
+            },
+            None,
+        );
+        let target = camilla("camilladsp.exe");
+
+        let (pending, effects) = decide(
+            &state,
+            Input::SetManaged {
+                update: HostManaged {
+                    camilla: Some(target.clone()),
+                    ..HostManaged::default()
+                },
+                requester_session: 7,
+                requester_sid: "sid-a".into(),
+                managing_session: Some(7),
+            },
+        );
+
+        let immediate_response = HostResponse::Ok;
+        assert_eq!(immediate_response, HostResponse::Ok);
+        assert_eq!(
+            pending.pending_takeover,
+            Some(PendingTakeover { session: 7, target })
+        );
+        assert!(
+            effects
+                .iter()
+                .any(|effect| matches!(effect, Effect::LaunchChild { session: 7, .. }))
+        );
+
+        let (logged_off, effects) = decide(
+            &pending,
+            Input::Session {
+                event: SessionEvent::Logoff,
+                session_id: 7,
+                owner_matches: true,
+            },
+        );
+        assert_eq!(logged_off.pending_takeover, None);
+        assert!(effects.iter().any(|effect| matches!(
+            effect,
+            Effect::Log(line) if line.event == "session_logoff"
+        )));
+        assert!(
+            effects
+                .iter()
+                .any(|effect| matches!(effect, Effect::StopChild))
+        );
+    }
+
+    #[test]
     fn stop_managing_calls_platform_stop_without_a_tracked_child() {
         let mut state = State::new(HostManaged::default(), None);
         let mut platform = FakePlatform::default();
@@ -587,7 +654,7 @@ mod tests {
     }
 
     #[test]
-    fn launch_that_does_not_create_a_child_is_not_recorded_as_running() {
+    fn scheduled_launch_is_not_recorded_as_running_before_completion() {
         let mut state = State::new(
             HostManaged {
                 camilla: Some(camilla("camilladsp.exe")),
@@ -597,10 +664,7 @@ mod tests {
             },
             None,
         );
-        let mut platform = FakePlatform {
-            launch_starts_child: false,
-            ..FakePlatform::default()
-        };
+        let mut platform = FakePlatform::default();
         let (next, effects) = decide(
             &state,
             Input::RestartTick {
@@ -612,6 +676,10 @@ mod tests {
         drive(&mut state, effects, &mut platform).unwrap();
 
         assert_eq!(state.running_child_session, None);
+        assert_eq!(
+            state.pending_takeover.as_ref().map(|work| work.session),
+            Some(7)
+        );
     }
 
     #[test]
@@ -780,10 +848,7 @@ mod tests {
             },
             Some(7),
         );
-        let mut platform = FakePlatform {
-            fail_repairs: true,
-            ..FakePlatform::default()
-        };
+        let mut platform = FakePlatform::default();
         let (next, effects) = decide(
             &state,
             Input::ConfigChanged {
@@ -792,19 +857,24 @@ mod tests {
         );
         state = next;
 
-        assert!(drive(&mut state, effects, &mut platform).is_ok());
-        for _ in 0..2 {
-            let mut deadline = None;
-            state.sync_repair_retry_deadline(&mut deadline, std::time::Instant::now());
-            assert!(deadline.is_some());
-            let (next, effects) = decide(
-                &state,
-                Input::RepairRetry {
-                    managing_session: Some(7),
-                },
-            );
-            state = next;
-            drive(&mut state, effects, &mut platform).unwrap();
+        drive(&mut state, effects, &mut platform).unwrap();
+        for attempt in 0..3 {
+            let error = Err(IpcError::new(ErrorCode::ApplyFailed, "repair failed"));
+            let line = finish_repair(&mut state, &error).unwrap();
+            platform.log(&line).unwrap();
+            if attempt < 2 {
+                let mut deadline = None;
+                state.sync_repair_retry_deadline(&mut deadline, std::time::Instant::now());
+                assert!(deadline.is_some());
+                let (next, effects) = decide(
+                    &state,
+                    Input::RepairRetry {
+                        managing_session: Some(7),
+                    },
+                );
+                state = next;
+                drive(&mut state, effects, &mut platform).unwrap();
+            }
         }
 
         assert_eq!(state.running_child_session, Some(7));
@@ -874,10 +944,7 @@ mod tests {
             },
             None,
         );
-        let mut platform = FakePlatform {
-            fail_repairs: true,
-            ..FakePlatform::default()
-        };
+        let mut platform = FakePlatform::default();
         let (next, effects) = decide(
             &state,
             Input::ConfigChanged {
@@ -886,6 +953,10 @@ mod tests {
         );
         state = next;
         drive(&mut state, effects, &mut platform).unwrap();
+        finish_repair(
+            &mut state,
+            &Err(IpcError::new(ErrorCode::ApplyFailed, "repair failed")),
+        );
 
         let mut deadline = None;
         state.sync_repair_retry_deadline(&mut deadline, std::time::Instant::now());
@@ -899,12 +970,9 @@ mod tests {
     }
 
     #[test]
-    fn set_managed_reports_repair_error_after_running_later_effects() {
+    fn set_managed_accepts_before_repair_finishes_and_schedules_takeover() {
         let mut state = State::new(HostManaged::default(), None);
-        let mut platform = FakePlatform {
-            fail_repairs: true,
-            ..FakePlatform::default()
-        };
+        let mut platform = FakePlatform::default();
         let (next, effects) = decide(
             &state,
             Input::SetManaged {
@@ -922,13 +990,12 @@ mod tests {
 
         let outcome = drive(&mut state, effects, &mut platform).unwrap();
 
-        assert_eq!(
-            outcome
-                .repair_error
-                .as_ref()
-                .map(|error| error.detail.as_str()),
-            Some("repair failed")
-        );
+        assert_eq!(outcome.repair_error, None);
+        assert_eq!(platform.repair_calls, 1);
         assert_eq!(platform.launches.len(), 1);
+        assert_eq!(
+            state.pending_takeover.as_ref().map(|work| work.session),
+            Some(7)
+        );
     }
 }

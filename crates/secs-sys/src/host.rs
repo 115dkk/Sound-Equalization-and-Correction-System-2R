@@ -184,16 +184,17 @@ pub fn pipe_server(
             process_id,
             session_id,
         };
-        let wait = PipeWait::within(PIPE_TIMEOUT);
+        let request_wait = PipeWait::within(PIPE_TIMEOUT);
         let request_bytes = read_frame(|buffer| {
             slot.server
-                .read(buffer, &wait)
+                .read(buffer, &request_wait)
                 .map_err(|error| ipc_error(format!("read managed-host request: {error}")))
         })?;
         let request = parse_frame::<HostRequest>(&request_bytes)?;
         let response = frame(&handler(identity, request))?;
+        let response_wait = PipeWait::within(PIPE_RESPONSE_TIMEOUT);
         slot.server
-            .write_all(&response, &wait)
+            .write_all(&response, &response_wait)
             .map_err(|error| ipc_error(format!("write managed-host response: {error}")))?;
         // DisconnectNamedPipe discards unread bytes. Wait until the client has
         // read the response and closed its handle before reusing this instance.
@@ -1351,6 +1352,63 @@ mod tests {
             pipe_call_at_unchecked(&name, &HostRequest::Status).unwrap(),
             HostResponse::Ok
         );
+        assert!(server.join().unwrap().unwrap());
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn slow_handler_gets_a_response_with_a_fresh_write_deadline() {
+        use std::collections::BTreeMap;
+        use std::time::Instant;
+        use win_custody::{PipeAccess, PipeClient, PipeWait};
+
+        let name = format!(
+            r"\\.\pipe\secs2r-host-slow-handler-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let response = HostResponse::Log(vec![secs_types::ipc::HostLogLine {
+            timestamp: "2026-11-06T00:00:00Z".into(),
+            event: "slow_handler".into(),
+            fields: BTreeMap::from([("payload".into(), "x".repeat(256 * 1024))]),
+        }]);
+        let server_response = response.clone();
+        let server_name = name.clone();
+        let server = std::thread::spawn(move || {
+            let mut slot = PipeServerSlot::create(&server_name).unwrap();
+            pipe_server(&mut slot, PIPE_TIMEOUT, |_, _| {
+                std::thread::sleep(Duration::from_secs(6));
+                server_response
+            })
+        });
+
+        let client = PipeClient::open(
+            &name,
+            PipeAccess::ReadWrite,
+            Instant::now() + PIPE_TIMEOUT,
+            Duration::from_millis(10),
+        )
+        .unwrap();
+        client
+            .write_all(
+                &frame(&HostRequest::Status).unwrap(),
+                &PipeWait::within(PIPE_TIMEOUT),
+            )
+            .unwrap();
+        std::thread::sleep(Duration::from_secs(7));
+        let answer_wait = PipeWait::within(PIPE_RESPONSE_TIMEOUT);
+        let answer = read_frame(|buffer| {
+            client
+                .read(buffer, &answer_wait)
+                .map_err(|error| ipc_error(format!("read slow response: {error}")))
+        })
+        .and_then(|bytes| parse_frame::<HostResponse>(&bytes));
+
+        assert_eq!(answer.unwrap(), response);
+        drop(client);
         assert!(server.join().unwrap().unwrap());
     }
 
