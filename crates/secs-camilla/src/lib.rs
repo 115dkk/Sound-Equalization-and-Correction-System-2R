@@ -671,6 +671,303 @@ fn howto_lines(
     lines
 }
 
+struct CamillaSupportGroup {
+    output: usize,
+    low_hz: f64,
+    fir: bool,
+    delay_samples: i64,
+    members: Vec<usize>,
+}
+
+fn support_groups_for_camilla(
+    graph: &ExportGraph,
+    paths: &[MimoPath],
+    output_rate: u32,
+) -> (Vec<CamillaSupportGroup>, Vec<usize>, Vec<i64>) {
+    let n_paths = paths.len();
+    let path_delays: Vec<_> = paths
+        .iter()
+        .map(|path| {
+            let extra = match &path.filter {
+                MimoFilter::Iir { delay_ms, .. } => *delay_ms,
+                _ => 0.0,
+            };
+            // Round the old complete delay exactly once, then factor integer samples.
+            secs_dsp::rate::delay_samples(path.delay_ms + extra, output_rate)
+        })
+        .collect();
+    // The graph groups support paths by output, family and exact low edge.
+    // CamillaDSP writes the high-pass at the low edge rounded to three places,
+    // so graph groups whose rounded cutoff coincides share one channel. The
+    // delay split is this writer's own (F13): each path's total delay is
+    // rounded to whole samples once, the group carries the smallest and each
+    // path the rest, so no path's delay is rounded twice. Equalizer APO keeps
+    // the identical rendered milliseconds instead.
+    let mut groups = graph
+        .support_groups_rounded()
+        .into_iter()
+        .map(|group| CamillaSupportGroup {
+            output: group.output,
+            low_hz: group.low_hz,
+            fir: group.fir,
+            delay_samples: 0,
+            members: group.members,
+        })
+        .collect::<Vec<_>>();
+    let mut path_groups = vec![0; n_paths];
+    for (index, group) in groups.iter_mut().enumerate() {
+        group.members.sort_unstable();
+        group.delay_samples = group
+            .members
+            .iter()
+            .map(|&path| path_delays[path])
+            .min()
+            .expect("a support group has a path");
+        for &path in &group.members {
+            path_groups[path] = index;
+        }
+    }
+    (groups, path_groups, path_delays)
+}
+
+fn head_comment(
+    inputs: &[String],
+    outputs: &[String],
+    subs: &[SubChannel],
+    options: &Options,
+    lfe: bool,
+    capture: &Device,
+    playback: &Device,
+) -> Vec<String> {
+    let n_in = inputs.len();
+    let n_out = outputs.len();
+    let mut lines = vec![
+        "# SECS 2 calibration -> CamillaDSP v4 (generated)".into(),
+        format!(
+            "# inputs {n_in}: {} / outputs {n_out}: {}",
+            inputs.join(", "),
+            outputs.join(", ")
+        ),
+    ];
+    if !options.note.is_empty() {
+        lines.push(format!(
+            "# {}",
+            options
+                .note
+                .chars()
+                .filter(char::is_ascii)
+                .collect::<String>()
+        ));
+    }
+    if let Some(gain) = options.lfe_gain_db.filter(|_| lfe) {
+        lines.push(format!(
+            "# LFE: gain {} dB, LR24 lowpass {} Hz -> every sub bus (same sub gain/polarity/filters/delay as the bass-managed mains), no MIMO",
+            format_g(gain, true),
+            format_g(options.lfe_lp_hz, false)
+        ));
+    }
+    for sub in subs {
+        let allpass = sub
+            .allpass
+            .iter()
+            .map(|(frequency, q)| {
+                format!(
+                    ", allpass {} Hz Q {}",
+                    format_fixed(*frequency, 1, false),
+                    format_fixed(*q, 3, false)
+                )
+            })
+            .collect::<String>();
+        let mut fixed = String::new();
+        if sub.hp_hz != 0.0 {
+            write!(
+                fixed,
+                ", fixed HP {} Hz {}",
+                format_g(sub.hp_hz, false),
+                sub.hp_type.name()
+            )
+            .expect("String write");
+        }
+        if sub.lp_hz != 0.0 {
+            write!(
+                fixed,
+                ", fixed LP {} Hz {}",
+                format_g(sub.lp_hz, false),
+                sub.lp_type.name()
+            )
+            .expect("String write");
+        }
+        for (frequency, q, gain) in &sub.peq {
+            write!(
+                fixed,
+                ", fixed PEQ {} Hz Q {} {} dB",
+                format_fixed(*frequency, 1, false),
+                format_fixed(*q, 3, false),
+                format_fixed(*gain, 2, true)
+            )
+            .expect("String write");
+        }
+        lines.push(format!(
+            "# sub {}: {} gain {} dB, delay {} ms, polarity {}{allpass}{fixed}",
+            sub.role,
+            sub.mode,
+            format_fixed(sub.gain_db, 3, true),
+            format_fixed(sub.delay_ms, 3, false),
+            if sub.polarity > 0 {
+                "normal"
+            } else {
+                "inverted"
+            }
+        ));
+    }
+    lines.push("#".into());
+    lines.extend(howto_lines(
+        inputs,
+        outputs,
+        options.latency_ms,
+        &options.mode,
+        options.output_rate,
+        options.design.is_none() || (options.capture.is_none() && options.playback.is_none()),
+        options.design.is_some() && (device_is(capture, "Asio") || device_is(playback, "Asio")),
+    ));
+
+    lines
+}
+
+fn title_and_description(
+    options: &Options,
+    inputs: &[String],
+    outputs: &[String],
+) -> (String, String) {
+    let title = if let Some(design) = &options.design {
+        let base = design.project_name.as_deref().map_or_else(
+            || format!("SECS 2R · {}", design.design_name),
+            |project| format!("SECS 2R · {project} · {}", design.design_name),
+        );
+        if design.bypass {
+            format!("{base} (우회)")
+        } else {
+            base
+        }
+    } else {
+        format!(
+            "SECS 2{}{}",
+            if options.mode.is_empty() {
+                String::new()
+            } else {
+                format!(" {}", options.mode)
+            },
+            options.latency_ms.map_or_else(String::new, |value| format!(
+                " ({} ms)",
+                format_fixed(value, 1, false)
+            ))
+        )
+    };
+    let mut description = format!(
+        "inputs {} | outputs {} | numbers start at 0, change routing in Mixers route_in / route_out | devices are file placeholders: set capture = loopback, playback = interface",
+        inputs
+            .iter()
+            .enumerate()
+            .map(|(index, role)| format!("{index} {role}"))
+            .collect::<Vec<_>>()
+            .join(", "),
+        outputs
+            .iter()
+            .enumerate()
+            .map(|(index, role)| format!("{index} {role}"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+    if let Some(design) = &options.design {
+        write!(
+            description,
+            " | secs-design {}{}",
+            design.design_id,
+            if design.bypass { " bypass" } else { "" }
+        )
+        .expect("String write");
+    }
+    (title, description)
+}
+
+struct SerializeParts<'a> {
+    lines: Vec<String>,
+    title: String,
+    description: String,
+    options: &'a Options,
+    capture: &'a Device,
+    playback: &'a Device,
+    inputs: &'a [String],
+    filters: Vec<(String, Json)>,
+    route_in: Json,
+    route_out: Json,
+    fork: Option<Json>,
+    mixers: Vec<(String, Json)>,
+    pipeline: Vec<Json>,
+    coeffs: Vec<(PathBuf, Vec<u8>)>,
+    n_in: usize,
+}
+
+fn serialize(parts: SerializeParts<'_>) -> Config {
+    let SerializeParts {
+        mut lines,
+        title,
+        description,
+        options,
+        capture,
+        playback,
+        inputs,
+        filters,
+        route_in,
+        route_out,
+        fork,
+        mixers,
+        pipeline,
+        coeffs,
+        n_in,
+    } = parts;
+    lines.extend([
+        format!("title: {}", json(&Json::Str(title))),
+        format!("description: {}", json(&Json::Str(description))),
+        "devices:".into(),
+        format!("  samplerate: {}", options.output_rate),
+        format!("  chunksize: {}", options.chunksize),
+        format!(
+            "  capture: {}",
+            json(&if options.labels {
+                device_json_with_labels(capture, Some(inputs))
+            } else {
+                device_json(capture)
+            })
+        ),
+        format!("  playback: {}", json(&device_json(playback))),
+        "filters:".into(),
+    ]);
+    for (name, spec) in filters {
+        lines.push(format!("  {name}: {}", json(&spec)));
+    }
+    lines.extend([
+        "mixers:".into(),
+        format!("  route_in: {}", json(&route_in)),
+        format!("  route_out: {}", json(&route_out)),
+    ]);
+    if let Some(fork) = fork {
+        lines.push(format!("  mimo_fork: {}", json(&fork)));
+    }
+    for (name, mixer) in mixers {
+        lines.push(format!("  {name}: {}", json(&mixer)));
+    }
+    lines.push("pipeline:".into());
+    for stage in pipeline {
+        lines.push(format!("  - {}", json(&stage)));
+    }
+    Config {
+        yaml: lines.join("\n") + "\n",
+        coeffs,
+        n_in,
+    }
+}
+
 /// Build a CamillaDSP v4 configuration without writing anything.
 pub fn make_config(
     chain: &SignalChain,
@@ -1009,55 +1306,8 @@ pub fn make_config_observed(
         pipeline.push(pipeline_filter(n_main + sub_index, names));
     }
 
-    struct CamillaSupportGroup {
-        output: usize,
-        low_hz: f64,
-        fir: bool,
-        delay_samples: i64,
-        members: Vec<usize>,
-    }
-    let path_delays: Vec<_> = paths
-        .iter()
-        .map(|path| {
-            let extra = match &path.filter {
-                MimoFilter::Iir { delay_ms, .. } => *delay_ms,
-                _ => 0.0,
-            };
-            // Round the old complete delay exactly once, then factor integer samples.
-            secs_dsp::rate::delay_samples(path.delay_ms + extra, options.output_rate)
-        })
-        .collect();
-    // The graph groups support paths by output, family and exact low edge.
-    // CamillaDSP writes the high-pass at the low edge rounded to three places,
-    // so graph groups whose rounded cutoff coincides share one channel. The
-    // delay split is this writer's own (F13): each path's total delay is
-    // rounded to whole samples once, the group carries the smallest and each
-    // path the rest, so no path's delay is rounded twice. Equalizer APO keeps
-    // the identical rendered milliseconds instead.
-    let mut groups = graph
-        .support_groups_rounded()
-        .into_iter()
-        .map(|group| CamillaSupportGroup {
-            output: group.output,
-            low_hz: group.low_hz,
-            fir: group.fir,
-            delay_samples: 0,
-            members: group.members,
-        })
-        .collect::<Vec<_>>();
-    let mut path_groups = vec![0; n_paths];
-    for (index, group) in groups.iter_mut().enumerate() {
-        group.members.sort_unstable();
-        group.delay_samples = group
-            .members
-            .iter()
-            .map(|&path| path_delays[path])
-            .min()
-            .expect("a support group has a path");
-        for &path in &group.members {
-            path_groups[path] = index;
-        }
-    }
+    let (groups, path_groups, path_delays) =
+        support_groups_for_camilla(&graph, paths, options.output_rate);
     for (index, path) in paths.iter().enumerate() {
         let tag = path_tag(path);
         let mut names = Vec::new();
@@ -1259,185 +1509,26 @@ pub fn make_config_observed(
         ),
     ]);
 
-    let mut lines = vec![
-        "# SECS 2 calibration -> CamillaDSP v4 (generated)".into(),
-        format!(
-            "# inputs {n_in}: {} / outputs {n_out}: {}",
-            inputs.join(", "),
-            outputs.join(", ")
-        ),
-    ];
-    if !options.note.is_empty() {
-        lines.push(format!(
-            "# {}",
-            options
-                .note
-                .chars()
-                .filter(char::is_ascii)
-                .collect::<String>()
-        ));
-    }
-    if let Some(gain) = options.lfe_gain_db.filter(|_| lfe) {
-        lines.push(format!(
-            "# LFE: gain {} dB, LR24 lowpass {} Hz -> every sub bus (same sub gain/polarity/filters/delay as the bass-managed mains), no MIMO",
-            format_g(gain, true),
-            format_g(options.lfe_lp_hz, false)
-        ));
-    }
-    for sub in subs {
-        let allpass = sub
-            .allpass
-            .iter()
-            .map(|(frequency, q)| {
-                format!(
-                    ", allpass {} Hz Q {}",
-                    format_fixed(*frequency, 1, false),
-                    format_fixed(*q, 3, false)
-                )
-            })
-            .collect::<String>();
-        let mut fixed = String::new();
-        if sub.hp_hz != 0.0 {
-            write!(
-                fixed,
-                ", fixed HP {} Hz {}",
-                format_g(sub.hp_hz, false),
-                sub.hp_type.name()
-            )
-            .expect("String write");
-        }
-        if sub.lp_hz != 0.0 {
-            write!(
-                fixed,
-                ", fixed LP {} Hz {}",
-                format_g(sub.lp_hz, false),
-                sub.lp_type.name()
-            )
-            .expect("String write");
-        }
-        for (frequency, q, gain) in &sub.peq {
-            write!(
-                fixed,
-                ", fixed PEQ {} Hz Q {} {} dB",
-                format_fixed(*frequency, 1, false),
-                format_fixed(*q, 3, false),
-                format_fixed(*gain, 2, true)
-            )
-            .expect("String write");
-        }
-        lines.push(format!(
-            "# sub {}: {} gain {} dB, delay {} ms, polarity {}{allpass}{fixed}",
-            sub.role,
-            sub.mode,
-            format_fixed(sub.gain_db, 3, true),
-            format_fixed(sub.delay_ms, 3, false),
-            if sub.polarity > 0 {
-                "normal"
-            } else {
-                "inverted"
-            }
-        ));
-    }
-    lines.push("#".into());
-    lines.extend(howto_lines(
-        inputs,
-        outputs,
-        options.latency_ms,
-        &options.mode,
-        options.output_rate,
-        options.design.is_none() || (options.capture.is_none() && options.playback.is_none()),
-        options.design.is_some() && (device_is(capture, "Asio") || device_is(playback, "Asio")),
-    ));
-
-    let title = if let Some(design) = &options.design {
-        let base = design.project_name.as_deref().map_or_else(
-            || format!("SECS 2R · {}", design.design_name),
-            |project| format!("SECS 2R · {project} · {}", design.design_name),
-        );
-        if design.bypass {
-            format!("{base} (우회)")
-        } else {
-            base
-        }
-    } else {
-        format!(
-            "SECS 2{}{}",
-            if options.mode.is_empty() {
-                String::new()
-            } else {
-                format!(" {}", options.mode)
-            },
-            options.latency_ms.map_or_else(String::new, |value| format!(
-                " ({} ms)",
-                format_fixed(value, 1, false)
-            ))
-        )
-    };
-    let mut description = format!(
-        "inputs {} | outputs {} | numbers start at 0, change routing in Mixers route_in / route_out | devices are file placeholders: set capture = loopback, playback = interface",
-        inputs
-            .iter()
-            .enumerate()
-            .map(|(index, role)| format!("{index} {role}"))
-            .collect::<Vec<_>>()
-            .join(", "),
-        outputs
-            .iter()
-            .enumerate()
-            .map(|(index, role)| format!("{index} {role}"))
-            .collect::<Vec<_>>()
-            .join(", ")
-    );
-    if let Some(design) = &options.design {
-        write!(
-            description,
-            " | secs-design {}{}",
-            design.design_id,
-            if design.bypass { " bypass" } else { "" }
-        )
-        .expect("String write");
-    }
+    let lines = head_comment(inputs, outputs, subs, options, lfe, capture, playback);
+    let (title, description) = title_and_description(options, inputs, outputs);
     boundary("build");
-    lines.extend([
-        format!("title: {}", json(&Json::Str(title))),
-        format!("description: {}", json(&Json::Str(description))),
-        "devices:".into(),
-        format!("  samplerate: {}", options.output_rate),
-        format!("  chunksize: {}", options.chunksize),
-        format!(
-            "  capture: {}",
-            json(&if options.labels {
-                device_json_with_labels(capture, Some(inputs))
-            } else {
-                device_json(capture)
-            })
-        ),
-        format!("  playback: {}", json(&device_json(playback))),
-        "filters:".into(),
-    ]);
-    for (name, spec) in filters {
-        lines.push(format!("  {name}: {}", json(&spec)));
-    }
-    lines.extend([
-        "mixers:".into(),
-        format!("  route_in: {}", json(&route_in)),
-        format!("  route_out: {}", json(&route_out)),
-    ]);
-    if let Some(fork) = fork {
-        lines.push(format!("  mimo_fork: {}", json(&fork)));
-    }
-    for (name, mixer) in mixers {
-        lines.push(format!("  {name}: {}", json(&mixer)));
-    }
-    lines.push("pipeline:".into());
-    for stage in pipeline {
-        lines.push(format!("  - {}", json(&stage)));
-    }
-    let config = Config {
-        yaml: lines.join("\n") + "\n",
+    let config = serialize(SerializeParts {
+        lines,
+        title,
+        description,
+        options,
+        capture,
+        playback,
+        inputs,
+        filters,
+        route_in,
+        route_out,
+        fork,
+        mixers,
+        pipeline,
         coeffs,
         n_in,
-    };
+    });
     boundary("serialize");
     Ok(config)
 }
