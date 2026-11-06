@@ -108,10 +108,11 @@ pub use mimo::{
     design_mimo_iir_with_options,
 };
 pub use normalize::normalize_measurements;
-pub use notes::{GuardCause, MimoNote, Note, NoteRecord};
+pub use notes::{NoteRecord, NoteRecords};
 pub use replay::{DesignReplay, ExportAxis};
 pub use scorecard::Metrics;
 pub use secs_dsp::resample::{MAX_RESAMPLE_RATE, MIN_RESAMPLE_RATE};
+pub use secs_types::notes::{GuardCause, MimoNote, Note};
 pub use setup::SubFilter;
 
 /// Complex spectrum value.

@@ -604,7 +604,10 @@ fn rc_bands_agreement_probe_ignores_extras_and_reports_merged_bands() {
         multi
             .notes
             .iter()
-            .any(|n| matches!(n, Note::RcBands { bands } if bands == &multi.rc_bands))
+            .any(|n| matches!(n, Note::RcBands { bands } if bands
+                .iter()
+                .map(|band| (band.lo_hz, band.hi_hz))
+                .eq(multi.rc_bands.iter().copied())))
     );
     assert_eq!(multi.replay.config(), &config);
     let requests = requests.lock().unwrap();

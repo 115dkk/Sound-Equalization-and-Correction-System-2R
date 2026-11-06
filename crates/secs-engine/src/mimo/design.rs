@@ -833,13 +833,37 @@ pub(crate) fn guard_cause(
         band: (step.band_db > 1.0)
             .then_some(step.band_hz)
             .flatten()
-            .map(|(lo, hi)| (lo, hi, step.band_db)),
+            .map(|(lo_hz, hi_hz)| crate::notes::GuardBand {
+                lo_hz,
+                hi_hz,
+                db: step.band_db,
+            }),
         tail: (step.t60_change > 0.15)
             .then_some(step.mode_hz)
             .flatten()
-            .map(|hz| (hz, step.t60_change / 0.15)),
+            .map(|hz| crate::notes::GuardTail {
+                hz,
+                db: step.t60_change / 0.15,
+            }),
     })
 }
+
+fn mimo_note(note: crate::MimoNote) -> Note {
+    Note::Mimo { note }
+}
+
+fn support_ranges_note(ranges: &[(String, Option<(f64, f64)>)]) -> Note {
+    mimo_note(crate::MimoNote::SupportRanges {
+        ranges: ranges
+            .iter()
+            .map(|(role, range)| crate::notes::RoleNote {
+                role: role.clone(),
+                value: range.map(|(lo_hz, hi_hz)| crate::notes::Band { lo_hz, hi_hz }),
+            })
+            .collect(),
+    })
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct InputTrace {
     pub candidates: Vec<String>,
@@ -1264,7 +1288,7 @@ pub(crate) fn design_mimo_inputs_observed(
     let positions = &design.spectra.positions;
     if positions.len() < 3 {
         out.notes
-            .push(Note::Mimo(crate::notes::MimoNote::InsufficientPositions {
+            .push(mimo_note(crate::MimoNote::InsufficientPositions {
                 measured: positions.len(),
             }));
         return Ok((out, Vec::new()));
@@ -1303,7 +1327,7 @@ pub(crate) fn design_mimo_prepared_accelerated(
     let positions = &design.spectra.positions;
     if positions.len() < 3 {
         out.notes
-            .push(Note::Mimo(crate::notes::MimoNote::InsufficientPositions {
+            .push(mimo_note(crate::MimoNote::InsufficientPositions {
                 measured: positions.len(),
             }));
         return Ok((out, Vec::new()));
@@ -1336,15 +1360,11 @@ pub(crate) fn design_mimo_prepared_accelerated(
     if !req.exclude.is_empty() {
         let mut excluded = req.exclude.clone();
         excluded.sort();
-        out.notes
-            .push(Note::Mimo(crate::notes::MimoNote::ExcludedSupports(
-                excluded,
-            )));
+        out.notes.push(mimo_note(crate::MimoNote::ExcludedSupports {
+            roles: excluded,
+        }));
     }
-    out.notes
-        .push(Note::Mimo(crate::notes::MimoNote::SupportRanges(
-            out.ranges.clone(),
-        )));
+    out.notes.push(support_ranges_note(&out.ranges));
     observe("ranges", started.elapsed());
     let started = std::time::Instant::now();
     let mains: Vec<_> = design
@@ -1462,7 +1482,7 @@ pub(crate) fn design_mimo_prepared_accelerated(
     for (role, result) in results {
         let scale = result.trace.guard_scale;
         if let Some(cause) = guard_cause(&result.trace.guards, positions) {
-            out.notes.push(Note::Mimo(if scale > 0.0 {
+            out.notes.push(mimo_note(if scale > 0.0 {
                 crate::notes::MimoNote::GuardReduced {
                     role: role.clone(),
                     gain_db: 20.0 * scale.max(1e-9).log10(),
@@ -1526,7 +1546,7 @@ pub(crate) fn design_mimo_before(
     let positions = &design.spectra.positions;
     if positions.len() < 3 {
         out.notes
-            .push(Note::Mimo(crate::notes::MimoNote::InsufficientPositions {
+            .push(mimo_note(crate::MimoNote::InsufficientPositions {
                 measured: positions.len(),
             }));
         return Ok((out, Vec::new()));
@@ -1572,15 +1592,11 @@ pub(crate) fn design_mimo_before(
     if !req.exclude.is_empty() {
         let mut excluded = req.exclude.clone();
         excluded.sort();
-        out.notes
-            .push(Note::Mimo(crate::notes::MimoNote::ExcludedSupports(
-                excluded,
-            )));
+        out.notes.push(mimo_note(crate::MimoNote::ExcludedSupports {
+            roles: excluded,
+        }));
     }
-    out.notes
-        .push(Note::Mimo(crate::notes::MimoNote::SupportRanges(
-            out.ranges.clone(),
-        )));
+    out.notes.push(support_ranges_note(&out.ranges));
     let results = ctx
         .try_map(
             design
@@ -1645,7 +1661,7 @@ pub(crate) fn design_mimo_before(
     for (role, result) in results {
         let scale = result.trace.guard_scale;
         if let Some(cause) = guard_cause(&result.trace.guards, positions) {
-            out.notes.push(Note::Mimo(if scale > 0.0 {
+            out.notes.push(mimo_note(if scale > 0.0 {
                 crate::notes::MimoNote::GuardReduced {
                     role: role.clone(),
                     gain_db: 20.0 * scale.max(1e-9).log10(),

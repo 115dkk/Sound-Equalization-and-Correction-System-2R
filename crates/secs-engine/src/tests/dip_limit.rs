@@ -163,11 +163,14 @@ fn dip_limit_notes_list_the_deepest_limited_dips() {
     assert_eq!(role, "L");
     assert!(!dips.is_empty());
     assert!(dips.len() <= 6);
-    assert!((90.0..=110.0).contains(&dips[0].0));
-    assert!(dips.windows(2).all(|pair| pair[0].1 >= pair[1].1));
-    for &(_, depth, fill) in dips {
-        assert!(depth >= 4.0);
-        assert_eq!(fill, (2.0 + (depth - 2.0) / 2.0).min(6.0));
+    assert!((90.0..=110.0).contains(&dips[0].hz));
+    assert!(
+        dips.windows(2)
+            .all(|pair| pair[0].depth_db >= pair[1].depth_db)
+    );
+    for dip in dips {
+        assert!(dip.depth_db >= 4.0);
+        assert_eq!(dip.fill_db, (2.0 + (dip.depth_db - 2.0) / 2.0).min(6.0));
     }
 }
 

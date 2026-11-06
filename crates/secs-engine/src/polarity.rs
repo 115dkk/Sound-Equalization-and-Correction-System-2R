@@ -250,10 +250,10 @@ pub fn check(set: &MeasurementSet, mains: &[String], main_position: u32) -> Vec<
             .filter_map(|(left, right)| pairs[left][right].map(f64::abs))
             .collect::<Vec<_>>();
         notes.push(Note::PolaritySplit {
-            groups: (
-                a.iter().map(|&index| mains[index].clone()).collect(),
-                b.iter().map(|&index| mains[index].clone()).collect(),
-            ),
+            groups: secs_types::notes::PolarityGroups {
+                a: a.iter().map(|&index| mains[index].clone()).collect(),
+                b: b.iter().map(|&index| mains[index].clone()).collect(),
+            },
             confidence: levels::median(confidence),
         });
     }
@@ -344,7 +344,7 @@ mod tests {
         );
         assert!(
             matches!(notes.as_slice(), [Note::PolaritySplit { groups, .. }]
-            if groups.0 == ["L", "R"] && groups.1 == ["C", "Ls"])
+            if groups.a == ["L", "R"] && groups.b == ["C", "Ls"])
         );
     }
 
@@ -372,7 +372,7 @@ mod tests {
         );
         assert!(
             matches!(notes.as_slice(), [Note::PolaritySplit { groups, .. }]
-            if groups.0 == ["L"] && groups.1 == ["R"])
+            if groups.a == ["L"] && groups.b == ["R"])
         );
 
         // Two reversed mains among five: each is opposite to the three normal
@@ -428,7 +428,7 @@ mod tests {
         );
         assert!(
             matches!(notes.as_slice(), [Note::PolaritySplit { groups, .. }]
-            if groups.0 == ["L"] && groups.1 == ["R"])
+            if groups.a == ["L"] && groups.b == ["R"])
         );
     }
 

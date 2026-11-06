@@ -23,7 +23,7 @@ use crate::{
     grid::{N_FFT, SR, design_freqs},
     levels,
     measurement::{self, Spectra},
-    notes::Note,
+    notes::{Band, Note, Peq as NotePeq, RoleBand, RoleNote, RoleValue, SubFilterNote},
     rc::{self, RcInput},
     scorecard::{self, Metrics},
     setup::Setup,
@@ -568,7 +568,26 @@ fn design_pass(
         });
     }
     if !setup.sub_filters.is_empty() {
-        notes.push(Note::SubFilters(setup.sub_filters.clone()));
+        notes.push(Note::SubFilters {
+            filters: setup
+                .sub_filters
+                .iter()
+                .map(|(role, filter)| RoleNote {
+                    role: role.clone(),
+                    value: SubFilterNote {
+                        hp_hz: filter.hp_hz,
+                        hp_type: filter.hp_type,
+                        lp_hz: filter.lp_hz,
+                        lp_type: filter.lp_type,
+                        peq: filter
+                            .peq
+                            .iter()
+                            .map(|&(hz, q, gain_db)| NotePeq { hz, q, gain_db })
+                            .collect(),
+                    },
+                })
+                .collect(),
+        });
     }
     let rc_auto = setup.rc_hi_manual.is_none();
     let schroeder_hz = schroeder.strict;
@@ -603,7 +622,10 @@ fn design_pass(
     } else {
         let bands = rc::band_set(setup.rc_lo, setup.rc_hi, &setup.rc_bands);
         notes.push(Note::RcBands {
-            bands: bands.clone(),
+            bands: bands
+                .iter()
+                .map(|&(lo_hz, hi_hz)| Band { lo_hz, hi_hz })
+                .collect(),
         });
         bands
     };
@@ -1051,18 +1073,24 @@ fn design_pass(
     observed("scores", scores_started.elapsed());
     #[cfg(test)]
     timings.push(("scores".into(), scores_started.elapsed()));
-    notes.push(Note::PhaseStrength(
-        mains
+    notes.push(Note::PhaseStrength {
+        values: mains
             .iter()
-            .map(|m| (m.role.clone(), m.phase_strength))
+            .map(|m| RoleValue {
+                role: m.role.clone(),
+                value: m.phase_strength,
+            })
             .collect(),
-    ));
-    notes.push(Note::PhaseBand(
-        mains
+    });
+    notes.push(Note::PhaseBand {
+        values: mains
             .iter()
-            .map(|m| (m.role.clone(), m.phase_band))
+            .map(|m| RoleBand {
+                role: m.role.clone(),
+                hz: m.phase_band,
+            })
             .collect(),
-    ));
+    });
     if let Some(hz) = setup.input_hp_hz {
         notes.push(Note::InputHp { hz });
     }

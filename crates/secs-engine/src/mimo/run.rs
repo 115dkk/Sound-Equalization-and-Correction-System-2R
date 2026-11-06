@@ -507,20 +507,20 @@ pub(crate) fn assemble_prepared(
     }
     let mut ideal = ideal.clone();
     if key.max_supports != 0 {
-        ideal
-            .notes
-            .push(Note::Mimo(crate::notes::MimoNote::SupportLimit {
+        ideal.notes.push(Note::Mimo {
+            note: crate::notes::MimoNote::SupportLimit {
                 max_supports: key.max_supports,
-            }));
+            },
+        });
     }
     if key.fir {
         let total: usize = paths.iter().map(|p| p.filter.fir_len_48k()).sum();
-        ideal
-            .notes
-            .push(Note::Mimo(crate::notes::MimoNote::FirBudget {
+        ideal.notes.push(Note::Mimo {
+            note: crate::notes::MimoNote::FirBudget {
                 support_count: paths.len(),
                 taps_total: total,
-            }));
+            },
+        });
     }
     let lp = if key.fir {
         vec![C::new(1.0, 0.0); f.len()]

@@ -768,9 +768,14 @@ fn mimo_iir_joint_seed_fallback_is_reported() {
         &ctx,
     )
     .unwrap();
-    assert!(result.notes.iter().any(|note| matches!(note,
-        crate::Note::Mimo(crate::MimoNote::IirSeedFallback { support, status: -1 }) if support == "L")),
-        "joint-fit seed fallback must be recorded: {:?}", result.notes);
+    assert!(
+        result.notes.iter().any(|note| matches!(note,
+        crate::Note::Mimo {
+            note: crate::MimoNote::IirSeedFallback { support, status: -1 },
+        } if support == "L")),
+        "joint-fit seed fallback must be recorded: {:?}",
+        result.notes
+    );
 }
 
 #[test]
@@ -796,9 +801,14 @@ fn mimo_run_preserves_iir_seed_fallback_note() {
         &context(1),
     )
     .unwrap();
-    assert!(run.notes.iter().any(|note| matches!(note,
-        crate::Note::Mimo(crate::MimoNote::IirSeedFallback { support, status: -1 }) if support == "L")),
-        "the run must retain the IIR seed fallback: {:?}", run.notes);
+    assert!(
+        run.notes.iter().any(|note| matches!(note,
+        crate::Note::Mimo {
+            note: crate::MimoNote::IirSeedFallback { support, status: -1 },
+        } if support == "L")),
+        "the run must retain the IIR seed fallback: {:?}",
+        run.notes
+    );
 }
 
 #[test]

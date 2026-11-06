@@ -980,7 +980,9 @@ fn layout_stage(
         if lay.kind == LayoutKind::Dba {
             if front.is_empty() || rear.is_empty() {
                 info.kind = LayoutKind::Multi;
-                out.notes.push(Note::LayoutFallback(name.clone()));
+                out.notes.push(Note::LayoutFallback {
+                    value: name.clone(),
+                });
             } else {
                 let arrival = |p, r: &str| -> Result<f64, EngineError> {
                     let m = input
@@ -1117,7 +1119,9 @@ fn layout_stage(
             lay.members.iter().cloned().zip(rows).collect(),
         ));
         out.layout_info.push((name.clone(), info));
-        out.notes.push(Note::Layout(name.clone()));
+        out.notes.push(Note::Layout {
+            value: name.clone(),
+        });
     }
     Ok(())
 }
@@ -1291,7 +1295,7 @@ fn align_with(
             DifferentialEvolutionOptions::default(),
         )?;
         check(input)?;
-        out.notes.push(Note::BaCost(res.fun));
+        out.notes.push(Note::BaCost { value: res.fun });
         let mut x = res.x;
         if input.tuning.sub_bus_fix
             && let Some(p1) = bus_response(input, &h, &out, &search.unpack(input, &x), fitter)?
@@ -1358,7 +1362,9 @@ fn align_with(
     let lvl = level(input, &out.sub_sum_by_pos);
     out.sub_level_db = Some(lvl - input.ref_level);
     if out.plan.as_ref().is_some_and(|p| p.gain_anchored) {
-        out.notes.push(Note::BusGainAnchored(lvl - input.ref_level));
+        out.notes.push(Note::BusGainAnchored {
+            value: lvl - input.ref_level,
+        });
     } else {
         out.bus_gain = 10f64.powf((input.ref_level - lvl) / 20.0);
     }

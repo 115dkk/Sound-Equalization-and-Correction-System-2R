@@ -2,6 +2,7 @@ use super::{cases, design};
 use crate::{
     MimoDesign, MimoRequest, Note,
     mimo::design::{InputResult, convolve, design_input, design_mimo_traced, normal_equations},
+    notes::MimoOracleText,
 };
 use secs_compute::{CancelToken, Context, MemoryBudget, NoProgress};
 use secs_oracle::{Fixture, number, oracle_libm};
@@ -526,9 +527,9 @@ fn mimo_guard_cause_names_the_last_rejected_level_and_its_guards() {
     .unwrap();
     assert!((cause.rejected_db + 3.0).abs() < 1e-12);
     assert_eq!(cause.band, None);
-    let (hz, tail_db) = cause.tail.unwrap();
-    assert_eq!(hz, 47.5);
-    assert!((tail_db - 2.0).abs() < 1e-12);
+    let tail = cause.tail.unwrap();
+    assert_eq!(tail.hz, 47.5);
+    assert!((tail.db - 2.0).abs() < 1e-12);
     // Every level failed: the cause is the last, −12 dB trial, with both guards.
     let cause = guard_cause(
         &[
@@ -542,7 +543,14 @@ fn mimo_guard_cause_names_the_last_rejected_level_and_its_guards() {
     )
     .unwrap();
     assert!((cause.rejected_db + 12.0).abs() < 1e-12);
-    assert_eq!(cause.band, Some((40.0, 50.4, 1.5)));
+    assert_eq!(
+        cause.band,
+        Some(crate::notes::GuardBand {
+            lo_hz: 40.0,
+            hi_hz: 50.4,
+            db: 1.5,
+        })
+    );
     assert!(cause.tail.is_some());
 }
 
@@ -936,7 +944,7 @@ fn mimo_whole_path_goldens() {
                 .notes
                 .iter()
                 .map(|n| match n {
-                    Note::Mimo(note) => note.oracle_text(),
+                    Note::Mimo { note } => note.oracle_text(),
                     other => panic!("unexpected MIMO note: {other:?}"),
                 })
                 .collect();
@@ -1413,13 +1421,11 @@ fn mimo_ranges_and_upstream_behaviors() {
             .iter()
             .all(|(_, t)| !t.candidates.iter().any(|r| r == "SW2"))
     );
-    assert!(
-        excluded
-            .notes
-            .contains(&Note::Mimo(crate::MimoNote::ExcludedSupports(vec![
-                "SW2".into()
-            ])))
-    );
+    assert!(excluded.notes.contains(&Note::Mimo {
+        note: crate::MimoNote::ExcludedSupports {
+            roles: vec!["SW2".into()],
+        },
+    }));
     let view = crate::export_view(&d, &case.measurements, &case.config).unwrap();
     let baseline =
         crate::mimo::support_ranges(&d, &view.spectra, 150.0, &d.spectra.positions).unwrap();
@@ -1437,9 +1443,9 @@ fn mimo_ranges_and_upstream_behaviors() {
     assert_eq!(
         short,
         MimoDesign {
-            notes: vec![Note::Mimo(crate::MimoNote::InsufficientPositions {
-                measured: 2
-            })],
+            notes: vec![Note::Mimo {
+                note: crate::MimoNote::InsufficientPositions { measured: 2 },
+            }],
             ..MimoDesign::default()
         }
     );

@@ -424,7 +424,10 @@ fn long_mode_mask(modes: &[(f64, f64)], notes: &mut Vec<Note>, cap_db: f64) -> V
         selected.sort_by(|a, b| a.0.total_cmp(&b.0));
         notes.push(Note::LongModeBoost {
             cap_db,
-            modes: selected,
+            modes: selected
+                .into_iter()
+                .map(|(hz, t60_s)| secs_types::notes::LongMode { hz, t60_s })
+                .collect(),
         });
     }
     mask
@@ -1550,7 +1553,11 @@ pub(crate) fn channel_with_cuts(
         out.notes.push(Note::ModeDecay {
             role: input.role.to_owned(),
             target_t60_s: mode.target_t60_s,
-            modes: mode.modes.clone(),
+            modes: mode
+                .modes
+                .iter()
+                .map(|&(hz, t60_s, cut_db)| secs_types::notes::Mode { hz, t60_s, cut_db })
+                .collect(),
         });
     }
     if let Some(hf) = &out.hf_phase {
@@ -1563,7 +1570,14 @@ pub(crate) fn channel_with_cuts(
     if let Some(dips) = &out.dip_limit {
         out.notes.push(Note::DipLimit {
             role: input.role.to_owned(),
-            dips: dips.clone(),
+            dips: dips
+                .iter()
+                .map(|&(hz, depth_db, fill_db)| secs_types::notes::Dip {
+                    hz,
+                    depth_db,
+                    fill_db,
+                })
+                .collect(),
         });
     }
     let gd_cuts = if input.tuning.gd_cuts {
@@ -1630,7 +1644,10 @@ pub(crate) fn channel_with_cuts(
     } else {
         out.notes.push(Note::GdCuts {
             role: input.role.to_owned(),
-            cuts: gd_cuts.clone(),
+            cuts: gd_cuts
+                .iter()
+                .map(|&(hz, q, gain_db)| secs_types::notes::Peq { hz, q, gain_db })
+                .collect(),
         });
         multiply(
             &out.response,

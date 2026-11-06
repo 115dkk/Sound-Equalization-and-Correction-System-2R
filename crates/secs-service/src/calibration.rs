@@ -372,7 +372,11 @@ fn summarize_mimo(run: &secs_engine::mimo::MimoRun) -> MimoSummary {
         notes: run
             .notes
             .iter()
-            .flat_map(|note| note.record().into_iter().map(notice_from_record))
+            .flat_map(|note| {
+                secs_engine::NoteRecords::record(note)
+                    .into_iter()
+                    .map(notice_from_record)
+            })
             .chain((run.compute.fallbacks > 0).then(|| Notice {
                 code: "compute_fallback".into(),
                 params: [("count".into(), run.compute.fallbacks.to_string())].into(),
@@ -731,7 +735,11 @@ fn summarize(
         notes: design
             .notes
             .iter()
-            .flat_map(|note| note.record().into_iter().map(notice_from_record))
+            .flat_map(|note| {
+                secs_engine::NoteRecords::record(note)
+                    .into_iter()
+                    .map(notice_from_record)
+            })
             .collect(),
         main_roles: design
             .chain
@@ -762,7 +770,7 @@ fn notice_from_record(record: secs_engine::NoteRecord) -> Notice {
 // `curves.rs` is outside P188's allowed files and still calls this adapter.
 pub(crate) fn scalar_notice(note: &secs_engine::Note) -> Notice {
     notice_from_record(
-        note.record()
+        secs_engine::NoteRecords::record(note)
             .into_iter()
             .next()
             .expect("scalar note records one notice"),

@@ -1,4 +1,5 @@
 use super::cases;
+use crate::notes::MimoOracleText;
 pub(super) use crate::test_support::{replay, replay_with_context};
 use crate::{
     C,
@@ -47,9 +48,13 @@ fn note_value(note: &crate::notes::Note) -> Value {
         Note::PolaritySplit { groups, confidence } => {
             json!({"PolaritySplit": {"groups": groups, "confidence": confidence}})
         }
-        Note::PairPhase { a, b, bands } => {
-            json!({"PairPhase": {"a": a, "b": b, "bands": bands}})
-        }
+        Note::PairPhase { a, b, bands } => json!({"PairPhase": {
+            "a": a,
+            "b": b,
+            "bands": bands.iter().map(|band| (
+                band.lo_hz, band.hi_hz, band.phase_deg, band.loss_db
+            )).collect::<Vec<_>>()
+        }}),
         Note::LowProtect {
             role,
             rolloff_hz,
@@ -65,17 +70,24 @@ fn note_value(note: &crate::notes::Note) -> Value {
             taps,
             lift_ms,
         } => json!({"LiftCapped": {"from_ms": from_ms, "taps": taps, "lift_ms": lift_ms}}),
-        Note::SubFilters(filters) => json!({"SubFilters": filters.iter().map(|(r, f)| (r, json!({
-            "hp_hz": f.hp_hz, "hp_type": f.hp_type.name(), "lp_hz": f.lp_hz,
-            "lp_type": f.lp_type.name(), "peq": f.peq
-        }))).collect::<Vec<_>>()}),
+        Note::SubFilters { filters } => json!({"SubFilters": filters.iter().map(|entry| (
+            &entry.role,
+            json!({
+                "hp_hz": entry.value.hp_hz,
+                "hp_type": entry.value.hp_type.name(),
+                "lp_hz": entry.value.lp_hz,
+                "lp_type": entry.value.lp_type.name(),
+                "peq": entry.value.peq.iter().map(|peq| (peq.hz, peq.q, peq.gain_db)).collect::<Vec<_>>()
+            })
+        )).collect::<Vec<_>>()}),
         Note::RcLimit {
             hz,
             auto,
             schroeder_hz,
             ..
         } => json!({"RcLimit": {"hz": hz, "auto": auto, "schroeder_hz": schroeder_hz}}),
-        Note::RcBands { bands } => json!({"RcBands": {"bands": bands}}),
+        Note::RcBands { bands } => json!({"RcBands": {"bands": bands
+            .iter().map(|band| (band.lo_hz, band.hi_hz)).collect::<Vec<_>>()}}),
         Note::LfAlign {
             role,
             strength,
@@ -88,15 +100,20 @@ fn note_value(note: &crate::notes::Note) -> Value {
             role,
             target_t60_s,
             modes,
-        } => json!({"ModeDecay": {"role": role, "target_t60_s": target_t60_s, "modes": modes}}),
+        } => json!({"ModeDecay": {
+            "role": role,
+            "target_t60_s": target_t60_s,
+            "modes": modes.iter().map(|mode| (mode.hz, mode.t60_s, mode.cut_db)).collect::<Vec<_>>()
+        }}),
         Note::HfPhase {
             role,
             rotation_deg,
             limited,
         } => json!({"HfPhase": {"role": role, "rotation_deg": rotation_deg, "limited": limited}}),
-        Note::DipLimit { role, dips } => {
-            json!({"DipLimit": {"role": role, "dips": dips}})
-        }
+        Note::DipLimit { role, dips } => json!({"DipLimit": {
+            "role": role,
+            "dips": dips.iter().map(|dip| (dip.hz, dip.depth_db, dip.fill_db)).collect::<Vec<_>>()
+        }}),
         Note::InputHp { hz } => json!({"InputHp": {"hz": hz}}),
         Note::Latency {
             latency_ms,
@@ -105,28 +122,34 @@ fn note_value(note: &crate::notes::Note) -> Value {
         } => {
             json!({"Latency": {"latency_ms": latency_ms, "lift_ms": lift_ms, "main_extra_ms": main_extra_ms}})
         }
-        Note::PhaseStrength(v) => json!({"PhaseStrength": v}),
-        Note::PhaseBand(v) => json!({"PhaseBand": v}),
-        Note::LongModeBoost { cap_db, modes } => {
-            json!({"LongModeBoost": {"cap_db": cap_db, "modes": modes}})
-        }
-        Note::GdCuts { role, cuts } => json!({"GdCuts": {"role": role, "cuts": cuts}}),
-        Note::BaCost(v) => json!({"BaCost": v}),
+        Note::PhaseStrength { values } => json!({"PhaseStrength": values
+            .iter().map(|entry| (&entry.role, entry.value)).collect::<Vec<_>>() }),
+        Note::PhaseBand { values } => json!({"PhaseBand": values
+            .iter().map(|entry| (&entry.role, entry.hz)).collect::<Vec<_>>() }),
+        Note::LongModeBoost { cap_db, modes } => json!({"LongModeBoost": {
+            "cap_db": cap_db,
+            "modes": modes.iter().map(|mode| (mode.hz, mode.t60_s)).collect::<Vec<_>>()
+        }}),
+        Note::GdCuts { role, cuts } => json!({"GdCuts": {
+            "role": role,
+            "cuts": cuts.iter().map(|peq| (peq.hz, peq.q, peq.gain_db)).collect::<Vec<_>>()
+        }}),
+        Note::BaCost { value } => json!({"BaCost": value}),
         Note::BaBusPass {
             first,
             second,
             kept_first,
         } => json!({"BaBusPass": {"first": first, "second": second, "kept_first": kept_first}}),
         Note::BaManual => json!("BaManual"),
-        Note::LayoutFallback(v) => json!({"LayoutFallback": v}),
-        Note::Layout(v) => json!({"Layout": v}),
+        Note::LayoutFallback { value } => json!({"LayoutFallback": value}),
+        Note::Layout { value } => json!({"Layout": value}),
         Note::TwoWay {
             roles,
             gain_db,
             xo_hz,
         } => json!({"TwoWay": {"roles": roles, "gain_db": gain_db, "xo_hz": xo_hz}}),
-        Note::BusGainAnchored(v) => json!({"BusGainAnchored": v}),
-        Note::Mimo(v) => json!({"Mimo": v.oracle_text()}),
+        Note::BusGainAnchored { value } => json!({"BusGainAnchored": value}),
+        Note::Mimo { note } => json!({"Mimo": note.oracle_text()}),
     }
 }
 
@@ -314,7 +337,7 @@ fn pair_phase_runs_once_on_the_final_pass_and_reports_dolby() {
             assert!(
                 bands
                     .iter()
-                    .all(|band| band.3 <= crate::pair_phase::LOSS_DB)
+                    .all(|band| band.loss_db <= crate::pair_phase::LOSS_DB)
             );
             eprintln!("PAIR_PHASE {label} {a}/{b} {bands:?}");
         }
@@ -355,7 +378,7 @@ fn pair_phase_runs_once_on_the_final_pass_and_reports_dolby() {
             assert!(
                 bands
                     .iter()
-                    .any(|band| band.0 >= 70.0 && band.1 <= 113.0 && band.3 <= -12.0),
+                    .any(|band| band.lo_hz >= 70.0 && band.hi_hz <= 113.0 && band.loss_db <= -12.0),
                 "{bands:?}"
             );
         } else {
@@ -811,7 +834,7 @@ fn design_matches_recorded_stages() {
             if matches!(
                 note,
                 crate::notes::Note::LiftCapped { .. }
-                    | crate::notes::Note::SubFilters(_)
+                    | crate::notes::Note::SubFilters { .. }
                     | crate::notes::Note::RcLimit { .. }
             ) {
                 compare_value(
@@ -839,7 +862,7 @@ fn design_matches_recorded_stages() {
                 crate::notes::Note::PairPhase { .. } => "PairPhase",
                 crate::notes::Note::LowProtect { .. } => "LowProtect",
                 crate::notes::Note::LiftCapped { .. } => "LiftCapped",
-                crate::notes::Note::SubFilters(_) => "SubFilters",
+                crate::notes::Note::SubFilters { .. } => "SubFilters",
                 crate::notes::Note::RcLimit { .. } => "RcLimit",
                 crate::notes::Note::RcBands { .. } => "RcBands",
                 crate::notes::Note::LfAlign { .. } => "LfAlign",
@@ -848,18 +871,18 @@ fn design_matches_recorded_stages() {
                 crate::notes::Note::DipLimit { .. } => "DipLimit",
                 crate::notes::Note::InputHp { .. } => "InputHp",
                 crate::notes::Note::Latency { .. } => "Latency",
-                crate::notes::Note::PhaseStrength(_) => "PhaseStrength",
-                crate::notes::Note::PhaseBand(_) => "PhaseBand",
+                crate::notes::Note::PhaseStrength { .. } => "PhaseStrength",
+                crate::notes::Note::PhaseBand { .. } => "PhaseBand",
                 crate::notes::Note::LongModeBoost { .. } => "LongModeBoost",
                 crate::notes::Note::GdCuts { .. } => "GdCuts",
-                crate::notes::Note::BaCost(_) => "BaCost",
+                crate::notes::Note::BaCost { .. } => "BaCost",
                 crate::notes::Note::BaBusPass { .. } => "BaBusPass",
                 crate::notes::Note::BaManual => "BaManual",
-                crate::notes::Note::LayoutFallback(_) => "LayoutFallback",
-                crate::notes::Note::Layout(_) => "Layout",
+                crate::notes::Note::LayoutFallback { .. } => "LayoutFallback",
+                crate::notes::Note::Layout { .. } => "Layout",
                 crate::notes::Note::TwoWay { .. } => "TwoWay",
-                crate::notes::Note::BusGainAnchored(_) => "BusGainAnchored",
-                crate::notes::Note::Mimo(_) => "Mimo",
+                crate::notes::Note::BusGainAnchored { .. } => "BusGainAnchored",
+                crate::notes::Note::Mimo { .. } => "Mimo",
             })
             .collect();
         if gate {

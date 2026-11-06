@@ -1306,10 +1306,12 @@ pub(crate) fn design_mimo_iir_prepared_with_options(
     let mut out = MimoIir::default();
     for (input, paths, removed, status) in results {
         if status == -1 {
-            out.notes.push(Note::Mimo(crate::MimoNote::IirSeedFallback {
-                support: input.clone(),
-                status,
-            }));
+            out.notes.push(Note::Mimo {
+                note: crate::MimoNote::IirSeedFallback {
+                    support: input.clone(),
+                    status,
+                },
+            });
         }
         out.supports.push((input.clone(), paths));
         out.removed.push((input, removed));

@@ -1,178 +1,11 @@
 //! Typed engine diagnostics; presentation owns their translated text.
 
-use crate::input::Peq;
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum Note {
-    /// ADR 0033, one per main whose direct sound is opposite to the majority
-    /// of the mains it could be correlated with. `compared` is the number of
-    /// decided pairs, `opposite` how many of them were negative, `confidence`
-    /// the median |r| over the decided pairs.
-    PolarityReversed {
-        role: String,
-        confidence: f64,
-        compared: usize,
-        opposite: usize,
-    },
-    PolaritySplit {
-        groups: (Vec<String>, Vec<String>),
-        confidence: f64,
-    },
-    /// ADR 0035, one per main pair whose corrected reference response cancels
-    /// by at least 6 dB in one or more inspected one-third-octave bands.
-    PairPhase {
-        a: String,
-        b: String,
-        bands: Vec<crate::pair_phase::Band>,
-    },
-    LiftCapped {
-        from_ms: f64,
-        taps: usize,
-        lift_ms: f64,
-    },
-    SubFilters(Vec<(String, crate::setup::SubFilter)>),
-    LowProtect {
-        role: String,
-        rolloff_hz: f64,
-        hp_hz: Option<f64>,
-        limited: bool,
-        reduced: usize,
-        cuts: usize,
-    },
-    RcLimit {
-        hz: f64,
-        auto: bool,
-        schroeder_hz: Option<f64>,
-        basis: secs_types::calibration::RcHiBasis,
-        factor: u8,
-        band_hz: Option<f64>,
-        band_t60_s: Option<f64>,
-        positions: Option<usize>,
-    },
-    RcBands {
-        bands: Vec<(f64, f64)>,
-    },
-    /// ADR 0025, one per main when `lf_align` is on and the mode has FIR
-    /// taps. `arrival_ms` is the median LF arrival left after correction
-    /// (positive = later than HF); `limited` means the pull clamp cut the
-    /// requested correction by more than 1 ms somewhere in the band.
-    LfAlign {
-        role: String,
-        strength: f64,
-        arrival_ms: Option<f64>,
-        limited: bool,
-    },
-    /// ADR 0025, one per main when `mode_decay` is on. Each mode is
-    /// `(hz, measured T60 s, cut depth dB)` with the depth positive; an empty
-    /// list means no mode qualified.
-    ModeDecay {
-        role: String,
-        target_t60_s: f64,
-        modes: Vec<(f64, f64, f64)>,
-    },
-    /// ADR 0030, one per channel whose FIR realizes excess phase when
-    /// `hf_phase` is on. `rotation_deg` is the wrapped rotation unwound above
-    /// the band, `None` when less than an octave is left below 0.45·SR;
-    /// `limited` means the `[−5 ms, lift]` clamp kept part of it.
-    HfPhase {
-        role: String,
-        rotation_deg: Option<f64>,
-        limited: bool,
-    },
-    /// ADR 0034, one per main when `dip_limit` is on. Each entry is
-    /// `(centre Hz, depth dB, allowed fill dB)`, deepest first.
-    DipLimit {
-        role: String,
-        dips: Vec<(f64, f64, f64)>,
-    },
-    /// ADR 0031, once when `input_hp_hz` is set: the common input high-pass,
-    /// 8th-order Butterworth, at `hz`.
-    InputHp {
-        hz: f64,
-    },
-    Latency {
-        latency_ms: f64,
-        lift_ms: f64,
-        main_extra_ms: f64,
-    },
-    PhaseStrength(Vec<(String, f64)>),
-    PhaseBand(Vec<(String, Option<f64>)>),
-    // RC (P09)
-    LongModeBoost {
-        cap_db: f64,
-        modes: Vec<(f64, f64)>,
-    },
-    GdCuts {
-        role: String,
-        cuts: Vec<Peq>,
-    },
-    // BA (P10)
-    BaCost(f64),
-    BaBusPass {
-        first: f64,
-        second: f64,
-        kept_first: bool,
-    },
-    BaManual,
-    LayoutFallback(String),
-    Layout(String),
-    TwoWay {
-        roles: Vec<String>,
-        gain_db: f64,
-        xo_hz: f64,
-    },
-    BusGainAnchored(f64),
-    Mimo(MimoNote),
-}
-
-/// Semantic diagnostics in producer order; never translated presentation text.
-#[derive(Debug, Clone, PartialEq)]
-pub enum MimoNote {
-    /// Input whose joint support fit returned its seeds after both solves failed.
-    IirSeedFallback {
-        support: String,
-        status: i32,
-    },
-    InsufficientPositions {
-        measured: usize,
-    },
-    ExcludedSupports(Vec<String>),
-    SupportRanges(Vec<(String, Option<(f64, f64)>)>),
-    GuardReduced {
-        role: String,
-        gain_db: f64,
-        cause: GuardCause,
-    },
-    GuardDisabled {
-        role: String,
-        cause: GuardCause,
-    },
-    SupportLimit {
-        max_supports: usize,
-    },
-    FirBudget {
-        support_count: usize,
-        taps_total: usize,
-    },
-}
-
-/// What the MIMO guard rejected last: the support level of that trial
-/// (3 dB above `GuardReduced::gain_db`, or −12 dB before `GuardDisabled`)
-/// and the guard values there that broke their 1 dB limits.
-#[derive(Debug, Clone, PartialEq)]
-pub struct GuardCause {
-    pub rejected_db: f64,
-    /// Measured position whose band change broke the limit when the seat
-    /// guard is on (ADR 0036); the tail guard has its own.
-    pub band_position: Option<u32>,
-    /// Measured position whose modal tail broke the limit when the seat guard is on.
-    pub tail_position: Option<u32>,
-    /// Late energy rise over every position, `(lo Hz, hi Hz, dB)`: a
-    /// third-octave band or a ±1.5 Hz band around a late mode.
-    pub band: Option<(f64, f64, f64)>,
-    /// Modal tail energy rise over every position, `(mode Hz, dB)`.
-    pub tail: Option<(f64, f64)>,
-}
+pub(crate) use secs_types::notes::{
+    Band, GuardBand, GuardTail, Peq, RoleBand, RoleNote, RoleValue, SubFilterNote,
+};
+#[cfg(test)]
+use secs_types::notes::{Dip, LongMode, Mode, PairBand, PolarityGroups};
+pub use secs_types::notes::{GuardCause, MimoNote, Note};
 
 /// One wire record of a note: the stable code and scalar string parameters.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -181,7 +14,7 @@ pub struct NoteRecord {
     pub params: Vec<(&'static str, String)>,
 }
 
-/// Every stable record code produced by [`Note::record`] and [`MimoNote::record`].
+/// Every stable record code produced by [`NoteRecords::record`] and [`MimoNoteRecords::record`].
 pub const RECORD_CODES: &[&str] = &[
     "polarity_reversed",
     "polarity_split",
@@ -225,9 +58,14 @@ fn record(code: &'static str, params: Vec<(&'static str, String)>) -> NoteRecord
     NoteRecord { code, params }
 }
 
-impl Note {
+/// Stable scalar-record projection for typed engine notes.
+pub trait NoteRecords {
     /// Expands the note into records in producer order. Every value is scalar.
-    pub fn record(&self) -> Vec<NoteRecord> {
+    fn record(&self) -> Vec<NoteRecord>;
+}
+
+impl NoteRecords for Note {
+    fn record(&self) -> Vec<NoteRecord> {
         match self {
             Self::PolarityReversed {
                 role,
@@ -246,25 +84,25 @@ impl Note {
             Self::PolaritySplit { groups, confidence } => vec![record(
                 "polarity_split",
                 vec![
-                    ("a", groups.0.join(",")),
-                    ("b", groups.1.join(",")),
+                    ("a", groups.a.join(",")),
+                    ("b", groups.b.join(",")),
                     ("confidence", confidence.to_string()),
                 ],
             )],
             Self::PairPhase { a, b, bands } => bands
                 .iter()
                 .enumerate()
-                .map(|(index, (lo, hi, phase, loss))| {
+                .map(|(index, band)| {
                     record(
                         "pair_phase",
                         vec![
                             ("a", a.clone()),
                             ("b", b.clone()),
                             ("index", index.to_string()),
-                            ("lo_hz", format!("{lo:.0}")),
-                            ("hi_hz", format!("{hi:.0}")),
-                            ("phase_deg", format!("{phase:.1}")),
-                            ("loss_db", format!("{loss:.1}")),
+                            ("lo_hz", format!("{:.0}", band.lo_hz)),
+                            ("hi_hz", format!("{:.0}", band.hi_hz)),
+                            ("phase_deg", format!("{:.1}", band.phase_deg)),
+                            ("loss_db", format!("{:.1}", band.loss_db)),
                         ],
                     )
                 })
@@ -281,9 +119,11 @@ impl Note {
                     ("lift_ms", lift_ms.to_string()),
                 ],
             )],
-            Self::SubFilters(filters) => filters
+            Self::SubFilters { filters } => filters
                 .iter()
-                .flat_map(|(role, filter)| {
+                .flat_map(|entry| {
+                    let role = &entry.role;
+                    let filter = &entry.value;
                     let mut records = vec![record(
                         "sub_filters",
                         vec![
@@ -295,20 +135,18 @@ impl Note {
                             ("peq_count", filter.peq.len().to_string()),
                         ],
                     )];
-                    records.extend(filter.peq.iter().enumerate().map(
-                        |(index, (hz, q, gain_db))| {
-                            record(
-                                "sub_filter_peq",
-                                vec![
-                                    ("role", role.clone()),
-                                    ("index", index.to_string()),
-                                    ("hz", hz.to_string()),
-                                    ("q", q.to_string()),
-                                    ("gain_db", gain_db.to_string()),
-                                ],
-                            )
-                        },
-                    ));
+                    records.extend(filter.peq.iter().enumerate().map(|(index, peq)| {
+                        record(
+                            "sub_filter_peq",
+                            vec![
+                                ("role", role.clone()),
+                                ("index", index.to_string()),
+                                ("hz", peq.hz.to_string()),
+                                ("q", peq.q.to_string()),
+                                ("gain_db", peq.gain_db.to_string()),
+                            ],
+                        )
+                    }));
                     records
                 })
                 .collect(),
@@ -362,13 +200,13 @@ impl Note {
             Self::RcBands { bands } => bands
                 .iter()
                 .enumerate()
-                .map(|(index, (lo_hz, hi_hz))| {
+                .map(|(index, band)| {
                     record(
                         "rc_bands",
                         vec![
                             ("index", index.to_string()),
-                            ("lo_hz", lo_hz.to_string()),
-                            ("hi_hz", hi_hz.to_string()),
+                            ("lo_hz", band.lo_hz.to_string()),
+                            ("hi_hz", band.hi_hz.to_string()),
                         ],
                     )
                 })
@@ -406,15 +244,15 @@ impl Note {
                 modes,
             } => modes
                 .iter()
-                .map(|(hz, t60_s, depth_db)| {
+                .map(|mode| {
                     record(
                         "mode_decay",
                         vec![
                             ("role", role.clone()),
-                            ("hz", hz.to_string()),
-                            ("t60_s", t60_s.to_string()),
+                            ("hz", mode.hz.to_string()),
+                            ("t60_s", mode.t60_s.to_string()),
                             ("target_s", target_t60_s.to_string()),
-                            ("depth_db", depth_db.to_string()),
+                            ("depth_db", mode.cut_db.to_string()),
                         ],
                     )
                 })
@@ -437,15 +275,15 @@ impl Note {
             Self::DipLimit { role, dips } => dips
                 .iter()
                 .enumerate()
-                .map(|(index, (hz, depth, fill))| {
+                .map(|(index, dip)| {
                     record(
                         "dip_limit",
                         vec![
                             ("role", role.clone()),
                             ("index", index.to_string()),
-                            ("hz", format!("{hz:.2}")),
-                            ("depth_db", format!("{depth:.2}")),
-                            ("fill_db", format!("{fill:.2}")),
+                            ("hz", format!("{:.2}", dip.hz)),
+                            ("depth_db", format!("{:.2}", dip.depth_db)),
+                            ("fill_db", format!("{:.2}", dip.fill_db)),
                         ],
                     )
                 })
@@ -466,23 +304,26 @@ impl Note {
                     ("main_extra_ms", main_extra_ms.to_string()),
                 ],
             )],
-            Self::PhaseStrength(values) => values
+            Self::PhaseStrength { values } => values
                 .iter()
-                .map(|(role, strength)| {
+                .map(|entry| {
                     record(
                         "phase_strength",
-                        vec![("role", role.clone()), ("strength", strength.to_string())],
+                        vec![
+                            ("role", entry.role.clone()),
+                            ("strength", entry.value.to_string()),
+                        ],
                     )
                 })
                 .collect(),
-            Self::PhaseBand(values) => values
+            Self::PhaseBand { values } => values
                 .iter()
-                .map(|(role, hz)| {
+                .map(|entry| {
                     let mut params = vec![
-                        ("role", role.clone()),
-                        ("enabled", hz.is_some().to_string()),
+                        ("role", entry.role.clone()),
+                        ("enabled", entry.hz.is_some().to_string()),
                     ];
-                    if let Some(hz) = hz {
+                    if let Some(hz) = entry.hz {
                         params.push(("hz", hz.to_string()));
                     }
                     record("phase_band", params)
@@ -490,13 +331,13 @@ impl Note {
                 .collect(),
             Self::LongModeBoost { cap_db, modes } => modes
                 .iter()
-                .map(|(hz, t60_s)| {
+                .map(|mode| {
                     record(
                         "long_mode_boost",
                         vec![
                             ("cap_db", cap_db.to_string()),
-                            ("hz", hz.to_string()),
-                            ("t60_s", t60_s.to_string()),
+                            ("hz", mode.hz.to_string()),
+                            ("t60_s", mode.t60_s.to_string()),
                         ],
                     )
                 })
@@ -504,20 +345,22 @@ impl Note {
             Self::GdCuts { role, cuts } => cuts
                 .iter()
                 .enumerate()
-                .map(|(index, (hz, q, gain_db))| {
+                .map(|(index, peq)| {
                     record(
                         "gd_cuts",
                         vec![
                             ("role", role.clone()),
                             ("index", index.to_string()),
-                            ("hz", hz.to_string()),
-                            ("q", q.to_string()),
-                            ("gain_db", gain_db.to_string()),
+                            ("hz", peq.hz.to_string()),
+                            ("q", peq.q.to_string()),
+                            ("gain_db", peq.gain_db.to_string()),
                         ],
                     )
                 })
                 .collect(),
-            Self::BaCost(value) => vec![record("ba_cost", vec![("value", value.to_string())])],
+            Self::BaCost { value } => {
+                vec![record("ba_cost", vec![("value", value.to_string())])]
+            }
             Self::BaBusPass {
                 first,
                 second,
@@ -531,10 +374,10 @@ impl Note {
                 ],
             )],
             Self::BaManual => vec![record("ba_manual", Vec::new())],
-            Self::LayoutFallback(value) => {
+            Self::LayoutFallback { value } => {
                 vec![record("layout_fallback", vec![("value", value.clone())])]
             }
-            Self::Layout(value) => vec![record("layout", vec![("value", value.clone())])],
+            Self::Layout { value } => vec![record("layout", vec![("value", value.clone())])],
             Self::TwoWay {
                 roles,
                 gain_db,
@@ -552,18 +395,17 @@ impl Note {
                     )
                 })
                 .collect(),
-            Self::BusGainAnchored(value) => vec![record(
+            Self::BusGainAnchored { value } => vec![record(
                 "bus_gain_anchored",
                 vec![("value", value.to_string())],
             )],
-            Self::Mimo(note) => note.record(),
+            Self::Mimo { note } => note.record(),
         }
     }
 }
 
-impl MimoNote {
-    /// Expands one MIMO note into records in producer order.
-    pub fn record(&self) -> Vec<NoteRecord> {
+impl NoteRecords for MimoNote {
+    fn record(&self) -> Vec<NoteRecord> {
         match self {
             Self::IirSeedFallback { support, status } => vec![record(
                 "mimo_iir_seed_fallback",
@@ -573,19 +415,22 @@ impl MimoNote {
                 "mimo_insufficient_positions",
                 vec![("measured", measured.to_string()), ("required", "3".into())],
             )],
-            Self::ExcludedSupports(roles) => roles
+            Self::ExcludedSupports { roles } => roles
                 .iter()
                 .map(|role| record("mimo_support_excluded", vec![("role", role.clone())]))
                 .collect(),
-            Self::SupportRanges(ranges) => ranges
+            Self::SupportRanges { ranges } => ranges
                 .iter()
-                .map(|(role, range)| {
+                .map(|entry| {
                     let mut params = vec![
-                        ("role", role.clone()),
-                        ("enabled", range.is_some().to_string()),
+                        ("role", entry.role.clone()),
+                        ("enabled", entry.value.is_some().to_string()),
                     ];
-                    if let Some((lo, hi)) = range {
-                        params.extend([("lo_hz", lo.to_string()), ("hi_hz", hi.to_string())]);
+                    if let Some(range) = &entry.value {
+                        params.extend([
+                            ("lo_hz", range.lo_hz.to_string()),
+                            ("hi_hz", range.hi_hz.to_string()),
+                        ]);
                     }
                     record("mimo_support_range", params)
                 })
@@ -631,23 +476,31 @@ fn guard_cause_params(cause: &GuardCause) -> Vec<(&'static str, String)> {
     if let Some(position) = cause.tail_position {
         params.push(("tail_position", position.to_string()));
     }
-    if let Some((lo, hi, db)) = cause.band {
+    if let Some(band) = &cause.band {
         params.extend([
-            ("band_lo_hz", lo.to_string()),
-            ("band_hi_hz", hi.to_string()),
-            ("band_db", db.to_string()),
+            ("band_lo_hz", band.lo_hz.to_string()),
+            ("band_hi_hz", band.hi_hz.to_string()),
+            ("band_db", band.db.to_string()),
         ]);
     }
-    if let Some((hz, db)) = cause.tail {
-        params.extend([("mode_hz", hz.to_string()), ("tail_db", db.to_string())]);
+    if let Some(tail) = &cause.tail {
+        params.extend([
+            ("mode_hz", tail.hz.to_string()),
+            ("tail_db", tail.db.to_string()),
+        ]);
     }
     params
 }
 
 #[cfg(test)]
-impl MimoNote {
+pub(crate) trait MimoOracleText {
+    fn oracle_text(&self) -> String;
+}
+
+#[cfg(test)]
+impl MimoOracleText for MimoNote {
     // Only the oracle adapter renders the legacy diagnostic strings.
-    pub(crate) fn oracle_text(&self) -> String {
+    fn oracle_text(&self) -> String {
         match self {
             Self::IirSeedFallback { support, status } => {
                 format!("IIR seed fallback {support}: {status}")
@@ -655,14 +508,17 @@ impl MimoNote {
             Self::InsufficientPositions { measured } => {
                 format!("측정 위치 {measured}곳 — MIMO 는 3곳 이상일 때만")
             }
-            Self::ExcludedSupports(roles) => format!("서포트 제외(사용자): {}", roles.join(", ")),
-            Self::SupportRanges(ranges) => format!(
+            Self::ExcludedSupports { roles } => {
+                format!("서포트 제외(사용자): {}", roles.join(", "))
+            }
+            Self::SupportRanges { ranges } => format!(
                 "서포트 대역 {}",
                 ranges
                     .iter()
-                    .map(|(role, range)| match range {
-                        Some((lo, hi)) => format!("{role} {lo:.0}–{hi:.0}"),
-                        None => format!("{role} 제외"),
+                    .map(|entry| match &entry.value {
+                        Some(range) =>
+                            format!("{} {:.0}–{:.0}", entry.role, range.lo_hz, range.hi_hz),
+                        None => format!("{} 제외", entry.role),
                     })
                     .collect::<Vec<_>>()
                     .join(", ")
@@ -701,6 +557,101 @@ mod tests {
         }
     }
 
+    fn pair_bands(values: &[(f64, f64, f64, f64)]) -> Vec<PairBand> {
+        values
+            .iter()
+            .map(|&(lo_hz, hi_hz, phase_deg, loss_db)| PairBand {
+                lo_hz,
+                hi_hz,
+                phase_deg,
+                loss_db,
+            })
+            .collect()
+    }
+
+    fn bands(values: &[(f64, f64)]) -> Vec<Band> {
+        values
+            .iter()
+            .map(|&(lo_hz, hi_hz)| Band { lo_hz, hi_hz })
+            .collect()
+    }
+
+    fn dips(values: &[(f64, f64, f64)]) -> Vec<Dip> {
+        values
+            .iter()
+            .map(|&(hz, depth_db, fill_db)| Dip {
+                hz,
+                depth_db,
+                fill_db,
+            })
+            .collect()
+    }
+
+    fn modes(values: &[(f64, f64, f64)]) -> Vec<Mode> {
+        values
+            .iter()
+            .map(|&(hz, t60_s, cut_db)| Mode { hz, t60_s, cut_db })
+            .collect()
+    }
+
+    fn long_modes(values: &[(f64, f64)]) -> Vec<LongMode> {
+        values
+            .iter()
+            .map(|&(hz, t60_s)| LongMode { hz, t60_s })
+            .collect()
+    }
+
+    fn peqs(values: &[(f64, f64, f64)]) -> Vec<Peq> {
+        values
+            .iter()
+            .map(|&(hz, q, gain_db)| Peq { hz, q, gain_db })
+            .collect()
+    }
+
+    fn role_values(values: &[(&str, f64)]) -> Vec<RoleValue> {
+        values
+            .iter()
+            .map(|&(role, value)| RoleValue {
+                role: role.into(),
+                value,
+            })
+            .collect()
+    }
+
+    fn role_bands(values: &[(&str, Option<f64>)]) -> Vec<RoleBand> {
+        values
+            .iter()
+            .map(|&(role, hz)| RoleBand {
+                role: role.into(),
+                hz,
+            })
+            .collect()
+    }
+
+    fn sub_filter(role: &str, filter: SubFilter) -> RoleNote<SubFilterNote> {
+        RoleNote {
+            role: role.into(),
+            value: SubFilterNote {
+                hp_hz: filter.hp_hz,
+                hp_type: filter.hp_type,
+                lp_hz: filter.lp_hz,
+                lp_type: filter.lp_type,
+                peq: peqs(&filter.peq),
+            },
+        }
+    }
+
+    fn mimo(note: MimoNote) -> Note {
+        Note::Mimo { note }
+    }
+
+    fn range(role: &str, value: Option<(f64, f64)>) -> RoleNote<Option<Band>> {
+        RoleNote {
+            role: role.into(),
+            value: value.map(|(lo_hz, hi_hz)| Band { lo_hz, hi_hz }),
+        }
+    }
+
     #[test]
     fn record_of_polarity_reversed_matches_the_service_literal() {
         assert_eq!(
@@ -723,7 +674,10 @@ mod tests {
         );
         assert_eq!(
             Note::PolaritySplit {
-                groups: (vec!["L".into(), "R".into()], vec!["C".into(), "Ls".into()],),
+                groups: PolarityGroups {
+                    a: vec!["L".into(), "R".into()],
+                    b: vec!["C".into(), "Ls".into()],
+                },
                 confidence: 0.91,
             }
             .record(),
@@ -789,54 +743,67 @@ mod tests {
     #[test]
     fn record_of_sub_filters_mode_decay_and_mimo_guard_match_the_service_literals() {
         let notes = [
-            Note::SubFilters(vec![(
-                "SW1".into(),
-                SubFilter {
-                    hp_hz: 10.0,
-                    hp_type: BandType::Lr12,
-                    lp_hz: 80.0,
-                    lp_type: BandType::Lr24,
-                    peq: vec![(40.0, 1.0, -2.0)],
-                },
-            )]),
+            Note::SubFilters {
+                filters: vec![sub_filter(
+                    "SW1",
+                    SubFilter {
+                        hp_hz: 10.0,
+                        hp_type: BandType::Lr12,
+                        lp_hz: 80.0,
+                        lp_type: BandType::Lr24,
+                        peq: vec![(40.0, 1.0, -2.0)],
+                    },
+                )],
+            },
             Note::ModeDecay {
                 role: "L".into(),
                 target_t60_s: 0.25,
-                modes: vec![(63.0, 0.8, -6.5), (125.0, 0.5, -3.0)],
+                modes: modes(&[(63.0, 0.8, -6.5), (125.0, 0.5, -3.0)]),
             },
             Note::ModeDecay {
                 role: "R".into(),
                 target_t60_s: 0.3,
                 modes: Vec::new(),
             },
-            Note::Mimo(MimoNote::IirSeedFallback {
+            mimo(MimoNote::IirSeedFallback {
                 support: "L".into(),
                 status: -1,
             }),
-            Note::Mimo(MimoNote::GuardReduced {
+            mimo(MimoNote::GuardReduced {
                 role: "L".into(),
                 gain_db: -6.25,
                 cause: GuardCause {
                     rejected_db: -3.25,
                     band_position: Some(3),
                     tail_position: Some(5),
-                    band: Some((40.0, 50.5, 1.5)),
+                    band: Some(GuardBand {
+                        lo_hz: 40.0,
+                        hi_hz: 50.5,
+                        db: 1.5,
+                    }),
                     tail: None,
                 },
             }),
-            Note::Mimo(MimoNote::GuardDisabled {
+            mimo(MimoNote::GuardDisabled {
                 role: "R".into(),
                 cause: GuardCause {
                     rejected_db: -12.0,
                     band_position: None,
                     tail_position: None,
-                    band: Some((46.5, 49.5, 2.0)),
-                    tail: Some((48.0, 1.25)),
+                    band: Some(GuardBand {
+                        lo_hz: 46.5,
+                        hi_hz: 49.5,
+                        db: 2.0,
+                    }),
+                    tail: Some(GuardTail { hz: 48.0, db: 1.25 }),
                 },
             }),
         ];
         assert_eq!(
-            notes.iter().flat_map(Note::record).collect::<Vec<_>>(),
+            notes
+                .iter()
+                .flat_map(NoteRecords::record)
+                .collect::<Vec<_>>(),
             vec![
                 record(
                     "sub_filters",
@@ -955,35 +922,43 @@ mod tests {
                 limited: false,
             },
             Note::InputHp { hz: 27.0 },
-            Note::PhaseStrength(vec![("L".into(), 0.5), ("R".into(), 1.0)]),
-            Note::PhaseBand(vec![("L".into(), Some(100.0)), ("R".into(), None)]),
+            Note::PhaseStrength {
+                values: role_values(&[("L", 0.5), ("R", 1.0)]),
+            },
+            Note::PhaseBand {
+                values: role_bands(&[("L", Some(100.0)), ("R", None)]),
+            },
             Note::LongModeBoost {
                 cap_db: 3.0,
-                modes: vec![(40.0, 2.0)],
+                modes: long_modes(&[(40.0, 2.0)]),
             },
             Note::GdCuts {
                 role: "L".into(),
-                cuts: vec![(50.0, 2.0, -3.0)],
+                cuts: peqs(&[(50.0, 2.0, -3.0)]),
             },
             Note::TwoWay {
                 roles: vec!["SW1".into(), "SW2".into()],
                 gain_db: -1.0,
                 xo_hz: 50.0,
             },
-            Note::Mimo(MimoNote::InsufficientPositions { measured: 2 }),
-            Note::Mimo(MimoNote::ExcludedSupports(vec!["SW2".into()])),
-            Note::Mimo(MimoNote::SupportRanges(vec![
-                ("L".into(), Some((50.25, 150.0))),
-                ("R".into(), None),
-            ])),
-            Note::Mimo(MimoNote::SupportLimit { max_supports: 2 }),
-            Note::Mimo(MimoNote::FirBudget {
+            mimo(MimoNote::InsufficientPositions { measured: 2 }),
+            mimo(MimoNote::ExcludedSupports {
+                roles: vec!["SW2".into()],
+            }),
+            mimo(MimoNote::SupportRanges {
+                ranges: vec![range("L", Some((50.25, 150.0))), range("R", None)],
+            }),
+            mimo(MimoNote::SupportLimit { max_supports: 2 }),
+            mimo(MimoNote::FirBudget {
                 support_count: 2,
                 taps_total: 16_000,
             }),
         ];
         assert_eq!(
-            notes.iter().flat_map(Note::record).collect::<Vec<_>>(),
+            notes
+                .iter()
+                .flat_map(NoteRecords::record)
+                .collect::<Vec<_>>(),
             vec![
                 record(
                     "low_protect",
@@ -1088,7 +1063,7 @@ mod tests {
 
     #[test]
     fn every_note_variant_records_at_least_one_code() {
-        let sub_filter = SubFilter {
+        let filter = SubFilter {
             hp_hz: 10.0,
             hp_type: BandType::Lr12,
             lp_hz: 80.0,
@@ -1110,20 +1085,25 @@ mod tests {
                 opposite: 2,
             },
             Note::PolaritySplit {
-                groups: (vec!["L".into()], vec!["R".into()]),
+                groups: PolarityGroups {
+                    a: vec!["L".into()],
+                    b: vec!["R".into()],
+                },
                 confidence: 0.8,
             },
             Note::PairPhase {
                 a: "L".into(),
                 b: "R".into(),
-                bands: vec![(40.0, 50.0, 180.0, -6.0)],
+                bands: pair_bands(&[(40.0, 50.0, 180.0, -6.0)]),
             },
             Note::LiftCapped {
                 from_ms: 2.0,
                 taps: 3,
                 lift_ms: 1.0,
             },
-            Note::SubFilters(vec![("SW1".into(), sub_filter)]),
+            Note::SubFilters {
+                filters: vec![sub_filter("SW1", filter)],
+            },
             Note::LowProtect {
                 role: "L".into(),
                 rolloff_hz: 30.0,
@@ -1143,7 +1123,7 @@ mod tests {
                 positions: None,
             },
             Note::RcBands {
-                bands: vec![(20.0, 300.0)],
+                bands: bands(&[(20.0, 300.0)]),
             },
             Note::LfAlign {
                 role: "L".into(),
@@ -1154,7 +1134,7 @@ mod tests {
             Note::ModeDecay {
                 role: "L".into(),
                 target_t60_s: 0.25,
-                modes: vec![(63.0, 0.8, -6.5)],
+                modes: modes(&[(63.0, 0.8, -6.5)]),
             },
             Note::HfPhase {
                 role: "L".into(),
@@ -1163,7 +1143,7 @@ mod tests {
             },
             Note::DipLimit {
                 role: "L".into(),
-                dips: vec![(90.0, 7.0, 4.5)],
+                dips: dips(&[(90.0, 7.0, 4.5)]),
             },
             Note::InputHp { hz: 20.0 },
             Note::Latency {
@@ -1171,52 +1151,61 @@ mod tests {
                 lift_ms: 2.0,
                 main_extra_ms: 1.0,
             },
-            Note::PhaseStrength(vec![("L".into(), 0.5)]),
-            Note::PhaseBand(vec![("L".into(), Some(100.0))]),
+            Note::PhaseStrength {
+                values: role_values(&[("L", 0.5)]),
+            },
+            Note::PhaseBand {
+                values: role_bands(&[("L", Some(100.0))]),
+            },
             Note::LongModeBoost {
                 cap_db: 3.0,
-                modes: vec![(40.0, 2.0)],
+                modes: long_modes(&[(40.0, 2.0)]),
             },
             Note::GdCuts {
                 role: "L".into(),
-                cuts: vec![(50.0, 2.0, -3.0)],
+                cuts: peqs(&[(50.0, 2.0, -3.0)]),
             },
-            Note::BaCost(1.5),
+            Note::BaCost { value: 1.5 },
             Note::BaBusPass {
                 first: 1.0,
                 second: 2.0,
                 kept_first: true,
             },
             Note::BaManual,
-            Note::LayoutFallback("fallback".into()),
-            Note::Layout("dba".into()),
+            Note::LayoutFallback {
+                value: "fallback".into(),
+            },
+            Note::Layout {
+                value: "dba".into(),
+            },
             Note::TwoWay {
                 roles: vec!["SW1".into()],
                 gain_db: -1.0,
                 xo_hz: 50.0,
             },
-            Note::BusGainAnchored(-2.0),
-            Note::Mimo(MimoNote::IirSeedFallback {
+            Note::BusGainAnchored { value: -2.0 },
+            mimo(MimoNote::IirSeedFallback {
                 support: "L".into(),
                 status: -1,
             }),
-            Note::Mimo(MimoNote::InsufficientPositions { measured: 2 }),
-            Note::Mimo(MimoNote::ExcludedSupports(vec!["L".into()])),
-            Note::Mimo(MimoNote::SupportRanges(vec![(
-                "L".into(),
-                Some((50.0, 150.0)),
-            )])),
-            Note::Mimo(MimoNote::GuardReduced {
+            mimo(MimoNote::InsufficientPositions { measured: 2 }),
+            mimo(MimoNote::ExcludedSupports {
+                roles: vec!["L".into()],
+            }),
+            mimo(MimoNote::SupportRanges {
+                ranges: vec![range("L", Some((50.0, 150.0)))],
+            }),
+            mimo(MimoNote::GuardReduced {
                 role: "L".into(),
                 gain_db: -6.0,
                 cause: cause.clone(),
             }),
-            Note::Mimo(MimoNote::GuardDisabled {
+            mimo(MimoNote::GuardDisabled {
                 role: "R".into(),
                 cause,
             }),
-            Note::Mimo(MimoNote::SupportLimit { max_supports: 2 }),
-            Note::Mimo(MimoNote::FirBudget {
+            mimo(MimoNote::SupportLimit { max_supports: 2 }),
+            mimo(MimoNote::FirBudget {
                 support_count: 2,
                 taps_total: 16_000,
             }),
@@ -1237,7 +1226,7 @@ mod tests {
         let note = Note::PairPhase {
             a: "L".into(),
             b: "Ls".into(),
-            bands: vec![(89.1, 112.2, 167.25, -20.04), (112.2, 141.4, 179.96, -30.0)],
+            bands: pair_bands(&[(89.1, 112.2, 167.25, -20.04), (112.2, 141.4, 179.96, -30.0)]),
         };
         assert_eq!(
             note.record(),
@@ -1274,7 +1263,7 @@ mod tests {
     fn dip_limit_records_one_record_per_dip() {
         let note = Note::DipLimit {
             role: "R".into(),
-            dips: vec![(94.123, 7.456, 4.728), (136.0, 9.2, 5.6)],
+            dips: dips(&[(94.123, 7.456, 4.728), (136.0, 9.2, 5.6)]),
         };
         assert_eq!(
             note.record(),
@@ -1314,7 +1303,7 @@ mod tests {
     #[test]
     fn rc_bands_records_one_record_per_band() {
         let note = Note::RcBands {
-            bands: vec![(20.0, 300.0), (15_000.5, 20_000.0)],
+            bands: bands(&[(20.0, 300.0), (15_000.5, 20_000.0)]),
         };
         assert_eq!(
             note.record(),
