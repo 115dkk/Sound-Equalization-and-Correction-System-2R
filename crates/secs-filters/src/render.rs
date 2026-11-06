@@ -120,12 +120,14 @@ impl Route {
                 ))?),
                 Op::Fir { name, taps, .. } => {
                     let taps = materialized_fir(firs, name, FirView::Full(taps), rate)?;
-                    route.fir = if has_fir {
-                        convolve(&route.fir, &taps, max_len, input, output, cancelled)?.into()
-                    } else {
-                        has_fir = true;
-                        taps
-                    };
+                    route.fir = chained_fir(
+                        has_fir.then_some(&route.fir),
+                        taps,
+                        max_len,
+                        (input, output),
+                        cancelled,
+                    )?;
+                    has_fir = true;
                 }
                 Op::FirLowRate {
                     name,
@@ -135,12 +137,14 @@ impl Route {
                 } => {
                     let taps =
                         materialized_fir(firs, name, FirView::LowRate(taps_low, *fs_low), rate)?;
-                    route.fir = if has_fir {
-                        convolve(&route.fir, &taps, max_len, input, output, cancelled)?.into()
-                    } else {
-                        has_fir = true;
-                        taps
-                    };
+                    route.fir = chained_fir(
+                        has_fir.then_some(&route.fir),
+                        taps,
+                        max_len,
+                        (input, output),
+                        cancelled,
+                    )?;
+                    has_fir = true;
                 }
                 Op::Gain { db, .. } => route.gain *= 10_f64.powf(db / 20.0),
                 Op::Invert { .. } => route.gain = -route.gain,
@@ -246,6 +250,27 @@ impl Route {
             ));
         }
         Ok(response)
+    }
+}
+
+/// Chain one more FIR onto a route: the first FIR is shared as is, later ones
+/// convolve with it. The first FIR used to pass through an identity
+/// convolution, which refused taps longer than `max_len`; keep that refusal
+/// so a long FIR errors instead of being cut to the render length.
+fn chained_fir(
+    current: Option<&Arc<[f64]>>,
+    taps: Arc<[f64]>,
+    max_len: usize,
+    pair: (&str, &str),
+    cancelled: &dyn Fn() -> bool,
+) -> Result<Arc<[f64]>, FiltersError> {
+    let (input, output) = pair;
+    match current {
+        Some(current) => Ok(convolve(current, &taps, max_len, input, output, cancelled)?.into()),
+        None if taps.len() > max_len => Err(FiltersError::Invalid(format!(
+            "path {input} -> {output} exceeds max_len {max_len}"
+        ))),
+        None => Ok(taps),
     }
 }
 
