@@ -210,17 +210,20 @@ impl EventSink for AppLog {
                 }
                 let elapsed = started.map_or(0, |record| record.at.elapsed().as_millis());
                 let mut text = format!("{} finished status={status:?} elapsed_ms={elapsed}", job.0);
-                let level = if let Some(error) = error {
+                if let Some(error) = error {
                     text.push_str(&format!(
                         " error_code={:?} message={}",
                         error.code,
                         log_value(&error.detail)
                     ));
-                    Level::Error
-                } else if status == secs_types::ipc::JobStatus::Cancelled {
-                    Level::Warn
-                } else {
-                    Level::Info
+                    for (key, value) in error.params {
+                        text.push_str(&format!(" {key}={}", log_value(&value)));
+                    }
+                }
+                let level = match status {
+                    secs_types::ipc::JobStatus::Failed => Level::Error,
+                    secs_types::ipc::JobStatus::Cancelled => Level::Warn,
+                    _ => Level::Info,
                 };
                 self.line(level, "job", &text);
             }
@@ -328,7 +331,7 @@ mod tests {
     use std::collections::BTreeMap;
     use std::sync::atomic::{AtomicU64, Ordering};
 
-    use secs_types::ipc::JobStatus;
+    use secs_types::ipc::{ErrorCode, IpcError, JobStatus};
 
     use super::*;
 
@@ -420,6 +423,42 @@ mod tests {
     #[test]
     fn log_values_with_spaces_are_quoted() {
         assert_eq!(log_value("project is not open"), r#""project is not open""#);
+    }
+
+    #[test]
+    fn failed_job_line_carries_params_as_key_value_td165() {
+        let root = root("failed-params");
+        let log = AppLog::open(&root);
+        let error = IpcError::new(ErrorCode::EngineInput, "MIMO input failed")
+            .with_param("stage", "mimo")
+            .with_param("reason", "rc_agreement_positions");
+        log.send(JobEvent::Finished {
+            job: JobId(11),
+            status: JobStatus::Failed,
+            result: None,
+            error: Some(error),
+        });
+
+        let text = fs::read_to_string(root.join("secs2r.log")).unwrap();
+        assert!(text.contains("reason=rc_agreement_positions stage=mimo"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn cancelled_job_is_logged_as_warning_whatever_its_error_shape_td165() {
+        let root = root("cancelled-level");
+        let log = AppLog::open(&root);
+        log.send(JobEvent::Finished {
+            job: JobId(12),
+            status: JobStatus::Cancelled,
+            result: None,
+            error: Some(IpcError::new(ErrorCode::Cancelled, "cancelled")),
+        });
+
+        let text = fs::read_to_string(root.join("secs2r.log")).unwrap();
+        assert!(text.contains(" WARN job 12 finished status=Cancelled"));
+        assert!(!text.contains(" ERROR job 12 finished status=Cancelled"));
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

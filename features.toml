@@ -441,6 +441,8 @@ tests = [
   "secs2r::event_sink_writes_started_log_finished_and_skips_progress",
   "secs-service::retire_failure_reaches_the_log_sink_td151",
   "secs-service::side_mdat_failure_reaches_the_log_sink_td151",
+  "secs2r::failed_job_line_carries_params_as_key_value_td165",
+  "secs2r::cancelled_job_is_logged_as_warning_whatever_its_error_shape_td165",
 ]
 note = "ADR 0027: a bounded local app log records starts, job events, request failures, and panics without stopping the app on I/O errors"
 
@@ -1031,7 +1033,7 @@ id = "service.jobs"
 kind = "service"
 milestone = "M4"
 status = "implemented"
-tests = ["secs-service::jobs_push_ordered_events_and_exclude_the_same_group", "secs-service::cancellation_finishes_within_one_second", "secs-service::cancelled_calibration_preserves_previous_results", "secs-service::room_dba_mimo_runs_and_becomes_stale_after_recalibration", "secs-service::terminal_history_is_bounded_by_completion_and_active_jobs_keep_their_events", "secs-types::job_snapshot_is_metadata_without_a_result_payload"]
+tests = ["secs-service::jobs_push_ordered_events_and_exclude_the_same_group", "secs-service::cancellation_finishes_within_one_second", "secs-service::cancelled_calibration_preserves_previous_results", "secs-service::room_dba_mimo_runs_and_becomes_stale_after_recalibration", "secs-service::terminal_history_is_bounded_by_completion_and_active_jobs_keep_their_events", "secs-types::job_snapshot_is_metadata_without_a_result_payload", "secs-service::a_body_that_returns_cancelled_finishes_like_an_external_cancel_td165"]
 note = "one job per group, cooperative cancellation, stale instead of discarded results; metadata-only job records retain the latest 32 completions and every active job (ADR 0009)"
 
 [[feature]]

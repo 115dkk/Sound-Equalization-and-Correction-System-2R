@@ -345,11 +345,14 @@ impl JobRegistry {
             let Some(job) = inner.jobs.iter_mut().find(|job| job.snapshot.job == id) else {
                 return;
             };
+            let cancelled = || IpcError::new(ErrorCode::Cancelled, "cancelled");
             let (status, result, error) = match outcome {
-                Ok(_) if job.cancel.is_cancelled() => (JobStatus::Cancelled, None, None),
+                Ok(_) if job.cancel.is_cancelled() => {
+                    (JobStatus::Cancelled, None, Some(cancelled()))
+                }
                 Ok(result) => (JobStatus::Succeeded, Some(result), None),
                 Err(error) if error.code == ErrorCode::Cancelled || job.cancel.is_cancelled() => {
-                    (JobStatus::Cancelled, None, Some(error))
+                    (JobStatus::Cancelled, None, Some(cancelled()))
                 }
                 Err(error) => (JobStatus::Failed, None, Some(error)),
             };
@@ -552,6 +555,51 @@ mod tests {
         for id in &completed[completed.len() - (TERMINAL_HISTORY_LIMIT - 1)..] {
             assert!(snapshots.iter().any(|snapshot| snapshot.job == *id));
         }
+    }
+
+    #[test]
+    fn a_body_that_returns_cancelled_finishes_like_an_external_cancel_td165() {
+        fn cancelled_error(events: &Events) -> IpcError {
+            let values = events.wait_finished(Duration::from_secs(2));
+            let Some(JobEvent::Finished {
+                status,
+                result,
+                error,
+                ..
+            }) = values.last()
+            else {
+                panic!("job did not finish")
+            };
+            assert_eq!(*status, JobStatus::Cancelled);
+            assert!(result.is_none());
+            let error = error.clone().expect("cancelled jobs carry one error");
+            assert_eq!(error.code, ErrorCode::Cancelled);
+            assert_eq!(error.detail, "cancelled");
+            assert!(error.params.is_empty());
+            error
+        }
+
+        let registry = JobRegistry::default();
+        let external_events = Arc::new(Events::default());
+        let external = registry
+            .start(JobKind::Calibrate, external_events.clone(), |ctx| {
+                while !ctx.cancel().is_cancelled() {
+                    std::thread::yield_now();
+                }
+                Ok(JobResult::Calibration)
+            })
+            .unwrap();
+        registry.cancel(external.job).unwrap();
+        let external_error = cancelled_error(&external_events);
+
+        let body_events = Arc::new(Events::default());
+        registry
+            .start(JobKind::Calibrate, body_events.clone(), |_| {
+                Err(IpcError::new(ErrorCode::Cancelled, "cancelled"))
+            })
+            .unwrap();
+        let body_error = cancelled_error(&body_events);
+        assert_eq!(external_error, body_error);
     }
 
     #[test]

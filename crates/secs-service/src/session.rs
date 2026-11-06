@@ -1146,7 +1146,7 @@ mod commit_tests {
     }
 
     #[test]
-    fn a_stale_ticket_is_reported_before_cancellation() {
+    fn a_cancelled_stale_ticket_finishes_with_the_canonical_cancelled_error() {
         let registry = JobRegistry::default();
         let session = opened();
         let ticket = lock(&session).ticket().unwrap();
@@ -1170,8 +1170,8 @@ mod commit_tests {
             },
         );
         assert_eq!(
-            error.expect("the commit fails").code,
-            ErrorCode::StaleInputs
+            error.expect("the cancelled job has one error shape").code,
+            ErrorCode::Cancelled
         );
     }
 
