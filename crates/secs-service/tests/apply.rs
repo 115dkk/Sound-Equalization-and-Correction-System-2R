@@ -2373,6 +2373,49 @@ fn failed_eqapo_restore_keeps_the_generation_the_entry_may_reference() {
     fs::remove_dir_all(root).unwrap();
 }
 
+fn assert_eqapo_config_encoding_error(name: &str, bytes: &[u8]) {
+    let root = root(name);
+    let config = root.join("config.txt");
+    fs::write(&config, bytes).unwrap();
+    let install = EqApoInstall {
+        config_path: root.to_string_lossy().into_owned(),
+        install_path: "EqualizerAPO/current".into(),
+        variant: EqApoVariant::Official,
+    };
+    let service = Service::new(Deps {
+        eqapo_install: Arc::new(move || Some(install.clone())),
+        apply: Arc::new(NativeApply),
+        ..Deps::default()
+    });
+
+    let Envelope::Err(error) = service.call(Request::ApplyStatus, Arc::new(NoEvents)) else {
+        panic!("non-UTF-8 config.txt must fail status")
+    };
+    assert_eq!(error.code, ErrorCode::ApplyFailed);
+    assert_eq!(
+        error.params.get("reason").map(String::as_str),
+        Some("config_encoding")
+    );
+    assert_eq!(
+        error.params.get("path").map(String::as_str),
+        Some(config.to_string_lossy().as_ref())
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn latin1_config_txt_is_reported_as_an_encoding_problem_td199() {
+    assert_eqapo_config_encoding_error("latin1-config", b"# caf\xe9\r\nInclude: x\r\n");
+}
+
+#[test]
+fn utf16_config_txt_is_reported_as_an_encoding_problem_td199() {
+    assert_eqapo_config_encoding_error(
+        "utf16-config",
+        &[0xff, 0xfe, b'#', 0, b' ', 0, b'x', 0, b'\r', 0, b'\n', 0],
+    );
+}
+
 #[test]
 fn eqapo_status_reads_injected_install_and_applied_manifest() {
     let root = root("status");

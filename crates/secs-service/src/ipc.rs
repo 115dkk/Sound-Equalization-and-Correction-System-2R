@@ -135,7 +135,7 @@ pub(crate) fn dispatch(
         Request::AppSettingsSet(params) => service
             .app_settings_set(params)
             .map(Response::AppSettingsSet),
-        Request::ApplyStatus => Ok(Response::ApplyStatus(service.apply_status())),
+        Request::ApplyStatus => service.apply_status().map(Response::ApplyStatus),
         Request::ApplyCamilla(params) => service
             .start_apply_camilla(params, events)
             .map(Response::ApplyCamilla),

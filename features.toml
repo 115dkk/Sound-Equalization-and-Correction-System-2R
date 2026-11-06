@@ -1266,7 +1266,7 @@ kind = "ipc"
 milestone = "M6"
 status = "implemented"
 upstream = "new"
-tests = ["secs-service::eqapo_status_reads_injected_install_and_applied_manifest", "secs-service::apply_camilla_covers_success_rejection_rollback_folder_and_design_matches"]
+tests = ["secs-service::eqapo_status_reads_injected_install_and_applied_manifest", "secs-service::apply_camilla_covers_success_rejection_rollback_folder_and_design_matches", "secs-service::latin1_config_txt_is_reported_as_an_encoding_problem_td199", "secs-service::utf16_config_txt_is_reported_as_an_encoding_problem_td199"]
 
 [[feature]]
 id = "ipc.apply_camilla"
@@ -2334,7 +2334,7 @@ kind = "apply"
 milestone = "M6"
 status = "implemented"
 upstream = "new"
-tests = ["secs-apply::eqapo_config", "secs-apply::trailing_spaces_are_managed_and_repair_revert_count_real_includes"]
+tests = ["secs-apply::eqapo_config", "secs-apply::trailing_spaces_are_managed_and_repair_revert_count_real_includes", "secs-service::latin1_config_txt_is_reported_as_an_encoding_problem_td199", "secs-service::utf16_config_txt_is_reported_as_an_encoding_problem_td199"]
 
 [[feature]]
 id = "apply.supervise"

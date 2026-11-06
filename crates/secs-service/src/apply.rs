@@ -14,7 +14,7 @@ const CAMILLA_CURRENT: &str = "camilladsp-current.txt";
 const RETAINED_GENERATIONS: &str = "secs-retained-generations.txt";
 
 impl Service {
-    pub(crate) fn apply_status(&self) -> ApplyStatus {
+    pub(crate) fn apply_status(&self) -> Result<ApplyStatus, IpcError> {
         let current = self.current_design_identity();
         let address = lock(&self.app_settings).apply.camilla.address.clone();
         let camilla = match self.deps.apply.camilla_status(&address, TIMEOUT) {
@@ -55,13 +55,13 @@ impl Service {
                 HostResponse::Status(status) => Some(status),
                 HostResponse::Ok | HostResponse::Log(_) | HostResponse::Error(_) => None,
             });
-        ApplyStatus {
+        Ok(ApplyStatus {
             camilla,
-            eqapo: self.eqapo_status(),
+            eqapo: self.eqapo_status()?,
             host,
             host_status,
             current_design_id: current.map(|(design_id, _)| design_id),
-        }
+        })
     }
 
     pub(crate) fn start_apply_camilla(
@@ -376,7 +376,7 @@ impl Service {
                 .with_param("target", "equalizer_apo")
         })?;
         let path = PathBuf::from(install.config_path).join("config.txt");
-        let text = fs::read_to_string(&path).map_err(|error| io_error(path.clone(), &error))?;
+        let text = read_eqapo_config(&path)?;
         if let Some(updated) = self.deps.apply.eqapo_without_include(&text)? {
             write_changed(&path, updated.as_bytes())?;
         }
@@ -410,22 +410,26 @@ impl Service {
         self.deps.app_data_path.clone()
     }
 
-    fn eqapo_status(&self) -> EqApoApplyStatus {
+    fn eqapo_status(&self) -> Result<EqApoApplyStatus, IpcError> {
         let Some(install) = (self.deps.eqapo_install)() else {
-            return EqApoApplyStatus {
+            return Ok(EqApoApplyStatus {
                 installed: false,
                 variant: EqApoVariant::Unknown,
                 config_path: None,
                 include: IncludeState::Absent,
                 applied_design_id: None,
-            };
+            });
         };
         let root = PathBuf::from(&install.config_path);
-        let include = fs::read_to_string(root.join("config.txt"))
-            .ok()
-            .map_or(IncludeState::Absent, |text| {
-                self.deps.apply.eqapo_include_state(&text)
-            });
+        let config = root.join("config.txt");
+        let include = match fs::read(&config) {
+            Ok(bytes) => self
+                .deps
+                .apply
+                .eqapo_include_state(&decode_eqapo_config(&config, bytes)?),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => IncludeState::Absent,
+            Err(error) => return Err(io_error(&config, &error)),
+        };
         let bundle = root.join(EQAPO_FOLDER);
         let applied_manifest = fs::read_to_string(bundle.join("SECS.txt"))
             .ok()
@@ -437,13 +441,13 @@ impl Service {
         let applied_design_id = applied_manifest
             .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
             .and_then(|value| value.get("design_id")?.as_str().map(str::to_owned));
-        EqApoApplyStatus {
+        Ok(EqApoApplyStatus {
             installed: true,
             variant: install.variant,
             config_path: Some(install.config_path),
             include,
             applied_design_id,
-        }
+        })
     }
 
     fn current_design_identity(&self) -> Option<(String, String)> {
@@ -765,8 +769,37 @@ fn remove_stage(path: &Path) -> Result<(), IpcError> {
     }
 }
 
+fn config_encoding_error(path: &Path, detail: impl Into<String>) -> IpcError {
+    IpcError::new(ErrorCode::ApplyFailed, detail)
+        .with_param("reason", "config_encoding")
+        .with_param("path", path.to_string_lossy().into_owned())
+}
+
+fn decode_eqapo_config(path: &Path, bytes: Vec<u8>) -> Result<String, IpcError> {
+    if bytes.starts_with(&[0xff, 0xfe]) || bytes.starts_with(&[0xfe, 0xff]) {
+        return Err(config_encoding_error(
+            path,
+            format!("Equalizer APO config {} is UTF-16", path.display()),
+        ));
+    }
+    String::from_utf8(bytes).map_err(|error| {
+        config_encoding_error(
+            path,
+            format!(
+                "Equalizer APO config {} is not UTF-8: {error}",
+                path.display()
+            ),
+        )
+    })
+}
+
+fn read_eqapo_config(path: &Path) -> Result<String, IpcError> {
+    let bytes = fs::read(path).map_err(|error| io_error(path, &error))?;
+    decode_eqapo_config(path, bytes)
+}
+
 fn ensure_eqapo_include(config: &Path, apply: &dyn ApplyAdapter) -> Result<(), IpcError> {
-    let text = fs::read_to_string(config).map_err(|error| io_error(config, &error))?;
+    let text = read_eqapo_config(config)?;
     let Some(updated) = apply.eqapo_with_include(&text)? else {
         return Ok(());
     };
