@@ -1484,7 +1484,7 @@ id = "ipc.export"
 kind = "ipc"
 milestone = "M4"
 status = "implemented"
-tests = ["secs-types::every_method_name_is_listed_and_parses", "secs-types::mdat_scope_is_optional_on_the_wire", "secs-service::oracle_project_calibrates_recommends_xo_and_exports", "secs-service::room_dba_mimo_runs_and_becomes_stale_after_recalibration", "secs-service::output_rate_resolver_falls_back_for_bad_missing_and_failed_defaults", "secs-service::changing_only_output_rate_keeps_calibration_fresh_for_export", "secs-service::camilla_export_cancelled_before_commit_writes_nothing_td196"]
+tests = ["secs-types::every_method_name_is_listed_and_parses", "secs-types::mdat_scope_is_optional_on_the_wire", "secs-service::oracle_project_calibrates_recommends_xo_and_exports", "secs-service::room_dba_mimo_runs_and_becomes_stale_after_recalibration", "secs-service::output_rate_resolver_falls_back_for_bad_missing_and_failed_defaults", "secs-service::changing_only_output_rate_keeps_calibration_fresh_for_export", "secs-service::camilla_export_cancelled_before_commit_writes_nothing_td196", "secs-service::relative_export_folder_is_rejected_td211"]
 note = "Export IPC covers CamillaDSP, mdat, filter text, Equalizer APO, and complete convolution bundles, including typed export_scope reasons, the REW mdat's optional mdat_scope, additional convolution rates, the resolved output rate, and automatic-rate fallback notices."
 
 [[feature]]

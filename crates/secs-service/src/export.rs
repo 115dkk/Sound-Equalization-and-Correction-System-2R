@@ -113,6 +113,14 @@ impl Service {
                 "tutorial sessions cannot export",
             ));
         }
+        if !params.folder.is_empty() && !Path::new(&params.folder).is_absolute() {
+            return Err(IpcError::new(
+                ErrorCode::InvalidRequest,
+                "export folder must be an absolute path",
+            )
+            .with_param("reason", "relative_folder")
+            .with_param("field", "folder"));
+        }
         let requested_design_name = crate::design_export::validate_design_name(
             params.design_name.as_deref(),
         )

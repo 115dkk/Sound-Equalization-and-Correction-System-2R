@@ -1889,6 +1889,59 @@ fn exported_measurements_keep_their_curves_and_results_drop_them() {
 }
 
 #[test]
+fn relative_export_folder_is_rejected_td211() {
+    let root = temp_root("relative-export");
+    fs::create_dir_all(&root).unwrap();
+    let path = root.join("room.secs");
+    let service = service();
+    call_ok(
+        &service,
+        Request::ProjectNew(ProjectNewParams {
+            path: path.to_string_lossy().into_owned(),
+            preset: "2.0".into(),
+            sub_count: 0,
+            sample: false,
+            tutorial: false,
+        }),
+        Arc::new(NoEvents),
+    );
+    let relative = format!(
+        "relative-export-{}-{}",
+        std::process::id(),
+        TEMP.fetch_add(1, Ordering::Relaxed)
+    );
+    let relative_path = PathBuf::from(&relative);
+    let _ = fs::remove_dir_all(&relative_path);
+    let events = Arc::new(Events::default());
+
+    let Envelope::Err(error) = service.call(
+        Request::Export(ExportParams {
+            kind: ExportKind::CamillaDsp,
+            folder: relative.clone(),
+            mdat_scope: None,
+            design_name: None,
+            camilla_devices: None,
+            extra_rates: Vec::new(),
+        }),
+        events.clone(),
+    ) else {
+        panic!("a relative export folder must fail before a job starts")
+    };
+    assert_eq!(error.code, ErrorCode::InvalidRequest);
+    assert_eq!(
+        error.params.get("reason").map(String::as_str),
+        Some("relative_folder")
+    );
+    assert_eq!(
+        error.params.get("field").map(String::as_str),
+        Some("folder")
+    );
+    assert!(lock(&events.values).is_empty());
+    assert!(!relative_path.exists());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn mdat_scope_is_refused_for_other_kinds() {
     let root = temp_root("mdat-scope-invalid");
     fs::create_dir_all(&root).unwrap();
