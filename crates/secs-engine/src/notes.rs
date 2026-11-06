@@ -128,6 +128,11 @@ pub enum Note {
 /// Semantic diagnostics in producer order; never translated presentation text.
 #[derive(Debug, Clone, PartialEq)]
 pub enum MimoNote {
+    /// Input whose joint support fit returned its seeds after both solves failed.
+    IirSeedFallback {
+        support: String,
+        status: i32,
+    },
     InsufficientPositions {
         measured: usize,
     },
@@ -174,6 +179,9 @@ impl MimoNote {
     // Only the oracle adapter renders the legacy diagnostic strings.
     pub(crate) fn oracle_text(&self) -> String {
         match self {
+            Self::IirSeedFallback { support, status } => {
+                format!("IIR seed fallback {support}: {status}")
+            }
             Self::InsufficientPositions { measured } => {
                 format!("측정 위치 {measured}곳 — MIMO 는 3곳 이상일 때만")
             }

@@ -708,6 +708,8 @@ pub(crate) fn solve_joint_with_options(
             return Ok(sol);
         }
     }
+    // Upstream src/secs/mimo_iir.py:326-329 keeps the seed after both solves
+    // fail. Preserve that numerical fallback, but report its status on the run.
     let cost = 0.5 * decay::energy(&NormalEquations::residual(&mut objective, &x0));
     Ok(optimize::LeastSquaresResult {
         x: x0,
@@ -725,6 +727,7 @@ pub(crate) fn solve_problem(
     ctx: &Context,
 ) -> Result<(Vec<f64>, Vec<i8>), EngineError> {
     solve_problem_with_options(pb, t, ctx, &IirSolveOptions::default())
+        .map(|(x, pols, _)| (x, pols))
 }
 
 fn solve_problem_with_options(
@@ -732,7 +735,7 @@ fn solve_problem_with_options(
     t: &Tuning,
     ctx: &Context,
     options: &IirSolveOptions,
-) -> Result<(Vec<f64>, Vec<i8>), EngineError> {
+) -> Result<(Vec<f64>, Vec<i8>, i32), EngineError> {
     let mut starts = Vec::new();
     let mut pols = Vec::new();
     for (r, &(lo, hi)) in pb.ranges.iter().enumerate() {
@@ -757,10 +760,8 @@ fn solve_problem_with_options(
         starts.extend(seed.x);
         pols.push(seed.polarity);
     }
-    Ok((
-        solve_joint_with_options(pb, t, ctx, &starts, &pols, options)?.x,
-        pols,
-    ))
+    let solution = solve_joint_with_options(pb, t, ctx, &starts, &pols, options)?;
+    Ok((solution.x, pols, solution.status))
 }
 
 pub(crate) fn applied(pb: &Problem, supports: &[(usize, IirSupport)]) -> Vec<Vec<f64>> {
@@ -1103,23 +1104,28 @@ pub(crate) fn build_problem(
 }
 
 fn validate_request(req: &MimoRequest, t: &Tuning) -> Result<(), EngineError> {
-    if !(0.0..300.0).contains(&req.fsiso)
-        || req.fsiso == 0.0
-        || !req.level_db.is_finite()
-        || !req.mimo_early_ms.is_finite()
-        || !(5.0..=60.0).contains(&req.mimo_early_ms)
-        || !t.mimo_band_db.is_finite()
-        || t.mimo_band_db <= 0.0
-        || !t.mimo_q_max.is_finite()
-        || t.mimo_q_max <= 0.5
-        || !t.mimo_gain_max_db.is_finite()
-        || t.mimo_gain_max_db <= -80.0
-        || t.mimo_max_nfev == 0
-        || [t.mimo_band_reg, t.mimo_effort, t.mimo_worse_db]
-            .iter()
-            .any(|v| !v.is_finite() || *v < 0.0)
-    {
-        return Err(EngineError::Input("invalid MIMO IIR tuning".into()));
+    super::validate_field(
+        "fsiso",
+        (0.0..300.0).contains(&req.fsiso) && req.fsiso != 0.0,
+    )?;
+    super::validate_field("level_db", req.level_db.is_finite())?;
+    super::validate_field("mimo_early_ms", (5.0..=60.0).contains(&req.mimo_early_ms))?;
+    super::validate_field(
+        "mimo_band_db",
+        t.mimo_band_db.is_finite() && t.mimo_band_db > 0.0,
+    )?;
+    super::validate_field("mimo_q_max", t.mimo_q_max.is_finite() && t.mimo_q_max > 0.5)?;
+    super::validate_field(
+        "mimo_gain_max_db",
+        t.mimo_gain_max_db.is_finite() && t.mimo_gain_max_db > -80.0,
+    )?;
+    super::validate_field("mimo_max_nfev", t.mimo_max_nfev != 0)?;
+    for (field, value) in [
+        ("mimo_band_reg", t.mimo_band_reg),
+        ("mimo_effort", t.mimo_effort),
+        ("mimo_worse_db", t.mimo_worse_db),
+    ] {
+        super::validate_field(field, value.is_finite() && value >= 0.0)?;
     }
     // Each support's seed fit solves `per(t)` = 2 + 3·K + 2·A parameters from
     // its SEED_RESIDUALS residuals; more unknowns than that is not a fit the
@@ -1131,7 +1137,7 @@ fn validate_request(req: &MimoRequest, t: &Tuning) -> Result<(), EngineError> {
         .and_then(|(k, a)| k.checked_add(a)?.checked_add(2));
     if parameters.is_none_or(|n| n > SEED_RESIDUALS) {
         return Err(EngineError::Input(format!(
-            "invalid MIMO IIR tuning: {} peaking and {} all-pass bands exceed {SEED_RESIDUALS} parameters per support",
+            "invalid MIMO IIR tuning: mimo_k_bands={} and mimo_a_bands={} exceed {SEED_RESIDUALS} parameters per support",
             t.mimo_k_bands, t.mimo_a_bands
         )));
     }
@@ -1141,14 +1147,19 @@ fn validate_request(req: &MimoRequest, t: &Tuning) -> Result<(), EngineError> {
     // for any band `band_of` returns, so one representative band suffices.
     // Every bound is finite after the checks above.
     let (lb, ub) = bounds((15.0, 300.0), t);
-    if lb
-        .iter()
-        .zip(&ub)
-        .any(|(&l, &u)| u - l <= 2e-6 || l + 1e-6 > u - 1e-6)
-    {
-        return Err(EngineError::Input(
-            "invalid MIMO IIR tuning: a parameter range is not wider than 2e-6".into(),
-        ));
+    for (index, (&l, &u)) in lb.iter().zip(&ub).enumerate() {
+        if u - l <= 2e-6 || l + 1e-6 > u - 1e-6 {
+            let field = if index == 0 {
+                "mimo_gain_max_db"
+            } else if index >= 2 && (index - 2) % 3 == 1 {
+                "mimo_q_max"
+            } else {
+                "mimo_band_db"
+            };
+            return Err(EngineError::Input(format!(
+                "invalid {field}: parameter range is not wider than 2e-6"
+            )));
+        }
     }
     Ok(())
 }
@@ -1281,7 +1292,7 @@ pub(crate) fn design_mimo_iir_prepared_with_options(
                 t,
                 ctx,
             )?;
-            let (x, pols) = solve_problem_with_options(&pb, t, ctx, options)?;
+            let (x, pols, status) = solve_problem_with_options(&pb, t, ctx, options)?;
             let post = postprocess(&pb, &x, &pols, t, ctx)?;
             let paths = post
                 .supports
@@ -1289,11 +1300,17 @@ pub(crate) fn design_mimo_iir_prepared_with_options(
                 .map(|(r, s)| (pb.roles[r].clone(), s))
                 .collect();
             progress.advance(1);
-            Ok((input.clone(), paths, post.removed))
+            Ok((input.clone(), paths, post.removed, status))
         },
     )?;
     let mut out = MimoIir::default();
-    for (input, paths, removed) in results {
+    for (input, paths, removed, status) in results {
+        if status == -1 {
+            out.notes.push(Note::Mimo(crate::MimoNote::IirSeedFallback {
+                support: input.clone(),
+                status,
+            }));
+        }
         out.supports.push((input.clone(), paths));
         out.removed.push((input, removed));
     }

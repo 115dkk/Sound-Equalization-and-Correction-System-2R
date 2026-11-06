@@ -348,27 +348,31 @@ fn compute_observed_accelerated(
     progress.advance(1);
     check(ctx)?;
     let started = std::time::Instant::now();
+    let mut realization_notes = Vec::new();
     let supports = if key.fir {
         fir_supports(&ideal)
     } else if ideal.supports.is_empty() {
         Vec::new()
     } else {
-        super::iir::design_mimo_iir_prepared_with_options(
+        let realized = super::iir::design_mimo_iir_prepared_with_options(
             design, &prepared, &ideal, &req, tuning, &iir, ctx,
-        )?
-        .supports
-        .into_iter()
-        .map(|(r, s)| {
-            (
-                r,
-                s.into_iter().map(|(r, s)| (r, Support::Iir(s))).collect(),
-            )
-        })
-        .collect()
+        )?;
+        realization_notes = realized.notes;
+        realized
+            .supports
+            .into_iter()
+            .map(|(r, s)| {
+                (
+                    r,
+                    s.into_iter().map(|(r, s)| (r, Support::Iir(s))).collect(),
+                )
+            })
+            .collect()
     };
     observe("realization", started.elapsed());
     let started = std::time::Instant::now();
     let mut run = assemble_prepared(design, &prepared, &ideal, supports, key, ctx)?;
+    run.notes.extend(realization_notes);
     if let Some(acceleration) = acceleration {
         run.compute = acceleration.report();
     }

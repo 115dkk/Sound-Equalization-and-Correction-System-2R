@@ -726,3 +726,135 @@ fn mimo_iir_band_limits_match_upstream_1012() {
         assert!(band.0 - 1e-6 <= f0 && f0 <= band.1 + 1e-6, "f0 {f0}");
     }
 }
+
+#[test]
+fn mimo_iir_joint_seed_fallback_is_reported() {
+    let fx = Fixture::load("engine_mimo_iir", "room_dba_L");
+    let pb = problem(&fx);
+    // Finite effort makes the normal matrices overflow, so both scales fail.
+    // Seed fitting and postprocessing do not use this effort penalty.
+    let tuning = Tuning {
+        mimo_effort: 1e300,
+        mimo_max_nfev: 1,
+        ..Tuning::default()
+    };
+    let ctx = context(1);
+    let x = fx.f64s(&fx.outputs()["reference"]["joint"]["x0"]);
+    let joint = solve_joint(&pb, &tuning, &ctx, &x, &pols(&fx)).unwrap();
+    assert_eq!(joint.status, -1, "both normal solves must fail");
+    assert_eq!(
+        joint.nfev, 0,
+        "the result must be the untouched seed fallback"
+    );
+    let case = super::cases::load("room_dba");
+    let design = super::design::replay("room_dba");
+    let ideal = crate::MimoDesign {
+        ranges: pb
+            .roles
+            .iter()
+            .cloned()
+            .zip(pb.ranges.iter().copied().map(Some))
+            .collect(),
+        supports: vec![("L".into(), pb.roles.into_iter().zip(pb.fir).collect())],
+        ..crate::MimoDesign::default()
+    };
+    let result = crate::design_mimo_iir(
+        &design,
+        &case.measurements,
+        &case.config,
+        &ideal,
+        &crate::MimoRequest::default(),
+        &tuning,
+        &ctx,
+    )
+    .unwrap();
+    assert!(result.notes.iter().any(|note| matches!(note,
+        crate::Note::Mimo(crate::MimoNote::IirSeedFallback { support, status: -1 }) if support == "L")),
+        "joint-fit seed fallback must be recorded: {:?}", result.notes);
+}
+
+#[test]
+fn mimo_run_preserves_iir_seed_fallback_note() {
+    let case = super::cases::load("room_dba");
+    let design = super::design::replay("room_dba");
+    let tuning = Tuning {
+        mimo_effort: 1e300,
+        mimo_max_nfev: 1,
+        ..Tuning::default()
+    };
+    let settings = secs_types::calibration::CalibrationSettings {
+        mimo_on: true,
+        mimo_fir: false,
+        ..Default::default()
+    };
+    let run = crate::mimo::compute(
+        &design,
+        &case.measurements,
+        &case.config,
+        &settings,
+        &tuning,
+        &context(1),
+    )
+    .unwrap();
+    assert!(run.notes.iter().any(|note| matches!(note,
+        crate::Note::Mimo(crate::MimoNote::IirSeedFallback { support, status: -1 }) if support == "L")),
+        "the run must retain the IIR seed fallback: {:?}", run.notes);
+}
+
+#[test]
+fn mimo_validation_names_the_invalid_field() {
+    let case = super::cases::load("room_dba");
+    let design = super::design::replay("room_dba");
+    let ctx = context(1);
+    for (request, field) in [
+        (
+            crate::MimoRequest {
+                fsiso: 300.0,
+                ..Default::default()
+            },
+            "fsiso",
+        ),
+        (
+            crate::MimoRequest {
+                mimo_early_ms: 61.0,
+                ..Default::default()
+            },
+            "mimo_early_ms",
+        ),
+    ] {
+        for error in [
+            crate::design_mimo(&design, &case.measurements, &case.config, &request, &ctx)
+                .unwrap_err(),
+            crate::design_mimo_iir(
+                &design,
+                &case.measurements,
+                &case.config,
+                &crate::MimoDesign::default(),
+                &request,
+                &Tuning::default(),
+                &ctx,
+            )
+            .unwrap_err(),
+        ] {
+            assert!(
+                matches!(&error, crate::EngineError::Input(message) if message.contains(field)),
+                "invalid {field} must be named: {error:?}"
+            );
+        }
+    }
+    let tuning = Tuning {
+        mimo_q_max: 0.5,
+        ..Default::default()
+    };
+    let error = crate::design_mimo_iir(
+        &design,
+        &case.measurements,
+        &case.config,
+        &crate::MimoDesign::default(),
+        &crate::MimoRequest::default(),
+        &tuning,
+        &ctx,
+    )
+    .unwrap_err();
+    assert!(matches!(error, crate::EngineError::Input(message) if message.contains("mimo_q_max")));
+}

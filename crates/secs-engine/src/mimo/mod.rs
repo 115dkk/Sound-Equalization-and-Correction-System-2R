@@ -25,3 +25,11 @@ pub use design::{
 
 #[cfg(feature = "test-support")]
 pub use acceleration::{RidgeReplayInput, RidgeReplayOutput, replay_ridge};
+
+fn validate_field(field: &str, valid: bool) -> Result<(), crate::EngineError> {
+    if valid {
+        Ok(())
+    } else {
+        Err(crate::EngineError::Input(format!("invalid MIMO {field}")))
+    }
+}

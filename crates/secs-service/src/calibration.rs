@@ -816,6 +816,10 @@ fn notices(note: &secs_engine::Note) -> Vec<Notice> {
             })
             .collect(),
         Note::Mimo(note) => match note {
+            MimoNote::IirSeedFallback { support, status } => vec![record(
+                "mimo_iir_seed_fallback",
+                vec![("input", support.clone()), ("status", status.to_string())],
+            )],
             MimoNote::InsufficientPositions { measured } => vec![record(
                 "mimo_insufficient_positions",
                 vec![("measured", measured.to_string()), ("required", "3".into())],
@@ -1290,6 +1294,10 @@ pub(crate) fn engine_error(error: secs_engine::EngineError) -> IpcError {
         EngineError::Solver(detail) => {
             IpcError::new(ErrorCode::Internal, detail).with_param("reason", "solver")
         }
+        EngineError::MissingSubMeasurement { position, role } => failure
+            .with_param("reason", "missing_sub_measurement")
+            .with_param("position", position.to_string())
+            .with_param("role", role),
         EngineError::Input(_) => failure,
     }
 }
@@ -1576,6 +1584,14 @@ mod tests {
                 "invalid input: missing main position",
             ),
             (
+                EngineError::MissingSubMeasurement {
+                    position: 7,
+                    role: "SW2".into(),
+                },
+                json!({"reason":"missing_sub_measurement","position":"7","role":"SW2"}),
+                "invalid input: position 7: missing sub measurement SW2",
+            ),
+            (
                 EngineError::MissingMainMeasurement { position: 5 },
                 json!({"reason":"missing_main_measurement","position":"5"}),
                 "invalid input: no measured main",
@@ -1838,6 +1854,20 @@ mod tests {
             serde_json::to_value(notices(&note)).unwrap(),
             serde_json::json!([
                 {"code":"mode_decay_none","params":{"role":"R","target_s":"0.3"}}
+            ])
+        );
+    }
+
+    #[test]
+    fn mimo_iir_seed_fallback_notice_preserves_input_and_status() {
+        let note = Note::Mimo(secs_engine::MimoNote::IirSeedFallback {
+            support: "L".into(),
+            status: -1,
+        });
+        assert_eq!(
+            serde_json::to_value(notices(&note)).unwrap(),
+            serde_json::json!([
+                {"code":"mimo_iir_seed_fallback","params":{"input":"L","status":"-1"}}
             ])
         );
     }

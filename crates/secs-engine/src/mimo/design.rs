@@ -1483,17 +1483,14 @@ pub(crate) fn design_mimo_prepared_accelerated(
 }
 
 fn validate_request(req: &MimoRequest) -> Result<(), EngineError> {
-    if !(0.0..300.0).contains(&req.fsiso)
-        || req.fsiso == 0.0
-        || !req.level_db.is_finite()
-        || req.taps_low == 0
-        || req.taps_low > 720
-        || req.f_low.is_some_and(|f| !f.is_finite())
-        || !req.mimo_early_ms.is_finite()
-        || !(5.0..=60.0).contains(&req.mimo_early_ms)
-    {
-        return Err(EngineError::Input("invalid MIMO request".into()));
-    }
+    super::validate_field(
+        "fsiso",
+        (0.0..300.0).contains(&req.fsiso) && req.fsiso != 0.0,
+    )?;
+    super::validate_field("level_db", req.level_db.is_finite())?;
+    super::validate_field("taps_low", (1..=720).contains(&req.taps_low))?;
+    super::validate_field("f_low", req.f_low.is_none_or(f64::is_finite))?;
+    super::validate_field("mimo_early_ms", (5.0..=60.0).contains(&req.mimo_early_ms))?;
     Ok(())
 }
 

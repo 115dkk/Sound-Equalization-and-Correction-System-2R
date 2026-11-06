@@ -1189,3 +1189,33 @@ fn design_memory_refusal_preserves_requested_and_total_bytes() {
         "a 1024-byte budget must return structured requested and total bytes: {error:?}"
     );
 }
+
+#[test]
+fn design_missing_reference_sub_returns_structured_error() {
+    let mut case = cases::load("room_manual");
+    let role = case.config.subs[0].clone();
+    let position = case.config.main_position;
+    case.measurements
+        .positions
+        .iter_mut()
+        .find(|(p, _)| *p == position)
+        .unwrap()
+        .1
+        .retain(|(r, _)| r != &role);
+    let ctx = Context::serial();
+    let error = crate::design(
+        &DesignRequest {
+            measurements: &case.measurements,
+            config: &case.config,
+            tuning: &case.tuning,
+            subs_only: false,
+            adapter_notes: &[],
+        },
+        &ctx,
+        &*design::production_fitters(ctx.cancel()),
+    )
+    .unwrap_err();
+    assert!(matches!(error, crate::EngineError::MissingSubMeasurement {
+        position: actual, role: missing,
+    } if actual == position && missing == role));
+}

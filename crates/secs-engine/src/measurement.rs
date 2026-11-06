@@ -296,10 +296,23 @@ pub fn prepare_until(
         .ok_or(EngineError::MissingReferencePosition {
             position: config.main_position,
         })?;
-    if !main.1.iter().any(|(r, _)| config.mains.contains(r)) {
+    if config.mains.is_empty()
+        || config
+            .mains
+            .iter()
+            .any(|role| !main.1.iter().any(|(r, _)| r == role))
+    {
         return Err(EngineError::MissingMainMeasurement {
             position: config.main_position,
         });
+    }
+    for role in &config.subs {
+        if !main.1.iter().any(|(r, _)| r == role) {
+            return Err(EngineError::MissingSubMeasurement {
+                position: config.main_position,
+                role: role.clone(),
+            });
+        }
     }
     let arrival_s = main
         .1

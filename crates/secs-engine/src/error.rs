@@ -42,6 +42,9 @@ pub enum EngineError {
     /// The reference position has no measurement of a configured main speaker.
     #[error("invalid input: no measured main")]
     MissingMainMeasurement { position: u32 },
+    /// A configured sub has no measurement at the reference position.
+    #[error("invalid input: position {position}: missing sub measurement {role}")]
+    MissingSubMeasurement { position: u32, role: String },
     /// A DSP primitive rejected its arguments.
     #[error(transparent)]
     Dsp(#[from] secs_dsp::DspError),
