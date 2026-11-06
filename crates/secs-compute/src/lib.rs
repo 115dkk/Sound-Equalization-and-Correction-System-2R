@@ -18,6 +18,8 @@
 //! OS adapter from `secs-sys`; tests inject a fixed value.
 
 use std::fmt::Debug;
+#[cfg(any(test, feature = "test-support"))]
+use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
@@ -55,11 +57,20 @@ struct Pacing {
     clock: Arc<dyn PaceClock>,
 }
 
+#[cfg(any(test, feature = "test-support"))]
+#[derive(Debug)]
+struct CancellationProbe {
+    after: usize,
+    calls: Arc<AtomicUsize>,
+}
+
 /// Cooperative cancellation shared by a job and everything it starts.
 #[derive(Clone, Debug)]
 pub struct CancelToken {
     cancelled: Arc<AtomicBool>,
     pacing: Option<Arc<Pacing>>,
+    #[cfg(any(test, feature = "test-support"))]
+    probe: Option<Arc<CancellationProbe>>,
 }
 
 impl Default for CancelToken {
@@ -67,6 +78,8 @@ impl Default for CancelToken {
         Self {
             cancelled: Arc::new(AtomicBool::new(false)),
             pacing: None,
+            #[cfg(any(test, feature = "test-support"))]
+            probe: None,
         }
     }
 }
@@ -81,6 +94,23 @@ impl CancelToken {
     /// Cancels this token and all of its clones.
     pub fn cancel(&self) {
         self.cancelled.store(true, Ordering::Release);
+    }
+
+    /// Creates a token that reports cancellation from its `after`th check
+    /// and returns the shared check counter.
+    #[cfg(any(test, feature = "test-support"))]
+    #[must_use]
+    pub fn probe(after: usize) -> (CancelToken, Arc<AtomicUsize>) {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let token = CancelToken {
+            cancelled: Arc::new(AtomicBool::new(false)),
+            pacing: None,
+            probe: Some(Arc::new(CancellationProbe {
+                after,
+                calls: Arc::clone(&calls),
+            })),
+        };
+        (token, calls)
     }
 
     /// Returns a token that shares cancellation and rests after each sustained
@@ -104,6 +134,8 @@ impl CancelToken {
                 last_rest: Mutex::new(now),
                 clock,
             })),
+            #[cfg(any(test, feature = "test-support"))]
+            probe: self.probe.clone(),
         }
     }
 
@@ -127,6 +159,13 @@ impl CancelToken {
     #[must_use]
     pub fn is_cancelled(&self) -> bool {
         self.pace();
+        #[cfg(any(test, feature = "test-support"))]
+        if let Some(probe) = &self.probe {
+            let call = probe.calls.fetch_add(1, Ordering::SeqCst) + 1;
+            if call >= probe.after {
+                return true;
+            }
+        }
         self.cancelled.load(Ordering::Acquire)
     }
 
@@ -686,6 +725,27 @@ mod tests {
                 .unwrap();
             assert_eq!(output, expected);
         }
+    }
+
+    #[test]
+    fn probe_token_cancels_from_the_nth_check_and_counts_calls() {
+        let (token, calls) = CancelToken::probe(3);
+        assert!(!token.is_cancelled());
+        assert!(!token.is_cancelled());
+        assert!(token.is_cancelled());
+        assert_eq!(calls.load(Ordering::SeqCst), 3);
+        assert!(token.is_cancelled());
+        assert_eq!(calls.load(Ordering::SeqCst), 4);
+    }
+
+    #[test]
+    fn map_with_a_probe_token_stops_at_the_recorded_point() {
+        let (token, calls) = CancelToken::probe(10);
+        let result = context(1, token).map((0..100).collect(), |value| value);
+        assert_eq!(result, Err(Cancelled));
+        let calls = calls.load(Ordering::SeqCst);
+        assert!(calls >= 10, "probe was called {calls} times");
+        assert!(calls < 100, "probe was called {calls} times");
     }
 
     #[test]

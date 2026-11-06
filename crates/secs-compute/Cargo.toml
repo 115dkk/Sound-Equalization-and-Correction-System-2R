@@ -15,6 +15,9 @@ include = ["Cargo.toml", "README.md", "LICENSE", "src/**"]
 [lints]
 workspace = true
 
+[features]
+test-support = []
+
 [dependencies]
 rayon.workspace = true
 thiserror.workspace = true
