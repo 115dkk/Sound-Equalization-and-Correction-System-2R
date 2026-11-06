@@ -972,6 +972,7 @@ tests = [
   "secs-service::attached_calibration_is_removed_before_the_engine",
   "secs-service::measurement_curves_use_the_corrected_ir",
   "secs-service::calibration_signature_keeps_old_caches_without_curves",
+  "secs-service::invalid_sidecar_curve_is_excluded_and_noticed_td262",
 ]
 upstream = "new"
 note = "new (D45): calculation and measurement graphs remove each measurement's attached meterCal/scCal curves (and, for a C-weighted meter, C weighting outside the meter file's range, as REW) with a zero-phase filter, boost capped at 20 dB; the signature carries the curves' fingerprints only when some are attached (ADR 0015)."

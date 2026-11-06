@@ -33,12 +33,20 @@ pub(crate) struct Snapshot {
 }
 
 #[derive(Debug)]
+struct LoadedMeasurements {
+    measurements: MeasurementSet,
+    notices: Vec<Notice>,
+    invalid_calibration_keys: Vec<(i64, String)>,
+}
+
 pub(crate) struct Prepared {
     pub ticket: ProjectTicket,
     pub project: Project,
     pub project_settings: CalibrationSettings,
     pub settings: CalibrationSettings,
     pub measurements: MeasurementSet,
+    pub measurement_notices: Vec<Notice>,
+    pub invalid_calibration_keys: Vec<(i64, String)>,
     pub signature: String,
     pub target_key: String,
     pub config_key: String,
@@ -94,6 +102,10 @@ impl Service {
             );
             let commit_calibration = |open: &mut session::OpenProject| {
                 let mut summary = summarize(&design, &prepared.settings, &late_energy);
+                summary.notes.extend(prepared.measurement_notices.clone());
+                for key in &prepared.invalid_calibration_keys {
+                    open.store.project_mut().measurement_calibration.remove(key);
+                }
                 if calibration.resampled > 0 {
                     summary.notes.push(Notice {
                         code: "measurement_resampled".into(),
@@ -399,9 +411,12 @@ impl Snapshot {
     /// cancellation between files. The commit checks the ticket.
     pub(crate) fn load(self, job: &JobContext) -> Result<Prepared, IpcError> {
         let mut store = secs_project::MeasurementStore::new(&self.path, self.project.clone());
-        let measurements = load_measurements_cancellable(&mut store, job.cancel())?;
-        check_rc_agreement(&self.project, &self.settings, &measurements)?;
-        let project = self.project;
+        let loaded = load_measurements_with_notices(&mut store, job.cancel())?;
+        check_rc_agreement(&self.project, &self.settings, &loaded.measurements)?;
+        let mut project = self.project;
+        for key in &loaded.invalid_calibration_keys {
+            project.measurement_calibration.remove(key);
+        }
         Ok(Prepared {
             ticket: self.ticket,
             signature: signature_key(&project),
@@ -410,7 +425,9 @@ impl Snapshot {
             project,
             project_settings: self.project_settings,
             settings: self.settings,
-            measurements,
+            measurements: loaded.measurements,
+            measurement_notices: loaded.notices,
+            invalid_calibration_keys: loaded.invalid_calibration_keys,
         })
     }
 }
@@ -543,6 +560,52 @@ fn mic_curve(cal: &secs_mdat::CalInfo) -> Option<secs_audio::MicCalibration> {
     secs_audio::MicCalibration::from_points(points).ok()
 }
 
+pub(crate) fn has_valid_meter_calibration(info: &secs_mdat::SourceInfo) -> bool {
+    secs_project::attached_calibration(info)
+        .meter
+        .and_then(mic_curve)
+        .is_some()
+}
+
+fn response_correction(info: &secs_mdat::SourceInfo) -> (secs_audio::ResponseCorrection, bool) {
+    let attached = secs_project::attached_calibration(info);
+    let meter = attached.meter.and_then(mic_curve);
+    let invalid_meter = attached.meter.is_some() && meter.is_none();
+    let mut invalid_other = false;
+    let others = attached
+        .others
+        .into_iter()
+        .filter_map(|cal| {
+            let curve = mic_curve(cal);
+            invalid_other |= curve.is_none();
+            curve
+        })
+        .collect();
+    (
+        secs_audio::ResponseCorrection::new(meter, others, attached.c_weighted && !invalid_meter),
+        invalid_meter || invalid_other,
+    )
+}
+
+fn measured_ir_with_curve_status(
+    store: &mut secs_project::MeasurementStore,
+    role: &str,
+    pos: i64,
+) -> Result<((Vec<f32>, u32), bool), crate::ServiceError> {
+    let (samples, sample_rate) = store.ir_of(role, pos)?;
+    let Some(info) = store.source_of(role, pos) else {
+        return Ok(((samples, sample_rate), false));
+    };
+    let (correction, invalid_curve) = response_correction(&info);
+    if correction.is_empty() {
+        return Ok(((samples, sample_rate), invalid_curve));
+    }
+    let corrected = correction.apply(&samples, sample_rate).map_err(|error| {
+        crate::ServiceError::Project(format!("measurement response correction: {error}"))
+    })?;
+    Ok(((corrected, sample_rate), invalid_curve))
+}
+
 /// Loads a stored IR and removes the response curves attached to its source
 /// sidecar without changing the stored waveform (ADR 0015).
 pub(crate) fn measured_ir(
@@ -550,30 +613,23 @@ pub(crate) fn measured_ir(
     role: &str,
     pos: i64,
 ) -> Result<(Vec<f32>, u32), crate::ServiceError> {
-    let (samples, sample_rate) = store.ir_of(role, pos)?;
-    let Some(info) = store.source_of(role, pos) else {
-        return Ok((samples, sample_rate));
-    };
-    let attached = secs_project::attached_calibration(&info);
-    let correction = secs_audio::ResponseCorrection::new(
-        attached.meter.and_then(mic_curve),
-        attached.others.into_iter().filter_map(mic_curve).collect(),
-        attached.c_weighted,
-    );
-    if correction.is_empty() {
-        return Ok((samples, sample_rate));
-    }
-    let corrected = correction.apply(&samples, sample_rate).map_err(|error| {
-        crate::ServiceError::Project(format!("measurement response correction: {error}"))
-    })?;
-    Ok((corrected, sample_rate))
+    measured_ir_with_curve_status(store, role, pos).map(|(measurement, _)| measurement)
 }
 
 pub(crate) fn load_measurements_cancellable(
     store: &mut secs_project::MeasurementStore,
     cancel: &secs_compute::CancelToken,
 ) -> Result<MeasurementSet, IpcError> {
+    load_measurements_with_notices(store, cancel).map(|loaded| loaded.measurements)
+}
+
+fn load_measurements_with_notices(
+    store: &mut secs_project::MeasurementStore,
+    cancel: &secs_compute::CancelToken,
+) -> Result<LoadedMeasurements, IpcError> {
     let mut positions = Vec::new();
+    let mut notices = Vec::new();
+    let mut invalid_calibration_keys = Vec::new();
     for record in store.records() {
         if record.pos < 0 {
             continue;
@@ -585,7 +641,19 @@ pub(crate) fn load_measurements_cancellable(
             if cancel.is_cancelled() {
                 return Err(IpcError::new(ErrorCode::Cancelled, "cancelled"));
             }
-            let (samples, sample_rate) = measured_ir(store, role, record.pos)?;
+            let ((samples, sample_rate), invalid_curve) =
+                measured_ir_with_curve_status(store, role, record.pos)?;
+            if invalid_curve {
+                notices.push(Notice {
+                    code: "calibration_curve_invalid".into(),
+                    params: [
+                        ("role".into(), role.clone()),
+                        ("position".into(), record.pos.to_string()),
+                    ]
+                    .into(),
+                });
+                invalid_calibration_keys.push((record.pos, role.clone()));
+            }
             roles.push((
                 role.clone(),
                 Measurement {
@@ -603,7 +671,11 @@ pub(crate) fn load_measurements_cancellable(
         return Err(IpcError::new(ErrorCode::Cancelled, "cancelled"));
     }
     positions.sort_by_key(|(position, _)| *position);
-    Ok(MeasurementSet { positions })
+    Ok(LoadedMeasurements {
+        measurements: MeasurementSet { positions },
+        notices,
+        invalid_calibration_keys,
+    })
 }
 
 fn summarize(

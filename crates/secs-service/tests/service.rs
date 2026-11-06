@@ -180,6 +180,58 @@ fn project_open_surfaces_sidecar_warnings_td183() {
 }
 
 #[test]
+fn invalid_sidecar_curve_is_excluded_and_noticed_td262() {
+    let root = temp_root("invalid-sidecar-curve");
+    fs::create_dir_all(&root).unwrap();
+    let (path, settings) = write_case(&root, "room");
+    let store = MeasurementStore::open(&path).unwrap();
+    let first = store.records().into_iter().next().unwrap();
+    let position = first.pos;
+    let role = first.ir.keys().next().unwrap().clone();
+    let wav = path.parent().unwrap().join(&first.ir[&role]);
+    secs_project::save_source(
+        &wav,
+        Some(&secs_mdat::SourceInfo {
+            cal: vec![(
+                "meterCal".into(),
+                secs_mdat::CalInfo {
+                    inverse_c_selected: false,
+                    source_name: "unsorted.cal".into(),
+                    source_path: "unsorted.cal".into(),
+                    freq: Some(vec![1_000.0, 100.0]),
+                    gain: Some(vec![0.0, 1.0]),
+                    phase: None,
+                    boxed: Vec::new(),
+                },
+            )],
+            ..Default::default()
+        }),
+    )
+    .unwrap();
+    let service = deterministic_service();
+    open(&service, &path);
+
+    let Response::MicCalibrationGet(status) =
+        call_ok(&service, Request::MicCalibrationGet, Arc::new(NoEvents))
+    else {
+        panic!();
+    };
+    assert_eq!(status.attached, 0);
+
+    let events = Arc::new(Events::default());
+    let job = start_calibration(&service, events.clone(), settings);
+    finished_result(events.wait(job, Duration::from_secs(120)));
+    let results = read_results(&service);
+    let notices = &results.calibration.unwrap().notes;
+    assert!(notices.iter().any(|notice| {
+        notice.code == "calibration_curve_invalid"
+            && notice.params.get("role") == Some(&role)
+            && notice.params.get("position") == Some(&position.to_string())
+    }));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn damaged_settings_file_is_reported_and_not_overwritten_until_set_td169() {
     let root = temp_root("damaged-settings");
     fs::create_dir_all(&root).unwrap();

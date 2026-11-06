@@ -125,7 +125,7 @@ fn status(
             let has_meter = store
                 .source_of(role, record.pos)
                 .as_ref()
-                .is_some_and(|info| secs_project::attached_calibration(info).meter.is_some());
+                .is_some_and(crate::calibration::has_valid_meter_calibration);
             if has_meter {
                 attached = attached.saturating_add(1);
             } else if record.source.get(role).is_none_or(String::is_empty) {
