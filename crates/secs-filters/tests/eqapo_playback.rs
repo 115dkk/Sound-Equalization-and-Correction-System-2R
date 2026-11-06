@@ -1492,6 +1492,6 @@ fn excitation_favours_the_low_band_and_its_level_follows_the_paths() {
 }
 
 fn playback_note(latency: f64, mimo: Option<&MimoPaths>) -> String {
-    let mimo = mimo.and_then(|paths| secs_camilla::note::MimoNote::for_paths(paths, 0));
-    secs_camilla::note::eqapo_note("mixed", latency, 100.0, mimo.as_ref())
+    let mimo = mimo.and_then(|paths| secs_graph::emit::note::MimoNote::for_paths(paths, 0));
+    secs_graph::emit::note::eqapo_note("mixed", latency, 100.0, mimo.as_ref())
 }

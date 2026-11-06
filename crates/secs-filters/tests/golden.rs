@@ -1380,7 +1380,7 @@ fn serializers_match_oracle_text_exactly() {
                 } => secs_dsp::fir::lowrate_to_48k(taps_low, *fs_low),
                 _ => unreachable!(),
             };
-            secs_camilla::wav_bytes(&taps, 48_000).unwrap()
+            secs_graph::files::wav_bytes(&taps, 48_000).unwrap()
         };
         assert_apo_transfer(
             case,
@@ -2036,7 +2036,7 @@ fn extra_rc_bands_keep_every_eqapo_header_line_a_comment() {
     let run_value = &fixture.inputs()["run"];
     let (label, rc_pieces, stamp) = run_parts(&fixture);
     let mode = export_mode(run_value);
-    let note = secs_camilla::note::eqapo_note_with_bands(
+    let note = secs_graph::emit::note::eqapo_note_with_bands(
         &mode,
         number(&run_value["latency_ms"]),
         number(&run_value["rc_hi_hz"]),
@@ -2085,15 +2085,15 @@ fn extra_rc_bands_keep_every_eqapo_header_line_a_comment() {
 }
 
 fn export_mode(value: &Value) -> String {
-    secs_camilla::note::mode_name(
+    secs_graph::emit::note::mode_name(
         serde_json::from_value(value["mode"].clone()).unwrap(),
         number(&value["ultra_ms"]),
     )
 }
 
 fn export_note(mode: &str, latency: f64, rc_hi: f64, mimo: Option<&MimoPaths>) -> String {
-    let mimo = mimo.and_then(|paths| secs_camilla::note::MimoNote::for_paths(paths, 0));
-    secs_camilla::note::eqapo_note(mode, latency, rc_hi, mimo.as_ref())
+    let mimo = mimo.and_then(|paths| secs_graph::emit::note::MimoNote::for_paths(paths, 0));
+    secs_graph::emit::note::eqapo_note(mode, latency, rc_hi, mimo.as_ref())
 }
 
 /// Issue #106: with Dirac ART on a Denon receiver in Stereo mode, the

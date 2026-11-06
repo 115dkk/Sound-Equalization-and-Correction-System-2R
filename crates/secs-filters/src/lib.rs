@@ -101,9 +101,9 @@ pub struct FilterRun<'a> {
     pub chain: &'a SignalChain,
     /// MIMO paths only when the run includes MIMO.
     pub mimo: Option<&'a MimoPaths>,
-    /// Mode name (`secs_camilla::note::mode_name`).
+    /// Mode name (`secs_graph::emit::note::mode_name`).
     pub mode: &'a str,
-    /// Equalizer APO's ASCII header note (`secs_camilla::note::eqapo_note`).
+    /// Equalizer APO's ASCII header note (`secs_graph::emit::note::eqapo_note`).
     pub note: &'a str,
     /// Human-facing mode label.
     pub label: &'a str,

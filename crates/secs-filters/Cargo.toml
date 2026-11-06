@@ -24,6 +24,4 @@ serde_json.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
-# Removed after ADR 0045 step 3 moves the note helpers into secs-graph.
-secs-camilla.workspace = true
 secs-oracle.workspace = true

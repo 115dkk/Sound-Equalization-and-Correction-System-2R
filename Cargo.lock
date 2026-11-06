@@ -4442,7 +4442,6 @@ dependencies = [
 name = "secs-filters"
 version = "0.21.0"
 dependencies = [
- "secs-camilla",
  "secs-dsp",
  "secs-graph",
  "secs-oracle",
