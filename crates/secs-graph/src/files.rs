@@ -11,16 +11,26 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
+/// Return the byte length of one float32 WAV data chunk.
+pub fn wav_data_len(samples: usize) -> Result<u32, GraphError> {
+    let bytes = samples
+        .checked_mul(4)
+        .and_then(|bytes| u32::try_from(bytes).ok())
+        .filter(|bytes| bytes.checked_add(36).is_some())
+        .ok_or_else(|| GraphError::Invalid("FIR WAV exceeds RIFF limit".into()))?;
+    Ok(bytes)
+}
+
 /// Serialize an IEEE-float, mono, 32-bit WAV exactly like upstream `write_wav`.
 ///
 /// Fails when a tap is not finite once narrowed to `f32` (`1e100` is a finite
 /// `f64` but an infinite `f32`), so every writer that shares it rejects the
 /// coefficients before its first file.
 pub fn wav_bytes(data: &[f64], rate: u32) -> Result<Vec<u8>, GraphError> {
+    let data_len = wav_data_len(data.len())?;
     if let Some(index) = data.iter().position(|value| !(*value as f32).is_finite()) {
         return Err(GraphError::NonFinite(format!("fir[{index}] as f32")));
     }
-    let data_len = u32::try_from(data.len() * 4).expect("FIR WAV fits u32");
     let mut out = Vec::with_capacity(44 + data.len() * 4);
     out.extend_from_slice(b"RIFF");
     out.extend_from_slice(&(36 + data_len).to_le_bytes());
@@ -341,6 +351,15 @@ mod tests {
     #[cfg(unix)]
     fn link_directory(target: &Path, link: &Path) {
         std::os::unix::fs::symlink(target, link).unwrap();
+    }
+
+    #[test]
+    fn wav_data_len_refuses_riff_overflow_td225() {
+        let samples = ((u32::MAX - 36) / 4 + 1) as usize;
+        assert_eq!(
+            wav_data_len(samples),
+            Err(GraphError::Invalid("FIR WAV exceeds RIFF limit".into()))
+        );
     }
 
     #[test]

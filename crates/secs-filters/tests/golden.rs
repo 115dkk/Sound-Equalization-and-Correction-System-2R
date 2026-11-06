@@ -204,15 +204,18 @@ fn malformed_plans_return_errors_instead_of_panicking_td180() {
 
     assert!(matches!(
         eqapo_filters(&plan, &firs, ""),
-        Err(FiltersError::Invalid(message)) if message.contains(&missing)
+        Err(FiltersError::Graph(secs_graph::GraphError::Invalid(message)))
+            if message.contains(&missing)
     ));
     assert!(matches!(
         filter_text(&plan, &firs, "test", &[]),
-        Err(FiltersError::Invalid(message)) if message.contains(&missing)
+        Err(FiltersError::Graph(secs_graph::GraphError::Invalid(message)))
+            if message.contains(&missing)
     ));
     assert!(matches!(
         render_paths(&plan, 1 << 16),
-        Err(FiltersError::Invalid(message)) if message.contains(&missing)
+        Err(FiltersError::Graph(secs_graph::GraphError::Invalid(message)))
+            if message.contains(&missing)
     ));
 }
 
@@ -1706,7 +1709,7 @@ fn invalid_values_write_nothing_and_existing_files_are_replaced_atomically() {
     };
     assert!(matches!(
         export_filter_text(&bad_run, &invalid),
-        Err(FiltersError::Invalid(_))
+        Err(FiltersError::Graph(secs_graph::GraphError::NonFinite(_)))
     ));
     assert!(!invalid.exists());
 
@@ -1902,7 +1905,7 @@ fn fir_responses_require_the_rfft_grid_td94() {
     assert!(plan_responses(&fir, &uniform, "L", false).is_ok());
     assert!(matches!(
         plan_responses(&fir, &skewed, "L", false),
-        Err(FiltersError::Invalid(_))
+        Err(FiltersError::Graph(secs_graph::GraphError::Invalid(_)))
     ));
     // Without a FIR every response is evaluated on `f` itself.
     let iir =

@@ -590,8 +590,11 @@ fn add_xo_items(
     }
 }
 
-pub fn stage_items(run: &ExportRun<'_>, label: Option<&str>) -> Vec<MeasurementInput> {
-    stage_items_with_mimo(run, MimoExport::None, label).expect("validated engine export inputs")
+pub fn stage_items(
+    run: &ExportRun<'_>,
+    label: Option<&str>,
+) -> Result<Vec<MeasurementInput>, ExportError> {
+    stage_items_with_mimo(run, MimoExport::None, label)
 }
 
 pub fn stage_items_mimo(
@@ -769,9 +772,11 @@ fn clear_curves(item: &mut MeasurementInput) {
     }
 }
 
-pub fn before_after_items(run: &ExportRun<'_>, sources: Option<&Sources>) -> Vec<MeasurementInput> {
+pub fn before_after_items(
+    run: &ExportRun<'_>,
+    sources: Option<&Sources>,
+) -> Result<Vec<MeasurementInput>, ExportError> {
     before_after_items_with_mimo(run, MimoExport::None, sources, None)
-        .expect("validated engine export inputs")
 }
 
 pub fn before_after_items_mimo(

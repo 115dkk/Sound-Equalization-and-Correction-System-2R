@@ -124,22 +124,15 @@ pub enum FiltersError {
     /// Validation failed before any filesystem change.
     #[error("invalid filter export: {0}")]
     Invalid(String),
+    /// Validation of the shared export graph failed.
+    #[error(transparent)]
+    Graph(#[from] GraphError),
     /// The caller cancelled a long-running calculation before installation.
     #[error("filter export cancelled")]
     Cancelled,
     /// Filesystem operation failed.
     #[error(transparent)]
     Io(#[from] std::io::Error),
-}
-
-impl From<GraphError> for FiltersError {
-    fn from(error: GraphError) -> Self {
-        Self::Invalid(match error {
-            GraphError::NonAscii(detail) => format!("non-ASCII {detail}"),
-            GraphError::NonFinite(detail) => format!("non-finite {detail}"),
-            GraphError::Invalid(detail) => detail,
-        })
-    }
 }
 
 fn validate_options(options: &Options, convolution: bool) -> Result<(), FiltersError> {
@@ -2043,6 +2036,23 @@ mod generation_entry_tests {
             super::generation_entry("design-2"),
             "Include: design-2\\config.txt\r\n"
         );
+    }
+
+    #[test]
+    fn graph_errors_keep_their_variants_td225() {
+        let error = super::FiltersError::from(secs_graph::GraphError::NonFinite("x".into()));
+        assert!(matches!(
+            error,
+            super::FiltersError::Graph(secs_graph::GraphError::NonFinite(ref field)) if field == "x"
+        ));
+        for error in [
+            secs_graph::GraphError::NonAscii("name".into()),
+            secs_graph::GraphError::NonFinite("value".into()),
+            secs_graph::GraphError::Invalid("structure".into()),
+        ] {
+            let expected = error.to_string();
+            assert_eq!(super::FiltersError::from(error).to_string(), expected);
+        }
     }
 }
 
