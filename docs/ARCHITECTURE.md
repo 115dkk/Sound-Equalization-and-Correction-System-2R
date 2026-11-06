@@ -69,11 +69,10 @@ ui ──IPC──> secs2r ─┬─> secs-service ─┬─> secs-engine ─┬
                     │                 ├─> secs-audio ────> secs-dsp
                     │                 ├─> secs-mdat ─────> secs-jos, secs-dsp
                     │                 ├─> secs-dirac
-                    │                 ├─> secs-export ───> secs-engine, secs-mdat, secs-camilla (숫자 포매터),
+                    │                 ├─> secs-export ───> secs-engine, secs-mdat, secs-graph,
                     │                 │                    secs-dsp, secs-types
                     │                 ├─> secs-camilla ──> secs-graph, secs-dsp, secs-types
-                    │                 ├─> secs-filters ──> secs-graph, secs-camilla (숫자 포매터),
-                    │                 │                    secs-dsp, secs-types
+                    │                 ├─> secs-filters ──> secs-graph, secs-dsp, secs-types
                     │                 └─> secs-compute, secs-dsp, secs-types
                     ├─> secs-gpu ─────> secs-engine (RidgeBackend seam), secs-compute, secs-types
                     │        └───────> secs-cuda-sys (선택적 네이티브 라이브러리)
