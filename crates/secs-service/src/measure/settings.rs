@@ -219,7 +219,7 @@ pub fn store_devices(project: &mut Project, values: Vec<(String, PyJson)>) {
     }
 }
 pub fn to_rew_plan(p: &MeasurementPlan) -> Result<secs_rew::MeasurementPlan, MeasureError> {
-    Ok(secs_rew::MeasurementPlan {
+    let plan = secs_rew::MeasurementPlan {
         roles: p.roles.clone(),
         outputs: p
             .outputs
@@ -246,7 +246,11 @@ pub fn to_rew_plan(p: &MeasurementPlan) -> Result<secs_rew::MeasurementPlan, Mea
         start_frequency: p.start_frequency,
         end_frequency: p.end_frequency,
         sample_rate: positive(p.sample_rate, "sample rate")?,
-    })
+    };
+    if let Some(error) = plan.validate().first() {
+        return Err(MeasureError::Input((*error).into()));
+    }
+    Ok(plan)
 }
 pub fn to_audio_plan(
     p: &MeasurementPlan,
@@ -306,4 +310,30 @@ pub fn to_audio_plan(
         share: settings.share,
         window: settings.window,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rew_plan_rejects_invalid_sweep_settings_from_project() {
+        for (field, value, code) in [
+            ("start_frequency", f64::NAN, "rew.plan.frequency"),
+            ("end_frequency", 20.0, "rew.plan.frequency"),
+            ("sweep_level_db", 1.0, "rew.plan.level"),
+            ("sweep_level_db", f64::NAN, "rew.plan.level"),
+        ] {
+            let mut project = Project::default();
+            store_devices(&mut project, vec![(field.into(), PyJson::Float(value))]);
+            let mut plan = plan_for(&project, &MeasurementSettings::default());
+            plan.roles = vec!["L".into()];
+            plan.outputs = std::collections::BTreeMap::from([("L".into(), 1)]);
+            let result = to_rew_plan(&plan);
+            assert!(
+                matches!(&result, Err(MeasureError::Input(message)) if message == code),
+                "{field}={value}: {result:?}"
+            );
+        }
+    }
 }

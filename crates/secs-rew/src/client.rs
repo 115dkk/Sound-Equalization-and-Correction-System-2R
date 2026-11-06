@@ -723,7 +723,7 @@ impl<T: Transport> RewClient<T> {
             .as_str()
             .ok_or_else(|| RewError::schema(&path, "missing data"))?;
         let rate = data.get("sampleRate").and_then(number).unwrap_or(48000.0);
-        if rate <= 0.0 || rate > f64::from(u32::MAX) {
+        if !(1.0..=f64::from(u32::MAX)).contains(&rate) || rate.fract() != 0.0 {
             return Err(RewError::schema(&path, "invalid sample rate"));
         }
         Ok(ImpulseResponse {
