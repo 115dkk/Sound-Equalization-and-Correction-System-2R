@@ -34,7 +34,7 @@ pub(crate) struct OpenProject {
 }
 
 /// The private folder a tutorial session writes its measurements and
-/// results into instead of the given path (`temp_dir()/secs2r-tutorial-<pid>-<n>`).
+/// results into instead of the given path (under the user's app-data folder).
 /// Dropping it removes the folder, best effort, so closing, replacing or
 /// opening another project cleans up (TD-90).
 #[derive(Debug)]
@@ -45,17 +45,22 @@ pub(crate) struct TutorialFolder {
 }
 
 impl TutorialFolder {
-    fn create(requested: PathBuf) -> Result<Self, ServiceError> {
+    fn create(requested: PathBuf, app_data: &Path) -> Result<Self, ServiceError> {
         static NEXT: AtomicU64 = AtomicU64::new(0);
-        let folder = std::env::temp_dir().join(format!(
-            "secs2r-tutorial-{}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
-        // A folder of that name can only be left by an earlier process with this id.
-        let _ = fs::remove_dir_all(&folder);
-        fs::create_dir_all(&folder)?;
-        Ok(Self { folder, requested })
+        let base = app_data.join("tutorial");
+        fs::create_dir_all(&base)?;
+        loop {
+            let folder = base.join(format!(
+                "secs2r-tutorial-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ));
+            match fs::create_dir(&folder) {
+                Ok(()) => return Ok(Self { folder, requested }),
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(error) => return Err(error.into()),
+            }
+        }
     }
 
     fn project(&self) -> PathBuf {
@@ -89,6 +94,7 @@ impl Session {
         sub_count: u8,
         sample: bool,
         tutorial: bool,
+        app_data: &Path,
     ) -> Result<ProjectInfo, ServiceError> {
         let sample = sample || tutorial;
         let selected_preset = if sample { "7.1.4" } else { preset };
@@ -135,7 +141,7 @@ impl Session {
             vec![("method".into(), PyJson::Str("none".into()))],
         );
         let tutorial_folder = if tutorial {
-            Some(TutorialFolder::create(path.clone())?)
+            Some(TutorialFolder::create(path.clone(), app_data)?)
         } else {
             None
         };
@@ -901,7 +907,7 @@ mod tests {
         fs::create_dir_all(&root).unwrap();
         let mut session = Session::default();
         let created = session
-            .create(source.clone(), "2.1", 1, false, false)
+            .create(source.clone(), "2.1", 1, false, false, &root)
             .unwrap();
         assert_eq!(created.path, source.to_string_lossy());
         assert_eq!(created.sub_count, 1);

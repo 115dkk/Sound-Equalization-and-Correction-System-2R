@@ -911,6 +911,50 @@ fn new_projects_store_none_measurement_method() {
 }
 
 #[test]
+fn tutorial_folder_lives_under_app_data_and_refuses_an_existing_path_td210() {
+    let root = temp_root("tutorial-app-data");
+    let app_data = root.join("app-data");
+    fs::create_dir_all(&root).unwrap();
+    let service = Service::new(Deps {
+        app_data_path: app_data.clone(),
+        ..Deps::default()
+    });
+    let create = |name: &str| {
+        call_ok(
+            &service,
+            Request::ProjectNew(ProjectNewParams {
+                path: root.join(name).to_string_lossy().into_owned(),
+                preset: "2.0".into(),
+                sub_count: 0,
+                sample: false,
+                tutorial: true,
+            }),
+            Arc::new(NoEvents),
+        );
+        let mut folders = fs::read_dir(app_data.join("tutorial"))
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| path.is_dir())
+            .collect::<Vec<_>>();
+        folders.sort();
+        assert_eq!(folders.len(), 1);
+        folders.remove(0)
+    };
+
+    let first = create("first.secs");
+    assert!(first.starts_with(&app_data));
+    assert_ne!(first.parent(), Some(std::env::temp_dir().as_path()));
+    let second = create("second.secs");
+    assert!(second.starts_with(&app_data));
+    assert_ne!(second, first);
+    assert!(!first.exists());
+
+    drop(service);
+    assert!(!second.exists());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn tutorial_projects_block_save_without_writing() {
     let root = temp_root("tutorial");
     fs::create_dir_all(&root).unwrap();

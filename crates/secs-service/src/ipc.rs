@@ -19,6 +19,7 @@ pub(crate) fn dispatch(
                 params.sub_count,
                 params.sample,
                 params.tutorial,
+                &service.deps.app_data_path,
             )
             .map(Response::ProjectNew)
             .map_err(IpcError::from),

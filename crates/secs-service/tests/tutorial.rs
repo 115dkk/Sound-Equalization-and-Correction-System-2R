@@ -5,7 +5,7 @@
 //! directory, which every other test in the same process would share.
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
@@ -78,9 +78,9 @@ fn tutorial(service: &Service) -> ProjectInfo {
     info
 }
 
-fn tutorial_folders() -> Vec<PathBuf> {
+fn tutorial_folders(app_data: &Path) -> Vec<PathBuf> {
     let prefix = format!("secs2r-tutorial-{}-", std::process::id());
-    let mut folders: Vec<_> = fs::read_dir(std::env::temp_dir())
+    let mut folders: Vec<_> = fs::read_dir(app_data.join("tutorial"))
         .unwrap()
         .filter_map(Result::ok)
         .map(|entry| entry.path())
@@ -99,11 +99,16 @@ fn tutorial_measurements_and_results_stay_in_a_temporary_folder_removed_with_the
     let base = std::env::temp_dir();
     let cwd = base.join(format!("secs-tutorial-cwd-{}", std::process::id()));
     let other = base.join(format!("secs-tutorial-other-{}.secs", std::process::id()));
+    let app_data = base.join(format!("secs-tutorial-app-data-{}", std::process::id()));
     let _ = fs::remove_dir_all(&cwd);
+    let _ = fs::remove_dir_all(&app_data);
     fs::create_dir_all(&cwd).unwrap();
     std::env::set_current_dir(&cwd).unwrap();
 
-    let service = Service::new(Deps::default());
+    let service = Service::new(Deps {
+        app_data_path: app_data.clone(),
+        ..Deps::default()
+    });
     let info = tutorial(&service);
     assert!(info.tutorial);
     assert_eq!(info.path, "", "the given path is reported back");
@@ -137,7 +142,7 @@ fn tutorial_measurements_and_results_stay_in_a_temporary_folder_removed_with_the
     };
     assert!(results.calibration.is_some());
 
-    let folders = tutorial_folders();
+    let folders = tutorial_folders(&app_data);
     assert_eq!(folders.len(), 1, "{folders:?}");
     let folder = &folders[0];
     assert!(
@@ -169,7 +174,7 @@ fn tutorial_measurements_and_results_stay_in_a_temporary_folder_removed_with_the
 
     // So does ending the service while a tutorial is open.
     tutorial(&service);
-    let second = tutorial_folders();
+    let second = tutorial_folders(&app_data);
     assert_eq!(second.len(), 1, "{second:?}");
     drop(service);
     assert!(!second[0].exists(), "tutorial folder outlived the service");
@@ -178,4 +183,5 @@ fn tutorial_measurements_and_results_stay_in_a_temporary_folder_removed_with_the
     fs::remove_dir_all(&cwd).unwrap();
     let _ = fs::remove_file(&other);
     let _ = fs::remove_dir_all(other.with_extension("irs"));
+    let _ = fs::remove_dir_all(app_data);
 }
