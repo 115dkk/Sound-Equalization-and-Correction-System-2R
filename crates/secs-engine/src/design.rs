@@ -108,28 +108,46 @@ impl Design {
         self.rc_hi
     }
 
+    pub fn export_view(&self) -> Result<crate::ExportView, EngineError> {
+        self.replay.export_view(self)
+    }
+
+    pub fn main_channels(&self) -> impl Iterator<Item = &MainChannel> {
+        self.chain.mains.iter()
+    }
+
+    pub fn sub_channels(&self) -> impl Iterator<Item = &SubChannel> {
+        self.chain.subs.iter()
+    }
+
+    pub fn layouts(&self) -> impl Iterator<Item = (&str, &LayoutInfo)> {
+        self.subs.iter().flat_map(|subs| {
+            subs.layout_info
+                .iter()
+                .map(|(name, info)| (name.as_str(), info))
+        })
+    }
+
     pub fn measured(&self, position: u32, role: &str) -> Option<&crate::Measurement> {
         self.replay.measurements().get(position, role)
     }
 
     pub fn main_roles(&self) -> impl Iterator<Item = &str> {
-        self.chain.mains.iter().map(|main| main.role.as_str())
+        self.main_channels().map(|main| main.role.as_str())
     }
 
     pub fn sub_roles(&self) -> impl Iterator<Item = &str> {
-        self.chain.subs.iter().map(|sub| sub.role.as_str())
+        self.sub_channels().map(|sub| sub.role.as_str())
     }
 
     pub fn fir(&self, role: &str) -> Option<&[f64]> {
-        self.chain
-            .mains
-            .iter()
+        self.main_channels()
             .find(|main| main.role == role)
             .map(|main| main.fir.as_slice())
     }
 
     pub fn stage(&self, role: &str, position: u32) -> Result<crate::StageResponses, EngineError> {
-        let view = self.replay.export_view(self)?;
+        let view = self.export_view()?;
         crate::chain::stage_responses(self, role, &view.spectra, position)
             .ok_or_else(|| EngineError::Input(format!("missing stage response {position}/{role}")))
     }

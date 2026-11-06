@@ -8,9 +8,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use secs_engine::{
-    Design, EngineError, ExportAxis, StageResponses, input::LayoutKind, stage_responses,
-};
+use secs_engine::{Design, EngineError, ExportAxis, StageResponses, input::LayoutKind};
 use secs_graph::emit::grouped;
 use secs_graph::emit::pyfmt::{format_fixed, format_g};
 use secs_mdat::{MdatError, MeasurementInput, SourceInfo, TEMPLATE};
@@ -107,19 +105,17 @@ pub enum ExportError {
 }
 
 fn chain_text(run: &ExportRun<'_>) -> String {
-    let peq = run.design.replay.config().peq_bands.unwrap_or(16);
+    let config = run.design.config();
+    let peq = config.peq_bands.unwrap_or(16);
     // The fitted budget; mode_decay puts its cuts beside it (ADR 0025), so
     // the per-channel count printed later can be larger.
-    let peq = if run.design.replay.config().mode_decay {
+    let peq = if config.mode_decay {
         format!("{peq} + 울림 컷")
     } else {
         peq.to_string()
     };
-    if run.design.replay.config().taps > 0 {
-        format!(
-            "PEQ {peq} + FIR {}",
-            grouped(run.design.replay.config().taps)
-        )
+    if config.taps > 0 {
+        format!("PEQ {peq} + FIR {}", grouped(config.taps))
     } else {
         format!("PEQ {peq}")
     }
@@ -200,11 +196,8 @@ fn sub_value_text(sub: &SubChannel) -> String {
 }
 
 pub fn layout_lines(run: &ExportRun<'_>) -> Vec<String> {
-    let Some(subs) = &run.design.subs else {
-        return Vec::new();
-    };
-    let mut layouts: Vec<_> = subs.layout_info.iter().collect();
-    layouts.sort_by(|a, b| a.0.cmp(&b.0));
+    let mut layouts: Vec<_> = run.design.layouts().collect();
+    layouts.sort_by(|a, b| a.0.cmp(b.0));
     layouts
         .into_iter()
         .map(|(name, info)| match info.kind {
@@ -229,14 +222,14 @@ pub fn layout_lines(run: &ExportRun<'_>) -> Vec<String> {
 pub fn sub_values_text(run: &ExportRun<'_>) -> String {
     layout_lines(run)
         .into_iter()
-        .chain(run.design.chain.subs.iter().map(sub_value_text))
+        .chain(run.design.sub_channels().map(sub_value_text))
         .collect::<Vec<_>>()
         .join(" · ")
 }
 
 pub fn rc_pieces(run: &ExportRun<'_>) -> Vec<String> {
     let mut pieces = rc_pieces_from_values_with_bands(
-        run.design.rc_hi,
+        run.design.rc_hi(),
         run.design.rc_auto,
         run.design.schroeder_hz,
         run.settings.room_volume_m3,
@@ -385,12 +378,12 @@ fn item(
     spectrum: &[secs_engine::C],
     axis: ExportAxis,
 ) -> MeasurementInput {
-    let (samples, t0) = design.replay.export_ir(design, spectrum, axis);
+    let (samples, t0) = design.export_ir(spectrum, axis);
     MeasurementInput {
         title,
         notes,
         sample_rate_hz: SR,
-        samples,
+        samples: samples.into_iter().map(f64::from).collect(),
         start_time_s: t0,
         spl_offset_db: None,
         source_info: None,
@@ -398,31 +391,36 @@ fn item(
     }
 }
 
+fn stages(design: &Design, role: &str, position: u32) -> Result<StageResponses, ExportError> {
+    design.stage(role, position).map_err(|error| match error {
+        EngineError::Input(reason) if reason.starts_with("missing stage response ") => {
+            ExportError::MissingResponse(role.into())
+        }
+        error => ExportError::Engine(error),
+    })
+}
+
 fn stage_items_with_mimo(
     run: &ExportRun<'_>,
     mimo: MimoExport<'_>,
     label: Option<&str>,
 ) -> Result<Vec<MeasurementInput>, ExportError> {
-    let view = run.design.replay.export_view(run.design)?;
-    let position = run.design.replay.config().main_position;
+    let view = run.design.export_view()?;
+    let position = run.design.main_position();
     let subs: Vec<_> = run
         .design
-        .replay
-        .config()
-        .subs
-        .iter()
+        .sub_roles()
         .filter_map(|role| view.spectra.get(position, role))
         .collect();
     let label = label.map_or_else(|| run.settings.label(), str::to_owned);
     let mut items = Vec::new();
-    for (index, main) in run.design.chain.mains.iter().enumerate() {
+    for (index, main) in run.design.main_channels().enumerate() {
         let seq = index + 1;
         let raw = view
             .spectra
             .get(position, &main.role)
             .ok_or_else(|| ExportError::MissingResponse(main.role.clone()))?;
-        let stages = stage_responses(run.design, &main.role, &view.spectra, position)
-            .ok_or_else(|| ExportError::MissingResponse(main.role.clone()))?;
+        let stages = stages(run.design, &main.role, position)?;
         let prefix = format!("SECS 보정 설계 · {label} · 청취 위치 {position} · 계산값 — ");
         items.push(item(
             run.design,
@@ -467,8 +465,8 @@ fn stage_items_with_mimo(
             format!(
                 "{prefix}2차: 탑+서브 합에 입력 보정({}) · 전체 지연 {} ms(시작 시각에서 뺌) · RC 상한 {} Hz{correction_pieces}",
                 chain_text(run),
-                format_fixed(run.design.chain.latency_ms, 1, false),
-                format_fixed(run.design.rc_hi, 0, false)
+                format_fixed(run.design.latency_ms(), 1, false),
+                format_fixed(run.design.rc_hi(), 0, false)
             ),
             &stages.output,
             ExportAxis::Corrected,
@@ -547,9 +545,7 @@ fn add_xo_items(
 ) {
     let Some(xo) = run
         .design
-        .chain
-        .mains
-        .iter()
+        .main_channels()
         .find(|m| m.role == role)
         .and_then(|m| m.xo_hz)
         .filter(|v| *v != 0.0)
@@ -601,15 +597,14 @@ fn before_after_items_with_mimo(
     sources: Option<&Sources>,
     originals: Option<&[Original]>,
 ) -> Result<Vec<MeasurementInput>, ExportError> {
-    let view = run.design.replay.export_view(run.design)?;
-    let position = run.design.replay.config().main_position;
+    let position = run.design.main_position();
     let label = run.settings.label();
     let source_env = sources.and_then(|sources| sources.get(&position));
     let mut items = Vec::new();
     let mut seq = 0;
-    for main in &run.design.chain.mains {
+    for main in run.design.main_channels() {
         seq += 1;
-        if let Some(measured) = run.design.replay.measurements().get(position, &main.role) {
+        if let Some(measured) = run.design.measured(position, &main.role) {
             items.push(measured_item(
                 seq,
                 &main.role,
@@ -620,21 +615,20 @@ fn before_after_items_with_mimo(
                 originals,
             ));
         }
-        let final_response = stage_responses(run.design, &main.role, &view.spectra, position)
-            .ok_or_else(|| ExportError::MissingResponse(main.role.clone()))?
-            .output;
-        let fir = if main.fir.len() > 1 {
-            format!("FIR {}탭", grouped(main.fir.len()))
+        let final_response = stages(run.design, &main.role, position)?.output;
+        let fir_taps = run.design.fir(&main.role).map_or(0, <[f64]>::len);
+        let fir = if fir_taps > 1 {
+            format!("FIR {}탭", grouped(fir_taps))
         } else {
             "FIR 없음".into()
         };
         let mut notes = format!(
             "SECS 보정 설계 · {label} · 청취 위치 {position} · 계산값 — 채널 보정(PEQ {}개 · {fir}) + 서브 합, 전체 지연 {} ms(시작 시각에서 뺌) · {}",
             main.input_peq.len(),
-            format_fixed(run.design.chain.latency_ms, 1, false),
+            format_fixed(run.design.latency_ms(), 1, false),
             rc_pieces(run).join(" · ")
         );
-        if !run.design.chain.subs.is_empty() && main.xo_hz.is_some_and(|v| v != 0.0) {
+        if run.design.sub_roles().next().is_some() && main.xo_hz.is_some_and(|v| v != 0.0) {
             notes.push_str(" · 서브: ");
             notes.push_str(&sub_values_text(run));
         }
@@ -691,8 +685,8 @@ fn before_after_items_with_mimo(
             }
         }
     }
-    for sub in &run.design.chain.subs {
-        if let Some(measured) = run.design.replay.measurements().get(position, &sub.role) {
+    for sub in run.design.sub_channels() {
+        if let Some(measured) = run.design.measured(position, &sub.role) {
             seq += 1;
             items.push(measured_item(
                 seq,
