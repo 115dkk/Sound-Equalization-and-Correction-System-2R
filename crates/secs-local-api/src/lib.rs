@@ -11,7 +11,7 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use axum::Json;
 use axum::Router;
@@ -33,6 +33,7 @@ const BODY_IDLE_TIMEOUT: Duration = Duration::from_secs(2);
 const BODY_SHUTDOWN_POLL: Duration = Duration::from_millis(250);
 const OVERSIZE_CLOSE_GRACE: Duration = Duration::from_millis(50);
 const EVENT_CAPACITY: usize = 256;
+const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Broadcast event sink shared by the app service and the local API server.
 #[derive(Clone)]
@@ -143,7 +144,9 @@ impl ServerHandle {
         self.port
     }
 
-    /// Stops accepting connections and waits for the listener thread to exit.
+    /// Stops accepting connections and waits at most two seconds for graceful
+    /// requests and runtime shutdown together (apart from thread scheduling).
+    /// Blocking service calls cannot be aborted and may finish after this returns.
     pub fn stop(&self) {
         self.shutdown_requested.store(true, Ordering::Release);
         if let Some(shutdown) = lock(&self.shutdown).take() {
@@ -231,16 +234,31 @@ pub fn start(config: ServerConfig) -> Result<ServerHandle, LocalApiError> {
     let thread = std::thread::Builder::new()
         .name("secs-local-api".into())
         .spawn(move || {
-            runtime.block_on(async move {
-                let result = axum::serve(listener, router)
-                    .with_graceful_shutdown(async {
-                        let _ = shutdown_rx.await;
-                    })
-                    .await;
-                if let Err(error) = result {
-                    eprintln!("local API server stopped with an error: {error}");
+            let remaining = runtime.block_on(async move {
+                let (started_tx, started_rx) = oneshot::channel();
+                let serve = async move {
+                    let result = axum::serve(listener, router)
+                        .with_graceful_shutdown(async {
+                            let _ = shutdown_rx.await;
+                            let _ = started_tx.send(Instant::now());
+                        })
+                        .await;
+                    if let Err(error) = result {
+                        eprintln!("local API server stopped with an error: {error}");
+                    }
+                };
+                tokio::pin!(serve);
+                tokio::select! {
+                    () = &mut serve => SHUTDOWN_TIMEOUT,
+                    started = started_rx => {
+                        let started = started.unwrap_or_else(|_| Instant::now());
+                        let remaining = SHUTDOWN_TIMEOUT.saturating_sub(started.elapsed());
+                        let _ = tokio::time::timeout(remaining, &mut serve).await;
+                        SHUTDOWN_TIMEOUT.saturating_sub(started.elapsed())
+                    }
                 }
             });
+            runtime.shutdown_timeout(remaining);
         })
         .map_err(LocalApiError::Thread)?;
     Ok(ServerHandle {

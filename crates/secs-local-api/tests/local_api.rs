@@ -550,3 +550,49 @@ fn slow_reader_receives_lagged_before_the_1013_close_td161() {
         server.stop();
     });
 }
+
+#[test]
+fn stop_returns_within_the_shutdown_bound_while_a_request_runs_td214() {
+    let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+    let (finished_tx, finished_rx) = std::sync::mpsc::channel();
+    let service = Arc::new(Service::new(Deps {
+        eqapo_install: Arc::new(move || {
+            entered_tx.send(()).unwrap();
+            std::thread::sleep(Duration::from_secs(10));
+            let _ = finished_tx.send(());
+            None
+        }),
+        ..Deps::default()
+    }));
+    let server = running(service, EventHub::default());
+    let port = server.port();
+    let caller = std::thread::spawn(move || {
+        let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(20)))
+            .unwrap();
+        stream
+            .write_all(&request(
+                port,
+                "POST",
+                "/v1/call",
+                &format!("127.0.0.1:{port}"),
+                Some(TOKEN),
+                None,
+                br#"{"method":"apply_status"}"#,
+            ))
+            .unwrap();
+        let _ = stream.read_to_end(&mut Vec::new());
+    });
+    entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    let started = Instant::now();
+    server.stop();
+    let elapsed = started.elapsed();
+    // Let the injected blocking operation finish before the test exits.
+    finished_rx.recv_timeout(Duration::from_secs(12)).unwrap();
+    caller.join().unwrap();
+    assert!(
+        elapsed < Duration::from_secs(3),
+        "stop waited {elapsed:?} for a blocking request"
+    );
+}
