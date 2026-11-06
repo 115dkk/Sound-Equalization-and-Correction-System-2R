@@ -19,6 +19,7 @@ use std::{fmt, sync::Arc};
 #[derive(Debug)]
 pub enum MeasureError {
     Input(String),
+    InvalidSamples { row: String, reason: &'static str },
     Audio(secs_audio::AudioError),
     Rew(secs_rew::RewError),
     Project(secs_project::ProjectError),
@@ -27,6 +28,9 @@ impl fmt::Display for MeasureError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Input(s) => f.write_str(s),
+            Self::InvalidSamples { row, reason } => {
+                write!(f, "measurement row {row} has {reason} samples")
+            }
             Self::Audio(e) => e.fmt(f),
             Self::Rew(e) => e.fmt(f),
             Self::Project(e) => e.fmt(f),
@@ -47,6 +51,26 @@ impl From<secs_rew::RewError> for MeasureError {
 impl From<secs_project::ProjectError> for MeasureError {
     fn from(e: secs_project::ProjectError) -> Self {
         Self::Project(e)
+    }
+}
+
+pub(crate) fn validate_samples(
+    samples: &[f32],
+    row: impl Into<String>,
+) -> Result<(), MeasureError> {
+    let reason = if samples.is_empty() {
+        Some("empty")
+    } else if samples.iter().any(|sample| !sample.is_finite()) {
+        Some("non_finite")
+    } else {
+        None
+    };
+    match reason {
+        Some(reason) => Err(MeasureError::InvalidSamples {
+            row: row.into(),
+            reason,
+        }),
+        None => Ok(()),
     }
 }
 

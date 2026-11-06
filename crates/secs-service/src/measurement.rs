@@ -26,6 +26,9 @@ pub(crate) fn measure_error(
     let detail = error.to_string();
     match error {
         MeasureError::Input(_) => input(field, detail),
+        MeasureError::InvalidSamples { row, reason } => input(field, detail)
+            .with_param("row", row)
+            .with_param("reason", reason),
         MeasureError::Project(_) => IpcError::new(ErrorCode::ProjectIo, detail),
         MeasureError::Audio(A::Cancelled) | MeasureError::Rew(R::Cancelled) => {
             IpcError::new(ErrorCode::Cancelled, detail)
@@ -586,6 +589,11 @@ impl Service {
                 ctx.measurement_cancel(),
                 &mut |mut result| {
                     let recorded = (|| -> Result<(), IpcError> {
+                        measure::validate_samples(
+                            &result.ir,
+                            format!("{} P{}", result.role, result.pos),
+                        )
+                        .map_err(|error| measure_error(error, "record", share))?;
                         if result.uuid.is_none() {
                             result.uuid = Some(format!(
                                 "{:032x}",
@@ -987,6 +995,16 @@ mod tests {
                 ErrorCode::MeasurementInput,
                 "field",
                 "plan",
+            ),
+            (
+                MeasureError::InvalidSamples {
+                    row: "bad row".into(),
+                    reason: "empty",
+                },
+                S::Auto,
+                ErrorCode::MeasurementInput,
+                "row",
+                "bad row",
             ),
             (
                 A::DeviceNotFound("gone".into()).into(),

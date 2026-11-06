@@ -13,7 +13,9 @@ use std::path::Path;
 use secs_mdat::SourceInfo;
 use secs_project::{MeasurementResult, MeasurementStore};
 
-use crate::measure::{MeasureError, MeasurementSettings, plan_for, position_count};
+use crate::measure::{
+    MeasureError, MeasurementSettings, plan_for, position_count, validate_samples,
+};
 use crate::{dirac_import, mdat_import};
 
 /// The largest measurement file a request reads, before the format
@@ -137,6 +139,7 @@ pub(crate) fn import(
             continue;
         }
         let ir = reader.take(index)?;
+        validate_samples(&ir.samples, &row.title)?;
         store.record(
             MeasurementResult {
                 role: role.clone(),
@@ -201,6 +204,7 @@ mod tests {
     /// Rows without a file; `take` notes which rows the import asked for.
     struct FakeReader {
         rows: Vec<FileRow>,
+        samples: Vec<Vec<f32>>,
         taken: RefCell<Vec<usize>>,
     }
 
@@ -218,6 +222,23 @@ mod tests {
                         position_tagged: true,
                     })
                     .collect(),
+                samples: (0..rows.len())
+                    .map(|row| vec![1.0, -0.5, row as f32 / 10.0])
+                    .collect(),
+                taken: RefCell::default(),
+            }
+        }
+
+        fn with_samples(title: &str, samples: Vec<f32>) -> Self {
+            Self {
+                rows: vec![FileRow {
+                    title: title.into(),
+                    position: 1,
+                    role: Some("L".into()),
+                    looks_like_sub: Some(false),
+                    position_tagged: true,
+                }],
+                samples: vec![samples],
                 taken: RefCell::default(),
             }
         }
@@ -231,7 +252,7 @@ mod tests {
         fn take(&self, row: usize) -> Result<ImportedIr, MeasureError> {
             self.taken.borrow_mut().push(row);
             Ok(ImportedIr {
-                samples: vec![1.0, -0.5, row as f32 / 10.0],
+                samples: self.samples[row].clone(),
                 sample_rate: 48_000,
                 t0_s: -(row as f64) / 1000.0,
                 uuid: format!("row-{row}"),
@@ -306,6 +327,38 @@ mod tests {
         assert_eq!(
             store.entry_for(1).unwrap().uuid["R"].as_deref(),
             Some("row-7")
+        );
+    }
+
+    fn invalid_samples_error(samples: Vec<f32>, title: &str) -> secs_types::ipc::IpcError {
+        let directory = TempDir::new();
+        let mut store = store(&directory);
+        let reader = FakeReader::with_samples(title, samples);
+        let error = import(
+            &mut store,
+            &reader,
+            "invalid.mdat",
+            &[assign(Some("L"), Some(1))],
+        )
+        .unwrap_err();
+        assert!(store.records().is_empty());
+        crate::measurement::measure_error(error, "file", secs_audio::SharePreference::Auto)
+    }
+
+    #[test]
+    fn import_rejects_a_row_with_non_finite_samples_naming_it_td263() {
+        let error = invalid_samples_error(vec![0.25, f32::NAN], "NaN row");
+        assert_eq!(error.code, secs_types::ipc::ErrorCode::MeasurementInput);
+        assert_eq!(error.params.get("row").map(String::as_str), Some("NaN row"));
+    }
+
+    #[test]
+    fn import_rejects_an_empty_row_td263() {
+        let error = invalid_samples_error(Vec::new(), "empty row");
+        assert_eq!(error.code, secs_types::ipc::ErrorCode::MeasurementInput);
+        assert_eq!(
+            error.params.get("row").map(String::as_str),
+            Some("empty row")
         );
     }
 

@@ -990,7 +990,7 @@ id = "measure.mdat_import"
 kind = "measure"
 milestone = "M4"
 status = "implemented"
-tests = ["secs-service::service_mdat_every_oracle_value_and_imported_secs_bytes", "secs-service::test_mdat_titles_match_biamp_roles", "secs-service::test_mdat_cancel_and_missing_file_leave_measurements_unchanged", "secs-service::test_mdat_dialog_repeated_duplicate_skip_and_cancel", "secs-service::mdat_scan_and_import_match_direct_oracle_bytes"]
+tests = ["secs-service::service_mdat_every_oracle_value_and_imported_secs_bytes", "secs-service::test_mdat_titles_match_biamp_roles", "secs-service::test_mdat_cancel_and_missing_file_leave_measurements_unchanged", "secs-service::test_mdat_dialog_repeated_duplicate_skip_and_cancel", "secs-service::mdat_scan_and_import_match_direct_oracle_bytes", "secs-service::import_rejects_a_row_with_non_finite_samples_naming_it_td263", "secs-service::import_rejects_an_empty_row_td263"]
 upstream = "wizard/step5_measure.py MdatAssignDialog, MdatFilesDialog"
 
 [[feature]]
@@ -1003,6 +1003,8 @@ tests = [
   "secs-service::dirac_scan_lists_positions_channels_and_sub_flags",
   "secs-service::dirac_import_records_irs_t0_and_source",
   "secs-service::dirac_import_skips_unplanned_and_outside_rows_and_rejects_bad_files",
+  "secs-service::import_rejects_a_row_with_non_finite_samples_naming_it_td263",
+  "secs-service::import_rejects_an_empty_row_td263",
 ]
 upstream = "new"
 note = "new: mdat 가져오기 흐름(mdat_scan, mdat_import)이 .liveproject도 받습니다. Dirac 위치 p는 위치 p+1, 채널 이름에서 역할 제안, t0 −0.25 s, 출처는 파일 이름입니다(ADR 0013)."
