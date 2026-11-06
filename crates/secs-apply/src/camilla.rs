@@ -132,6 +132,16 @@ pub fn parse_reply(command: &Command, text: &str) -> Result<Value, ApplyError> {
 pub trait Transport {
     /// Sends one text frame and returns the next text frame.
     fn request(&mut self, message: &str) -> Result<String, ApplyError>;
+
+    /// Per-operation timeout used when one higher-level call shares a deadline.
+    fn timeout(&self) -> Duration {
+        Duration::from_secs(2)
+    }
+
+    /// Sends one request without extending `deadline`.
+    fn request_until(&mut self, message: &str, _deadline: Instant) -> Result<String, ApplyError> {
+        self.request(message)
+    }
 }
 
 #[derive(Debug)]
@@ -252,7 +262,14 @@ impl WsTransport {
 
 impl Transport for WsTransport {
     fn request(&mut self, message: &str) -> Result<String, ApplyError> {
-        let deadline = Instant::now() + self.timeout;
+        self.request_until(message, Instant::now() + self.timeout)
+    }
+
+    fn timeout(&self) -> Duration {
+        self.timeout
+    }
+
+    fn request_until(&mut self, message: &str, deadline: Instant) -> Result<String, ApplyError> {
         self.socket.get_mut().set_deadline(deadline);
         self.socket
             .send(Message::Text(message.to_owned().into()))
@@ -320,8 +337,19 @@ impl<T: Transport> Camilla<T> {
         parse_reply(command, &reply)
     }
 
-    fn optional_command(&mut self, command: &Command) -> Result<Option<Value>, ApplyError> {
-        match self.command(command) {
+    fn command_until(&mut self, command: &Command, deadline: Instant) -> Result<Value, ApplyError> {
+        let reply = self
+            .transport
+            .request_until(&command.to_message(), deadline)?;
+        parse_reply(command, &reply)
+    }
+
+    fn optional_command_until(
+        &mut self,
+        command: &Command,
+        deadline: Instant,
+    ) -> Result<Option<Value>, ApplyError> {
+        match self.command_until(command, deadline) {
             Ok(value) => Ok(Some(value)),
             Err(ApplyError::Unsupported { .. }) => Ok(None),
             Err(error) => Err(error),
@@ -339,28 +367,44 @@ impl<T: Transport> Camilla<T> {
             })
     }
 
+    fn required_string_until(
+        &mut self,
+        command: &Command,
+        deadline: Instant,
+    ) -> Result<String, ApplyError> {
+        let value = self.command_until(command, deadline)?;
+        value
+            .as_str()
+            .map(ToOwned::to_owned)
+            .ok_or_else(|| ApplyError::Reply {
+                command: command.name().to_owned(),
+                reply: value.to_string(),
+            })
+    }
+
     /// Reads the status fields supported by the running CamillaDSP.
     pub fn status(&mut self) -> Result<CamillaStatus, ApplyError> {
-        let version = self.required_string(&Command::GetVersion)?;
-        let state = self.required_string(&Command::GetState)?;
+        let deadline = Instant::now() + self.transport.timeout();
+        let version = self.required_string_until(&Command::GetVersion, deadline)?;
+        let state = self.required_string_until(&Command::GetState, deadline)?;
         let stop_reason = optional_string(
-            self.optional_command(&Command::GetStopReason)?,
+            self.optional_command_until(&Command::GetStopReason, deadline)?,
             &Command::GetStopReason,
         )?;
         let title = optional_string(
-            self.optional_command(&Command::GetConfigTitle)?,
+            self.optional_command_until(&Command::GetConfigTitle, deadline)?,
             &Command::GetConfigTitle,
         )?;
         let description = optional_string(
-            self.optional_command(&Command::GetConfigDescription)?,
+            self.optional_command_until(&Command::GetConfigDescription, deadline)?,
             &Command::GetConfigDescription,
         )?;
         let config_path = optional_string(
-            self.optional_command(&Command::GetConfigFilePath)?,
+            self.optional_command_until(&Command::GetConfigFilePath, deadline)?,
             &Command::GetConfigFilePath,
         )?;
         let capture_rate = optional_u64(
-            self.optional_command(&Command::GetCaptureRate)?,
+            self.optional_command_until(&Command::GetCaptureRate, deadline)?,
             &Command::GetCaptureRate,
         )?
         .map(|value| {
@@ -371,15 +415,15 @@ impl<T: Transport> Camilla<T> {
         })
         .transpose()?;
         let clipped_samples = optional_u64(
-            self.optional_command(&Command::GetClippedSamples)?,
+            self.optional_command_until(&Command::GetClippedSamples, deadline)?,
             &Command::GetClippedSamples,
         )?;
         let processing_load_pct = optional_f64(
-            self.optional_command(&Command::GetProcessingLoad)?,
+            self.optional_command_until(&Command::GetProcessingLoad, deadline)?,
             &Command::GetProcessingLoad,
         )?;
         let playback_peak_db = optional_playback_peak(
-            self.optional_command(&Command::GetSignalLevels)?,
+            self.optional_command_until(&Command::GetSignalLevels, deadline)?,
             &Command::GetSignalLevels,
         )?;
 
@@ -613,6 +657,45 @@ mod tests {
         }
     }
 
+    #[derive(Debug)]
+    struct SlowStatusTransport {
+        calls: usize,
+        timeout: Duration,
+    }
+
+    impl Transport for SlowStatusTransport {
+        fn request(&mut self, message: &str) -> Result<String, ApplyError> {
+            self.calls += 1;
+            if self.calls > 1 {
+                thread::sleep(self.timeout + Duration::from_millis(20));
+            }
+            Ok(match message {
+                r#""GetVersion""# => ok("GetVersion", serde_json::json!("4.1.3")),
+                r#""GetState""# => ok("GetState", serde_json::json!("Running")),
+                _ => r#"{"Invalid":{"error":"unknown variant"}}"#.into(),
+            })
+        }
+
+        fn timeout(&self) -> Duration {
+            self.timeout
+        }
+
+        fn request_until(
+            &mut self,
+            message: &str,
+            deadline: Instant,
+        ) -> Result<String, ApplyError> {
+            if self.calls == 0 {
+                return self.request(message);
+            }
+            self.calls += 1;
+            thread::sleep(
+                deadline.saturating_duration_since(Instant::now()) + Duration::from_millis(10),
+            );
+            Err(ApplyError::Transport("websocket request timed out".into()))
+        }
+    }
+
     fn ok(command: &str, value: Value) -> String {
         serde_json::json!({command: {"result": "Ok", "value": value}}).to_string()
     }
@@ -726,6 +809,23 @@ mod tests {
                 processing_load_pct: Some(12.5),
                 playback_peak_db: Some(vec![-3.0, -4.0]),
             }
+        );
+    }
+
+    #[test]
+    fn status_uses_one_deadline_for_every_command_td201() {
+        let timeout = Duration::from_millis(200);
+        let mut camilla = Camilla::new(SlowStatusTransport { calls: 0, timeout });
+        let started = Instant::now();
+        let result = camilla.status();
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed < timeout + Duration::from_millis(150),
+            "status took {elapsed:?} for a {timeout:?} deadline"
+        );
+        assert!(
+            matches!(result, Err(ApplyError::Transport(ref message)) if message.contains("timed out")),
+            "{result:?}"
         );
     }
 

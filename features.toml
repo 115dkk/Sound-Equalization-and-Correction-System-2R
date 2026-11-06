@@ -2308,7 +2308,7 @@ kind = "apply"
 milestone = "M6"
 status = "implemented"
 upstream = "new"
-tests = ["secs-apply::camilla_ws", "secs-apply::websocket_ping_frames_do_not_extend_request_deadline", "secs-apply::incomplete_fragment_stream_does_not_extend_request_deadline"]
+tests = ["secs-apply::camilla_ws", "secs-apply::websocket_ping_frames_do_not_extend_request_deadline", "secs-apply::incomplete_fragment_stream_does_not_extend_request_deadline", "secs-apply::status_uses_one_deadline_for_every_command_td201"]
 
 [[feature]]
 id = "apply.eqapo_config"
