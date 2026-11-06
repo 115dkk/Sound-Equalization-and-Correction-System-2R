@@ -30,6 +30,9 @@ pub enum Input {
     ConfigChanged {
         owner_session: Option<u32>,
     },
+    WatcherFailed {
+        detail: String,
+    },
     RestartTick {
         owner_session: Option<u32>,
     },
@@ -248,6 +251,14 @@ pub fn decide(state: &State, input: Input) -> (State, Vec<Effect>) {
             {
                 effects.push(Effect::RepairEqapo { session });
             }
+        }
+        Input::WatcherFailed { detail } => {
+            next.eqapo_error = Some(detail.clone());
+            effects.push(Effect::Log(HostLogLine {
+                timestamp: chrono::Utc::now().to_rfc3339(),
+                event: "watcher_failed".into(),
+                fields: BTreeMap::from([("detail".into(), detail)]),
+            }));
         }
         Input::RestartTick { owner_session } => {
             next.restart_scheduled = false;
@@ -716,6 +727,46 @@ mod tests {
         assert_eq!(state.managed.owner_session_id, Some(9));
         assert_eq!(platform.saved_states.len(), 1);
         assert_eq!(platform.saved_states[0].owner_session_id, Some(9));
+    }
+
+    #[test]
+    fn watcher_failure_damages_eqapo_and_still_accepts_stop_managing() {
+        let state = State::new(
+            HostManaged {
+                eqapo: Some(eqapo()),
+                owner_session_id: Some(7),
+                owner_user_sid: Some("sid-a".into()),
+                ..HostManaged::default()
+            },
+            None,
+        );
+
+        let (failed, effects) = decide(
+            &state,
+            Input::WatcherFailed {
+                detail: "Equalizer APO machine configuration is not registered".into(),
+            },
+        );
+
+        assert_eq!(
+            failed.eqapo_error.as_deref(),
+            Some("Equalizer APO machine configuration is not registered")
+        );
+        assert_eq!(
+            failed
+                .eqapo_error
+                .as_ref()
+                .map(|_| secs_types::ipc::IncludeState::Damaged),
+            Some(secs_types::ipc::IncludeState::Damaged)
+        );
+        assert!(effects.iter().any(|effect| matches!(
+            effect,
+            Effect::Log(line) if line.event == "watcher_failed"
+        )));
+
+        let (stopped, _) = decide(&failed, Input::StopManaging);
+        assert_eq!(stopped.managed, HostManaged::default());
+        assert_eq!(stopped.eqapo_error, None);
     }
 
     #[test]

@@ -1039,9 +1039,10 @@ mod service_dispatch {
         self, ServiceControlHandlerResult, ServiceStatusHandle,
     };
 
-    use super::{SERVICE_NAME, ServiceEvent};
+    use super::{IpcError, SERVICE_NAME, ServiceEvent};
 
-    type Worker = Box<dyn FnOnce(mpsc::Receiver<ServiceEvent>) + Send + 'static>;
+    type Worker =
+        Box<dyn FnOnce(mpsc::Receiver<ServiceEvent>) -> Result<(), IpcError> + Send + 'static>;
     static WORKER: OnceLock<Mutex<Option<Worker>>> = OnceLock::new();
 
     define_windows_service!(ffi_service_main, service_main);
@@ -1056,7 +1057,18 @@ mod service_dispatch {
         let _ = run_inner();
     }
 
-    fn status(handle: &ServiceStatusHandle, state: ServiceState) -> windows_service::Result<()> {
+    pub(super) fn exit_code_for<E>(result: &Result<(), E>) -> ServiceExitCode {
+        match result {
+            Ok(()) => ServiceExitCode::Win32(0),
+            Err(_) => ServiceExitCode::ServiceSpecific(1),
+        }
+    }
+
+    fn status(
+        handle: &ServiceStatusHandle,
+        state: ServiceState,
+        exit_code: ServiceExitCode,
+    ) -> windows_service::Result<()> {
         handle.set_service_status(ServiceStatus {
             service_type: ServiceType::OWN_PROCESS,
             current_state: state,
@@ -1065,7 +1077,7 @@ mod service_dispatch {
             } else {
                 ServiceControlAccept::empty()
             },
-            exit_code: ServiceExitCode::Win32(0),
+            exit_code,
             checkpoint: 0,
             wait_hint: Duration::ZERO,
             process_id: None,
@@ -1099,11 +1111,20 @@ mod service_dispatch {
             _ => ServiceControlHandlerResult::NotImplemented,
         };
         let status_handle = service_control_handler::register(SERVICE_NAME, handler)?;
-        status(&status_handle, ServiceState::Running)?;
-        if let Some(worker) = WORKER.get().and_then(|worker| worker.lock().ok()?.take()) {
-            worker(receiver);
-        }
-        status(&status_handle, ServiceState::Stopped)
+        status(
+            &status_handle,
+            ServiceState::Running,
+            ServiceExitCode::Win32(0),
+        )?;
+        let result = WORKER
+            .get()
+            .and_then(|worker| worker.lock().ok()?.take())
+            .map_or(Ok(()), |worker| worker(receiver));
+        status(
+            &status_handle,
+            ServiceState::Stopped,
+            exit_code_for(&result),
+        )
     }
 }
 
@@ -1111,7 +1132,9 @@ mod service_dispatch {
 /// stop event and receives logon/logoff notifications through the channel.
 #[cfg(target_os = "windows")]
 pub fn run_service(
-    worker: impl FnOnce(std::sync::mpsc::Receiver<ServiceEvent>) + Send + 'static,
+    worker: impl FnOnce(std::sync::mpsc::Receiver<ServiceEvent>) -> Result<(), IpcError>
+    + Send
+    + 'static,
 ) -> Result<(), IpcError> {
     service_dispatch::run(Box::new(worker))
         .map_err(|error| ipc_error(format!("run {SERVICE_NAME}: {error}")))
@@ -1119,7 +1142,9 @@ pub fn run_service(
 
 #[cfg(not(target_os = "windows"))]
 pub fn run_service(
-    _worker: impl FnOnce(std::sync::mpsc::Receiver<ServiceEvent>) + Send + 'static,
+    _worker: impl FnOnce(std::sync::mpsc::Receiver<ServiceEvent>) -> Result<(), IpcError>
+    + Send
+    + 'static,
 ) -> Result<(), IpcError> {
     Err(unsupported("Windows service dispatcher"))
 }
@@ -1127,6 +1152,21 @@ pub fn run_service(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn worker_error_reports_nonzero_service_exit() {
+        use windows_service::service::ServiceExitCode;
+
+        assert_eq!(
+            service_dispatch::exit_code_for(&Ok::<(), IpcError>(())),
+            ServiceExitCode::Win32(0)
+        );
+        assert_eq!(
+            service_dispatch::exit_code_for(&Err::<(), _>(ipc_error("worker failed"))),
+            ServiceExitCode::ServiceSpecific(1)
+        );
+    }
 
     #[test]
     fn shell_autostart_value_quotes_the_executable_and_hides_the_window() {

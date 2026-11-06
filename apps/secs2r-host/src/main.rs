@@ -178,12 +178,16 @@ fn run(cli: Cli) -> Result<(), IpcError> {
                 prepare_state_directory(root)?;
             }
             secs_sys::host::run_service(move |events| {
-                if let Err(error) = service_loop(&paths, &events) {
+                let result = service_loop(&paths, &events);
+                if let Err(error) = &result {
                     eprintln!("secs2r-host service: {}", error.detail);
-                    let line =
-                        rules::log_line("service_error", [("detail".to_owned(), error.detail)]);
-                    let _ = rules::append_log(&paths.log, &line, rules::LOG_LIMIT);
+                    let line = rules::log_line(
+                        "service_error",
+                        [("detail".to_owned(), error.detail.clone())],
+                    );
+                    append_log_nonfatal(&paths.log, &line);
                 }
+                result
             })
         }
         Action::Status => {
@@ -232,7 +236,7 @@ fn finish_update() -> Result<(), IpcError> {
         }
         if Instant::now() >= deadline {
             let line = rules::log_line("update_timeout", [version()]);
-            let _ = rules::append_log(&paths.log, &line, rules::LOG_LIMIT);
+            append_log_nonfatal(&paths.log, &line);
             if secs_sys::host::service_state() == secs_types::ipc::ServiceState::Stopped {
                 secs_sys::host::start_service()?;
             }
@@ -258,14 +262,14 @@ fn finish_update() -> Result<(), IpcError> {
     match &result {
         Ok(()) => {
             let line = rules::log_line("update_done", [version()]);
-            let _ = rules::append_log(&paths.log, &line, rules::LOG_LIMIT);
+            append_log_nonfatal(&paths.log, &line);
         }
         Err(error) => {
             let line = rules::log_line(
                 "update_failed",
                 [version(), ("reason".to_owned(), error.detail.clone())],
             );
-            let _ = rules::append_log(&paths.log, &line, rules::LOG_LIMIT);
+            append_log_nonfatal(&paths.log, &line);
         }
     }
     result
@@ -361,6 +365,21 @@ fn mark_other_user(core: &mut Core, paths: &Paths, session: u32) -> Result<(), I
 }
 
 #[cfg(target_os = "windows")]
+fn append_log_nonfatal(path: &Path, line: &secs_types::ipc::HostLogLine) {
+    if let Err(error) = rules::append_log(path, line, rules::LOG_LIMIT) {
+        static LAST_REPORT: std::sync::OnceLock<std::sync::Mutex<Option<Instant>>> =
+            std::sync::OnceLock::new();
+        let reports = LAST_REPORT.get_or_init(|| std::sync::Mutex::new(None));
+        let mut last = reports.lock().unwrap_or_else(|error| error.into_inner());
+        let now = Instant::now();
+        if last.is_none_or(|reported| now.duration_since(reported) >= Duration::from_secs(60)) {
+            eprintln!("secs2r-host could not append its log: {}", error.detail);
+            *last = Some(now);
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
 fn remove_old_host_copy(paths: &Paths) {
     let old = std::env::current_exe()
         .ok()
@@ -380,7 +399,7 @@ fn remove_old_host_copy(paths: &Paths) {
                     ("reason".to_owned(), error.to_string()),
                 ],
             );
-            let _ = rules::append_log(&paths.log, &line, rules::LOG_LIMIT);
+            append_log_nonfatal(&paths.log, &line);
         }
     }
 }
@@ -398,7 +417,7 @@ fn service_loop(
                 "state_corrupt",
                 [("detail".to_owned(), error.detail.clone())],
             );
-            rules::append_log(&paths.log, &line, rules::LOG_LIMIT)?;
+            append_log_nonfatal(&paths.log, &line);
             HostManaged::default()
         }
     };
@@ -407,9 +426,12 @@ fn service_loop(
         core.record(line);
     }
     let (config_sender, config_events) = mpsc::channel();
-    let mut watcher = configure_watcher(&core, &config_sender)?;
+    let (mut watcher, watcher_failure) = match configure_watcher(&core, &config_sender) {
+        Ok(watcher) => (watcher, None),
+        Err(error) => (None, Some(error.detail)),
+    };
     let mut child = None;
-    let active_session = managing_session(&core)?;
+    let active_session = managing_session_or_none(&mut core, paths);
     if active_session.is_none()
         && (core.managed.camilla.is_some() || core.managed.eqapo.is_some())
         && let Some(session) = secs_sys::host::active_console_session()
@@ -457,6 +479,22 @@ fn service_loop(
             paths,
         )?;
     }
+    if let Some(detail) = watcher_failure {
+        let (next, effects) =
+            transitions::decide(&transition_state, TransitionInput::WatcherFailed { detail });
+        transition_state = next;
+        drive_transition(
+            &mut transition_state,
+            effects,
+            &mut core,
+            &mut child,
+            &mut process_rules,
+            &mut watcher,
+            &mut restart_at,
+            &config_sender,
+            paths,
+        )?;
+    }
     let mut repair_retry_at = None;
 
     let mut stop_after_response = false;
@@ -470,7 +508,7 @@ fn service_loop(
                     return Ok(());
                 }
                 secs_sys::host::ServiceEvent::SessionLogon(session) => {
-                    let owner_matches = managing_session(&core)? == Some(session);
+                    let owner_matches = managing_session_or_none(&mut core, paths) == Some(session);
                     let process_action = process_rules.apply(
                         if owner_matches {
                             ProcessEvent::Logon
@@ -543,7 +581,7 @@ fn service_loop(
         }
 
         while config_events.try_recv().is_ok() {
-            let owner_session = managing_session(&core)?;
+            let owner_session = managing_session_or_none(&mut core, paths);
             let (next, effects) = transitions::decide(
                 &transition_state,
                 TransitionInput::ConfigChanged { owner_session },
@@ -565,7 +603,7 @@ fn service_loop(
         transition_state.sync_repair_retry_deadline(&mut repair_retry_at, Instant::now());
         if repair_retry_at.is_some_and(|deadline| Instant::now() >= deadline) {
             repair_retry_at = None;
-            let managing_session = managing_session(&core)?;
+            let managing_session = managing_session_or_none(&mut core, paths);
             let (next, effects) = transitions::decide(
                 &transition_state,
                 TransitionInput::RepairRetry { managing_session },
@@ -584,9 +622,22 @@ fn service_loop(
             )?;
         }
 
-        if let Some(running) = child.as_ref()
-            && let Some(exit_code) = running.wait(Duration::ZERO)?
-        {
+        let child_exit = match child.as_ref() {
+            Some(running) => match running.wait(Duration::ZERO) {
+                Ok(Some(exit_code)) => Some(Some(exit_code)),
+                Ok(None) => None,
+                Err(error) => {
+                    record(
+                        &mut core,
+                        paths,
+                        rules::log_line("wait_failed", [("detail".to_owned(), error.detail)]),
+                    )?;
+                    Some(None)
+                }
+            },
+            None => None,
+        };
+        if let Some(exit_code) = child_exit {
             let pid = core.camilla.pid.take();
             child = None;
             transition_state.running_child_session = None;
@@ -600,7 +651,10 @@ fn service_loop(
                             "pid".to_owned(),
                             pid.map_or_else(String::new, |pid| pid.to_string()),
                         ),
-                        ("code".to_owned(), exit_code.to_string()),
+                        (
+                            "code".to_owned(),
+                            exit_code.map_or_else(|| "unknown".to_owned(), |code| code.to_string()),
+                        ),
                     ],
                 ),
             )?;
@@ -638,7 +692,7 @@ fn service_loop(
 
         if restart_at.is_some_and(|deadline| Instant::now() >= deadline) {
             restart_at = None;
-            let owner_session = managing_session(&core)?;
+            let owner_session = managing_session_or_none(&mut core, paths);
             let (next, effects) = transitions::decide(
                 &transition_state,
                 TransitionInput::RestartTick { owner_session },
@@ -681,7 +735,7 @@ fn service_loop(
         // must not stop the service; the next loop serves the next client.
         if let Err(error) = served {
             let line = rules::log_line("pipe_error", [("detail".to_owned(), error.detail)]);
-            let _ = rules::append_log(&paths.log, &line, rules::LOG_LIMIT);
+            append_log_nonfatal(&paths.log, &line);
             std::thread::sleep(Duration::from_millis(100));
         }
         if stop_after_response {
@@ -974,6 +1028,24 @@ fn managing_session_for(managed: &HostManaged) -> Result<Option<u32>, IpcError> 
 #[cfg(target_os = "windows")]
 fn managing_session(core: &Core) -> Result<Option<u32>, IpcError> {
     managing_session_for(&core.managed)
+}
+
+#[cfg(target_os = "windows")]
+fn managing_session_or_none(core: &mut Core, paths: &Paths) -> Option<u32> {
+    match managing_session(core) {
+        Ok(session) => session,
+        Err(error) => {
+            let _ = record(
+                core,
+                paths,
+                rules::log_line(
+                    "session_lookup_failed",
+                    [("detail".to_owned(), error.detail)],
+                ),
+            );
+            None
+        }
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -1363,7 +1435,7 @@ fn record(
     paths: &Paths,
     line: secs_types::ipc::HostLogLine,
 ) -> Result<(), IpcError> {
-    rules::append_log(&paths.log, &line, rules::LOG_LIMIT)?;
+    append_log_nonfatal(&paths.log, &line);
     core.record(line);
     Ok(())
 }
