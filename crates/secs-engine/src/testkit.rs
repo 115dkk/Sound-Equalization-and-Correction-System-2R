@@ -617,8 +617,7 @@ pub fn mimo_acoustic_metrics(
     mimo_acoustic_metrics_parts(&case.design, &case.measurements, &case.config, run, ctx)
 }
 
-#[doc(hidden)]
-pub fn mimo_acoustic_metrics_parts(
+fn mimo_acoustic_metrics_parts(
     design: &crate::Design,
     measurements: &crate::MeasurementSet,
     config: &crate::EngineConfig,

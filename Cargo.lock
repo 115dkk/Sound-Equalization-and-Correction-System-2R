@@ -4414,12 +4414,7 @@ dependencies = [
 name = "secs-engine-testkit"
 version = "0.54.0"
 dependencies = [
- "secs-compute",
- "secs-dsp",
  "secs-engine",
- "secs-oracle",
- "secs-types",
- "serde_json",
 ]
 
 [[package]]
