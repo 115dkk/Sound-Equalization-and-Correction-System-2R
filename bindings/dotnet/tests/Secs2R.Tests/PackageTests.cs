@@ -81,6 +81,21 @@ public sealed class PackageTests
     }
 
     [Fact]
+    public void SecsExceptionCarriesParams()
+    {
+        using var temp = new TestDirectory();
+        using var engine = new Engine(temp.SettingsPath);
+        SecsException error = Assert.Throws<SecsException>(() => Call(engine, "results"));
+        Assert.Equal("project_not_open", error.Code);
+        var property = typeof(SecsException).GetProperty("Params");
+        Assert.NotNull(property);
+        var parameters = Assert.IsAssignableFrom<IReadOnlyDictionary<string, string>>(property.GetValue(error));
+        Assert.Empty(parameters);
+        Assert.False(error.Retryable);
+        Assert.StartsWith("project_not_open: ", error.Message);
+    }
+
+    [Fact]
     public void ClosedPortClientFailsWithTransportErrorWithinFiveSeconds()
     {
         int port = ClosedPort();

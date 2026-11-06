@@ -96,3 +96,13 @@ def test_oracle_project_round_trip_when_supplied(tmp_path: Path) -> None:
     terminal = engine.wait_job(exported["data"]["job"], 120.0)
     assert terminal["status"] == "succeeded"
     assert any(tmp_path.iterdir())
+
+
+def test_python_error_carries_params_and_retryable_td160() -> None:
+    with pytest.raises(secs2r.SecsError) as raised:
+        secs2r.Engine().call({"method": "results"})
+    error = raised.value
+    assert error.code == "project_not_open"
+    assert getattr(error, "params", None) == {}
+    assert getattr(error, "retryable", None) is False
+    assert error.message.startswith("project_not_open: ")

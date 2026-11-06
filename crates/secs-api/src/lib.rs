@@ -123,14 +123,61 @@ pub enum Error {
 
 impl fmt::Display for Error {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Api(error) => write!(
-                formatter,
-                "SECS API error {:?}: {}",
-                error.code, error.detail
+        formatter.write_str(&WireError::from(self).message)
+    }
+}
+
+/// Serializable error shared by the language bindings.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct WireError {
+    /// Stable snake-case error code.
+    pub code: String,
+    /// Single-line diagnostic message, beginning with the code.
+    pub message: String,
+    /// Original diagnostic detail, when available.
+    pub detail: Option<String>,
+    /// Structured error parameters.
+    pub params: std::collections::BTreeMap<String, String>,
+    /// Whether retrying the same operation can succeed.
+    pub retryable: bool,
+}
+
+impl From<&Error> for WireError {
+    fn from(error: &Error) -> Self {
+        let (code, detail, params, retryable) = match error {
+            Error::Api(error) => (
+                serde_json::to_value(error.code)
+                    .expect("error code serialization")
+                    .as_str()
+                    .expect("string error code")
+                    .to_owned(),
+                error.detail.clone(),
+                error.params.clone(),
+                error.retryable,
             ),
-            Self::Transport(message) => write!(formatter, "transport error: {message}"),
-            Self::Protocol(message) => write!(formatter, "protocol error: {message}"),
+            Error::Transport(detail) => (
+                "transport_error".into(),
+                detail.clone(),
+                Default::default(),
+                false,
+            ),
+            Error::Protocol(detail) => (
+                "protocol_error".into(),
+                detail.clone(),
+                Default::default(),
+                false,
+            ),
+        };
+        let message = format!(
+            "{code}: {}",
+            detail.split_whitespace().collect::<Vec<_>>().join(" ")
+        );
+        Self {
+            code,
+            message,
+            detail: Some(detail),
+            params,
+            retryable,
         }
     }
 }

@@ -187,27 +187,27 @@ fn json_to_python(py: Python<'_>, value: Value) -> PyResult<Py<PyAny>> {
 }
 
 fn secs_error(py: Python<'_>, error: RustError) -> PyErr {
-    let (code, detail) = match &error {
-        RustError::Api(error) => {
-            let code = serde_json::to_value(error.code)
-                .ok()
-                .and_then(|value| value.as_str().map(str::to_owned))
-                .unwrap_or_else(|| "internal".to_owned());
-            (code, Some(error.detail.clone()))
-        }
-        RustError::Transport(detail) => ("transport_error".to_owned(), Some(detail.clone())),
-        RustError::Protocol(detail) => ("protocol_error".to_owned(), Some(detail.clone())),
-    };
-    let message = error.to_string();
+    let wire = secs::WireError::from(&error);
+    let message = wire.message;
     let exception = SecsError::new_err(message.clone());
     let value = exception.value(py);
-    if let Err(error) = value.setattr("code", code) {
+    if let Err(error) = value.setattr("code", wire.code) {
         return error;
     }
     if let Err(error) = value.setattr("message", message) {
         return error;
     }
-    if let Err(error) = value.setattr("detail", detail) {
+    if let Err(error) = value.setattr("detail", wire.detail) {
+        return error;
+    }
+    let params = match rust_to_python!(py, wire.params) {
+        Ok(params) => params,
+        Err(error) => return error,
+    };
+    if let Err(error) = value.setattr("params", params) {
+        return error;
+    }
+    if let Err(error) = value.setattr("retryable", wire.retryable) {
         return error;
     }
     exception

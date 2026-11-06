@@ -7,6 +7,8 @@ class SecsError(Exception):
     code: str
     message: str
     detail: Optional[str]
+    params: dict[str, str]
+    retryable: bool
 
 class _EngineEvents(Iterator[dict[str, Any]]):
     def __iter__(self) -> _EngineEvents: ...

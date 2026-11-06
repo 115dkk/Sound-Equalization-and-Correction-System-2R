@@ -24,7 +24,7 @@ unsafe가 드는 자리를 포인터에서 바이트를 빌리는 일 하나로 
 
 - **핸들은 번호입니다.** 엔진, 클라이언트, 이벤트 구독, 호출 결과를 포인터가 아닌 `u64` 번호로 주고받고, 실제 값은 크레이트 안의 표가 가집니다. `Box::from_raw` 같은 소유권 이동이 없으므로, 모르는 번호나 이미 해제한 번호를 넘기면 오류 봉투가 돌아올 뿐 정의되지 않은 동작(UB)이 생기지 않습니다. 0은 '없음'입니다.
 - **문자열은 C#이 가진 메모리만 씁니다.** 요청은 C#이 UTF-8 바이트의 포인터와 길이로 넘깁니다. 응답은 결과 번호로 돌려주고, C#은 길이를 물어 자기 버퍼를 만든 뒤 그 버퍼로 복사해 받습니다. 복사가 끝나면 크레이트가 결과를 지웁니다. Rust가 할당한 메모리를 C#이 해제하는 함수는 없습니다.
-- **응답은 언제나 JSON 봉투입니다.** 성공이면 `{"ok":true,"data":...}`, 실패면 `{"ok":false,"error":{"code","message","detail"}}`이고, 로컬 API 및 Python 패키지와 같은 모양입니다. 함수 안의 패닉은 `catch_unwind`로 잡아 `internal` 오류 봉투로 바꿉니다.
+- **응답은 언제나 JSON 봉투입니다.** 성공이면 `{"ok":true,"data":...}`, 실패면 `{"ok":false,"error":{"code","message","detail","params","retryable"}}`이며, Python 예외도 공개 API의 `WireError` 필드를 쓰고 로컬 API의 `IpcError`에는 `message`가 없습니다. 함수 안의 패닉은 `catch_unwind`로 잡아 `internal` 오류 봉투로 바꿉니다.
 - **빌리기 전에 확인하는 것.** 널 포인터는 길이가 0일 때만 받고, 길이가 `isize::MAX`를 넘으면 `from_raw_parts`의 전제를 어기므로 읽기 전에 거부합니다. 요청 크기의 상한은 따로 두지 않습니다. Python 패키지처럼 같은 프로세스 안의 호출이고, 로컬 API의 본문 상한(ADR 0016)은 네트워크로 들어오는 요청을 위한 것이기 때문입니다.
 - **함수 목록.** `secs_engine_new`(앱 설정 경로), `secs_engine_free`, `secs_engine_call`, `secs_engine_wait_job`(작업 번호, 밀리초), `secs_engine_subscribe`, `secs_client_new`(포트, 토큰, 토큰 파일 경로), `secs_client_free`, `secs_client_call`, `secs_client_status`, `secs_client_events`, `secs_events_next`(구독, 밀리초), `secs_events_free`, `secs_result_len`, `secs_result_take`(결과, 버퍼, 길이), `secs_result_free`.
 - **이벤트는 당겨 옵니다.** 콜백을 등록하지 않고 C#이 `secs_events_next`를 시한과 함께 부릅니다. Unity IL2CPP와 .NET NativeAOT는 네이티브에서 부르는 콜백에 각자 제약(`MonoPInvokeCallback`, `UnmanagedCallersOnly`)이 있어, 콜백을 쓰지 않으면 두 환경에서 같은 코드가 돕니다.

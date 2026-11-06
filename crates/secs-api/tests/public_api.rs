@@ -306,3 +306,38 @@ fn client_status_call_authentication_and_changed_event() {
     server.stop();
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn wire_error_has_one_shape_for_every_error_kind_td160() {
+    use sound_equalization_and_correction_system_rust_api::{
+        Error, ErrorCode, IpcError, WireError,
+    };
+    let mut api = IpcError::new(
+        ErrorCode::ProjectNotOpen,
+        "no project
+open",
+    )
+    .with_param("field", "x");
+    api.retryable = true;
+    for (error, expected) in [
+        (
+            Error::Api(api),
+            serde_json::json!({"code":"project_not_open","message":"project_not_open: no project open","detail":"no project
+open","params":{"field":"x"},"retryable":true}),
+        ),
+        (
+            Error::Transport("offline".into()),
+            serde_json::json!({"code":"transport_error","message":"transport_error: offline","detail":"offline","params":{},"retryable":false}),
+        ),
+        (
+            Error::Protocol("bad frame".into()),
+            serde_json::json!({"code":"protocol_error","message":"protocol_error: bad frame","detail":"bad frame","params":{},"retryable":false}),
+        ),
+    ] {
+        assert_eq!(
+            serde_json::to_value(WireError::from(&error)).unwrap(),
+            expected
+        );
+        assert_eq!(error.to_string(), expected["message"].as_str().unwrap());
+    }
+}

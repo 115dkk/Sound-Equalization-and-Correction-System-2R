@@ -379,28 +379,7 @@ fn invalid_handle(kind: &str, handle: u64) -> u64 {
 }
 
 fn api_error(error: Error) -> u64 {
-    let message = error.to_string();
-    let (code, detail, params, retryable) = match error {
-        Error::Api(error) => {
-            let code = serde_json::to_value(error.code)
-                .ok()
-                .and_then(|value| value.as_str().map(str::to_owned))
-                .unwrap_or_else(|| "internal".to_owned());
-            (code, error.detail, json!(error.params), error.retryable)
-        }
-        Error::Transport(detail) => ("transport_error".to_owned(), detail, json!({}), false),
-        Error::Protocol(detail) => ("protocol_error".to_owned(), detail, json!({}), false),
-    };
-    store_value(json!({
-        "ok": false,
-        "error": {
-            "code": code,
-            "message": message,
-            "detail": detail,
-            "params": params,
-            "retryable": retryable
-        }
-    }))
+    store_value(json!({ "ok": false, "error": secs::WireError::from(&error) }))
 }
 
 fn binding_error(code: &str, message: &str, detail: impl Into<String>) -> u64 {
