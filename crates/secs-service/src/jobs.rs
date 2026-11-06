@@ -300,7 +300,10 @@ impl JobRegistry {
     pub fn cancel_all(&self) {
         let mut inner = lock(&self.inner);
         for job in &mut inner.jobs {
-            if !job.snapshot.status.is_terminal() && job.snapshot.cancellable {
+            if job.group != JobGroup::SideMdat
+                && !job.snapshot.status.is_terminal()
+                && job.snapshot.cancellable
+            {
                 job.snapshot.status = JobStatus::CancelRequested;
                 job.cancel.cancel();
                 job.measurement_cancel.cancel();
@@ -308,14 +311,13 @@ impl JobRegistry {
         }
     }
 
-    pub fn wait_for_device(&self, timeout: Duration) -> bool {
+    pub fn wait_for_device_and_side_mdat(&self, timeout: Duration) -> bool {
         let deadline = Instant::now() + timeout;
         let mut inner = lock(&self.inner);
-        while inner
-            .jobs
-            .iter()
-            .any(|job| job.group == JobGroup::Device && !job.snapshot.status.is_terminal())
-        {
+        while inner.jobs.iter().any(|job| {
+            matches!(job.group, JobGroup::Device | JobGroup::SideMdat)
+                && !job.snapshot.status.is_terminal()
+        }) {
             let remaining = deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
                 return false;

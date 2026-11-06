@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -253,27 +254,38 @@ impl Service {
         let open = session.require().map_err(IpcError::from)?;
         let originals = original_snapshot(open);
         let destination = open.path.with_extension("mdat");
-        let memory = self.deps.memory.available_bytes();
-        let uuid = self.deps.uuid.clone();
-        let now_ms = (self.deps.unix_ms)();
-        let revisions = self.side_mdat_revision.clone();
-        let revision = {
-            let mut current = lock(&revisions);
-            *current = current.saturating_add(1);
-            *current
+        let work = SideMdatWork {
+            originals,
+            destination: destination.clone(),
+            uuid: self.deps.uuid.clone(),
+            now_ms: (self.deps.unix_ms)(),
+            memory: self.deps.memory.available_bytes(),
         };
         drop(session);
 
-        let work = SideMdatWork {
-            originals,
-            destination,
-            uuid,
-            now_ms,
-            revisions,
-            revision,
+        let queue = self.side_mdat_queue.clone();
+        let start = {
+            let mut queue = lock(&queue);
+            queue.next_generation = queue.next_generation.saturating_add(1);
+            let generation = queue.next_generation;
+            queue.pending.insert(destination, (generation, work));
+            if queue.running {
+                false
+            } else {
+                queue.running = true;
+                true
+            }
         };
-        self.jobs
-            .start_side_mdat(events, move |job| write_side_mdat_job(work, job, memory))?;
+        if start {
+            let worker_queue = queue.clone();
+            if let Err(error) = self
+                .jobs
+                .start_side_mdat(events, move |job| write_side_mdat_queue(worker_queue, job))
+            {
+                lock(&queue).running = false;
+                return Err(error);
+            }
+        }
         Ok(info)
     }
 }
@@ -584,7 +596,7 @@ fn copy_tree_contents(source: &Path, destination: &Path) -> Result<(), std::io::
     Ok(())
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct OriginalSnapshot {
     path: PathBuf,
     project: Project,
@@ -761,30 +773,117 @@ impl OriginalSnapshot {
     }
 }
 
+#[derive(Clone)]
 struct SideMdatWork {
     originals: OriginalSnapshot,
     destination: PathBuf,
     uuid: crate::UuidSource,
     now_ms: i64,
-    revisions: Arc<Mutex<u64>>,
-    revision: u64,
+    memory: u64,
 }
 
-fn write_side_mdat_job(
-    work: SideMdatWork,
+#[derive(Default)]
+pub(crate) struct SideMdatQueue {
+    pending: BTreeMap<PathBuf, (u64, SideMdatWork)>,
+    next_generation: u64,
+    running: bool,
+}
+
+impl std::fmt::Debug for SideMdatQueue {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("SideMdatQueue")
+            .field("pending", &self.pending.keys().collect::<Vec<_>>())
+            .field("next_generation", &self.next_generation)
+            .field("running", &self.running)
+            .finish()
+    }
+}
+
+struct SideMdatRunningGuard {
+    queue: Arc<Mutex<SideMdatQueue>>,
+    armed: bool,
+}
+
+impl SideMdatRunningGuard {
+    fn new(queue: Arc<Mutex<SideMdatQueue>>) -> Self {
+        Self { queue, armed: true }
+    }
+
+    fn stop(&mut self) {
+        if self.armed {
+            lock(&self.queue).running = false;
+            self.armed = false;
+        }
+    }
+
+    fn requeue_and_stop(&mut self, destination: PathBuf, generation: u64, work: SideMdatWork) {
+        let mut queue = lock(&self.queue);
+        let replace = queue
+            .pending
+            .get(&destination)
+            .is_none_or(|(pending_generation, _)| *pending_generation < generation);
+        if replace {
+            queue.pending.insert(destination, (generation, work));
+        }
+        queue.running = false;
+        self.armed = false;
+    }
+}
+
+impl Drop for SideMdatRunningGuard {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
+fn write_side_mdat_queue(
+    queue: Arc<Mutex<SideMdatQueue>>,
     job: JobContext,
-    memory: u64,
 ) -> Result<secs_types::ipc::JobResult, IpcError> {
-    let SideMdatWork {
-        originals,
-        destination,
-        uuid,
-        now_ms,
-        revisions,
-        revision,
-    } = work;
-    let context = super::calibration::compute_context(&job, memory, false);
-    let originals = originals.load(&job, context.budget())?;
+    let mut running = SideMdatRunningGuard::new(queue.clone());
+    let mut completed = None;
+    loop {
+        let next = {
+            let mut pending = lock(&queue);
+            if job.cancel().is_cancelled() {
+                pending.running = false;
+                running.armed = false;
+                return Err(IpcError::new(ErrorCode::Cancelled, "cancelled"));
+            }
+            match pending.pending.pop_first() {
+                Some((destination, (generation, work))) => Some((destination, generation, work)),
+                None => {
+                    pending.running = false;
+                    running.armed = false;
+                    None
+                }
+            }
+        };
+        let Some((destination, generation, work)) = next else {
+            return completed.ok_or_else(|| {
+                IpcError::new(ErrorCode::Internal, "side mdat queue finished without work")
+            });
+        };
+        match write_side_mdat_entry(&queue, generation, &work, &job) {
+            Ok(Some(result)) => completed = Some(result),
+            Ok(None) => {}
+            Err(error) => {
+                running.requeue_and_stop(destination, generation, work);
+                return Err(error);
+            }
+        }
+    }
+}
+
+fn write_side_mdat_entry(
+    queue: &Mutex<SideMdatQueue>,
+    generation: u64,
+    work: &SideMdatWork,
+    job: &JobContext,
+) -> Result<Option<secs_types::ipc::JobResult>, IpcError> {
+    let context = super::calibration::compute_context(job, work.memory, false);
+    let originals = work.originals.clone().load(job, context.budget())?;
     let LoadedOriginals { values, _permit } = originals;
     let inputs = values
         .into_iter()
@@ -794,45 +893,50 @@ fn write_side_mdat_job(
         None
     } else {
         let uuids = {
-            let mut uuid = lock(&uuid);
+            let mut uuid = lock(&work.uuid);
             (0..inputs.len())
                 .map(|_| uuid.as_mut()())
                 .collect::<Result<Vec<_>, _>>()
-                .map_err(|error| side_mdat_error(&destination, error))?
+                .map_err(|error| side_mdat_error(&work.destination, error))?
         };
         let mut uuids = uuids.into_iter();
         // `secs_mdat::build` consumes exactly one UUID for each validated input.
         Some(
-            secs_mdat::build(&inputs, secs_mdat::TEMPLATE, None, now_ms, &mut || {
+            secs_mdat::build(&inputs, secs_mdat::TEMPLATE, None, work.now_ms, &mut || {
                 uuids.next().unwrap_or_default()
             })
-            .map_err(|error| side_mdat_error(&destination, error))?,
+            .map_err(|error| side_mdat_error(&work.destination, error))?,
         )
     };
-    let revision_guard = lock(&revisions);
-    if *revision_guard != revision {
-        return Ok(side_mdat_result(&destination, Vec::new()));
+    let queue = lock(queue);
+    if queue
+        .pending
+        .get(&work.destination)
+        .is_some_and(|(pending_generation, _)| *pending_generation > generation)
+    {
+        return Ok(None);
     }
     job.begin_commit()?;
     let files = match bytes {
         Some(bytes) => {
-            let parent = destination.parent().unwrap_or_else(|| Path::new("."));
-            fs::create_dir_all(parent).map_err(|error| side_mdat_error(&destination, error))?;
-            secs_types::fs::write_atomic_bytes(&destination, &bytes)
-                .map_err(|error| side_mdat_error(&destination, error))?;
-            vec![destination.to_string_lossy().into_owned()]
+            let parent = work.destination.parent().unwrap_or_else(|| Path::new("."));
+            fs::create_dir_all(parent)
+                .map_err(|error| side_mdat_error(&work.destination, error))?;
+            secs_types::fs::write_atomic_bytes(&work.destination, &bytes)
+                .map_err(|error| side_mdat_error(&work.destination, error))?;
+            vec![work.destination.to_string_lossy().into_owned()]
         }
         None => {
-            match fs::remove_file(&destination) {
+            match fs::remove_file(&work.destination) {
                 Ok(()) => {}
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                Err(error) => return Err(side_mdat_error(&destination, error)),
+                Err(error) => return Err(side_mdat_error(&work.destination, error)),
             }
             Vec::new()
         }
     };
-    drop(revision_guard);
-    Ok(side_mdat_result(&destination, files))
+    drop(queue);
+    Ok(Some(side_mdat_result(&work.destination, files)))
 }
 
 fn side_mdat_result(destination: &Path, files: Vec<String>) -> secs_types::ipc::JobResult {

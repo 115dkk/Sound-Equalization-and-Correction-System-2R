@@ -101,6 +101,19 @@ impl Events {
         self.progress_released.notify_all();
     }
 
+    fn started_jobs(&self, kind: JobKind) -> Vec<JobId> {
+        lock(&self.values)
+            .iter()
+            .filter_map(|event| match event {
+                JobEvent::Started {
+                    job,
+                    kind: event_kind,
+                } if *event_kind == kind => Some(*job),
+                _ => None,
+            })
+            .collect()
+    }
+
     fn wait(&self, job: JobId, timeout: Duration) -> JobEvent {
         self.try_wait(job, timeout)
             .unwrap_or_else(|| panic!("job {job:?} did not finish"))
@@ -514,6 +527,236 @@ fn side_mdat_failure_is_a_job_error_not_a_silent_save_td149() {
             .detail
             .contains(&side_mdat.to_string_lossy().into_owned())
     );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn successive_saves_to_two_paths_write_both_side_mdats_td149() {
+    let root = temp_root("side-mdat-two-paths");
+    fs::create_dir_all(&root).unwrap();
+    let (source, _) = write_case(&root, "room");
+    let first = root.join("first.secs");
+    let second = root.join("second.secs");
+    let first_mdat = first.with_extension("mdat");
+    let second_mdat = second.with_extension("mdat");
+    let (blocked_tx, blocked_rx) = std::sync::mpsc::sync_channel(1);
+    let gate = Arc::new((Mutex::new(false), Condvar::new()));
+    let uuid_calls = Arc::new(AtomicU64::new(0));
+    let worker_gate = gate.clone();
+    let worker_calls = uuid_calls.clone();
+    let service = Service::new(Deps {
+        uuid: Arc::new(Mutex::new(Box::new(move || {
+            let call = worker_calls.fetch_add(1, Ordering::Relaxed);
+            if call == 0 {
+                blocked_tx.send(()).unwrap();
+                let mut released = lock(&worker_gate.0);
+                while !*released {
+                    released = worker_gate.1.wait(released).unwrap();
+                }
+            }
+            Ok(0x1234_5678_9abc_def0 + u128::from(call))
+        }))),
+        unix_ms: Arc::new(|| FIXED_MS),
+        ..Deps::default()
+    });
+    open(&service, &source);
+    let events = Arc::new(Events::default());
+
+    call_ok(
+        &service,
+        Request::ProjectSave(secs_types::ipc::ProjectSaveParams {
+            path: Some(first.to_string_lossy().into_owned()),
+        }),
+        events.clone(),
+    );
+    blocked_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+    let job = events.wait_started(JobKind::Export, Duration::from_secs(2));
+    call_ok(
+        &service,
+        Request::ProjectSave(secs_types::ipc::ProjectSaveParams {
+            path: Some(second.to_string_lossy().into_owned()),
+        }),
+        events.clone(),
+    );
+    *lock(&gate.0) = true;
+    gate.1.notify_all();
+    for job in events.started_jobs(JobKind::Export) {
+        assert!(matches!(
+            events.wait(job, Duration::from_secs(30)),
+            JobEvent::Finished {
+                status: JobStatus::Succeeded,
+                error: None,
+                ..
+            }
+        ));
+    }
+    assert!(events.try_wait(job, Duration::from_secs(1)).is_some());
+    assert!(first_mdat.is_file(), "first side mdat was not written");
+    assert!(second_mdat.is_file(), "second side mdat was not written");
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn saves_while_a_side_mdat_job_runs_coalesce_into_one_job_td149() {
+    let root = temp_root("side-mdat-coalesce");
+    fs::create_dir_all(&root).unwrap();
+    let (path, _) = write_case(&root, "room");
+    let side_mdat = path.with_extension("mdat");
+    let mut store = MeasurementStore::open(&path).unwrap();
+    let record = store.records().into_iter().next().unwrap();
+    let role = record.ir.keys().next().unwrap().clone();
+    let raw = PathBuf::from(record.ir[&role].clone());
+    let wav = if raw.is_absolute() {
+        raw
+    } else {
+        path.parent().unwrap().join(raw)
+    };
+    let (mut samples, sample_rate) = store.ir_of(&role, record.pos).unwrap();
+    let changed_sample = if samples[0] == 0.25 { 0.5 } else { 0.25 };
+
+    let (blocked_tx, blocked_rx) = std::sync::mpsc::sync_channel(1);
+    let gate = Arc::new((Mutex::new(false), Condvar::new()));
+    let uuid_calls = Arc::new(AtomicU64::new(0));
+    let worker_gate = gate.clone();
+    let worker_calls = uuid_calls.clone();
+    let service = Service::new(Deps {
+        uuid: Arc::new(Mutex::new(Box::new(move || {
+            let call = worker_calls.fetch_add(1, Ordering::Relaxed);
+            if call == 0 {
+                blocked_tx.send(()).unwrap();
+                let mut released = lock(&worker_gate.0);
+                while !*released {
+                    released = worker_gate.1.wait(released).unwrap();
+                }
+            }
+            Ok(0x1234_5678_9abc_def0 + u128::from(call))
+        }))),
+        unix_ms: Arc::new(|| FIXED_MS),
+        ..Deps::default()
+    });
+    open(&service, &path);
+    let events = Arc::new(Events::default());
+
+    call_ok(
+        &service,
+        Request::ProjectSave(secs_types::ipc::ProjectSaveParams { path: None }),
+        events.clone(),
+    );
+    blocked_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+    samples[0] = changed_sample;
+    fs::write(&wav, secs_project::write_wav_float32(&samples, sample_rate)).unwrap();
+    for _ in 0..2 {
+        call_ok(
+            &service,
+            Request::ProjectSave(secs_types::ipc::ProjectSaveParams { path: None }),
+            events.clone(),
+        );
+    }
+    let Response::Jobs(running) = call_ok(&service, Request::Jobs, Arc::new(NoEvents)) else {
+        panic!("jobs request must return snapshots")
+    };
+    let running_side_mdats = running
+        .iter()
+        .filter(|snapshot| snapshot.kind == JobKind::Export && !snapshot.status.is_terminal())
+        .count();
+    let started = events.started_jobs(JobKind::Export);
+    *lock(&gate.0) = true;
+    gate.1.notify_all();
+    for job in &started {
+        events.wait(*job, Duration::from_secs(30));
+    }
+
+    assert_eq!(
+        started.len(),
+        1,
+        "side mdat saves started more than one job"
+    );
+    assert_eq!(
+        running_side_mdats, 1,
+        "more than one side mdat job was running"
+    );
+    let loaded =
+        secs_mdat::load_mdat_project(&fs::read(&side_mdat).unwrap(), &secs_jos::Limits::default())
+            .unwrap();
+    let measurement = loaded
+        .measurements
+        .iter()
+        .find(|measurement| measurement.title == format!("{role}_P{}", record.pos))
+        .unwrap();
+    let (saved, _) = loaded.ir_provider.get_ir(&measurement.uuid).unwrap();
+    assert!((saved[0] - f64::from(changed_sample)).abs() < 1e-6);
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn shutdown_waits_for_a_running_side_mdat_job_td149() {
+    let root = temp_root("side-mdat-shutdown");
+    fs::create_dir_all(&root).unwrap();
+    let (path, _) = write_case(&root, "room");
+    let side_mdat = path.with_extension("mdat");
+    let (blocked_tx, blocked_rx) = std::sync::mpsc::sync_channel(1);
+    let gate = Arc::new((Mutex::new(false), Condvar::new()));
+    let worker_gate = gate.clone();
+    let first = Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let worker_first = first.clone();
+    let service = Arc::new(Service::new(Deps {
+        uuid: Arc::new(Mutex::new(Box::new(move || {
+            if worker_first.swap(false, Ordering::Relaxed) {
+                blocked_tx.send(()).unwrap();
+                let mut released = lock(&worker_gate.0);
+                while !*released {
+                    released = worker_gate.1.wait(released).unwrap();
+                }
+            }
+            Ok(0x1234_5678_9abc_def0)
+        }))),
+        unix_ms: Arc::new(|| FIXED_MS),
+        ..Deps::default()
+    }));
+    open(&service, &path);
+    let events = Arc::new(Events::default());
+    call_ok(
+        &service,
+        Request::ProjectSave(secs_types::ipc::ProjectSaveParams { path: None }),
+        events.clone(),
+    );
+    blocked_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+    let job = events.wait_started(JobKind::Export, Duration::from_secs(2));
+
+    let shutdown_service = service.clone();
+    let (shutdown_tx, shutdown_rx) = std::sync::mpsc::sync_channel(1);
+    let shutdown = std::thread::spawn(move || {
+        shutdown_tx
+            .send(shutdown_service.shutdown(Duration::from_secs(5)))
+            .unwrap();
+    });
+    let returned_early = shutdown_rx.recv_timeout(Duration::from_millis(200)).ok();
+    *lock(&gate.0) = true;
+    gate.1.notify_all();
+    let completed = returned_early.unwrap_or_else(|| {
+        shutdown_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("shutdown did not finish after the side mdat job")
+    });
+    shutdown.join().unwrap();
+
+    assert!(
+        returned_early.is_none(),
+        "shutdown returned before the side mdat job"
+    );
+    assert!(completed);
+    assert!(matches!(
+        events.wait(job, Duration::from_secs(30)),
+        JobEvent::Finished {
+            status: JobStatus::Succeeded,
+            error: None,
+            ..
+        }
+    ));
+    assert!(side_mdat.is_file());
 
     fs::remove_dir_all(root).unwrap();
 }

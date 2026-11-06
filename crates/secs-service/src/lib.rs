@@ -726,7 +726,7 @@ pub struct Service {
     app_settings: Arc<Mutex<secs_types::ipc::AppSettings>>,
     app_settings_revision: AtomicU64,
     app_effects: Mutex<AppEffects>,
-    side_mdat_revision: Arc<Mutex<u64>>,
+    side_mdat_queue: Arc<Mutex<session::SideMdatQueue>>,
     jobs: JobRegistry,
     level: monitor::LevelState,
     status_watch: watch::WatchState,
@@ -746,7 +746,7 @@ impl Service {
             app_settings: Arc::new(Mutex::new(app_settings)),
             app_settings_revision: AtomicU64::new(1),
             app_effects: Mutex::new(app_effects),
-            side_mdat_revision: Arc::new(Mutex::new(0)),
+            side_mdat_queue: Arc::new(Mutex::new(session::SideMdatQueue::default())),
             jobs: JobRegistry::default(),
             level: monitor::LevelState::default(),
             status_watch: watch::WatchState::default(),
@@ -797,10 +797,13 @@ impl Service {
         }
     }
 
-    /// Cancels every cancellable job and waits at most `timeout` for device access to stop.
+    /// Cancels every cancellable job except a side mdat save and waits at most
+    /// `timeout` for device access and side mdat saves to stop.
     pub fn shutdown(&self, timeout: std::time::Duration) -> bool {
         self.jobs.cancel_all();
-        self.jobs.wait_for_device(timeout)
+        // A side mdat still running at the deadline is abandoned when the process
+        // exits. `write_atomic_bytes` keeps the destination whole either way.
+        self.jobs.wait_for_device_and_side_mdat(timeout)
     }
 
     /// Parses and handles an untyped request. Malformed input cannot cross the seam.
