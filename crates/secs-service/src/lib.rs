@@ -654,6 +654,37 @@ impl AppEffects {
 
 #[cfg(test)]
 mod app_effect_tests {
+    /// TD-208: the mapping itself, so the registration holds on every OS (the
+    /// ACL round trip stays a Windows-only integration test).
+    #[test]
+    fn project_open_permission_denied_maps_to_permission_denied_td208() {
+        let path = std::path::PathBuf::from("locked.secs");
+        let error = super::project_open_ipc(
+            path.clone(),
+            secs_project::ProjectError::Io(std::io::Error::from(
+                std::io::ErrorKind::PermissionDenied,
+            )),
+        );
+        assert_eq!(error.code, secs_types::ipc::ErrorCode::PermissionDenied);
+        assert_eq!(
+            error.params.get("reason").map(String::as_str),
+            Some("permission_denied")
+        );
+        assert_eq!(
+            error.params.get("path").map(String::as_str),
+            Some(path.to_string_lossy().as_ref())
+        );
+        let missing = super::project_open_ipc(
+            path,
+            secs_project::ProjectError::Io(std::io::Error::from(std::io::ErrorKind::NotFound)),
+        );
+        assert_eq!(missing.code, secs_types::ipc::ErrorCode::ProjectIo);
+        assert_eq!(
+            missing.params.get("reason").map(String::as_str),
+            Some("not_found")
+        );
+    }
+
     use super::AppEffects;
 
     #[test]
