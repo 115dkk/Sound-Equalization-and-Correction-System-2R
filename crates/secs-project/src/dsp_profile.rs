@@ -122,6 +122,27 @@ impl DspProfile {
                 0,
                 false,
             ),
+            // SECS 2R's own preset (docs/DEVIATIONS.md U18). The budget is the
+            // maintainer's 2026-11-06 measurement on a TesiraFORTÉ VI with
+            // Tesira 5.7.0: six 2048-tap one-channel FIR blocks compile, the
+            // seventh fails DSP assignment whether chained or parallel, with or
+            // without the forced AEC block. Modelled as total taps like the
+            // SERVER preset; whether the device also accepts twelve 1024-tap
+            // blocks (the same total) is not measured yet. VT is assumed equal.
+            (
+                "tesira_forte",
+                "Biamp TesiraFORTÉ VI / VT",
+                2048,
+                2048 * 6,
+                16,
+                16,
+                16,
+                false,
+                0,
+                0,
+                0,
+                false,
+            ),
             (
                 "qsys",
                 "Q-SYS Core 8 Flex / 110f",
@@ -414,6 +435,7 @@ mod tests {
         for (profile, expected) in [
             ("camilla", 48_000),
             ("tesira", 48_000),
+            ("tesira_forte", 48_000),
             ("qsys", 48_000),
             ("minidsp", 96_000),
             ("custom", 48_000),
@@ -445,6 +467,53 @@ mod tests {
             let restored = DspProfile::from_json(dsp.to_json()).unwrap();
             assert_eq!(restored.output_rate, choice);
         }
+    }
+
+    #[test]
+    fn tesira_forte_preset_keeps_six_2048_tap_blocks() {
+        let forte = DspProfile::presets().remove("tesira_forte").unwrap();
+        let server = DspProfile::presets().remove("tesira").unwrap();
+        assert_eq!(forte.name, "Biamp TesiraFORTÉ VI / VT");
+        assert_eq!(
+            (forte.fir_taps, forte.fir_taps_max, forte.fir_budget),
+            (2048, 2048, 12_288)
+        );
+        assert_eq!(forte.output_rate, OutputRateChoice::Fixed(48_000));
+        // Everything but the key, the name and the budget is the Tesira SERVER's.
+        assert_eq!(
+            DspProfile {
+                profile: server.profile.clone(),
+                name: server.name.clone(),
+                fir_budget: server.fir_budget,
+                ..forte.clone()
+            },
+            server
+        );
+        // The allocator never plans more taps than the six blocks hold, and
+        // small systems still get a whole 2048-tap block per band. Bi-amped
+        // presets: two bands per bed main, one per sub and per height.
+        for (preset, expected_bands, expected) in [
+            ("2.0", 4, 2048),
+            ("2.2", 6, 2048),
+            ("5.1", 11, 1024),
+            ("7.1", 15, 512),
+            ("7.1.4", 19, 512),
+            ("9.1.6", 25, 256),
+        ] {
+            let config = SpeakerConfig::from_preset(preset, "", true).unwrap();
+            let bands: i64 = config.speakers.iter().map(|s| s.bands.len() as i64).sum();
+            assert_eq!(bands, expected_bands, "{preset}");
+            let (channel, support) = forte.allocate_taps(&config, "mixed", 0, 256);
+            assert_eq!(channel, expected, "{preset} ({bands} bands)");
+            assert!(
+                channel * bands <= forte.fir_budget,
+                "{preset}: {channel} × {bands} exceeds {}",
+                forte.fir_budget
+            );
+            assert_eq!(support, forte.support_taps, "{preset}");
+        }
+        // A project saved with the preset reads back to the same values.
+        assert_eq!(DspProfile::from_json(forte.to_json()).unwrap(), forte);
     }
 
     #[test]

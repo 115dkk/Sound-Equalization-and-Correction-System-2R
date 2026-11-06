@@ -331,6 +331,7 @@ export const dsp: DspResult = {
     { key: "minidsp", name: "miniDSP Flex / 2x4 HD", fields: { ...deviceRate(96000), fir_taps: 2048, fir_budget: 4096, iir_bands: 10, allpass_bands: 0, bm_path_delays: 0 } },
     { key: "qsys", name: "Q-SYS Core", fields: { ...deviceRate(48000), fir_taps: 16384, fir_budget: 65536, iir_bands: 24, allpass_bands: 16, bm_path_delays: 16 } },
     { key: "tesira", name: "Biamp Tesira", fields: { ...deviceRate(48000), fir_taps: 2048, fir_budget: 51200, iir_bands: 16, allpass_bands: 16, bm_path_delays: 16 } },
+    { key: "tesira_forte", name: "Biamp TesiraFORTÉ VI / VT", fields: { ...deviceRate(48000), fir_taps: 2048, fir_budget: 12288, iir_bands: 16, allpass_bands: 16, bm_path_delays: 16 } },
   ],
   window_ms: 65536 / 48, resolution_hz: 48000 / 65536,
 };

@@ -291,6 +291,15 @@ describe("SystemScreen", () => {
 
   it("chooses the DSP device and edits its fields under 고급 (U2)", () => {
     const actions = setup(sampleView);
+    // The device list in DSP_ORDER, with SECS 2R's TesiraFORTÉ preset (U18) after the Tesira SERVER.
+    expect([...(must("system.dsp.device") as HTMLSelectElement).options].map((option) => [option.value, option.textContent])).toEqual([
+      ["camilla", "CamillaDSP · BruteFIR"],
+      ["tesira", "Tesira SERVER-IO"],
+      ["tesira_forte", "TesiraFORTÉ VI / VT"],
+      ["qsys", "Q-SYS Core"],
+      ["minidsp", "miniDSP"],
+      ["custom", "사용자 지정"],
+    ]);
     fireEvent.change(must("system.dsp.device"), { target: { value: "tesira" } });
     expect(actions.setDspPreset).toHaveBeenCalledWith("tesira");
     expect(ui("system.dsp.fir_budget")).toBeNull();

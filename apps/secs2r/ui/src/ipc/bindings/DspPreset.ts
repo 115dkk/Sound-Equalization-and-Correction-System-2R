@@ -6,7 +6,7 @@ import type { DspFields } from "./DspFields";
  */
 export type DspPreset = { 
 /**
- * Preset key (`camilla`, `tesira`, `qsys`, `minidsp`, `custom`).
+ * Preset key (`camilla`, `tesira`, `tesira_forte`, `qsys`, `minidsp`, `custom`).
  */
 key: string, 
 /**

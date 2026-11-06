@@ -614,6 +614,7 @@
   "notice.unknown": "The setup has an unknown problem ({code}).",
   "system.dsp.preset.camilla": "CamillaDSP · BruteFIR",
   "system.dsp.preset.tesira": "Tesira SERVER-IO",
+  "system.dsp.preset.tesira_forte": "TesiraFORTÉ VI / VT",
   "system.dsp.preset.qsys": "Q-SYS Core",
   "system.dsp.preset.minidsp": "miniDSP",
   "system.dsp.preset.custom": "Custom",

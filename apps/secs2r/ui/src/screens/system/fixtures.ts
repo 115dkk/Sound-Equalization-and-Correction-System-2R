@@ -94,6 +94,7 @@ const DSP_PRESETS: DspResult["presets"] = [
   { key: "minidsp", name: "miniDSP Flex / 2x4 HD", fields: fields(2048, 4096, 10, 0, 0, { fixed: 96000 }, false) },
   { key: "qsys", name: "Q-SYS Core 8 Flex / 110f", fields: fields(16384, 65536, 24, 16, 16, { fixed: 48000 }, false) },
   { key: "tesira", name: "Biamp Tesira SERVER (DSP-2 ×3)", fields: fields(2048, 51200, 16, 16, 16, { fixed: 48000 }, false) },
+  { key: "tesira_forte", name: "Biamp TesiraFORTÉ VI / VT", fields: fields(2048, 12288, 16, 16, 16, { fixed: 48000 }, false) },
 ];
 
 /** dsp_get as the service answers it: the window at the output rate (48 kHz for 자동), the resolution at 48 kHz. */
