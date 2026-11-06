@@ -16,8 +16,8 @@ pub use render::{
     RenderedPath, RenderedPaths, render_paths, render_paths_at, render_paths_at_cancellable,
 };
 
-use secs_camilla::pyfmt::{format_fixed, round_ndigits};
 use secs_dsp::Complex64;
+use secs_graph::emit::pyfmt::{format_fixed, round_ndigits};
 use secs_graph::files::{safe_name, wav_bytes, write_bundle_observed};
 use secs_graph::{
     ExportGraph, FirView, GraphError, LFE_GAIN_DB, LFE_LP_HZ, LfeChoice, SAMPLE_RATE,

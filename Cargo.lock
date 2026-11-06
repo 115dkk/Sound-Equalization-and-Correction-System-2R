@@ -4428,6 +4428,7 @@ dependencies = [
  "secs-dsp",
  "secs-engine",
  "secs-engine-testkit",
+ "secs-graph",
  "secs-jos",
  "secs-mdat",
  "secs-oracle",

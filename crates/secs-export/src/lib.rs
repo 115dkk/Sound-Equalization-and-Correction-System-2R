@@ -8,10 +8,10 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use secs_camilla::pyfmt::{format_fixed, format_g};
 use secs_engine::{
     Design, EngineError, ExportAxis, StageResponses, input::LayoutKind, stage_responses,
 };
+use secs_graph::emit::pyfmt::{format_fixed, format_g};
 use secs_mdat::{MdatError, MeasurementInput, SourceInfo, TEMPLATE};
 use secs_types::{
     calibration::{CalibrationSettings, Mode, RcBand},

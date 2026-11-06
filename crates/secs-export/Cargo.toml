@@ -17,14 +17,16 @@ workspace = true
 
 [dependencies]
 getrandom = "0.3"
-secs-camilla.workspace = true
 secs-dsp.workspace = true
 secs-engine.workspace = true
+secs-graph.workspace = true
 secs-mdat.workspace = true
 secs-types.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+# The export_perf example benchmarks the CamillaDSP writer too.
+secs-camilla.workspace = true
 secs-engine-testkit.workspace = true
 secs-jos.workspace = true
 secs-oracle.workspace = true

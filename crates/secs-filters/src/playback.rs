@@ -12,7 +12,6 @@
 //! interpolation filters change the response from the historically cropped FIR.
 //! Both modes reuse transforms between routes and allocate only at construction.
 
-use secs_camilla::pyfmt::round_ndigits;
 use secs_dsp::{
     DspError,
     convolution::{FirRoute, MatrixConvolver},
@@ -20,6 +19,7 @@ use secs_dsp::{
     iir::{BType, Sos, butter},
     multirate::MultirateMatrixConvolver,
 };
+use secs_graph::emit::pyfmt::round_ndigits;
 use secs_graph::{ExportGraph, LfeChoice, round_ties_even_i64};
 use secs_types::chain::{BandType, MimoFilter, MimoPaths, SignalChain};
 use std::f64::consts::PI;

@@ -1,11 +1,11 @@
 #![forbid(unsafe_code)]
 
-use secs_camilla::pyfmt::format_fixed;
 use secs_dsp::Complex64;
 use secs_dsp::fft::{irfft, rfft};
 use secs_filters::{
     FilterPlan, FilterRun, Op, export_eqapo, make_plan, plan_responses, windows_channels,
 };
+use secs_graph::emit::pyfmt::format_fixed;
 use secs_oracle::Fixture;
 use secs_types::chain::{
     BandType, MainChannel, MimoFilter, MimoPath, MimoPaths, SignalChain, SubChannel,
