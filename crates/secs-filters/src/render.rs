@@ -414,6 +414,7 @@ fn collect_routes(
             add(input_index, &feed.support, &[&plan.pre_ops, &feed.ops], 1.0)?;
         }
     }
+    pairs.retain(|pair| !pair.routes.is_empty());
     Ok(pairs)
 }
 
@@ -473,7 +474,7 @@ pub fn render_paths_at_cancellable(
     loop {
         let mut rendered = Vec::with_capacity(pairs.len());
         let mut peak = 0.0_f64;
-        for pair in &pairs {
+        for (pair_index, pair) in pairs.iter().enumerate() {
             if cancelled() {
                 return Err(FiltersError::Cancelled);
             }
@@ -486,10 +487,13 @@ pub fn render_paths_at_cancellable(
                     *sum += value;
                 }
             }
-            peak = response
+            let pair_peak = response
                 .iter()
-                .fold(peak, |largest, sample| largest.max(sample.abs()));
-            rendered.push(response);
+                .fold(0.0_f64, |largest, sample| largest.max(sample.abs()));
+            if pair_peak != 0.0 {
+                peak = peak.max(pair_peak);
+                rendered.push((pair_index, response));
+            }
         }
         if peak == 0.0 {
             return Ok(RenderedPaths {
@@ -503,24 +507,29 @@ pub fn render_paths_at_cancellable(
         let threshold = peak * FLOOR_RATIO;
         let last_by_pair = rendered
             .iter()
-            .map(|response| response.iter().rposition(|sample| sample.abs() > threshold))
+            .map(|(pair_index, response)| {
+                (
+                    *pair_index,
+                    response.iter().rposition(|sample| sample.abs() > threshold),
+                )
+            })
             .collect::<Vec<_>>();
         let (pair_index, last) = last_by_pair
             .iter()
-            .enumerate()
-            .filter_map(|(pair_index, last)| last.map(|last| (pair_index, last)))
+            .filter_map(|(pair_index, last)| last.map(|last| (*pair_index, last)))
             .max_by_key(|(_, last)| *last)
             .expect("non-zero peak has a path");
-        let unguarded = pairs
+        let unguarded = last_by_pair
             .iter()
-            .zip(&last_by_pair)
-            .enumerate()
-            .find(|(_, (pair, last))| {
+            .find(|(pair_index, last)| {
                 last.is_some()
-                    && pair.routes.iter().any(|route| !route.biquads.is_empty())
+                    && pairs[*pair_index]
+                        .routes
+                        .iter()
+                        .any(|route| !route.biquads.is_empty())
                     && candidate.saturating_sub(last.unwrap() + 1) < tail_guard
             })
-            .map(|(index, _)| index);
+            .map(|(pair_index, _)| *pair_index);
         if let Some(unguarded) = unguarded {
             if candidate == max_len {
                 let pair = &pairs[unguarded];
@@ -541,20 +550,19 @@ pub fn render_paths_at_cancellable(
             )));
         }
         let mut paths = Vec::new();
-        for (pair, mut response) in pairs.iter().zip(rendered) {
+        for (pair_index, mut response) in rendered {
+            let pair = &pairs[pair_index];
             response.truncate(length);
-            if response.iter().any(|sample| *sample != 0.0) {
-                paths.push(RenderedPath {
-                    input: pair.input.clone(),
-                    output: pair.output.clone(),
-                    response,
-                    delay_ms: pair
-                        .routes
-                        .iter()
-                        .map(|route| route.delay_ms)
-                        .fold(f64::INFINITY, f64::min),
-                });
-            }
+            paths.push(RenderedPath {
+                input: pair.input.clone(),
+                output: pair.output.clone(),
+                response,
+                delay_ms: pair
+                    .routes
+                    .iter()
+                    .map(|route| route.delay_ms)
+                    .fold(f64::INFINITY, f64::min),
+            });
         }
         return Ok(RenderedPaths {
             rate,
