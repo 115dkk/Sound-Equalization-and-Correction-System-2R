@@ -1,7 +1,7 @@
 [package]
 name = "secs-dotnet-sys"
 description = "The C ABI isolation crate for the Secs2R .NET package."
-version = "0.21.0"
+version = "0.22.0"
 edition.workspace = true
 rust-version.workspace = true
 license = "AGPL-3.0-only"
@@ -24,7 +24,7 @@ missing_safety_doc = "deny"
 dbg_macro = "deny"
 
 [dependencies]
-secs = { package = "sound-equalization-and-correction-system-rust-api", path = "../../../crates/secs-api", version = "=0.21.0", default-features = false, features = ["engine", "client"] }
+secs = { package = "sound-equalization-and-correction-system-rust-api", path = "../../../crates/secs-api", version = "=0.22.0", default-features = false, features = ["engine", "client"] }
 serde_json.workspace = true
 
 [build-dependencies]
