@@ -263,7 +263,7 @@ impl Service {
             IpcError::new(ErrorCode::Unsupported, "Equalizer APO is not installed")
                 .with_param("target", "equalizer_apo")
         })?;
-        let config_root = PathBuf::from(&install.config_path);
+        let config_root = eqapo_config_root(&install.config_path)?;
         let final_folder = config_root.join(EQAPO_FOLDER);
         let stage = crate::design_export::staging_folder(&final_folder);
         remove_stage(&stage)?;
@@ -375,7 +375,7 @@ impl Service {
             IpcError::new(ErrorCode::Unsupported, "Equalizer APO is not installed")
                 .with_param("target", "equalizer_apo")
         })?;
-        let path = PathBuf::from(install.config_path).join("config.txt");
+        let path = eqapo_config_root(&install.config_path)?.join("config.txt");
         let text = read_eqapo_config(&path)?;
         if let Some(updated) = self.deps.apply.eqapo_without_include(&text)? {
             write_changed(&path, updated.as_bytes())?;
@@ -420,7 +420,7 @@ impl Service {
                 applied_design_id: None,
             });
         };
-        let root = PathBuf::from(&install.config_path);
+        let root = eqapo_config_root(&install.config_path)?;
         let config = root.join("config.txt");
         let include = match fs::read(&config) {
             Ok(bytes) => self
@@ -767,6 +767,19 @@ fn remove_stage(path: &Path) -> Result<(), IpcError> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(io_error(path, &error)),
     }
+}
+
+fn eqapo_config_root(raw: &str) -> Result<PathBuf, IpcError> {
+    let path = PathBuf::from(raw);
+    if path.is_absolute() && path.is_dir() {
+        return Ok(path);
+    }
+    Err(IpcError::new(
+        ErrorCode::Unsupported,
+        "Equalizer APO config path must be an absolute directory",
+    )
+    .with_param("reason", "eqapo_config_path")
+    .with_param("path", raw))
 }
 
 fn config_encoding_error(path: &Path, detail: impl Into<String>) -> IpcError {

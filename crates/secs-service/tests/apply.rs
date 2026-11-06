@@ -2417,6 +2417,37 @@ fn utf16_config_txt_is_reported_as_an_encoding_problem_td199() {
 }
 
 #[test]
+fn relative_eqapo_config_path_is_unsupported_td200() {
+    let relative = PathBuf::from(format!(
+        "relative-eqapo-{}-{}/config",
+        std::process::id(),
+        TEMP.fetch_add(1, Ordering::Relaxed)
+    ));
+    let relative_root = relative.parent().unwrap().to_path_buf();
+    let _ = fs::remove_dir_all(&relative_root);
+    let install = EqApoInstall {
+        config_path: relative.to_string_lossy().into_owned(),
+        install_path: "EqualizerAPO/current".into(),
+        variant: EqApoVariant::Official,
+    };
+    let service = Service::new(Deps {
+        eqapo_install: Arc::new(move || Some(install.clone())),
+        apply: Arc::new(NativeApply),
+        ..Deps::default()
+    });
+
+    let Envelope::Err(error) = service.call(Request::ApplyStatus, Arc::new(NoEvents)) else {
+        panic!("a relative Equalizer APO config path must be rejected")
+    };
+    assert_eq!(error.code, ErrorCode::Unsupported);
+    assert_eq!(
+        error.params.get("reason").map(String::as_str),
+        Some("eqapo_config_path")
+    );
+    assert!(!relative_root.exists());
+}
+
+#[test]
 fn eqapo_status_reads_injected_install_and_applied_manifest() {
     let root = root("status");
     fs::write(
