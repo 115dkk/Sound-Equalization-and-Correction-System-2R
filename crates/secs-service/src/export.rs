@@ -468,7 +468,7 @@ impl Service {
         } else {
             final_destination.clone()
         };
-        let registry_base = if is_filter_export {
+        let registry_base = if is_filter_export && job_kind != JobKind::Apply {
             if requested_design_name.is_some() {
                 Some(base)
             } else if let Some(base) = default_base {

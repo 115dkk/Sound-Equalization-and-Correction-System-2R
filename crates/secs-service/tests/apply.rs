@@ -1829,6 +1829,75 @@ fn apply_camilla_gives_each_design_its_own_folder_so_reload_reads_its_firs() {
 }
 
 #[test]
+fn eqapo_apply_leaves_no_design_index_in_the_config_root_td153() {
+    let root = root("eqapo-no-index");
+    let config_root = root.join("EqualizerAPO/config");
+    fs::create_dir_all(&config_root).unwrap();
+    fs::write(config_root.join("config.txt"), "Preamp: -3 dB\n").unwrap();
+    let install = EqApoInstall {
+        config_path: config_root.to_string_lossy().into_owned(),
+        install_path: "EqualizerAPO-XT/current".into(),
+        variant: EqApoVariant::Xt,
+    };
+    let service = calibrated_service(
+        &root,
+        Deps {
+            eqapo_install: Arc::new(move || Some(install.clone())),
+            ..Deps::default()
+        },
+    );
+    set_apply(
+        &service,
+        CamillaApply::default(),
+        EqApoApply {
+            level: ApplyLevel::Apply,
+        },
+    );
+
+    let events = Arc::new(Events::default());
+    let job = started(&service, Request::ApplyEqapo, events.clone());
+    succeeded(events.wait(job.job));
+    let mut names = fs::read_dir(&config_root)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect::<Vec<_>>();
+    names.sort();
+    assert_eq!(names, ["SECS2R", "config.txt", "config.txt.secs2r-backup"]);
+    assert!(!config_root.join("designs.json").exists());
+    assert!(!root.join("app-data/applied/designs.json").exists());
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn camilla_apply_leaves_no_design_index_in_applied_td153() {
+    let root = root("camilla-no-index");
+    let service = calibrated_service_with_apply(
+        &root,
+        Deps::default(),
+        Arc::new(DefaultReportApply {
+            outcomes: Mutex::new(vec![ApplyOutcome::Applied]),
+        }),
+    );
+    set_apply(
+        &service,
+        CamillaApply {
+            level: ApplyLevel::Apply,
+            address: "127.0.0.1:1234".into(),
+            exe_path: None,
+        },
+        EqApoApply::default(),
+    );
+
+    let events = Arc::new(Events::default());
+    let job = apply_camilla(&service, events.clone());
+    succeeded(events.wait(job.job));
+    assert!(!root.join("app-data/applied/designs.json").exists());
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn retire_failure_reaches_the_log_sink_td151() {
     let root = root("retire-log");
     let lines = Arc::new(Mutex::new(Vec::new()));
