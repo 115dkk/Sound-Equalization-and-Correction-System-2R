@@ -109,6 +109,9 @@ pub trait Measurer: Send {
 
     fn devices(&mut self) -> Result<Vec<Device>, MeasureError>;
     fn status(&mut self) -> Result<Status, MeasureError>;
+    fn take_notices(&mut self) -> Vec<secs_types::ipc::Notice> {
+        Vec::new()
+    }
     fn measure_position(
         &mut self,
         plan: &MeasurementPlan,

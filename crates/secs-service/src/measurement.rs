@@ -574,7 +574,7 @@ impl Service {
             }
             let mut count = 0;
             let mut failure = None;
-            m.measure_recording(
+            let measured = m.measure_recording(
                 &p,
                 params.position,
                 ctx.measurement_cancel(),
@@ -631,8 +631,11 @@ impl Service {
                     }
                     Ok(())
                 },
-            )
-            .map_err(|e| failure.unwrap_or_else(|| measure_error(e, "plan", share)))?;
+            );
+            for notice in m.take_notices() {
+                ctx.log(notice);
+            }
+            measured.map_err(|e| failure.unwrap_or_else(|| measure_error(e, "plan", share)))?;
             if rew {
                 rew_link.confirm_license();
             }

@@ -702,7 +702,7 @@ fn post(path: &str, body: serde_json::Value) -> secs_rew::RecordedExchange {
         json!({"message":"ok"}),
     )
 }
-fn rew_script() -> Vec<secs_rew::RecordedExchange> {
+fn rew_script_with_cal(input_cal: &str) -> Vec<secs_rew::RecordedExchange> {
     let mut script = vec![get(
         "/version",
         json!({"message":"5.40 Beta 124 API 0.9.4"}),
@@ -775,15 +775,22 @@ fn rew_script() -> Vec<secs_rew::RecordedExchange> {
                 json!({"splOffsetdB":116.12}),
                 5,
             ),
-            get(
-                "/audio/input-cal",
-                json!({"separateCalFileForEachInput":false,"calDataAllInputs":{"calFilePath":""}}),
-                3,
-            ),
         ]);
+        if i == 0 {
+            script.push(get(
+                "/audio/input-cal",
+                json!({"separateCalFileForEachInput":false,"calDataAllInputs":{"calFilePath":input_cal}}),
+                3,
+            ));
+        }
     }
     script
 }
+
+fn rew_script() -> Vec<secs_rew::RecordedExchange> {
+    rew_script_with_cal("")
+}
+
 #[test]
 fn rew_recorded_transport_records_each_role_and_warning() {
     let root = root("rew");
@@ -828,6 +835,50 @@ fn rew_recorded_transport_records_each_role_and_warning() {
     assert!(
         matches!(&values[2],JobEvent::Log{code,params,..} if code=="measurement_low_snr" && params["role"]=="L")
     );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn oversized_input_cal_file_is_refused_with_a_notice_and_read_once_td170() {
+    let root = root("rew-cal-limit");
+    let path = root.join("room.secs");
+    let cal = root.join("oversized.cal");
+    fs::File::create(&cal)
+        .unwrap()
+        .set_len(4 * 1024 * 1024 + 1)
+        .unwrap();
+    let transport = secs_rew::RecordedTransport::new(rew_script_with_cal(&cal.to_string_lossy()));
+    let copy = transport.clone();
+    let service = Service::new(Deps {
+        rew_transport: Arc::new(move || Box::new(copy.clone())),
+        ..Deps::default()
+    });
+    new(&service, &path);
+    configure(&service, "rew");
+    let Response::MeasureMethods(_) = call(&service, Request::MeasureMethods) else {
+        panic!("REW methods must be available")
+    };
+    let events = Arc::new(Events::default());
+    let job = measure(&service, 1, events.clone());
+    succeeded(&events, job);
+    transport.assert_finished();
+
+    let values = events.values.lock().unwrap();
+    let notices = values
+        .iter()
+        .filter_map(|event| match event {
+            JobEvent::Log { code, params, .. } if code == "measurement_calibration_too_large" => {
+                Some(params)
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(notices.len(), 1);
+    assert_eq!(
+        notices[0].get("path").map(String::as_str),
+        Some(cal.to_string_lossy().as_ref())
+    );
+    drop(values);
     fs::remove_dir_all(root).unwrap();
 }
 

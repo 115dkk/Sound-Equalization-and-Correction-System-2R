@@ -3,8 +3,11 @@ use crate::{Deps, lock};
 use secs_project::{MeasurementPlan, MeasurementResult};
 use std::{
     fs,
+    io::Read,
     sync::{Arc as SyncArc, Mutex},
 };
+
+const MAX_CALIBRATION_BYTES: u64 = 4 * 1024 * 1024;
 
 pub(crate) struct Transport(Box<dyn secs_rew::Transport>);
 impl secs_rew::Transport for Transport {
@@ -71,6 +74,9 @@ pub struct RewMeasurer<R> {
     pub client: R,
     unix_ms: SyncArc<dyn Fn() -> i64 + Send + Sync>,
     link: Option<RewLink>,
+    notices: Vec<secs_types::ipc::Notice>,
+    cache_calibration: bool,
+    position_calibration: Option<Option<secs_mdat::CalFile>>,
 }
 impl<R: std::fmt::Debug> std::fmt::Debug for RewMeasurer<R> {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -86,6 +92,9 @@ impl<R> RewMeasurer<R> {
             client,
             unix_ms,
             link: None,
+            notices: Vec::new(),
+            cache_calibration: false,
+            position_calibration: None,
         }
     }
 
@@ -98,6 +107,9 @@ impl<R> RewMeasurer<R> {
             client,
             unix_ms,
             link: Some(link),
+            notices: Vec::new(),
+            cache_calibration: false,
+            position_calibration: None,
         }
     }
 
@@ -110,6 +122,56 @@ impl<R> RewMeasurer<R> {
         result
     }
 }
+
+impl<R: secs_rew::MeasurementEnvironment> RewMeasurer<R> {
+    fn input_calibration(&mut self) -> Option<secs_mdat::CalFile> {
+        let path = self
+            .client
+            .input_calibration_file()
+            .ok()
+            .flatten()
+            .filter(|path| !path.is_empty())?;
+        let text = match read_calibration(&path) {
+            Ok(text) => Some(text),
+            Err((code, detail)) => {
+                self.notices.push(secs_types::ipc::Notice {
+                    code: code.into(),
+                    params: [("path".into(), path.clone()), ("detail".into(), detail)].into(),
+                });
+                None
+            }
+        };
+        Some(secs_mdat::CalFile { path, text })
+    }
+}
+
+fn read_calibration(path: &str) -> Result<Vec<u8>, (&'static str, String)> {
+    let mut file = fs::File::open(path)
+        .map_err(|error| ("measurement_calibration_unreadable", error.to_string()))?;
+    let length = file
+        .metadata()
+        .map_err(|error| ("measurement_calibration_unreadable", error.to_string()))?
+        .len();
+    if length > MAX_CALIBRATION_BYTES {
+        return Err((
+            "measurement_calibration_too_large",
+            format!("calibration file is {length} bytes"),
+        ));
+    }
+    let mut bytes = Vec::with_capacity(length as usize);
+    file.by_ref()
+        .take(MAX_CALIBRATION_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| ("measurement_calibration_unreadable", error.to_string()))?;
+    if bytes.len() as u64 > MAX_CALIBRATION_BYTES {
+        return Err((
+            "measurement_calibration_too_large",
+            "calibration file exceeds 4 MiB".into(),
+        ));
+    }
+    Ok(bytes)
+}
+
 impl<R> Measurer for RewMeasurer<R>
 where
     R: secs_rew::RewStatus
@@ -150,6 +212,9 @@ where
             pro: None,
         })
     }
+    fn take_notices(&mut self) -> Vec<secs_types::ipc::Notice> {
+        std::mem::take(&mut self.notices)
+    }
     fn measure_recording(
         &mut self,
         plan: &MeasurementPlan,
@@ -157,17 +222,24 @@ where
         cancel: &CancelToken,
         record: &mut dyn FnMut(MeasurementResult) -> Result<(), MeasureError>,
     ) -> Result<(), MeasureError> {
-        for role in &plan.roles {
-            if cancel.is_cancelled() {
-                break;
+        self.cache_calibration = true;
+        self.position_calibration = None;
+        let measured = (|| {
+            for role in &plan.roles {
+                if cancel.is_cancelled() {
+                    break;
+                }
+                let mut single = plan.clone();
+                single.roles = vec![role.clone()];
+                for result in self.measure_position(&single, pos, None, cancel)? {
+                    record(result)?;
+                }
             }
-            let mut single = plan.clone();
-            single.roles = vec![role.clone()];
-            for result in self.measure_position(&single, pos, None, cancel)? {
-                record(result)?;
-            }
-        }
-        Ok(())
+            Ok(())
+        })();
+        self.cache_calibration = false;
+        self.position_calibration = None;
+        measured
     }
     fn measure_position(
         &mut self,
@@ -212,16 +284,18 @@ where
                 progress,
                 &cancel.rew,
             )?;
-            let cal = self
-                .client
-                .input_calibration_file()
-                .ok()
-                .flatten()
-                .filter(|path| !path.is_empty())
-                .map(|path| secs_mdat::CalFile {
-                    text: fs::read(&path).ok(),
-                    path,
-                });
+            let cal = if self.cache_calibration {
+                match self.position_calibration.clone() {
+                    Some(cal) => cal,
+                    None => {
+                        let cal = self.input_calibration();
+                        self.position_calibration = Some(cal.clone());
+                        cal
+                    }
+                }
+            } else {
+                self.input_calibration()
+            };
             Ok(results
                 .into_iter()
                 .map(|r| {

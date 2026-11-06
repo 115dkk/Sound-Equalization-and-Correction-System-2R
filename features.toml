@@ -1552,7 +1552,10 @@ id = "ipc.measure_position"
 kind = "ipc"
 milestone = "M4"
 status = "implemented"
-tests = ["secs-service::device_group_exclusion_and_cancel_preserve_project"]
+tests = [
+  "secs-service::device_group_exclusion_and_cancel_preserve_project",
+  "secs-service::oversized_input_cal_file_is_refused_with_a_notice_and_read_once_td170",
+]
 
 [[feature]]
 id = "ipc.position_clear"
