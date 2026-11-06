@@ -181,6 +181,21 @@ jobs:
           fi
           echo "::add-mask::$identity_token"
 
+          # The claims the rule is matched against, so a refused exchange
+          # (the Console reports only match_condition_false and the like)
+          # can be compared with the rule without leaving the run log. Run
+          # metadata, nothing secret: the token's signature is not printed.
+          echo "OIDC claims the rule is matched against:"
+          printf '%s' "$identity_token" | python3 -c '
+          import base64, json, sys
+          payload = sys.stdin.read().split(".")[1]
+          claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+          keys = ("iss", "aud", "sub", "ref", "ref_type", "repository", "repository_owner",
+                  "repository_owner_id", "repository_id", "workflow_ref", "job_workflow_ref",
+                  "event_name", "environment", "runner_environment")
+          print(json.dumps({key: claims.get(key) for key in keys}, indent=2))
+          '
+
           workspace_field=""
           if [ -n "${ANTHROPIC_WORKSPACE_ID:-}" ]; then
             workspace_field=$(printf ', "workspace_id": "%s"' "$ANTHROPIC_WORKSPACE_ID")
