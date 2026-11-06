@@ -10,7 +10,9 @@ bundle job, release.yml's build job, before the release is published):
    linker adds. Apple Silicon calls a downloaded app with an unsigned bundle
    damaged and will not open it, whatever System Settings allows (0.27.1).
    With --signing-certificate, every slice must be signed with that
-   certificate under the hardened runtime, not ad-hoc, and the designated
+   certificate under the hardened runtime, not ad-hoc: the verifier must
+   accept a requirement that admits only that certificate, the signing
+   certificate extracted from the slice must be it, and the designated
    requirement must name the bundle identifier and the certificate's hash.
    macOS keeps that requirement with a microphone grant, so such a build
    keeps the grant across versions where an ad-hoc build, whose requirement
@@ -104,7 +106,8 @@ def authorities(details: str) -> list[str]:
 def requirement_problems(requirements: str, identifier: str, sha1: str) -> list[str]:
     """`requirements` is `codesign -d -r -` output. The designated requirement
     must name the bundle identifier and the signing certificate's hash, not a
-    cdhash, which changes with every build."""
+    cdhash, which changes with every build. This reads the requirement text
+    only; `signer_problems` checks who really signed."""
     match = re.search(r"^designated => (.*)$", requirements, re.MULTILINE)
     if match is None:
         return ["the bundle has no designated requirement"]
@@ -346,6 +349,36 @@ def bundle_identifier(app: Path) -> str:
         return plistlib.load(handle)["CFBundleIdentifier"]
 
 
+def signer_requirement(identifier: str, sha1: str) -> str:
+    """A requirement only a bundle with this identifier signed by this very
+    certificate satisfies (a self-signed certificate is its own root)."""
+    return f'identifier "{identifier}" and certificate root = H"{sha1}"'
+
+
+def signer_problems(app: Path, arch: str, identifier: str, sha1: str) -> list[str]:
+    """Who really signed the slice. The requirement text alone proves nothing:
+    a bundle signed by another certificate can carry a designated requirement
+    that names ours in an `or`. So the verifier is asked whether the real
+    signature satisfies a requirement admitting only our certificate, and the
+    signing certificate itself is extracted and compared."""
+    problems = []
+    requirement = signer_requirement(identifier, sha1)
+    verdict = run(["codesign", "--verify", "--strict", "--arch", arch, "-R", f"={requirement}", str(app)])
+    if verdict.returncode != 0:
+        problems.append(f"the signature does not satisfy the requirement {requirement}")
+    with tempfile.TemporaryDirectory() as folder:
+        prefix = Path(folder) / "certificate"
+        run(["codesign", "-d", f"--extract-certificates={prefix}", "--arch", arch, str(app)])
+        leaf = Path(f"{prefix}0")
+        if not leaf.is_file():
+            problems.append("no signing certificate can be extracted from the slice")
+        else:
+            actual = hashlib.sha1(leaf.read_bytes()).hexdigest()
+            if actual != sha1:
+                problems.append(f"the slice is signed with certificate {actual}, not {sha1}")
+    return problems
+
+
 def check_signature(app: Path, certificate: str | None = None) -> tuple[list[str], bool]:
     """Problems with the bundle's signature, and whether the main executable
     runs under the hardened runtime. `certificate` is the SHA-1 of the
@@ -362,13 +395,15 @@ def check_signature(app: Path, certificate: str | None = None) -> tuple[list[str
         problems += signature_problems(arch, details, certificate is not None)
         hardened |= "runtime" in (code_directory_flags(details) or set())
         print(f"{arch} signed by: {authorities(details) or 'no certificate (ad-hoc)'}")
-        # Each slice carries its own requirement: a universal app whose Intel
-        # slice was signed with another certificate would pass a check of the
-        # default slice alone.
+        # Each slice carries its own signature and requirement: a universal
+        # app whose Intel slice was signed with another certificate would
+        # pass a check of the default slice alone.
         if certificate is not None:
             shown = run(["codesign", "-d", "-r", "-", "--arch", arch, str(app)])
             problems += [f"{arch}: {problem}" for problem
                          in requirement_problems(shown.stdout + shown.stderr, identifier, certificate)]
+            problems += [f"{arch}: {problem}" for problem
+                         in signer_problems(app, arch, identifier, certificate)]
     # Gatekeeper's own verdict, for the log: every build that is not
     # notarized is rejected, so it is no gate.
     run(["spctl", "--status"])

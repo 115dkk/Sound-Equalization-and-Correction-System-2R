@@ -56,6 +56,7 @@ ew==
 -----END CERTIFICATE-----
 """
 FIXTURE_SHA1 = "249bedcecc0f837de3a26280d27b2714563b483b"
+FIXTURE_DER = m.base64.b64decode("".join(FIXTURE_PEM.splitlines()[1:-1]))
 IDENTIFIER = "io.github.115dkk.secs2r"
 DESIGNATED = ('designated => identifier "io.github.115dkk.secs2r" and certificate root = '
               'H"249BEDCECC0F837DE3A26280D27B2714563B483B"\n')
@@ -120,6 +121,9 @@ class SignatureTest(unittest.TestCase):
             if cmd[:3] == ["codesign", "-d", "-r"]:
                 arch = cmd[cmd.index("--arch") + 1]
                 return CompletedProcess(cmd, 0, other if arch == "x86_64" else DESIGNATED, "Executable=/tmp/x\n")
+            if cmd[:2] == ["codesign", "-d"] and cmd[2].startswith("--extract-certificates="):
+                Path(cmd[2].split("=", 1)[1] + "0").write_bytes(FIXTURE_DER)
+                return CompletedProcess(cmd, 0, "", "")
             return CompletedProcess(cmd, 0, "", "")
 
         def requirement_arches(run):
@@ -129,7 +133,7 @@ class SignatureTest(unittest.TestCase):
         with patch.object(m, "run", side_effect=fake_run) as run, \
                 patch.object(m, "executable", return_value=Path("/tmp/x")), \
                 patch.object(m, "bundle_identifier", return_value=IDENTIFIER):
-            # The Intel slice signed with another certificate is caught.
+            # The Intel slice whose requirement names another certificate is caught.
             problems, hardened = m.check_signature(Path("/tmp/SECS 2R.app"), FIXTURE_SHA1)
             self.assertTrue(hardened)
             self.assertEqual(len(problems), 1)
@@ -139,9 +143,54 @@ class SignatureTest(unittest.TestCase):
             self.assertEqual(m.check_signature(Path("/tmp/SECS 2R.app")), ([], True))
             self.assertEqual(requirement_arches(run), [])
             run.reset_mock()
+            # Another expected certificate: the arm64 requirement text and both
+            # slices' extracted certificates disagree with it (the x86_64
+            # requirement in this fixture happens to name it).
             problems, _ = m.check_signature(Path("/tmp/SECS 2R.app"), "0" * 40)
-            self.assertEqual(len(problems), 1)
-            self.assertTrue(problems[0].startswith("arm64: "), problems)
+            self.assertEqual(len(problems), 3, problems)
+            self.assertEqual(sum("signed with certificate" in problem for problem in problems), 2)
+            self.assertTrue(all(problem.startswith(("x86_64: ", "arm64: ")) for problem in problems))
+
+    def test_the_real_signer_is_checked_not_only_the_requirement_text(self):
+        """A designated requirement that names our certificate in an `or` next
+        to the real signer's passes the text check; the verifier's verdict on a
+        requirement admitting only ours, and the extracted certificate, do not."""
+        forged = ('designated => identifier "io.github.115dkk.secs2r" and (certificate root = '
+                  f'H"{FIXTURE_SHA1}" or certificate root = H"{"a" * 40}")\n')
+        self.assertEqual(m.requirement_problems(forged, IDENTIFIER, FIXTURE_SHA1), [])
+        self.assertEqual(m.signer_requirement(IDENTIFIER, FIXTURE_SHA1),
+                         f'identifier "io.github.115dkk.secs2r" and certificate root = H"{FIXTURE_SHA1}"')
+
+        def fake_run(cmd, **kwargs):
+            if cmd[:2] == ["codesign", "--verify"]:
+                self.assertIn("-R", cmd)
+                self.assertTrue(cmd[cmd.index("-R") + 1].startswith("=identifier "))
+                return CompletedProcess(cmd, 1, "", "test-requirement: code failed to satisfy specified code requirement(s)\n")
+            if cmd[:2] == ["codesign", "-d"] and cmd[2].startswith("--extract-certificates="):
+                Path(cmd[2].split("=", 1)[1] + "0").write_bytes(b"not our certificate")
+                return CompletedProcess(cmd, 0, "", "")
+            return CompletedProcess(cmd, 0, "", "")
+
+        with patch.object(m, "run", side_effect=fake_run):
+            problems = m.signer_problems(Path("/tmp/SECS 2R.app"), "arm64", IDENTIFIER, FIXTURE_SHA1)
+        self.assertEqual(len(problems), 2, problems)
+        self.assertIn("does not satisfy", problems[0])
+        self.assertIn("not " + FIXTURE_SHA1, problems[1])
+
+        def honest_run(cmd, **kwargs):
+            if cmd[:2] == ["codesign", "-d"] and cmd[2].startswith("--extract-certificates="):
+                Path(cmd[2].split("=", 1)[1] + "0").write_bytes(FIXTURE_DER)
+            return CompletedProcess(cmd, 0, "", "")
+
+        with patch.object(m, "run", side_effect=honest_run):
+            self.assertEqual(m.signer_problems(Path("/tmp/SECS 2R.app"), "arm64", IDENTIFIER, FIXTURE_SHA1), [])
+
+        def ad_hoc_run(cmd, **kwargs):
+            return CompletedProcess(cmd, 0, "", "")
+
+        with patch.object(m, "run", side_effect=ad_hoc_run):
+            problems = m.signer_problems(Path("/tmp/SECS 2R.app"), "arm64", IDENTIFIER, FIXTURE_SHA1)
+        self.assertEqual(problems, ["no signing certificate can be extracted from the slice"])
 
 
 class BundleTest(unittest.TestCase):

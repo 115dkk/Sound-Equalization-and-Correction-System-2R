@@ -30,7 +30,7 @@
 ### 검사
 
 - PR의 CI(`ci.yml`)는 `updater-signing` 환경을 읽지 못하므로, 실행마다 `macos_codesign.py make-certificate`로 이틀짜리 인증서를 만들어 같은 절차로 키체인에 넣고 서명합니다. 업데이터 키를 실행마다 만드는 것과 같은 방식입니다(ADR 0020).
-- `macos_app_check.py --signing-certificate <PEM>`은 모든 아키텍처 슬라이스가 임시 서명이 아니라 그 인증서로, 하드닝 런타임 아래 서명되었는지, 그리고 지정 요구 사항이 번들 식별자와 인증서의 해시를 담고 cdhash가 아닌지 확인한 뒤, 앱을 띄워 측정과 보정까지 돌립니다. 릴리스에서는 저장소의 공개 인증서와, PR에서는 그 실행의 인증서와 맞춰 봅니다.
+- `macos_app_check.py --signing-certificate <PEM>`은 모든 아키텍처 슬라이스가 임시 서명이 아니라 그 인증서로, 하드닝 런타임 아래 서명되었는지 확인한 뒤, 앱을 띄워 측정과 보정까지 돌립니다. 서명자는 지정 요구 사항의 문자열로 판정하지 않습니다. 다른 인증서로 서명한 번들도 우리 지문을 `or`로 끼운 요구 사항을 실을 수 있기 때문입니다. 대신 슬라이스마다 `codesign --verify -R`에 그 인증서만 허용하는 요구 사항(`identifier "io.github.115dkk.secs2r" and certificate root = H"…"`)을 전달해 검증기가 실제 서명을 판정하게 하고, `codesign -d --extract-certificates`로 뽑은 서명 인증서의 SHA-1도 대조합니다. 지정 요구 사항이 번들 식별자와 그 해시를 담고 cdhash가 아닌지는 그와 별도로 확인합니다. 릴리스에서는 저장소의 공개 인증서와, PR에서는 그 실행의 인증서와 맞춰 봅니다.
 
 ### 인증서 교체
 
@@ -39,7 +39,7 @@
 ## 결과
 
 - 판을 올려도(업데이터로든 손으로든) 마이크 허락이 유지됩니다. 0.53.0 이하에서 0.54.0으로 올릴 때는 서명 주체가 바뀌므로 허락 창이 한 번 더 열립니다.
-- 사용자가 서명한 주체를 확인할 수 있습니다. `codesign -dvv`의 `Authority=SECS 2R (self-signed)`와 `codesign -d -r -`의 `certificate root = H"c202de54a24d45771d563d048eb14372157c817c"`이 저장소의 공개 인증서와 맞습니다.
+- 사용자가 서명한 주체를 확인할 수 있습니다. 이름(`Authority=`)은 같은 이름의 인증서를 누구나 만들 수 있어 기준이 못 되고, 지문이 기준입니다. `codesign --verify -R '=certificate root = H"c202de54a24d45771d563d048eb14372157c817c"' "/Applications/SECS 2R.app"`이 출력 없이 끝나면 저장소의 공개 인증서로 서명된 앱입니다.
 - 달라지지 않는 것이 있습니다. Apple이 공증(notarization)하지 않은 앱이므로 처음 열 때 Apple이 악성 코드 여부를 확인할 수 없다는 경고와 '그래도 열기'는 그대로입니다. 공증은 Apple 개발자 계정과 Developer ID 인증서가 있어야 합니다. 그렇게 되면 이 ADR을 대신하는 ADR을 씁니다.
 - macOS CLI(`secs2r-cli` tar.gz)는 이 인증서로 서명하지 않습니다. 링커가 넣는 임시 서명만 있고, 터미널에서 쓰는 도구라 마이크 허락과 무관합니다.
 - `updater-signing` 환경은 이제 업데이터 키와 코드 서명 인증서를 함께 가집니다. 이름은 그대로 둡니다.
