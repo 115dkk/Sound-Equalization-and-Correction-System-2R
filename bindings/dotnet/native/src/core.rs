@@ -348,7 +348,11 @@ pub(crate) fn result_len(handle: u64) -> usize {
 }
 
 pub(crate) fn result_take(handle: u64, buffer: &mut [u8]) -> i32 {
-    let mut results = lock(results());
+    take_result(results(), handle, buffer)
+}
+
+fn take_result(table: &Mutex<HashMap<u64, Arc<Vec<u8>>>>, handle: u64, buffer: &mut [u8]) -> i32 {
+    let mut results = lock(table);
     let Some(bytes) = results.get(&handle) else {
         return 1;
     };
@@ -399,7 +403,19 @@ fn store_value(value: Value) -> u64 {
     let bytes = serde_json::to_vec(&value).unwrap_or_else(|_| {
         br#"{"ok":false,"error":{"code":"internal","message":"could not encode result","detail":"JSON serialization failed","params":{},"retryable":false}}"#.to_vec()
     });
-    insert(results(), Arc::new(bytes))
+    store_result(results(), bytes)
+}
+
+fn store_result(table: &Mutex<HashMap<u64, Arc<Vec<u8>>>>, bytes: Vec<u8>) -> u64 {
+    let mut results = lock(table);
+    if results.len() >= 1024
+        && let Some(oldest) = results.keys().copied().min()
+    {
+        results.remove(&oldest);
+    }
+    let handle = next_handle();
+    results.insert(handle, Arc::new(bytes));
+    handle
 }
 
 fn next_handle() -> u64 {
@@ -495,6 +511,23 @@ mod tests {
         let path = settings.to_string_lossy();
         let result = take_json(engine_new(path.as_bytes()));
         result["data"]["handle"].as_u64().expect("engine handle")
+    }
+
+    #[test]
+    fn results_table_is_capped_and_evicts_the_oldest_td205() {
+        // Isolate the result table from the other ABI tests running in parallel.
+        let table = Mutex::new(HashMap::new());
+        let first = store_result(&table, br#"{"ok":true,"data":0}"#.to_vec());
+        let mut newest = first;
+        for _ in 0..1024 {
+            newest = store_result(&table, br#"{"ok":true,"data":1024}"#.to_vec());
+        }
+        let mut buffer = [0; 64];
+        // The result-copy ABI reports invalid handles with status 1, not JSON.
+        assert_eq!(take_result(&table, first, &mut buffer), 1);
+        assert_eq!(lock(&table).len(), 1024);
+        assert_eq!(take_result(&table, newest, &mut buffer), 0);
+        assert!(buffer.starts_with(br#"{"ok":true,"data":1024}"#));
     }
 
     #[test]
