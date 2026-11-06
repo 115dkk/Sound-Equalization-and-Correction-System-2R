@@ -17,7 +17,9 @@ pub mod pyfmt;
 use pyfmt::{format_fixed, format_g, format_i3, format_s30, repr_f64, round_ndigits};
 use secs_graph::emit::guard;
 use secs_graph::{ExportGraph, FilterPlan, GraphError, LfeChoice, Op};
-use secs_types::chain::{BandType, MimoFilter, MimoPath, MimoPaths, SignalChain, SubChannel};
+use secs_types::chain::{
+    BandFamily, BandType, MimoFilter, MimoPath, MimoPaths, SignalChain, SubChannel,
+};
 use std::fmt::Write as _;
 use std::path::{Component, Path, PathBuf};
 
@@ -487,29 +489,13 @@ fn validate_options(options: &Options) -> Result<(), CamillaError> {
 }
 
 fn band_name(kind: BandType, highpass: bool) -> (&'static str, i64) {
-    let prefix = match kind {
-        BandType::Lr12 | BandType::Lr24 | BandType::Lr48 => "LinkwitzRiley",
-        BandType::Bw12 | BandType::Bw24 | BandType::Bw48 => "Butterworth",
+    let name = match (kind.family(), highpass) {
+        (BandFamily::LinkwitzRiley, true) => "LinkwitzRileyHighpass",
+        (BandFamily::LinkwitzRiley, false) => "LinkwitzRileyLowpass",
+        (BandFamily::Butterworth, true) => "ButterworthHighpass",
+        (BandFamily::Butterworth, false) => "ButterworthLowpass",
     };
-    let order = match kind {
-        BandType::Lr12 | BandType::Bw12 => 2,
-        BandType::Lr24 | BandType::Bw24 => 4,
-        BandType::Lr48 | BandType::Bw48 => 8,
-    };
-    (
-        if highpass {
-            if prefix == "LinkwitzRiley" {
-                "LinkwitzRileyHighpass"
-            } else {
-                "ButterworthHighpass"
-            }
-        } else if prefix == "LinkwitzRiley" {
-            "LinkwitzRileyLowpass"
-        } else {
-            "ButterworthLowpass"
-        },
-        order,
-    )
+    (name, i64::from(kind.order()))
 }
 
 fn fixed_filters(role: &str, sub: &SubChannel, filters: &mut Vec<(String, Json)>) -> Vec<String> {

@@ -1,9 +1,11 @@
 //! Time-domain rendering of complete export-plan input-to-output paths.
 
 use crate::{FiltersError, SECTION_Q};
+use secs_dsp::iir::{Biquad, Tdf2, rbj_allpass, rbj_band, rbj_peaking};
 use secs_dsp::rate::{DESIGN_RATE, delay_samples, is_output_rate, taps_at};
 use secs_graph::emit::guard::find_ops;
 use secs_graph::{FilterPlan, FirView, Op};
+#[cfg(test)]
 use std::f64::consts::PI;
 use std::sync::Arc;
 
@@ -41,92 +43,13 @@ pub struct RenderedPaths {
     pub length: usize,
 }
 
-#[derive(Debug, Clone, Copy)]
-struct Biquad {
-    b0: f64,
-    b1: f64,
-    b2: f64,
-    a1: f64,
-    a2: f64,
-}
-
-impl Biquad {
-    fn normalized(b: [f64; 3], a: [f64; 3]) -> Result<Self, FiltersError> {
-        let values = [b[0], b[1], b[2], a[0], a[1], a[2]];
-        if a[0] == 0.0 || values.iter().any(|value| !value.is_finite()) {
-            return Err(FiltersError::Invalid(
-                "invalid RBJ biquad coefficients".into(),
-            ));
-        }
-        Ok(Self {
-            b0: b[0] / a[0],
-            b1: b[1] / a[0],
-            b2: b[2] / a[0],
-            a1: a[1] / a[0],
-            a2: a[2] / a[0],
-        })
-    }
-
-    fn peaking(frequency: f64, q: f64, gain_db: f64, rate: u32) -> Result<Self, FiltersError> {
-        let w = 2.0 * PI * frequency / f64::from(rate);
-        let alpha = w.sin() / (2.0 * q);
-        let gain = 10_f64.powf(gain_db / 40.0);
-        Self::normalized(
-            [1.0 + alpha * gain, -2.0 * w.cos(), 1.0 - alpha * gain],
-            [1.0 + alpha / gain, -2.0 * w.cos(), 1.0 - alpha / gain],
-        )
-    }
-
-    fn band(frequency: f64, q: f64, high_pass: bool, rate: u32) -> Result<Self, FiltersError> {
-        let w = 2.0 * PI * frequency / f64::from(rate);
-        let alpha = w.sin() / (2.0 * q);
-        let cosine = w.cos();
-        let edge = if high_pass {
-            (1.0 + cosine) / 2.0
-        } else {
-            (1.0 - cosine) / 2.0
-        };
-        let middle = if high_pass { -2.0 * edge } else { 2.0 * edge };
-        Self::normalized(
-            [edge, middle, edge],
-            [1.0 + alpha, -2.0 * cosine, 1.0 - alpha],
-        )
-    }
-
-    fn all_pass(frequency: f64, q: f64, rate: u32) -> Result<Self, FiltersError> {
-        let w = 2.0 * PI * frequency / f64::from(rate);
-        let alpha = w.sin() / (2.0 * q);
-        let middle = -2.0 * w.cos();
-        Self::normalized(
-            [1.0 - alpha, middle, 1.0 + alpha],
-            [1.0 + alpha, middle, 1.0 - alpha],
-        )
-    }
-
-    #[cfg(test)]
-    fn apply(self, samples: &mut [f64]) {
-        self.apply_cancellable(samples, &|| false)
-            .expect("a non-cancelling callback cannot fail");
-    }
-
-    fn apply_cancellable(
-        self,
-        samples: &mut [f64],
-        cancelled: &dyn Fn() -> bool,
-    ) -> Result<(), FiltersError> {
-        // Transposed direct form II, in sample order.
-        let (mut z1, mut z2) = (0.0, 0.0);
-        for (index, sample) in samples.iter_mut().enumerate() {
-            if index.is_multiple_of(4096) && cancelled() {
-                return Err(FiltersError::Cancelled);
-            }
-            let input = *sample;
-            let output = self.b0 * input + z1;
-            z1 = self.b1 * input - self.a1 * output + z2;
-            z2 = self.b2 * input - self.a2 * output;
-            *sample = output;
-        }
-        Ok(())
+fn checked_biquad(section: Biquad) -> Result<Biquad, FiltersError> {
+    if section.is_finite() {
+        Ok(section)
+    } else {
+        Err(FiltersError::Invalid(
+            "invalid RBJ biquad coefficients".into(),
+        ))
     }
 }
 
@@ -189,9 +112,12 @@ impl Route {
                     q,
                     gain_db,
                     ..
-                } => route
-                    .biquads
-                    .push(Biquad::peaking(*frequency, *q, *gain_db, rate)?),
+                } => route.biquads.push(checked_biquad(rbj_peaking(
+                    f64::from(rate),
+                    *frequency,
+                    *q,
+                    *gain_db,
+                ))?),
                 Op::Fir { name, taps, .. } => {
                     let taps = materialized_fir(firs, name, FirView::Full(taps), rate)?;
                     route.fir = if has_fir {
@@ -231,14 +157,19 @@ impl Route {
                         .expect("known band type")
                         .1;
                     for &q in values {
-                        route
-                            .biquads
-                            .push(Biquad::band(*frequency, q, high_pass, rate)?);
+                        route.biquads.push(checked_biquad(rbj_band(
+                            f64::from(rate),
+                            *frequency,
+                            q,
+                            high_pass,
+                        ))?);
                     }
                 }
-                Op::Ap { frequency, q, .. } => {
-                    route.biquads.push(Biquad::all_pass(*frequency, *q, rate)?)
-                }
+                Op::Ap { frequency, q, .. } => route.biquads.push(checked_biquad(rbj_allpass(
+                    f64::from(rate),
+                    *frequency,
+                    *q,
+                ))?),
                 Op::Delay { ms, .. } => {
                     let samples = delay_samples(*ms, rate);
                     if samples < 0 {
@@ -300,8 +231,14 @@ impl Route {
         {
             *output = input * self.gain;
         }
-        for biquad in &self.biquads {
-            biquad.apply_cancellable(&mut response, cancelled)?;
+        for &biquad in &self.biquads {
+            let mut filter = Tdf2::new(biquad);
+            for (index, sample) in response.iter_mut().enumerate() {
+                if index.is_multiple_of(4096) && cancelled() {
+                    return Err(FiltersError::Cancelled);
+                }
+                *sample = filter.process(*sample);
+            }
         }
         if response.iter().any(|sample| !sample.is_finite()) {
             return Err(FiltersError::Invalid(

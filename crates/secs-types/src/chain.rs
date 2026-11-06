@@ -17,6 +17,15 @@ pub type Peq = (f64, f64, f64);
 /// One second-order all-pass `(frequency Hz, Q)`.
 pub type Allpass = (f64, f64);
 
+/// Analog prototype family for a crossover filter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BandFamily {
+    /// Linkwitz–Riley, made by cascading two half-order Butterworth filters.
+    LinkwitzRiley,
+    /// Butterworth.
+    Butterworth,
+}
+
 /// Crossover filter family (upstream `BAND_TYPES`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]
@@ -43,6 +52,31 @@ pub enum BandType {
 }
 
 impl BandType {
+    /// Analog prototype family.
+    pub const fn family(self) -> BandFamily {
+        match self {
+            Self::Lr12 | Self::Lr24 | Self::Lr48 => BandFamily::LinkwitzRiley,
+            Self::Bw12 | Self::Bw24 | Self::Bw48 => BandFamily::Butterworth,
+        }
+    }
+
+    /// Acoustic slope order.
+    pub const fn order(self) -> u8 {
+        match self {
+            Self::Lr12 | Self::Bw12 => 2,
+            Self::Lr24 | Self::Bw24 => 4,
+            Self::Lr48 | Self::Bw48 => 8,
+        }
+    }
+
+    /// Number of equal analog-prototype cascades.
+    pub const fn cascades(self) -> u8 {
+        match self.family() {
+            BandFamily::LinkwitzRiley => 2,
+            BandFamily::Butterworth => 1,
+        }
+    }
+
     /// Upstream name (`"LR24"` …).
     pub fn name(self) -> &'static str {
         match self {

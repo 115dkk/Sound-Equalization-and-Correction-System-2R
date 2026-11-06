@@ -16,13 +16,12 @@ use secs_dsp::{
     DspError,
     convolution::{FirRoute, MatrixConvolver},
     fir::lowrate_to_48k,
-    iir::{BType, Sos, butter},
+    iir::{BType, Biquad, Sos, Tdf2, butter, rbj_peaking},
     multirate::MultirateMatrixConvolver,
 };
 use secs_graph::emit::pyfmt::round_ndigits;
 use secs_graph::{ExportGraph, LfeChoice};
-use secs_types::chain::{BandType, MimoFilter, MimoPaths, SignalChain};
-use std::f64::consts::PI;
+use secs_types::chain::{BandFamily, BandType, MimoFilter, MimoPaths, SignalChain};
 
 const SAMPLE_RATE: f64 = secs_dsp::rate::DESIGN_RATE as f64;
 /// The reference renderer accepts output delays up to one minute.
@@ -74,26 +73,23 @@ impl Delay {
 
 #[derive(Debug, Default)]
 struct Biquads {
-    rows: Vec<[f64; 6]>,
-    state: Vec<[f64; 2]>,
+    sections: Vec<Tdf2>,
 }
 impl Biquads {
     fn append(&mut self, sos: &Sos) {
-        self.rows.extend_from_slice(&sos.0);
-        self.state.resize(self.rows.len(), [0.0; 2]);
+        self.sections.extend(sos.0.iter().map(|row| {
+            Tdf2::new(Biquad::from_sos(*row).expect("butter returns normalized finite sections"))
+        }));
     }
     fn band(&mut self, frequency: f64, kind: BandType, high: bool) -> Result<(), DspError> {
         if frequency == 0.0 {
             return Ok(());
         }
-        let (order, copies) = match kind {
-            BandType::Lr12 => (1, 2),
-            BandType::Lr24 => (2, 2),
-            BandType::Lr48 => (4, 2),
-            BandType::Bw12 => (2, 1),
-            BandType::Bw24 => (4, 1),
-            BandType::Bw48 => (8, 1),
+        let order = match kind.family() {
+            BandFamily::LinkwitzRiley => usize::from(kind.order() / 2),
+            BandFamily::Butterworth => usize::from(kind.order()),
         };
+        let copies = kind.cascades();
         let sos = butter(
             order,
             &[frequency],
@@ -123,36 +119,24 @@ impl Biquads {
         {
             return Err(invalid("invalid playback peaking EQ"));
         }
-        let a = 10_f64.powf(gain_db / 40.0);
-        let w = 2.0 * PI * frequency / SAMPLE_RATE;
-        let alpha = w.sin() / (2.0 * q);
-        let a0 = 1.0 + alpha / a;
-        let row = [
-            (1.0 + alpha * a) / a0,
-            -2.0 * w.cos() / a0,
-            (1.0 - alpha * a) / a0,
-            1.0,
-            -2.0 * w.cos() / a0,
-            (1.0 - alpha / a) / a0,
-        ];
-        if row.iter().any(|x| !x.is_finite()) {
+        let section = rbj_peaking(SAMPLE_RATE, frequency, q, gain_db);
+        if !section.is_finite() {
             return Err(invalid("invalid playback peaking coefficients"));
         }
-        self.append(&Sos(vec![row]));
+        self.sections.push(Tdf2::new(section));
         Ok(())
     }
     fn process(&mut self, values: &mut [f64]) {
-        for (row, state) in self.rows.iter().zip(&mut self.state) {
+        for section in &mut self.sections {
             for value in values.iter_mut() {
-                let input = *value;
-                *value = row[0] * input + state[0];
-                state[0] = row[1] * input - row[4] * *value + state[1];
-                state[1] = row[2] * input - row[5] * *value;
+                *value = section.process(*value);
             }
         }
     }
     fn reset(&mut self) {
-        self.state.fill([0.0; 2]);
+        for section in &mut self.sections {
+            section.reset();
+        }
     }
 }
 
