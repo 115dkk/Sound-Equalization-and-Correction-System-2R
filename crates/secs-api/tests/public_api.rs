@@ -341,3 +341,85 @@ open","params":{"field":"x"},"retryable":true}),
         assert_eq!(error.to_string(), expected["message"].as_str().unwrap());
     }
 }
+
+#[cfg(feature = "engine")]
+#[test]
+fn dropping_the_engine_stops_its_jobs_within_three_seconds_td206() {
+    use secs_service::EventSink;
+    use sound_equalization_and_correction_system_rust_api::types::ipc::{
+        CalibrateParams, JobStatus, ProjectPathParams,
+    };
+    use sound_equalization_and_correction_system_rust_api::{
+        EngineBuilder, JobEvent, Request, Secs,
+    };
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicBool;
+    use std::time::{Duration, Instant};
+
+    #[derive(Debug, Default)]
+    struct SlowProgress {
+        active: AtomicBool,
+        progressed: AtomicBool,
+        cancelled: AtomicBool,
+    }
+    impl EventSink for SlowProgress {
+        fn send(&self, event: JobEvent) {
+            match event {
+                JobEvent::Started { .. } => self.active.store(true, Ordering::Release),
+                JobEvent::Progress { .. } => {
+                    self.progressed.store(true, Ordering::Release);
+                    // Keep the real calibration busy long enough to observe missing cancellation.
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+                JobEvent::Finished { status, .. } => {
+                    self.cancelled
+                        .store(status == JobStatus::Cancelled, Ordering::Release);
+                    self.active.store(false, Ordering::Release);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    let root = temp_root("drop-cancels");
+    std::fs::create_dir_all(&root).unwrap();
+    let (project, settings) = case_project::write(&root, "dolby");
+    let observer = Arc::new(SlowProgress::default());
+    let engine = EngineBuilder::default().observer(observer.clone()).build();
+    engine
+        .call(Request::ProjectOpen(ProjectPathParams {
+            path: project.to_string_lossy().into_owned(),
+        }))
+        .unwrap();
+    engine
+        .call(Request::Calibrate(CalibrateParams {
+            settings: Some(settings),
+            ..Default::default()
+        }))
+        .unwrap();
+    let ready = Instant::now();
+    while !observer.progressed.load(Ordering::Acquire) && ready.elapsed() < Duration::from_secs(10)
+    {
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(
+        observer.progressed.load(Ordering::Acquire),
+        "job must report progress before drop"
+    );
+    let started = Instant::now();
+    drop(engine);
+    while observer.active.load(Ordering::Acquire) && started.elapsed() < Duration::from_millis(3500)
+    {
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(
+        !observer.active.load(Ordering::Acquire),
+        "job remained active 3.5 seconds after drop"
+    );
+    assert!(started.elapsed() < Duration::from_millis(3500));
+    assert!(
+        observer.cancelled.load(Ordering::Acquire),
+        "drop must cancel rather than let the job finish normally"
+    );
+    std::fs::remove_dir_all(root).unwrap();
+}

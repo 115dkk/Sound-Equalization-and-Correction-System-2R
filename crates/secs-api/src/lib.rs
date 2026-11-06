@@ -405,6 +405,11 @@ mod engine {
     }
 
     /// Embedded, file-based SECS 2R service.
+    ///
+    /// Dropping the engine requests cancellation of its jobs and waits at most
+    /// three seconds for device access to stop. Terminal events after drop are
+    /// not guaranteed to reach subscribers; use `wait_job` before dropping the
+    /// engine when the terminal result is required.
     pub struct Engine {
         service: Service,
         observer: Arc<Observer>,
@@ -417,6 +422,12 @@ mod engine {
                 .field("service", &self.service)
                 .field("observer", &self.observer)
                 .finish()
+        }
+    }
+
+    impl Drop for Engine {
+        fn drop(&mut self) {
+            self.service.shutdown(Duration::from_secs(3));
         }
     }
 

@@ -1800,6 +1800,7 @@ status = "implemented"
 tests = [
   "sound-equalization-and-correction-system-rust-api::engine_bootstrap_and_invalid_json", "sound-equalization-and-correction-system-rust-api::wire_error_has_one_shape_for_every_error_kind_td160",
   "sound-equalization-and-correction-system-rust-api::engine_oracle_flow_and_ordered_events",
+  "sound-equalization-and-correction-system-rust-api::dropping_the_engine_stops_its_jobs_within_three_seconds_td206",
   "sound-equalization-and-correction-system-rust-api::a_full_subscription_counts_drops_without_blocking_td127",
   "sound-equalization-and-correction-system-rust-api::terminal_events_keep_only_the_service_retention_td127",
   "sound-equalization-and-correction-system-rust-api::engine_subscribe_keeps_its_receiver_return_type_td127",
