@@ -107,30 +107,41 @@ class SignatureTest(unittest.TestCase):
         self.assertEqual(m.requirement_problems("Executable=/tmp/x\n", IDENTIFIER, FIXTURE_SHA1),
                          ["the bundle has no designated requirement"])
 
-    def test_the_requirement_is_read_only_when_a_certificate_is_required(self):
+    def test_the_requirement_of_every_slice_is_read_only_when_a_certificate_is_required(self):
+        other = DESIGNATED.replace(FIXTURE_SHA1.upper(), "0" * 40)
+
         def fake_run(cmd, **kwargs):
             if cmd[:2] == ["codesign", "--verify"]:
                 return CompletedProcess(cmd, 0, "", "")
             if cmd[0] == "lipo":
-                return CompletedProcess(cmd, 0, "arm64\n", "")
+                return CompletedProcess(cmd, 0, "x86_64 arm64\n", "")
             if cmd[:2] == ["codesign", "-dv"]:
                 return CompletedProcess(cmd, 0, "", CERTIFICATE)
             if cmd[:3] == ["codesign", "-d", "-r"]:
-                return CompletedProcess(cmd, 0, DESIGNATED, "Executable=/tmp/x\n")
+                arch = cmd[cmd.index("--arch") + 1]
+                return CompletedProcess(cmd, 0, other if arch == "x86_64" else DESIGNATED, "Executable=/tmp/x\n")
             return CompletedProcess(cmd, 0, "", "")
+
+        def requirement_arches(run):
+            return [call.args[0][call.args[0].index("--arch") + 1] for call in run.call_args_list
+                    if call.args[0][:3] == ["codesign", "-d", "-r"]]
 
         with patch.object(m, "run", side_effect=fake_run) as run, \
                 patch.object(m, "executable", return_value=Path("/tmp/x")), \
                 patch.object(m, "bundle_identifier", return_value=IDENTIFIER):
-            self.assertEqual(m.check_signature(Path("/tmp/SECS 2R.app"), FIXTURE_SHA1), ([], True))
-            self.assertIn(["codesign", "-d", "-r"], [call.args[0][:3] for call in run.call_args_list])
+            # The Intel slice signed with another certificate is caught.
+            problems, hardened = m.check_signature(Path("/tmp/SECS 2R.app"), FIXTURE_SHA1)
+            self.assertTrue(hardened)
+            self.assertEqual(len(problems), 1)
+            self.assertTrue(problems[0].startswith("x86_64: ") and "not anchored" in problems[0], problems)
+            self.assertEqual(requirement_arches(run), ["x86_64", "arm64"])
             run.reset_mock()
             self.assertEqual(m.check_signature(Path("/tmp/SECS 2R.app")), ([], True))
-            self.assertNotIn(["codesign", "-d", "-r"], [call.args[0][:3] for call in run.call_args_list])
+            self.assertEqual(requirement_arches(run), [])
             run.reset_mock()
             problems, _ = m.check_signature(Path("/tmp/SECS 2R.app"), "0" * 40)
             self.assertEqual(len(problems), 1)
-            self.assertIn("not anchored", problems[0])
+            self.assertTrue(problems[0].startswith("arm64: "), problems)
 
 
 class BundleTest(unittest.TestCase):

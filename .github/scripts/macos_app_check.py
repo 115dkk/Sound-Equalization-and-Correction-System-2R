@@ -355,15 +355,20 @@ def check_signature(app: Path, certificate: str | None = None) -> tuple[list[str
     if run(["codesign", "--verify", "--deep", "--strict", "--verbose=2", str(app)]).returncode != 0:
         problems.append("codesign --verify --deep --strict rejects the bundle")
     archs = run(["lipo", "-archs", str(executable(app))]).stdout.split()
+    identifier = bundle_identifier(app) if certificate is not None else None
     hardened = False
     for arch in archs:
         details = run(["codesign", "-dv", "--verbose=4", "--arch", arch, str(app)]).stderr
         problems += signature_problems(arch, details, certificate is not None)
         hardened |= "runtime" in (code_directory_flags(details) or set())
         print(f"{arch} signed by: {authorities(details) or 'no certificate (ad-hoc)'}")
-    if certificate is not None:
-        shown = run(["codesign", "-d", "-r", "-", str(app)])
-        problems += requirement_problems(shown.stdout + shown.stderr, bundle_identifier(app), certificate)
+        # Each slice carries its own requirement: a universal app whose Intel
+        # slice was signed with another certificate would pass a check of the
+        # default slice alone.
+        if certificate is not None:
+            shown = run(["codesign", "-d", "-r", "-", "--arch", arch, str(app)])
+            problems += [f"{arch}: {problem}" for problem
+                         in requirement_problems(shown.stdout + shown.stderr, identifier, certificate)]
     # Gatekeeper's own verdict, for the log: every build that is not
     # notarized is rejected, so it is no gate.
     run(["spctl", "--status"])
