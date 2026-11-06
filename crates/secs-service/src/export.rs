@@ -704,7 +704,7 @@ impl Service {
                 design_id = Some(id);
             }
             if requested_design_name.is_some() {
-                crate::design_export::replace_folder(folder, &final_destination)
+                crate::design_export::replace_folder_with_log(folder, &final_destination, &log)
                     .map_err(export_error)?;
                 for path in &mut paths {
                     if let Ok(relative) = path.strip_prefix(folder) {

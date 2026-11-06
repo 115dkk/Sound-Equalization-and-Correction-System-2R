@@ -23,6 +23,14 @@ pub(crate) enum DesignExportError {
     Json(#[from] serde_json::Error),
     #[error(transparent)]
     Graph(#[from] secs_graph::GraphError),
+    #[error(
+        "could not install replacement: {install}; could not restore backup {backup}: {restore}"
+    )]
+    Rollback {
+        backup: PathBuf,
+        install: std::io::Error,
+        restore: std::io::Error,
+    },
     #[error("timestamp is outside the RFC 3339 range")]
     Timestamp,
 }
@@ -190,9 +198,38 @@ pub(crate) fn staging_folder(destination: &Path) -> PathBuf {
         .join(format!(".{name}.stage-{}-{id}", std::process::id()))
 }
 
+#[cfg(test)]
 pub(crate) fn replace_folder(staged: &Path, destination: &Path) -> Result<(), DesignExportError> {
+    replace_folder_with_log(staged, destination, &crate::Deps::default().log)
+}
+
+pub(crate) fn replace_folder_with_log(
+    staged: &Path,
+    destination: &Path,
+    log: &LogSink,
+) -> Result<(), DesignExportError> {
+    replace_folder_using(
+        staged,
+        destination,
+        log,
+        |from, to| fs::rename(from, to),
+        |path| fs::remove_dir_all(path),
+    )
+}
+
+fn replace_folder_using<R, D>(
+    staged: &Path,
+    destination: &Path,
+    log: &LogSink,
+    mut rename: R,
+    mut remove: D,
+) -> Result<(), DesignExportError>
+where
+    R: FnMut(&Path, &Path) -> std::io::Result<()>,
+    D: FnMut(&Path) -> std::io::Result<()>,
+{
     if !destination.exists() {
-        fs::rename(staged, destination)?;
+        rename(staged, destination)?;
         return Ok(());
     }
     let backup = destination.with_file_name(format!(
@@ -204,12 +241,27 @@ pub(crate) fn replace_folder(staged: &Path, destination: &Path) -> Result<(), De
         std::process::id(),
         TEMP_ID.fetch_add(1, Ordering::Relaxed)
     ));
-    fs::rename(destination, &backup)?;
-    if let Err(error) = fs::rename(staged, destination) {
-        let _ = fs::rename(&backup, destination);
-        return Err(error.into());
+    rename(destination, &backup)?;
+    if let Err(install) = rename(staged, destination) {
+        return match rename(&backup, destination) {
+            Ok(()) => Err(install.into()),
+            Err(restore) => Err(DesignExportError::Rollback {
+                backup,
+                install,
+                restore,
+            }),
+        };
     }
-    fs::remove_dir_all(backup)?;
+    if let Err(error) = remove(&backup) {
+        log(
+            LogLevel::Warn,
+            "export",
+            &format!(
+                "could not remove replaced design backup {}: {error}",
+                backup.display()
+            ),
+        );
+    }
     Ok(())
 }
 
@@ -711,6 +763,93 @@ mod tests {
             mimo: None,
             bypass_config: None,
         }
+    }
+
+    #[test]
+    fn rollback_failure_names_the_backup_folder_td198() {
+        let root = std::env::temp_dir().join(format!(
+            "secs-design-rollback-{}-{}",
+            std::process::id(),
+            TEMP_ID.fetch_add(1, Ordering::Relaxed)
+        ));
+        let staged = root.join("staged");
+        let destination = root.join("bundle");
+        fs::create_dir_all(&staged).unwrap();
+        fs::create_dir_all(&destination).unwrap();
+        let mut calls = 0;
+        let mut rollback_from = None;
+
+        let result = replace_folder_using(
+            &staged,
+            &destination,
+            &crate::Deps::default().log,
+            |from, _to| {
+                calls += 1;
+                match calls {
+                    1 => Ok(()),
+                    2 => Err(std::io::Error::other("install failed")),
+                    3 => {
+                        rollback_from = Some(from.to_path_buf());
+                        Err(std::io::Error::other("restore failed"))
+                    }
+                    _ => unreachable!(),
+                }
+            },
+            |_| Ok(()),
+        );
+        let detail = result.err().map(|error| error.to_string());
+        let backup = rollback_from.clone();
+        let _ = fs::remove_dir_all(&root);
+
+        let backup = backup.expect("rollback must use the backup folder");
+        assert!(
+            detail
+                .unwrap()
+                .contains(backup.file_name().unwrap().to_string_lossy().as_ref())
+        );
+    }
+
+    #[test]
+    fn backup_removal_failure_is_a_warning_not_a_job_error_td198() {
+        let root = std::env::temp_dir().join(format!(
+            "secs-design-backup-warning-{}-{}",
+            std::process::id(),
+            TEMP_ID.fetch_add(1, Ordering::Relaxed)
+        ));
+        let staged = root.join("staged");
+        let destination = root.join("bundle");
+        fs::create_dir_all(&staged).unwrap();
+        fs::create_dir_all(&destination).unwrap();
+        let lines = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let sink = lines.clone();
+        let log: LogSink = std::sync::Arc::new(move |level, scope, line| {
+            sink.lock()
+                .unwrap()
+                .push((level, scope.to_owned(), line.to_owned()));
+        });
+        let mut removed = None;
+
+        let result = replace_folder_using(
+            &staged,
+            &destination,
+            &log,
+            |_, _| Ok(()),
+            |path| {
+                removed = Some(path.to_path_buf());
+                Err(std::io::Error::other("backup is busy"))
+            },
+        );
+        let lines = lines.lock().unwrap().clone();
+        let removed = removed.clone();
+        let _ = fs::remove_dir_all(&root);
+
+        assert!(result.is_ok());
+        assert_eq!(lines.len(), 1);
+        assert_eq!(
+            (lines[0].0, lines[0].1.as_str()),
+            (LogLevel::Warn, "export")
+        );
+        assert!(lines[0].2.contains(&removed.unwrap().display().to_string()));
     }
 
     #[test]
