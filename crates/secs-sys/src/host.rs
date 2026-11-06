@@ -126,51 +126,106 @@ pub struct PipeClientIdentity {
     pub session_id: u32,
 }
 
+/// One managed-host pipe instance retained across accept polls.
+#[cfg(target_os = "windows")]
+#[derive(Debug)]
+pub struct PipeServerSlot {
+    server: win_custody::PipeServer,
+}
+
+#[cfg(target_os = "windows")]
+fn pipe_security_descriptor() -> Result<&'static win_custody::SecurityDescriptor, IpcError> {
+    static DESCRIPTOR: std::sync::OnceLock<Result<win_custody::SecurityDescriptor, String>> =
+        std::sync::OnceLock::new();
+    DESCRIPTOR
+        .get_or_init(|| {
+            win_custody::SecurityDescriptor::from_sddl(PIPE_SDDL).map_err(|error| error.to_string())
+        })
+        .as_ref()
+        .map_err(|error| ipc_error(format!("pipe security descriptor: {error}")))
+}
+
+#[cfg(target_os = "windows")]
+impl PipeServerSlot {
+    pub fn create(pipe_name: &str) -> Result<Self, IpcError> {
+        let server = win_custody::PipeServer::create(
+            pipe_name,
+            win_custody::PipeDirection::Duplex,
+            pipe_security_descriptor()?,
+        )
+        .map_err(|error| ipc_error(format!("create managed-host pipe: {error}")))?;
+        Ok(Self { server })
+    }
+}
+
 /// Serves one pipe connection. `Ok(false)` means no client arrived before
 /// `accept_timeout`; callers use a short timeout to poll their stop signal.
 #[cfg(target_os = "windows")]
 pub fn pipe_server(
-    pipe_name: &str,
+    slot: &mut PipeServerSlot,
     accept_timeout: Duration,
     handler: impl FnOnce(PipeClientIdentity, HostRequest) -> HostResponse,
 ) -> Result<bool, IpcError> {
-    use win_custody::{PipeDirection, PipeError, PipeServer, PipeWait, SecurityDescriptor};
+    use win_custody::{PipeError, PipeWait};
 
-    let descriptor = SecurityDescriptor::from_sddl(PIPE_SDDL)
-        .map_err(|error| ipc_error(format!("pipe security descriptor: {error}")))?;
-    let server = PipeServer::create(pipe_name, PipeDirection::Duplex, &descriptor)
-        .map_err(|error| ipc_error(format!("create managed-host pipe: {error}")))?;
-    match server.connect(&PipeWait::within(accept_timeout)) {
+    match slot.server.connect(&PipeWait::within(accept_timeout)) {
         Ok(()) => {}
         Err(PipeError::TimedOut) => return Ok(false),
         Err(error) => return Err(ipc_error(format!("accept managed-host pipe: {error}"))),
     }
-    let process_id = server
-        .client_process_id()
-        .map_err(|error| ipc_error(format!("identify managed-host client: {error}")))?;
-    let session_id = win_custody::process_session_id(process_id)
-        .map_err(|error| ipc_error(format!("identify managed-host client session: {error}")))?;
-    let identity = PipeClientIdentity {
-        process_id,
-        session_id,
-    };
-    let wait = PipeWait::within(PIPE_TIMEOUT);
-    let request_bytes = read_frame(|buffer| {
-        server
-            .read(buffer, &wait)
-            .map_err(|error| ipc_error(format!("read managed-host request: {error}")))
-    })?;
-    let request = parse_frame::<HostRequest>(&request_bytes)?;
-    let response = frame(&handler(identity, request))?;
-    server
-        .write_all(&response, &wait)
-        .map_err(|error| ipc_error(format!("write managed-host response: {error}")))?;
+    let served = (|| {
+        let process_id = slot
+            .server
+            .client_process_id()
+            .map_err(|error| ipc_error(format!("identify managed-host client: {error}")))?;
+        let session_id = win_custody::process_session_id(process_id)
+            .map_err(|error| ipc_error(format!("identify managed-host client session: {error}")))?;
+        let identity = PipeClientIdentity {
+            process_id,
+            session_id,
+        };
+        let wait = PipeWait::within(PIPE_TIMEOUT);
+        let request_bytes = read_frame(|buffer| {
+            slot.server
+                .read(buffer, &wait)
+                .map_err(|error| ipc_error(format!("read managed-host request: {error}")))
+        })?;
+        let request = parse_frame::<HostRequest>(&request_bytes)?;
+        let response = frame(&handler(identity, request))?;
+        slot.server
+            .write_all(&response, &wait)
+            .map_err(|error| ipc_error(format!("write managed-host response: {error}")))?;
+        // DisconnectNamedPipe discards unread bytes. Wait until the client has
+        // read the response and closed its handle before reusing this instance.
+        let mut trailing = [0_u8; 1];
+        let _ = slot
+            .server
+            .read(&mut trailing, &PipeWait::within(PIPE_TIMEOUT));
+        Ok(())
+    })();
+    let disconnected = slot
+        .server
+        .disconnect()
+        .map_err(|error| ipc_error(format!("disconnect managed-host pipe: {error}")));
+    served?;
+    disconnected?;
     Ok(true)
 }
 
 #[cfg(not(target_os = "windows"))]
+#[derive(Debug)]
+pub struct PipeServerSlot;
+
+#[cfg(not(target_os = "windows"))]
+impl PipeServerSlot {
+    pub fn create(_pipe_name: &str) -> Result<Self, IpcError> {
+        Err(unsupported("managed-host pipe server"))
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
 pub fn pipe_server(
-    _pipe_name: &str,
+    _slot: &mut PipeServerSlot,
     _accept_timeout: Duration,
     _handler: impl FnOnce(PipeClientIdentity, HostRequest) -> HostResponse,
 ) -> Result<bool, IpcError> {
@@ -263,6 +318,44 @@ pub fn terminate_camilla_listener(port: u16) -> Result<ListenerOutcome, IpcError
     Ok(ListenerOutcome::Terminated(pid))
 }
 
+#[cfg(target_os = "windows")]
+fn verify_managed_service_server(process_id: u32) -> Result<(), IpcError> {
+    let session_id = win_custody::process_session_id(process_id)
+        .map_err(|error| ipc_error(format!("identify managed-host server session: {error}")))?;
+    if session_id != 0 {
+        return Err(ipc_error(format!(
+            "pipe server process {process_id} is not the managed service (session {session_id})"
+        )));
+    }
+
+    let process = win_custody::Process::open(process_id, win_custody::ProcessAccess::QueryLimited)
+        .map_err(|error| ipc_error(format!("open managed-host server {process_id}: {error}")))?;
+    let image = process.image_path().map_err(|error| {
+        ipc_error(format!(
+            "read managed-host server {process_id} image: {error}"
+        ))
+    })?;
+    let program_files = std::env::var_os("ProgramW6432")
+        .or_else(|| std::env::var_os("ProgramFiles"))
+        .ok_or_else(|| ipc_error("ProgramW6432 and ProgramFiles are unavailable"))?;
+    let expected = Path::new(&program_files)
+        .join("SECS 2R Host")
+        .join("secs2r-host.exe");
+    let normalized = |path: &Path| {
+        path.to_string_lossy()
+            .replace('/', "\\")
+            .trim_end_matches('\\')
+            .to_ascii_lowercase()
+    };
+    if normalized(&image) != normalized(&expected) {
+        return Err(ipc_error(format!(
+            "pipe server process {process_id} is not the managed service (image {})",
+            image.display()
+        )));
+    }
+    Ok(())
+}
+
 /// Makes one request and reads one response from the default host pipe.
 pub fn pipe_call(request: &HostRequest) -> Result<HostResponse, IpcError> {
     pipe_call_at(DEFAULT_PIPE_NAME, request)
@@ -271,6 +364,23 @@ pub fn pipe_call(request: &HostRequest) -> Result<HostResponse, IpcError> {
 /// Makes one request against an explicitly injected pipe name.
 #[cfg(target_os = "windows")]
 pub fn pipe_call_at(pipe_name: &str, request: &HostRequest) -> Result<HostResponse, IpcError> {
+    pipe_call_at_impl(pipe_name, request, true)
+}
+
+#[cfg(all(target_os = "windows", test))]
+fn pipe_call_at_unchecked(
+    pipe_name: &str,
+    request: &HostRequest,
+) -> Result<HostResponse, IpcError> {
+    pipe_call_at_impl(pipe_name, request, false)
+}
+
+#[cfg(target_os = "windows")]
+fn pipe_call_at_impl(
+    pipe_name: &str,
+    request: &HostRequest,
+    verify_server: bool,
+) -> Result<HostResponse, IpcError> {
     use std::time::Instant;
     use win_custody::{PipeAccess, PipeClient, PipeWait};
 
@@ -288,9 +398,12 @@ pub fn pipe_call_at(pipe_name: &str, request: &HostRequest) -> Result<HostRespon
             Duration::from_millis(10),
         )
         .map_err(|error| ipc_error(format!("open managed-host pipe: {error}")))?;
-        client
+        let server_process_id = client
             .server_process_id()
             .map_err(|error| ipc_error(format!("identify managed-host server: {error}")))?;
+        if verify_server {
+            verify_managed_service_server(server_process_id)?;
+        }
         let wait = PipeWait::until(deadline);
         if let Err(error) = client.write_all(&request, &wait) {
             if Instant::now() < deadline {
@@ -1231,13 +1344,112 @@ mod tests {
         );
         let server_name = name.clone();
         let server = std::thread::spawn(move || {
-            pipe_server(&server_name, PIPE_TIMEOUT, |_, _| HostResponse::Ok)
+            let mut slot = PipeServerSlot::create(&server_name).unwrap();
+            pipe_server(&mut slot, PIPE_TIMEOUT, |_, _| HostResponse::Ok)
         });
         assert_eq!(
-            pipe_call_at(&name, &HostRequest::Status).unwrap(),
+            pipe_call_at_unchecked(&name, &HostRequest::Status).unwrap(),
             HostResponse::Ok
         );
         assert!(server.join().unwrap().unwrap());
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn real_pipe_slot_never_releases_name_between_accept_polls() {
+        use std::sync::mpsc;
+        use win_custody::{PipeDirection, PipeServer, SecurityDescriptor};
+
+        let name = format!(
+            r"\\.\pipe\secs2r-host-slot-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let server_name = name.clone();
+        let (ready_sender, ready_receiver) = mpsc::channel();
+        let (poll_sender, poll_receiver) = mpsc::channel();
+        let (resume_sender, resume_receiver) = mpsc::channel();
+        let server = std::thread::spawn(move || {
+            let mut slot = PipeServerSlot::create(&server_name).unwrap();
+            ready_sender.send(()).unwrap();
+            let deadline = std::time::Instant::now() + Duration::from_secs(1);
+            let mut served = false;
+            let mut paused = false;
+            while std::time::Instant::now() < deadline || !served {
+                let accepted = pipe_server(&mut slot, Duration::from_millis(100), |_, _| {
+                    HostResponse::Ok
+                })?;
+                served |= accepted;
+                if !accepted && !paused {
+                    paused = true;
+                    poll_sender.send(()).unwrap();
+                    resume_receiver
+                        .recv_timeout(Duration::from_secs(5))
+                        .unwrap();
+                }
+            }
+            Ok::<_, IpcError>(served)
+        });
+        ready_receiver.recv_timeout(Duration::from_secs(5)).unwrap();
+        poll_receiver.recv_timeout(Duration::from_secs(5)).unwrap();
+
+        let descriptor = SecurityDescriptor::from_sddl("D:P(A;;GA;;;OW)").unwrap();
+        let attack_deadline = std::time::Instant::now() + Duration::from_millis(700);
+        let mut intruder = None;
+        while std::time::Instant::now() < attack_deadline {
+            if let Ok(candidate) = PipeServer::create(&name, PipeDirection::Duplex, &descriptor) {
+                intruder = Some(candidate);
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let name_was_taken = intruder.is_some();
+        drop(intruder);
+        resume_sender.send(()).unwrap();
+        assert!(
+            !name_was_taken,
+            "another first pipe instance was created between accept polls"
+        );
+
+        assert_eq!(
+            pipe_call_at_unchecked(&name, &HostRequest::Status).unwrap(),
+            HostResponse::Ok
+        );
+        assert!(server.join().unwrap().unwrap());
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn checked_pipe_call_rejects_a_test_process_server() {
+        let name = format!(
+            r"\\.\pipe\secs2r-host-identity-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let server_name = name.clone();
+        let server = std::thread::spawn(move || {
+            let mut slot = PipeServerSlot::create(&server_name).unwrap();
+            pipe_server(&mut slot, PIPE_TIMEOUT, |_, _| HostResponse::Ok)
+        });
+
+        let error = pipe_call_at(&name, &HostRequest::Status).unwrap_err();
+        assert!(
+            error.detail.contains(&std::process::id().to_string()),
+            "{}",
+            error.detail
+        );
+        assert!(
+            error.detail.contains("not the managed service"),
+            "{}",
+            error.detail
+        );
+        assert!(server.join().unwrap().is_err());
     }
 
     #[cfg(target_os = "windows")]

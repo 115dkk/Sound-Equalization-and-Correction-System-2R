@@ -496,6 +496,8 @@ fn service_loop(
         )?;
     }
     let mut repair_retry_at = None;
+    let mut pipe_slot = None;
+    let mut pipe_retry_at = Instant::now();
 
     let mut stop_after_response = false;
     loop {
@@ -711,28 +713,50 @@ fn service_loop(
             )?;
         }
 
-        let served = secs_sys::host::pipe_server(
-            &paths.pipe,
-            Duration::from_millis(100),
-            |identity, request| {
-                handle_request(
-                    identity,
-                    request,
-                    &mut core,
-                    &mut transition_state,
-                    &mut child,
-                    &mut process_rules,
-                    &mut watcher,
-                    &mut restart_at,
-                    &config_sender,
-                    paths,
-                    &mut stop_after_response,
-                )
-                .unwrap_or_else(HostResponse::Error)
-            },
-        );
+        if pipe_slot.is_none() && Instant::now() >= pipe_retry_at {
+            match secs_sys::host::PipeServerSlot::create(&paths.pipe) {
+                Ok(slot) => pipe_slot = Some(slot),
+                Err(error) => {
+                    record(
+                        &mut core,
+                        paths,
+                        rules::log_line(
+                            "pipe_create_failed",
+                            [("detail".to_owned(), error.detail)],
+                        ),
+                    )?;
+                    pipe_retry_at = Instant::now() + Duration::from_secs(1);
+                }
+            }
+        }
+        let served = match pipe_slot.as_mut() {
+            Some(slot) => secs_sys::host::pipe_server(
+                slot,
+                Duration::from_millis(100),
+                |identity, request| {
+                    handle_request(
+                        identity,
+                        request,
+                        &mut core,
+                        &mut transition_state,
+                        &mut child,
+                        &mut process_rules,
+                        &mut watcher,
+                        &mut restart_at,
+                        &config_sender,
+                        paths,
+                        &mut stop_after_response,
+                    )
+                    .unwrap_or_else(HostResponse::Error)
+                },
+            ),
+            None => {
+                std::thread::sleep(Duration::from_millis(100));
+                Ok(false)
+            }
+        };
         // One client's failure (it left before the answer, a broken frame)
-        // must not stop the service; the next loop serves the next client.
+        // must not stop the service; the retained instance serves the next client.
         if let Err(error) = served {
             let line = rules::log_line("pipe_error", [("detail".to_owned(), error.detail)]);
             append_log_nonfatal(&paths.log, &line);
