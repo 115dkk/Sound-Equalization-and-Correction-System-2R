@@ -78,12 +78,40 @@ impl Runner {
                     } else {
                         None
                     }
+                } else if matches!(*response, Response::ProjectSave(_)) {
+                    // The save reply returns before the side mdat job has
+                    // written the file (TD-149); this process ends with the
+                    // command, so wait for that job and report its failure.
+                    if self.finish_side_mdat(events.wait()) {
+                        print_json(&serde_json::json!({"reply": Envelope::Ok(response.clone())}));
+                        Some(*response)
+                    } else {
+                        None
+                    }
                 } else {
                     print_json(&serde_json::json!({"reply": Envelope::Ok(response.clone())}));
                     Some(*response)
                 }
             }
         }
+    }
+
+    fn finish_side_mdat(&mut self, event: JobEvent) -> bool {
+        let JobEvent::Finished { status, error, .. } = event else {
+            unreachable!("event sink waits for a finished event")
+        };
+        if status == JobStatus::Succeeded {
+            return true;
+        }
+        self.ok = false;
+        print_json(&serde_json::json!({"reply": {
+            "ok": false,
+            "error": error.unwrap_or_else(|| IpcError::new(
+                ErrorCode::Internal,
+                format!("side mdat job ended with {status:?}"),
+            )),
+        }}));
+        false
     }
 
     fn finish_job(&mut self, event: JobEvent) -> bool {
