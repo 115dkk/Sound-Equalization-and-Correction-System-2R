@@ -1530,3 +1530,53 @@ fn example_and_binary_names_are_unique() {
         "target names must be unique across the workspace: {clashes:#?}"
     );
 }
+
+#[test]
+fn engine_note_codes_are_catalog_keys() {
+    let root = repo_root();
+    let source = fs::read_to_string(root.join("crates/secs-engine/src/notes.rs")).unwrap();
+    let records = source
+        .split_once("pub const RECORD_CODES: &[&str] = &[")
+        .expect("RECORD_CODES declaration")
+        .1
+        .split_once("];\n")
+        .expect("RECORD_CODES terminator")
+        .0;
+    let codes = records
+        .lines()
+        .filter_map(|line| line.trim().strip_prefix('"')?.strip_suffix("\","))
+        .collect::<BTreeSet<_>>();
+    assert!(
+        !codes.is_empty(),
+        "RECORD_CODES must list engine note codes"
+    );
+
+    let catalog = fs::read_to_string(root.join("apps/secs2r/ui/src/i18n/ko.json")).unwrap();
+    let aliases = [
+        ("sub_filter_peq", "notice.sub_filters"),
+        ("rc_limit", "notice.rc_limit.manual"),
+        ("phase_band", "notice.phase_strength"),
+    ];
+    // These pre-existing MIMO metadata records have no screen sentence yet. Keep
+    // the baseline explicit so a new missing catalog key still fails this gate.
+    let unpresented = BTreeSet::from([
+        "mimo_iir_seed_fallback",
+        "mimo_insufficient_positions",
+        "mimo_support_excluded",
+        "mimo_support_range",
+        "mimo_support_limit",
+        "mimo_fir_budget",
+    ]);
+    for code in codes {
+        let has_key = aliases
+            .iter()
+            .find_map(|(candidate, key)| {
+                (*candidate == code).then(|| catalog.contains(&format!("\"{key}\"")))
+            })
+            .unwrap_or_else(|| catalog.contains(&format!("\"notice.{code}\"")));
+        assert!(
+            unpresented.contains(code) || has_key,
+            "missing Korean catalog key for notice record {code}"
+        );
+    }
+}

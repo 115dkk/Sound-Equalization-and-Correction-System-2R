@@ -108,7 +108,7 @@ pub use mimo::{
     design_mimo_iir_with_options,
 };
 pub use normalize::normalize_measurements;
-pub use notes::{GuardCause, MimoNote, Note};
+pub use notes::{GuardCause, MimoNote, Note, NoteRecord};
 pub use replay::{DesignReplay, ExportAxis};
 pub use scorecard::Metrics;
 pub use secs_dsp::resample::{MAX_RESAMPLE_RATE, MIN_RESAMPLE_RATE};
