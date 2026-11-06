@@ -1555,6 +1555,7 @@ status = "implemented"
 tests = [
   "secs-service::device_group_exclusion_and_cancel_preserve_project",
   "secs-service::oversized_input_cal_file_is_refused_with_a_notice_and_read_once_td170",
+  "secs-service::mock_measure_reports_in_role_stages_td171",
 ]
 
 [[feature]]

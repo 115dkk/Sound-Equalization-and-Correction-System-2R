@@ -219,6 +219,7 @@ where
         &mut self,
         plan: &MeasurementPlan,
         pos: i64,
+        progress: Option<ProgressSink>,
         cancel: &CancelToken,
         record: &mut dyn FnMut(MeasurementResult) -> Result<(), MeasureError>,
     ) -> Result<(), MeasureError> {
@@ -231,7 +232,7 @@ where
                 }
                 let mut single = plan.clone();
                 single.roles = vec![role.clone()];
-                for result in self.measure_position(&single, pos, None, cancel)? {
+                for result in self.measure_position(&single, pos, progress.clone(), cancel)? {
                     record(result)?;
                 }
             }

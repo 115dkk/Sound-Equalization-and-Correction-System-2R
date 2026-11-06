@@ -125,10 +125,11 @@ pub trait Measurer: Send {
         &mut self,
         plan: &MeasurementPlan,
         pos: i64,
+        progress: Option<ProgressSink>,
         cancel: &CancelToken,
         record: &mut dyn FnMut(MeasurementResult) -> Result<(), MeasureError>,
     ) -> Result<(), MeasureError> {
-        for result in self.measure_position(plan, pos, None, cancel)? {
+        for result in self.measure_position(plan, pos, progress, cancel)? {
             record(result)?;
         }
         Ok(())

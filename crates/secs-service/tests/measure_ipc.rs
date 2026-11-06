@@ -274,11 +274,16 @@ fn mock_flow_measurement_and_calibration() {
     let job = measure(&service, 1, events.clone());
     succeeded(&events, job);
     let values = events.values.lock().unwrap();
-    assert_eq!(values.len(), 4, "{values:?}");
     assert!(matches!(values[0], JobEvent::Started { .. }));
+    let role_progress = values
+        .iter()
+        .filter(|event| {
+            matches!(event, JobEvent::Progress { stage, .. } if stage == "L" || stage == "R")
+        })
+        .collect::<Vec<_>>();
     for (i, role) in ["L", "R"].iter().enumerate() {
         assert!(
-            matches!(&values[i+1],JobEvent::Progress{stage,done,total,..} if stage==role && *done==i as u64+1 && *total==2)
+            matches!(role_progress[i],JobEvent::Progress{stage,done,total,..} if stage==role && *done==i as u64+1 && *total==2)
         );
     }
     assert!(path.is_file());
@@ -286,6 +291,39 @@ fn mock_flow_measurement_and_calibration() {
     assert!(!calibration(&service).stale);
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn mock_measure_reports_in_role_stages_td171() {
+    let root = root("mock-progress");
+    let path = root.join("room.secs");
+    let service = Service::new(Deps::default());
+    new(&service, &path);
+    configure(&service, "mock");
+    let events = Arc::new(Events::default());
+    let job = measure(&service, 1, events.clone());
+    succeeded(&events, job);
+
+    let values = events.values.lock().unwrap();
+    let first_role_done = values
+        .iter()
+        .position(|event| matches!(event, JobEvent::Progress { stage, .. } if stage == "L"))
+        .expect("the first role must finish");
+    assert!(values[..first_role_done].iter().any(|event| {
+        matches!(event, JobEvent::Progress { stage, .. } if stage == "running" || stage == "process")
+    }));
+    let final_progress = values
+        .iter()
+        .rev()
+        .find_map(|event| match event {
+            JobEvent::Progress { done, total, .. } => Some((*done, *total)),
+            _ => None,
+        })
+        .expect("measurement progress is absent");
+    assert_eq!(final_progress.0, final_progress.1);
+    drop(values);
+    fs::remove_dir_all(root).unwrap();
+}
+
 #[test]
 fn measurement_records_report_planned_positions_and_sources() {
     let root = root("records");
@@ -690,6 +728,27 @@ fn mdat_scan_and_import_match_direct_oracle_bytes() {
     );
     fs::remove_dir_all(root).unwrap();
 }
+
+#[derive(Clone, Debug)]
+struct StableCallbackTransport(secs_rew::RecordedTransport);
+
+impl secs_rew::Transport for StableCallbackTransport {
+    fn request(
+        &self,
+        request: &secs_rew::Request,
+    ) -> Result<secs_rew::Response, secs_rew::RewError> {
+        let mut request = request.clone();
+        if matches!(
+            request.path.as_str(),
+            "/measure/subscribe" | "/measure/unsubscribe"
+        ) && let Some(body) = request.body.as_mut()
+        {
+            body["url"] = json!("callback");
+        }
+        self.0.request(&request)
+    }
+}
+
 fn get(path: &str, body: serde_json::Value, seconds: u64) -> secs_rew::RecordedExchange {
     secs_rew::RecordedExchange::new(
         secs_rew::Request::new("GET", path, None, Duration::from_secs(seconds)),
@@ -746,6 +805,10 @@ fn rew_script_with_cal(input_cal: &str) -> Vec<secs_rew::RecordedExchange> {
             get("/measure/sweep/repetitions", json!(1), 5),
             post("/measure/timing/reference", json!("None")),
         ]);
+        script.push(post(
+            "/measure/subscribe",
+            json!({"url":"callback","parameters":{}}),
+        ));
         script.extend([
             post("/audio/java/output-channel",json!({"channel":role})),
             post("/measure/naming",json!({"title":format!("{role} P1"),"namingOption":"Use as entered","prefixMeasNameWithOutput":false})),
@@ -776,6 +839,7 @@ fn rew_script_with_cal(input_cal: &str) -> Vec<secs_rew::RecordedExchange> {
                 5,
             ),
         ]);
+        script.push(post("/measure/unsubscribe", json!({"url":"callback"})));
         if i == 0 {
             script.push(get(
                 "/audio/input-cal",
@@ -804,7 +868,7 @@ fn rew_recorded_transport_records_each_role_and_warning() {
     let transport = secs_rew::RecordedTransport::new(script);
     let copy = transport.clone();
     let service = Service::new(Deps {
-        rew_transport: Arc::new(move || Box::new(copy.clone())),
+        rew_transport: Arc::new(move || Box::new(StableCallbackTransport(copy.clone()))),
         ..Default::default()
     });
     new(&service, &path);
@@ -831,10 +895,16 @@ fn rew_recorded_transport_records_each_role_and_warning() {
         assert_eq!(store.t0_of(role, 1), -0.125);
     }
     let values = events.values.lock().unwrap();
-    assert_eq!(values.len(), 6);
-    assert!(
-        matches!(&values[2],JobEvent::Log{code,params,..} if code=="measurement_low_snr" && params["role"]=="L")
-    );
+    let low_snr_roles = values
+        .iter()
+        .filter_map(|event| match event {
+            JobEvent::Log { code, params, .. } if code == "measurement_low_snr" => {
+                Some(params["role"].as_str())
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(low_snr_roles, ["L", "R"]);
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -850,7 +920,7 @@ fn oversized_input_cal_file_is_refused_with_a_notice_and_read_once_td170() {
     let transport = secs_rew::RecordedTransport::new(rew_script_with_cal(&cal.to_string_lossy()));
     let copy = transport.clone();
     let service = Service::new(Deps {
-        rew_transport: Arc::new(move || Box::new(copy.clone())),
+        rew_transport: Arc::new(move || Box::new(StableCallbackTransport(copy.clone()))),
         ..Deps::default()
     });
     new(&service, &path);
@@ -903,7 +973,7 @@ fn rew_license_observation_tracks_rejection_success_and_launch_reset() {
     let transport = secs_rew::RecordedTransport::new(script);
     let copy = transport.clone();
     let service = Service::new(Deps {
-        rew_transport: Arc::new(move || Box::new(copy.clone())),
+        rew_transport: Arc::new(move || Box::new(StableCallbackTransport(copy.clone()))),
         ..Default::default()
     });
     new(&service, &path);
@@ -979,7 +1049,7 @@ fn rew_cancel_keeps_already_recorded_role() {
     let transport = secs_rew::RecordedTransport::new(script);
     let copy = transport.clone();
     let service = Arc::new(Service::new(Deps {
-        rew_transport: Arc::new(move || Box::new(copy.clone())),
+        rew_transport: Arc::new(move || Box::new(StableCallbackTransport(copy.clone()))),
         ..Default::default()
     }));
     new(&service, &path);
