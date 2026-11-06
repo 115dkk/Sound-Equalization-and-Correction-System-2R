@@ -1156,6 +1156,95 @@ fn export_scope_and_wait(
     result
 }
 
+#[derive(Debug)]
+struct CancelFirstExportProgress {
+    service: Arc<Service>,
+    events: Arc<Events>,
+    requested: std::sync::atomic::AtomicBool,
+}
+
+impl EventSink for CancelFirstExportProgress {
+    fn send(&self, event: JobEvent) {
+        self.events.send(event.clone());
+        if let JobEvent::Progress { job, .. } = event
+            && !self.requested.swap(true, Ordering::SeqCst)
+        {
+            assert!(matches!(
+                self.service.call(
+                    Request::JobCancel(JobCancelParams { job }),
+                    Arc::new(NoEvents),
+                ),
+                Envelope::Ok(_)
+            ));
+        }
+    }
+}
+
+#[test]
+fn camilla_export_cancelled_before_commit_writes_nothing_td196() {
+    let root = temp_root("cancel-camilla-prepare");
+    fs::create_dir_all(&root).unwrap();
+    let destination = root.join("export");
+    fs::create_dir(&destination).unwrap();
+    let (path, settings) = write_case(&root, "room");
+    let service = Arc::new(deterministic_service());
+    open(&service, &path);
+    let calibration_events = Arc::new(Events::default());
+    let calibration = start_calibration(&service, calibration_events.clone(), settings);
+    finished_result(calibration_events.wait(calibration, Duration::from_secs(120)));
+    let Response::DspSet(camilla) = call_ok(
+        &service,
+        Request::DspSet(DspSetParams {
+            preset: Some("camilla".into()),
+            fields: None,
+        }),
+        Arc::new(NoEvents),
+    ) else {
+        panic!();
+    };
+    let mut fields = camilla.fields;
+    fields.output_rate = OutputRateChoice::Fixed(96_000);
+    call_ok(
+        &service,
+        Request::DspSet(DspSetParams {
+            preset: None,
+            fields: Some(fields),
+        }),
+        Arc::new(NoEvents),
+    );
+    let events = Arc::new(Events::default());
+    let sink = Arc::new(CancelFirstExportProgress {
+        service: service.clone(),
+        events: events.clone(),
+        requested: std::sync::atomic::AtomicBool::new(false),
+    });
+    let Response::Export(started) = call_ok(
+        &service,
+        Request::Export(ExportParams {
+            kind: ExportKind::CamillaDsp,
+            folder: destination.to_string_lossy().into_owned(),
+            mdat_scope: None,
+            design_name: None,
+            camilla_devices: None,
+            extra_rates: Vec::new(),
+        }),
+        sink.clone(),
+    ) else {
+        panic!();
+    };
+
+    assert!(matches!(
+        events.wait(started.job, Duration::from_secs(180)),
+        JobEvent::Finished {
+            status: JobStatus::Cancelled,
+            ..
+        }
+    ));
+    assert!(sink.requested.load(Ordering::SeqCst));
+    assert_eq!(fs::read_dir(&destination).unwrap().count(), 0);
+    fs::remove_dir_all(root).unwrap();
+}
+
 #[test]
 fn changing_only_output_rate_keeps_calibration_fresh_for_export() {
     let root = temp_root("output-rate-fresh");

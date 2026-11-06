@@ -499,7 +499,8 @@ impl Service {
                         chain.mains.len() + usize::from(!chain.subs.is_empty()),
                         chain.mains.len() + chain.subs.len(),
                     );
-                    let options = CamillaOptions {
+                    let labels = description.camilla();
+                    let mut options = CamillaOptions {
                         capture,
                         playback,
                         output_rate,
@@ -514,15 +515,24 @@ impl Service {
                         bypass: true,
                         ..CamillaOptions::default()
                     };
-                    job.begin_commit()?;
-                    secs_camilla::export_with_options(
+                    options.note = labels.note;
+                    options.latency_ms = Some(labels.latency_ms);
+                    options.mode = labels.mode;
+                    let name = format!("secs_{}", options.mode);
+                    let safe = secs_camilla::safe_name(&name);
+                    job.report_progress("export.camilla.prepare", 0, 1);
+                    secs_camilla::make_config(
                         chain,
                         folder,
-                        &description.camilla(),
+                        &folder.join("configs"),
+                        &format!("{safe}_"),
+                        &options,
                         export_mimo.as_ref(),
-                        options,
                     )
-                    .map_err(export_error)?
+                    .map_err(export_error)?;
+                    job.begin_commit()?;
+                    secs_camilla::write_config(chain, folder, &name, &options, export_mimo.as_ref())
+                        .map_err(export_error)?
                 }
                 ExportKind::FilterText | ExportKind::EqualizerApo | ExportKind::Convolution => {
                     let values = filter_values.as_ref().ok_or_else(|| {

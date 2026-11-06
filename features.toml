@@ -1142,7 +1142,7 @@ id = "export.camilladsp"
 kind = "export"
 milestone = "M4"
 status = "implemented"
-tests = ["secs-camilla::export_camilladsp_matches_oracle", "secs-camilla::invalid_values_write_nothing", "secs-camilla::fir_taps_that_overflow_f32_write_nothing_td45", "secs-camilla::duplicate_or_reserved_roles_write_nothing_td46", "secs-camilla::negative_delays_write_nothing_td94", "secs-camilla::controller_metadata_headroom_bypass_labels_and_devices_follow_v4_schema", "secs-camilla::camilla_exports_play_as_designed", "secs-camilla::failed_install_restores_the_previous_camilla_bundle_td22", "secs-graph::fir_filename_collisions_are_rejected_td266", "secs-graph::symlinked_bundle_parent_is_refused_td270", "secs-graph::wav_data_len_refuses_riff_overflow_td225", "secs-graph::refused_oracle_edge_keeps_its_fixed_format_bytes_td182", "secs-camilla::option_note_newline_writes_nothing_td224", "secs-camilla::sub_mode_newline_writes_nothing_td224", "secs-graph::nonfinite_formats_match_python_td267"]
+tests = ["secs-camilla::export_camilladsp_matches_oracle", "secs-camilla::invalid_values_write_nothing", "secs-camilla::fir_taps_that_overflow_f32_write_nothing_td45", "secs-camilla::duplicate_or_reserved_roles_write_nothing_td46", "secs-camilla::negative_delays_write_nothing_td94", "secs-camilla::controller_metadata_headroom_bypass_labels_and_devices_follow_v4_schema", "secs-camilla::camilla_exports_play_as_designed", "secs-camilla::failed_install_restores_the_previous_camilla_bundle_td22", "secs-graph::fir_filename_collisions_are_rejected_td266", "secs-graph::symlinked_bundle_parent_is_refused_td270", "secs-graph::wav_data_len_refuses_riff_overflow_td225", "secs-graph::refused_oracle_edge_keeps_its_fixed_format_bytes_td182", "secs-camilla::option_note_newline_writes_nothing_td224", "secs-camilla::sub_mode_newline_writes_nothing_td224", "secs-graph::nonfinite_formats_match_python_td267", "secs-service::camilla_export_cancelled_before_commit_writes_nothing_td196"]
 upstream = "calibration.py export_camilladsp"
 note = "The default writer remains byte-compatible with upstream. Service exports add design identity, capture labels, rounded headroom and controller-addressable correction/MIMO descriptions; these are new deviations from upstream."
 
@@ -1484,7 +1484,7 @@ id = "ipc.export"
 kind = "ipc"
 milestone = "M4"
 status = "implemented"
-tests = ["secs-types::every_method_name_is_listed_and_parses", "secs-types::mdat_scope_is_optional_on_the_wire", "secs-service::oracle_project_calibrates_recommends_xo_and_exports", "secs-service::room_dba_mimo_runs_and_becomes_stale_after_recalibration", "secs-service::output_rate_resolver_falls_back_for_bad_missing_and_failed_defaults", "secs-service::changing_only_output_rate_keeps_calibration_fresh_for_export"]
+tests = ["secs-types::every_method_name_is_listed_and_parses", "secs-types::mdat_scope_is_optional_on_the_wire", "secs-service::oracle_project_calibrates_recommends_xo_and_exports", "secs-service::room_dba_mimo_runs_and_becomes_stale_after_recalibration", "secs-service::output_rate_resolver_falls_back_for_bad_missing_and_failed_defaults", "secs-service::changing_only_output_rate_keeps_calibration_fresh_for_export", "secs-service::camilla_export_cancelled_before_commit_writes_nothing_td196"]
 note = "Export IPC covers CamillaDSP, mdat, filter text, Equalizer APO, and complete convolution bundles, including typed export_scope reasons, the REW mdat's optional mdat_scope, additional convolution rates, the resolved output rate, and automatic-rate fallback notices."
 
 [[feature]]
