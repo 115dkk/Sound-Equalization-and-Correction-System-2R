@@ -82,11 +82,7 @@ async fn secs_call(
             log.line(
                 applog::Level::Error,
                 "request",
-                &format!(
-                    "method={method} error_code={:?} message={}",
-                    error.code,
-                    applog::log_value(&error.detail)
-                ),
+                &format!("method={method}{}", applog::error_text(error)),
             );
         }
         envelope

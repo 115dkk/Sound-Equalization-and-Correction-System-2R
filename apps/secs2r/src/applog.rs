@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use secs_service::{EventSink, LocalTime};
-use secs_types::ipc::{JobEvent, JobId, JobKind};
+use secs_types::ipc::{IpcError, JobEvent, JobId, JobKind};
 
 const LOG_LIMIT: u64 = 2 * 1024 * 1024;
 const ROTATED_FILES: usize = 4;
@@ -211,14 +211,7 @@ impl EventSink for AppLog {
                 let elapsed = started.map_or(0, |record| record.at.elapsed().as_millis());
                 let mut text = format!("{} finished status={status:?} elapsed_ms={elapsed}", job.0);
                 if let Some(error) = error {
-                    text.push_str(&format!(
-                        " error_code={:?} message={}",
-                        error.code,
-                        log_value(&error.detail)
-                    ));
-                    for (key, value) in error.params {
-                        text.push_str(&format!(" {key}={}", log_value(&value)));
-                    }
+                    text.push_str(&error_text(&error));
                 }
                 let level = match status {
                     secs_types::ipc::JobStatus::Failed => Level::Error,
@@ -257,6 +250,19 @@ fn rotate(path: &Path) -> bool {
         let _ = fs::rename(rotated(index), rotated(index + 1));
     }
     fs::rename(path, rotated(1)).is_ok()
+}
+
+/// ` error_code=… message=… key=value…` for a job or request error (TD-165).
+pub(crate) fn error_text(error: &IpcError) -> String {
+    let mut text = format!(
+        " error_code={:?} message={}",
+        error.code,
+        log_value(&error.detail)
+    );
+    for (key, value) in &error.params {
+        text.push_str(&format!(" {key}={}", log_value(value)));
+    }
+    text
 }
 
 pub(crate) fn log_value(value: &str) -> String {
@@ -423,6 +429,20 @@ mod tests {
     #[test]
     fn log_values_with_spaces_are_quoted() {
         assert_eq!(log_value("project is not open"), r#""project is not open""#);
+    }
+
+    #[test]
+    fn request_error_text_carries_params_as_key_value_td165() {
+        let error = secs_types::ipc::IpcError::new(
+            secs_types::ipc::ErrorCode::InvalidRequest,
+            "folder must be absolute",
+        )
+        .with_param("reason", "relative_folder")
+        .with_param("field", "folder");
+        assert_eq!(
+            error_text(&error),
+            " error_code=InvalidRequest message=\"folder must be absolute\" field=folder reason=relative_folder"
+        );
     }
 
     #[test]
