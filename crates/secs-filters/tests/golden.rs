@@ -247,6 +247,35 @@ fn malformed_plans_return_errors_instead_of_panicking_td180() {
     ));
 }
 
+#[test]
+fn convolution_guide_uses_python_fixed_numbers_td226() {
+    // Verified with:
+    // python3 -c "print(format(2.25, '+.1f')); print(format(1.2345, '.3f'))"
+    let mut chain = f11_synthetic_chain(false, false, false);
+    // Exact DTFT phase multiplication puts the derived peak just above the tie;
+    // keep this public-export case below it. The unit test covers exact 2.25.
+    chain.mains[0].gain_db = 2.25 - 1e-10;
+    chain.mains[0].delay_ms = 1.2345;
+    let run = FilterRun {
+        chain: &chain,
+        mimo: None,
+        mode: "mixed",
+        note: "",
+        label: "test",
+        latency_ms: 1.2345,
+        rc_pieces: &[],
+        stamp: "2026-11-07 00:00",
+    };
+    let root = TempDir::new("guide_pyfmt");
+    export_convolution(&run, &root.0).unwrap();
+    let guide = fs::read_to_string(root.0.join(CONVOLUTION_GUIDE)).unwrap();
+    assert!(
+        guide.contains("L → L | L_to_L.wav | +2.2 dB | 1.234 ms"),
+        "{guide}"
+    );
+    assert!(guide.contains("헤드룸: 클리핑을 막으려고 모든 파일에 2.5 dB 감쇠"));
+}
+
 fn assert_op(fixture: &Fixture, id: &str, got: &Op, expected: &Value) {
     assert_eq!(got.fixed(), expected["fixed"].as_bool().unwrap(), "{id}");
     match (got, expected["kind"].as_str().unwrap()) {

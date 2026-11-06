@@ -1654,12 +1654,13 @@ fn convolution_guide(
     paths: &[ConvolutionRoute],
     extra_rates: &[u32],
 ) -> String {
+    let headroom = format_fixed(headroom_db, 1, false);
     let mut lines = vec![
         "SECS 2R 컨볼루션 IR".to_owned(),
         String::new(),
         "이 폴더의 WAV는 보정 필터 전체(FIR, PEQ, 크로스오버, 올패스, 게인, 극성, 딜레이)를 입력과 출력 쌍마다 하나로 합친 임펄스 응답입니다.".to_owned(),
         format!("형식: {rate} Hz, 32비트 float, 모노. 모든 파일의 길이는 {length} 샘플로 같습니다."),
-        format!("헤드룸: 클리핑을 막으려고 모든 파일에 {headroom_db:.1} dB 감쇠를 넣었습니다. 컨볼버에서 따로 줄이지 않아도 됩니다."),
+        format!("헤드룸: 클리핑을 막으려고 모든 파일에 {headroom} dB 감쇠를 넣었습니다. 컨볼버에서 따로 줄이지 않아도 됩니다."),
         String::new(),
         "거는 법".to_owned(),
         "- 아래 표의 한 줄은 입력 채널 하나를 그 WAV로 컨볼루션해 출력 채널 하나로 보내는 연결입니다.".to_owned(),
@@ -1684,8 +1685,12 @@ fn convolution_guide(
     }
     lines.extend(paths.iter().map(|path| {
         format!(
-            "{} → {} | {} | {:+.1} dB | {:.2} ms",
-            path.input, path.output, path.wav, path.peak_gain_db, path.delay_ms
+            "{} → {} | {} | {} dB | {} ms",
+            path.input,
+            path.output,
+            path.wav,
+            format_fixed(path.peak_gain_db, 1, true),
+            format_fixed(path.delay_ms, 3, false)
         )
     }));
     lines.extend([
@@ -2056,6 +2061,21 @@ mod generation_entry_tests {
             let expected = error.to_string();
             assert_eq!(super::FiltersError::from(error).to_string(), expected);
         }
+    }
+
+    #[test]
+    fn convolution_guide_formats_exact_ties_like_python_td226() {
+        let route = super::ConvolutionRoute {
+            input: "L".into(),
+            output: "L".into(),
+            wav: "L_to_L.wav".into(),
+            csv: "L_to_L.csv".into(),
+            peak_gain_db: 2.25,
+            delay_ms: 1.2345,
+        };
+        let guide = super::convolution_guide(48_000, 4096, 2.25, &[route], &[]);
+        assert!(guide.contains("모든 파일에 2.2 dB 감쇠"));
+        assert!(guide.contains("L → L | L_to_L.wav | +2.2 dB | 1.234 ms"));
     }
 }
 
