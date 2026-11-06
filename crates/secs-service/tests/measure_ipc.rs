@@ -1295,6 +1295,47 @@ fn rew_launch_classifies_reasons_and_returns_after_spawn() {
 }
 
 #[test]
+fn unparsable_mic_calibration_setting_names_itself_td268() {
+    let root = root("bad-mic-calibration-setting");
+    let path = root.join("room.secs");
+    let mut project = secs_project::Project::from_preset("2.0").unwrap();
+    project.extra.push((
+        "devices".into(),
+        secs_project::PyJson::Object(vec![(
+            "mic_calibration".into(),
+            secs_project::PyJson::Str("not a calibration".into()),
+        )]),
+    ));
+    fs::write(&path, project.save_text()).unwrap();
+    let service = Service::new(Deps::default());
+    call(
+        &service,
+        Request::ProjectOpen(ProjectPathParams {
+            path: path.to_string_lossy().into_owned(),
+        }),
+    );
+
+    let Envelope::Err(error) = service.call(Request::MeasureConfigGet, Arc::new(NoEvents)) else {
+        panic!("invalid microphone calibration must fail measure_config_get")
+    };
+    assert_eq!(error.code, ErrorCode::MeasurementInput);
+    assert_eq!(
+        error.params.get("field").map(String::as_str),
+        Some("mic_calibration")
+    );
+
+    let Envelope::Err(error) = service.call(Request::MicCalibrationGet, Arc::new(NoEvents)) else {
+        panic!("mic_calibration_get must retain its typed parse error")
+    };
+    assert_eq!(error.code, ErrorCode::MeasurementInput);
+    assert_eq!(
+        error.params.get("reason").map(String::as_str),
+        Some("mic_calibration")
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn measure_config_get_reads_stored_settings_without_dirtying_the_project() {
     let root = root("config-get");
     let path = root.join("room.secs");

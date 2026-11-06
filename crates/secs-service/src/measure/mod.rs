@@ -19,6 +19,7 @@ use std::{fmt, sync::Arc};
 #[derive(Debug)]
 pub enum MeasureError {
     Input(String),
+    InputField { field: &'static str, detail: String },
     InvalidSamples { row: String, reason: &'static str },
     Audio(secs_audio::AudioError),
     Rew(secs_rew::RewError),
@@ -28,6 +29,7 @@ impl fmt::Display for MeasureError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Input(s) => f.write_str(s),
+            Self::InputField { detail, .. } => f.write_str(detail),
             Self::InvalidSamples { row, reason } => {
                 write!(f, "measurement row {row} has {reason} samples")
             }

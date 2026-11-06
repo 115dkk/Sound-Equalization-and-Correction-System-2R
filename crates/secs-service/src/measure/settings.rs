@@ -77,7 +77,13 @@ impl MeasurementSettings {
             n("max_latency_seconds", settings.window.max_latency_seconds);
         settings.window.noise_seconds = n("noise_seconds", settings.window.noise_seconds);
         if let Some(text) = get("mic_calibration").and_then(PyJson::str) {
-            settings.calibration = Some(secs_audio::MicCalibration::parse(text)?);
+            settings.calibration =
+                Some(secs_audio::MicCalibration::parse(text).map_err(|error| {
+                    MeasureError::InputField {
+                        field: "mic_calibration",
+                        detail: error.to_string(),
+                    }
+                })?);
             let path = get("mic_calibration_path")
                 .and_then(PyJson::str)
                 .filter(|value| !value.is_empty())

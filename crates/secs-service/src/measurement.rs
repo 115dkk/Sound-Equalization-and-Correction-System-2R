@@ -26,6 +26,7 @@ pub(crate) fn measure_error(
     let detail = error.to_string();
     match error {
         MeasureError::Input(_) => input(field, detail),
+        MeasureError::InputField { field, .. } => input(field, detail),
         MeasureError::InvalidSamples { row, reason } => input(field, detail)
             .with_param("row", row)
             .with_param("reason", reason),
@@ -995,6 +996,16 @@ mod tests {
                 ErrorCode::MeasurementInput,
                 "field",
                 "plan",
+            ),
+            (
+                MeasureError::InputField {
+                    field: "mic_calibration",
+                    detail: "bad calibration".into(),
+                },
+                S::Auto,
+                ErrorCode::MeasurementInput,
+                "field",
+                "mic_calibration",
             ),
             (
                 MeasureError::InvalidSamples {

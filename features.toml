@@ -1520,7 +1520,7 @@ id = "ipc.measure_config_get"
 kind = "ipc"
 milestone = "M5"
 status = "implemented"
-tests = ["secs-service::measure_config_get_reads_stored_settings_without_dirtying_the_project"]
+tests = ["secs-service::measure_config_get_reads_stored_settings_without_dirtying_the_project", "secs-service::unparsable_mic_calibration_setting_names_itself_td268"]
 
 [[feature]]
 id = "ipc.measurement_records"
@@ -2031,7 +2031,7 @@ id = "ipc.mic_calibration_get"
 kind = "ipc"
 milestone = "M4"
 status = "implemented"
-tests = ["secs-service::mic_calibration_set_get_clear_and_errors"]
+tests = ["secs-service::mic_calibration_set_get_clear_and_errors", "secs-service::unparsable_mic_calibration_setting_names_itself_td268"]
 upstream = "new"
 
 [[feature]]
