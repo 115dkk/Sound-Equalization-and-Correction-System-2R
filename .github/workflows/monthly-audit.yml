@@ -13,7 +13,12 @@ name: Monthly audit
 #      API credit through Workload Identity Federation: this run's GitHub
 #      OIDC token is exchanged for a short-lived Anthropic token, so no key
 #      is stored. Match the rule to this file and nothing wider:
-#        subject   repo:115dkk/Sound-Equalization-and-Correction-System-2R:ref:refs/heads/main
+#        subject   repo:115dkk@33408534/Sound-Equalization-and-Correction-System-2R@1416026552:ref:refs/heads/main
+#                  (GitHub's immutable subject puts the owner and repository
+#                  ids after the names; `gh api repos/<owner>/<repo>/actions/
+#                  oidc/customization/sub` prints the prefix. A rule written
+#                  with the bare names fails as match_condition_false,
+#                  2026-11-06.)
 #        claims    ref = refs/heads/main
 #                  workflow_ref = 115dkk/Sound-Equalization-and-Correction-System-2R/.github/workflows/monthly-audit.yml@refs/heads/main
 #                  repository_owner = 115dkk
@@ -180,6 +185,21 @@ jobs:
             exit 1
           fi
           echo "::add-mask::$identity_token"
+
+          # The claims the rule is matched against, so a refused exchange
+          # (the Console reports only match_condition_false and the like)
+          # can be compared with the rule without leaving the run log. Run
+          # metadata, nothing secret: the token's signature is not printed.
+          echo "OIDC claims the rule is matched against:"
+          printf '%s' "$identity_token" | python3 -c '
+          import base64, json, sys
+          payload = sys.stdin.read().split(".")[1]
+          claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+          keys = ("iss", "aud", "sub", "ref", "ref_type", "repository", "repository_owner",
+                  "repository_owner_id", "repository_id", "workflow_ref", "job_workflow_ref",
+                  "event_name", "environment", "runner_environment")
+          print(json.dumps({key: claims.get(key) for key in keys}, indent=2))
+          '
 
           workspace_field=""
           if [ -n "${ANTHROPIC_WORKSPACE_ID:-}" ]; then
