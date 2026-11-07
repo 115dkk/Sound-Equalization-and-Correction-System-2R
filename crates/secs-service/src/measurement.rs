@@ -578,15 +578,10 @@ impl Service {
             }
             let mut count = 0;
             let mut failure = None;
-            let progress_ctx = ctx.clone();
-            let progress: measure::ProgressSink = Arc::new(move |progress| {
-                let done = progress.percent.clamp(0.0, 100.0).round() as u64;
-                progress_ctx.role_progress(&progress.phase, done, 100);
-            });
             let measured = m.measure_recording(
                 &p,
                 params.position,
-                Some(progress),
+                Some(&ctx),
                 ctx.measurement_cancel(),
                 &mut |mut result| {
                     let recorded = (|| -> Result<(), IpcError> {

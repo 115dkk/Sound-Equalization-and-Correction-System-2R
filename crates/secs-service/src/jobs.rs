@@ -67,13 +67,21 @@ impl Default for JobRegistry {
 }
 
 #[derive(Clone)]
-pub(crate) struct JobContext {
+pub struct JobContext {
     id: JobId,
     registry: JobRegistry,
     events: Arc<dyn EventSink>,
     cancel: CancelToken,
     measurement_cancel: crate::measure::CancelToken,
     available_memory: u64,
+}
+impl std::fmt::Debug for JobContext {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("JobContext")
+            .field("id", &self.id)
+            .finish_non_exhaustive()
+    }
 }
 impl JobContext {
     pub fn cancel(&self) -> &CancelToken {
@@ -84,12 +92,7 @@ impl JobContext {
     }
 
     pub fn report_progress(&self, stage: &'static str, done: u64, total: u64) {
-        self.progress_sink().report(&Progress {
-            stage,
-            done,
-            total,
-            eta: None,
-        });
+        self.progress(stage, done, total);
     }
 
     pub fn measurement_cancel(&self) -> &crate::measure::CancelToken {
@@ -111,6 +114,10 @@ impl JobContext {
     }
 
     pub fn role_progress(&self, stage: &str, done: u64, total: u64) {
+        self.progress(stage, done, total);
+    }
+
+    fn progress(&self, stage: &str, done: u64, total: u64) {
         let value = JobProgress {
             stage: stage.into(),
             done,
@@ -184,18 +191,8 @@ impl std::fmt::Debug for JobProgressSink {
 }
 impl ProgressSink for JobProgressSink {
     fn report(&self, progress: &Progress) {
-        let value = JobProgress {
-            stage: progress.stage.into(),
-            done: progress.done,
-            total: progress.total,
-        };
-        self.0.registry.progress(self.0.id, value.clone());
-        self.0.events.send(JobEvent::Progress {
-            job: self.0.id,
-            stage: value.stage,
-            done: value.done,
-            total: value.total,
-        });
+        self.0
+            .progress(progress.stage, progress.done, progress.total);
     }
 }
 
@@ -378,7 +375,10 @@ impl JobRegistry {
             if remaining.is_zero() {
                 return false;
             }
-            let (next, wait) = self.changed.wait_timeout(inner, remaining).unwrap();
+            let (next, wait) = self
+                .changed
+                .wait_timeout(inner, remaining)
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             inner = next;
             if wait.timed_out() {
                 return false;

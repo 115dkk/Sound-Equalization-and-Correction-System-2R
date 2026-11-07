@@ -488,7 +488,7 @@ where
         &mut self,
         plan: &MeasurementPlan,
         pos: i64,
-        progress: Option<ProgressSink>,
+        progress: Option<&JobContext>,
         cancel: &CancelToken,
         record: &mut dyn FnMut(MeasurementResult) -> Result<(), MeasureError>,
     ) -> Result<(), MeasureError> {
@@ -512,14 +512,17 @@ where
             let input_device = current_audio
                 .input_device
                 .unwrap_or_else(|| fallback(&plan.input_device, &input_devices));
-            let progress = progress.map(|sink| {
-                Arc::new(move |progress: secs_rew::Progress| {
-                    sink(Progress {
-                        role: progress.role,
-                        pos: i64::from(progress.pos),
-                        phase: progress.phase,
-                        percent: progress.percent,
-                    });
+            let progress = progress.cloned().map(|context| {
+                SyncArc::new(move |progress: secs_rew::Progress| {
+                    report(
+                        &context,
+                        Progress {
+                            role: progress.role,
+                            pos: i64::from(progress.pos),
+                            phase: progress.phase,
+                            percent: progress.percent,
+                        },
+                    );
                 }) as secs_rew::ProgressCallback
             });
             let rew_plan = to_rew_plan(plan)?;
@@ -581,7 +584,7 @@ where
         &mut self,
         plan: &MeasurementPlan,
         pos: i64,
-        progress: Option<ProgressSink>,
+        progress: Option<&JobContext>,
         cancel: &CancelToken,
     ) -> Result<Vec<MeasurementResult>, MeasureError> {
         let result = (|| {
@@ -604,14 +607,17 @@ where
             let input_device = current_audio
                 .input_device
                 .unwrap_or_else(|| fallback(&plan.input_device, &input_devices));
-            let progress = progress.map(|sink| {
-                Arc::new(move |p: secs_rew::Progress| {
-                    sink(Progress {
-                        role: p.role,
-                        pos: i64::from(p.pos),
-                        phase: p.phase,
-                        percent: p.percent,
-                    })
+            let progress = progress.cloned().map(|context| {
+                SyncArc::new(move |progress: secs_rew::Progress| {
+                    report(
+                        &context,
+                        Progress {
+                            role: progress.role,
+                            pos: i64::from(progress.pos),
+                            phase: progress.phase,
+                            percent: progress.percent,
+                        },
+                    );
                 }) as secs_rew::ProgressCallback
             });
             // TD-215: this direct path uses the client's position-wide subscription.

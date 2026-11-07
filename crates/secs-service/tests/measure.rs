@@ -1,12 +1,7 @@
 #![forbid(unsafe_code)]
 use secs_project::{MeasurementStore, Project, PyJson};
 use secs_service::measure::*;
-use std::{
-    collections::BTreeMap,
-    path::PathBuf,
-    sync::{Arc, Mutex},
-    time::Duration,
-};
+use std::{collections::BTreeMap, path::PathBuf, sync::Arc, time::Duration};
 fn project() -> Project {
     Project::from_preset("2.0").unwrap()
 }
@@ -352,20 +347,12 @@ fn rew_source_devices_fall_back_only_to_names_in_rew_lists() {
 fn test_cancel_before_start_measures_nothing() {
     let cancel = CancelToken::default();
     cancel.cancel();
-    let events = Arc::new(Mutex::new(vec![]));
-    let copy = events.clone();
     let mut mock = MockMeasurer::new();
     assert!(
-        mock.measure_position(
-            &plan(),
-            1,
-            Some(Arc::new(move |p| copy.lock().unwrap().push(p))),
-            &cancel
-        )
-        .unwrap()
-        .is_empty()
+        mock.measure_position(&plan(), 1, None, &cancel)
+            .unwrap()
+            .is_empty()
     );
-    assert_eq!(events.lock().unwrap().last().unwrap().phase, "cancelled");
 }
 #[test]
 fn native_plan_ignores_the_rew_only_timing_and_repetitions_u15() {

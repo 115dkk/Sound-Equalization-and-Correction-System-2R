@@ -1,6 +1,7 @@
 use super::*;
 use secs_audio::{AudioBackend, LevelInput, LevelOutput, LevelSignal};
 use secs_project::{MeasurementPlan, MeasurementResult};
+use std::sync::Arc;
 
 pub type BackendFactory =
     Arc<dyn Fn() -> Result<Box<dyn AudioBackend>, secs_audio::AudioError> + Send + Sync>;
@@ -159,16 +160,16 @@ impl Measurer for NativeMeasurer {
         &mut self,
         plan: &MeasurementPlan,
         pos: i64,
-        progress: Option<ProgressSink>,
+        progress: Option<&JobContext>,
         cancel: &CancelToken,
     ) -> Result<Vec<MeasurementResult>, MeasureError> {
         let position = positive(pos, "position")?;
         if cancel.is_cancelled() {
-            emit(&progress, "", pos, "cancelled", 0.0);
+            emit(progress, "", pos, "cancelled", 0.0);
             return Ok(vec![]);
         }
         let p = to_audio_plan(plan, &self.backend.enumerate()?, &self.settings)?;
-        emit(&progress, "", pos, "sweep", 0.0);
+        emit(progress, "", pos, "sweep", 0.0);
         let got = secs_audio::measure_position(
             self.backend.as_ref(),
             &p,
@@ -180,12 +181,12 @@ impl Measurer for NativeMeasurer {
                     secs_audio::session::SessionEvent::OutputDrained(_) => ("process", 90.0),
                     _ => return,
                 };
-                emit(&progress, "", pos, phase, percent);
+                emit(progress, "", pos, phase, percent);
             },
         );
         let got = match got {
             Err(secs_audio::AudioError::Cancelled) => {
-                emit(&progress, "", pos, "cancelled", 0.0);
+                emit(progress, "", pos, "cancelled", 0.0);
                 return Ok(vec![]);
             }
             other => other?,
@@ -204,7 +205,7 @@ impl Measurer for NativeMeasurer {
             .roles
             .into_iter()
             .map(|r| {
-                emit(&progress, &r.role, pos, "done", 100.0);
+                emit(progress, &r.role, pos, "done", 100.0);
                 MeasurementResult {
                     role: r.role,
                     pos,

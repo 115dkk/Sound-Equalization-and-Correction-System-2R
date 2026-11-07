@@ -337,7 +337,7 @@ impl Measurer for MockMeasurer {
         &mut self,
         plan: &MeasurementPlan,
         pos: i64,
-        progress: Option<ProgressSink>,
+        progress: Option<&JobContext>,
         cancel: &CancelToken,
     ) -> Result<Vec<MeasurementResult>, MeasureError> {
         let start = std::time::Instant::now();

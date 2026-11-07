@@ -14,7 +14,9 @@ pub use settings::{
 };
 
 use secs_project::{MeasurementPlan, MeasurementResult};
-use std::{fmt, sync::Arc};
+use std::fmt;
+
+use crate::jobs::JobContext;
 
 #[derive(Debug)]
 pub enum MeasureError {
@@ -122,7 +124,6 @@ pub struct Progress {
     pub phase: String,
     pub percent: f64,
 }
-pub type ProgressSink = Arc<dyn Fn(Progress) + Send + Sync>;
 
 /// How a measurement method commits a position's results.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -152,7 +153,7 @@ pub trait Measurer: Send {
         &mut self,
         plan: &MeasurementPlan,
         pos: i64,
-        progress: Option<ProgressSink>,
+        progress: Option<&JobContext>,
         cancel: &CancelToken,
     ) -> Result<Vec<MeasurementResult>, MeasureError>;
 
@@ -161,7 +162,7 @@ pub trait Measurer: Send {
         &mut self,
         plan: &MeasurementPlan,
         pos: i64,
-        progress: Option<ProgressSink>,
+        progress: Option<&JobContext>,
         cancel: &CancelToken,
         record: &mut dyn FnMut(MeasurementResult) -> Result<(), MeasureError>,
     ) -> Result<(), MeasureError> {
@@ -178,13 +179,21 @@ pub(crate) fn positive(value: i64, name: &str) -> Result<u32, MeasureError> {
         .filter(|v| *v > 0)
         .ok_or_else(|| MeasureError::Input(format!("{name} must be a positive u32")))
 }
-pub(crate) fn emit(sink: &Option<ProgressSink>, role: &str, pos: i64, phase: &str, percent: f64) {
-    if let Some(sink) = sink {
-        sink(Progress {
-            role: role.into(),
-            pos,
-            phase: phase.into(),
-            percent,
-        });
+pub(crate) fn emit(context: Option<&JobContext>, role: &str, pos: i64, phase: &str, percent: f64) {
+    if let Some(context) = context {
+        report(
+            context,
+            Progress {
+                role: role.into(),
+                pos,
+                phase: phase.into(),
+                percent,
+            },
+        );
     }
+}
+
+pub(crate) fn report(context: &JobContext, progress: Progress) {
+    let done = progress.percent.clamp(0.0, 100.0).round() as u64;
+    context.role_progress(&progress.phase, done, 100);
 }
