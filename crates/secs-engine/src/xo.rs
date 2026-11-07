@@ -14,6 +14,7 @@ use crate::{
     design::{DesignBytes, DesignRequest, design_prepared_for_xo, production_fitters_with},
     fit::PeqDerivatives,
     grid::design_freqs,
+    input::RoleMap,
     levels, measurement, scorecard,
     setup::Setup,
 };
@@ -140,7 +141,7 @@ fn check_scored_positions(set: &MeasurementSet, config: &EngineConfig) -> Result
         });
     for role in scored {
         for (position, measured) in &set.positions {
-            let has = |r: &str| measured.iter().any(|(m, _)| m == r);
+            let has = |role: &str| RoleMap::get_from(measured, role).is_some();
             if !has(role) {
                 continue;
             }
@@ -409,7 +410,7 @@ pub fn recommend_xo(
                     .iter()
                     .rposition(|c| *c == fc)
                     .expect("candidate key");
-                if let Some((_, scores)) = trials[index].iter().find(|(group, _)| group == &g) {
+                if let Some(scores) = RoleMap::get_from(&trials[index], &g) {
                     rows.push(XoRow {
                         fc,
                         scores: *scores,

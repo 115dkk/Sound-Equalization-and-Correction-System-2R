@@ -2,6 +2,7 @@
 //! Upstream: `onset_index`, `windowed`, `_prepare`, `long_spectra`, `_delay`.
 
 use crate::grid::{BINS, N_FFT, SR, SR_F, design_freqs};
+use crate::input::RoleMap;
 use crate::setup::{Setup, SubFilter};
 use crate::{C, EngineConfig, EngineError, MeasurementSet, Samples};
 use secs_dsp::{fft, response};
@@ -138,7 +139,7 @@ pub fn sub_filter_response(filter: &SubFilter) -> Vec<C> {
 #[derive(Debug, Clone, Default)]
 pub struct Spectra {
     positions: Vec<u32>,
-    cells: Vec<Vec<(String, Arc<[C]>)>>,
+    cells: Vec<RoleMap<Arc<[C]>>>,
 }
 
 impl Spectra {
@@ -147,24 +148,21 @@ impl Spectra {
     }
     pub fn get(&self, position: u32, role: &str) -> Option<&Arc<[C]>> {
         let p = self.positions.binary_search(&position).ok()?;
-        self.cells[p]
-            .iter()
-            .find(|(r, _)| r == role)
-            .map(|(_, h)| h)
+        self.cells[p].get(role)
     }
     pub fn roles_at(&self, position: u32) -> impl Iterator<Item = &str> {
         self.positions
             .binary_search(&position)
             .ok()
             .into_iter()
-            .flat_map(|p| self.cells[p].iter().map(|(r, _)| r.as_str()))
+            .flat_map(|p| self.cells[p].iter().map(|(role, _)| role))
     }
     pub fn set(&mut self, position: u32, role: &str, value: Arc<[C]>) {
         let p = self.ensure_position(position);
-        if let Some((_, h)) = self.cells[p].iter_mut().find(|(r, _)| r == role) {
+        if let Some(h) = self.cells[p].get_mut(role) {
             *h = value;
         } else {
-            self.cells[p].push((role.to_owned(), value));
+            self.cells[p].push(role.to_owned(), value);
         }
     }
     fn ensure_position(&mut self, position: u32) -> usize {
@@ -172,7 +170,7 @@ impl Spectra {
             Ok(p) => p,
             Err(p) => {
                 self.positions.insert(p, position);
-                self.cells.insert(p, Vec::new());
+                self.cells.insert(p, RoleMap::default());
                 p
             }
         }
@@ -238,9 +236,9 @@ fn build_spectra(
 ) -> Result<Spectra, EngineError> {
     #[cfg(test)]
     SPECTRA_BUILT.with(|built| built.set(built.get() + 1));
-    let filters: Vec<_> = filters
+    let filters: RoleMap<_> = filters
         .iter()
-        .map(|(r, f)| (r, sub_filter_response(f)))
+        .map(|(role, filter)| (role.clone(), sub_filter_response(filter)))
         .collect();
     let mut out = Spectra::default();
     for (pos, roles) in &set.positions {
@@ -253,7 +251,7 @@ fn build_spectra(
             for (h, f) in h.iter_mut().zip(design_freqs()) {
                 *h *= C::from_polar(1.0, ramp_phase(*f, start_t));
             }
-            if let Some((_, filter)) = filters.iter().find(|(r, _)| *r == role) {
+            if let Some(filter) = filters.get(role) {
                 for (h, f) in h.iter_mut().zip(filter) {
                     *h *= f;
                 }
@@ -344,14 +342,14 @@ pub fn prepare_until(
 /// Apply the same last multiplication as build_spectra, sharing untouched cells.
 /// `raw` must be built without filters on the requested window and time axis.
 pub(crate) fn filtered_spectra(raw: &Spectra, filters: &[(String, SubFilter)]) -> Spectra {
-    let filters: Vec<_> = filters
+    let filters: RoleMap<_> = filters
         .iter()
-        .map(|(r, f)| (r, sub_filter_response(f)))
+        .map(|(role, filter)| (role.clone(), sub_filter_response(filter)))
         .collect();
     let mut out = raw.clone();
     for &position in raw.positions() {
         for role in raw.roles_at(position) {
-            if let Some((_, filter)) = filters.iter().find(|(r, _)| r.as_str() == role) {
+            if let Some(filter) = filters.get(role) {
                 let h = raw.get(position, role).expect("existing cell");
                 out.set(
                     position,

@@ -5,7 +5,7 @@ use crate::chain::{BaRow, PreparedBaTerm, gather, sub_sum, sub_sum_prepared};
 use crate::decay::{BaLateGrid, ba_late_db};
 use crate::fit::{Fitter, xo_target_peq};
 use crate::grid::{BINS, SR_F, design_freqs};
-use crate::input::{BandType, BundleGain, DbaRow, LayoutKind, Peq, SubAllpass, SubMode};
+use crate::input::{BandType, BundleGain, DbaRow, LayoutKind, Peq, RoleMap, SubAllpass, SubMode};
 use crate::measurement::{Prepared, Spectra, onset_index, ramp_phase};
 use crate::notes::Note;
 use crate::setup::{Setup, SubFilter};
@@ -98,13 +98,7 @@ fn weight(pos: u32, main: u32) -> f64 {
     if pos == main { 5.0 } else { 1.0 }
 }
 fn base(input: &BaInput<'_>, role: &str) -> f64 {
-    input
-        .prepared
-        .align_delay_ms
-        .iter()
-        .find(|(r, _)| r == role)
-        .unwrap()
-        .1
+    *RoleMap::get_from(&input.prepared.align_delay_ms, role).expect("role present: alignment delay")
 }
 fn complete(h: &Spectra, roles: &[String]) -> Vec<u32> {
     h.positions()
@@ -454,21 +448,17 @@ impl BaSetup {
 }
 
 fn manual_value(setup: &Setup, role: &str) -> BaRow {
-    setup
-        .sub_manual
-        .iter()
-        .find(|(r, _)| r == role)
-        .map_or_else(
-            || row(0.0, 0.0, 1, vec![]),
-            |(_, m)| {
-                row(
-                    m.gain_db,
-                    m.delay_ms,
-                    if m.polarity < 0 { -1 } else { 1 },
-                    m.allpass.iter().take(2).copied().collect(),
-                )
-            },
-        )
+    RoleMap::get_from(&setup.sub_manual, role).map_or_else(
+        || row(0.0, 0.0, 1, vec![]),
+        |m| {
+            row(
+                m.gain_db,
+                m.delay_ms,
+                if m.polarity < 0 { -1 } else { 1 },
+                m.allpass.iter().take(2).copied().collect(),
+            )
+        },
+    )
 }
 fn manual_plan(input: &BaInput<'_>) -> Option<ManualPlan> {
     let mut p = ManualPlan {
@@ -478,17 +468,11 @@ fn manual_plan(input: &BaInput<'_>) -> Option<ManualPlan> {
         gain_anchored: false,
     };
     for r in &input.config.subs {
-        match input
-            .setup
-            .sub_manual
-            .iter()
-            .find(|(s, _)| s == r)
-            .map(|(_, m)| m)
-        {
+        match RoleMap::get_from(&input.setup.sub_manual, r) {
             Some(m) if m.mode == SubMode::Fixed => p.fixed.push(r.clone()),
             Some(m) if m.mode == SubMode::Bundle => {
                 let name = if m.bundle.is_empty() { "A" } else { &m.bundle };
-                if let Some((_, rs)) = p.bundles.iter_mut().find(|(b, _)| b == name) {
+                if let Some(rs) = RoleMap::get_mut_from(&mut p.bundles, name) {
                     rs.push(r.clone());
                 } else {
                     p.bundles.push((name.to_owned(), vec![r.clone()]));
@@ -615,14 +599,14 @@ impl Search {
             });
         }
         for (name, rs) in &plan.bundles {
-            let layout = alignment.layout_rel.iter().find(|(b, _)| b == name);
+            let layout = RoleMap::get_from(&alignment.layout_rel, name);
             let mut vals = layout.map_or_else(
                 || {
                     rs.iter()
                         .map(|r| (r.clone(), manual_value(input.setup, r)))
                         .collect()
                 },
-                |(_, v)| v.clone(),
+                Clone::clone,
             );
             let dmin = vals
                 .iter()
@@ -699,7 +683,11 @@ impl Search {
             .config
             .subs
             .iter()
-            .map(|r| out.iter().find(|(s, _)| s == r).unwrap().1.clone())
+            .map(|role| {
+                RoleMap::get_from(&out, role)
+                    .expect("role present: bass-alignment row")
+                    .clone()
+            })
             .collect()
     }
 }
@@ -1070,11 +1058,8 @@ fn layout_stage(
                         },
                     ));
                 }
-                out.sub_filters
-                    .iter_mut()
-                    .find(|(s, _)| s == r)
-                    .unwrap()
-                    .1
+                RoleMap::get_mut_from(&mut out.sub_filters, r)
+                    .expect("role present: sub filter")
                     .peq
                     .extend_from_slice(&peq);
                 for p in h.positions().to_vec() {
@@ -1121,15 +1106,11 @@ fn two_way(input: &BaInput<'_>, h: &Spectra, out: &mut SubAlignment) -> Result<u
     if low.is_empty() || high.is_empty() {
         return Ok(0);
     }
-    let xo = filters.iter().find(|(r, _)| r == &low[0]).unwrap().1.lp_hz;
+    let xo = RoleMap::get_from(filters, &low[0])
+        .expect("role present: low sub filter")
+        .lp_hz;
     if high.iter().any(|r| {
-        (filters
-            .iter()
-            .find(|(s, _)| s == *r)
-            .map_or(0.0, |(_, f)| f.hp_hz)
-            - xo)
-            .abs()
-            > 0.5
+        (RoleMap::get_from(filters, r).map_or(0.0, |filter| filter.hp_hz) - xo).abs() > 0.5
     }) {
         return Ok(0);
     }
@@ -1412,7 +1393,7 @@ fn bus_delay_observe(
     }
     let mut prepared = vec![];
     for (r, positions) in mains {
-        let Some(&(_, xo)) = xo_of.iter().find(|(s, x)| s == r && *x != 0.0) else {
+        let Some(xo) = RoleMap::get_from(xo_of, r).copied().filter(|xo| *xo != 0.0) else {
             continue;
         };
         let idx: Vec<_> = design_freqs()
@@ -1422,7 +1403,7 @@ fn bus_delay_observe(
             .map(|(i, _)| i)
             .collect();
         let f = gather(design_freqs(), &idx);
-        let d = align_delay_ms.iter().find(|(s, _)| s == r).unwrap().1;
+        let d = *RoleMap::get_from(align_delay_ms, r).expect("role present: alignment delay");
         let hp = response::lr4(&f, xo, "HP");
         let lp = response::lr4(&f, xo, "LP");
         for (pos, h) in positions {
@@ -1495,7 +1476,7 @@ pub fn fold(rows: &[BaRow], bus_gain: f64, bus_delay_ms: f64, bus_polarity: i8) 
         .collect()
 }
 pub fn sub_mode_label(role: &str, setup: &Setup, layout_info: &[(String, LayoutInfo)]) -> String {
-    let Some((_, m)) = setup.sub_manual.iter().find(|(r, _)| r == role) else {
+    let Some(m) = RoleMap::get_from(&setup.sub_manual, role) else {
         return "auto".into();
     };
     match m.mode {
@@ -1503,7 +1484,7 @@ pub fn sub_mode_label(role: &str, setup: &Setup, layout_info: &[(String, LayoutI
         SubMode::Fixed => "fixed".into(),
         SubMode::Bundle => {
             let name = if m.bundle.is_empty() { "A" } else { &m.bundle };
-            if let Some((_, info)) = layout_info.iter().find(|(n, _)| n == name) {
+            if let Some(info) = RoleMap::get_from(layout_info, name) {
                 let kind = match info.kind {
                     LayoutKind::Multi => "multi",
                     LayoutKind::Dba => {

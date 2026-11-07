@@ -22,6 +22,7 @@ use crate::{
     chain::BaRow,
     fit::{self, Fitter, PeqDerivatives},
     grid::{N_FFT, SR, design_freqs},
+    input::RoleMap,
     levels,
     measurement::{self, Spectra},
     notes::{Band, Note, Peq as NotePeq, RoleBand, RoleNote, RoleValue, SubFilterNote},
@@ -727,11 +728,12 @@ fn design_pass(
         .filter(|(g, _)| g != "sub")
         .flat_map(|(g, roles)| {
             roles.iter().filter_map(move |r| {
-                config
-                    .xo
-                    .iter()
-                    .find(|(name, x)| name == g && *x != 0.0 && !config.subs.is_empty())
-                    .map(|(_, x)| (r.clone(), *x))
+                (!config.subs.is_empty())
+                    .then(|| RoleMap::get_from(&config.xo, g))
+                    .flatten()
+                    .copied()
+                    .filter(|xo| *xo != 0.0)
+                    .map(|xo| (r.clone(), xo))
             })
         })
         .collect();
@@ -794,11 +796,9 @@ fn design_pass(
             if !config.xo_peq_on || hi <= lo {
                 continue;
             }
-            let level = levels
-                .iter()
-                .find(|(r, _)| r == role)
-                .ok_or_else(|| EngineError::Input(format!("XO role {role} missing at reference")))?
-                .1;
+            let level = *RoleMap::get_from(&levels, role).ok_or_else(|| {
+                EngineError::Input(format!("XO role {role} missing at reference"))
+            })?;
             let gain = C::new(10f64.powf((ref_level - level) / 20.0), 0.0);
             let by_pos: Vec<_> = positions
                 .iter()
@@ -909,14 +909,11 @@ fn design_pass(
                 return Ok(None);
             };
             let rc_started = std::time::Instant::now();
-            let gain_db = ref_level - levels.iter().find(|(r, _)| r == role).unwrap().1;
-            let xo_hz = xo_of.iter().find(|(r, _)| r == role).map(|(_, x)| *x);
-            let align_delay_ms = prepared
-                .align_delay_ms
-                .iter()
-                .find(|(r, _)| r == role)
-                .unwrap()
-                .1;
+            let gain_db = ref_level
+                - RoleMap::get_from(&levels, role).expect("role present: reference level");
+            let xo_hz = RoleMap::get_from(&xo_of, role).copied();
+            let align_delay_ms = *RoleMap::get_from(&prepared.align_delay_ms, role)
+                .expect("role present: alignment delay");
             let comb: Vec<(u32, Arc<[C]>)> = positions
                 .iter()
                 .filter_map(|&p| {
@@ -985,20 +982,14 @@ fn design_pass(
                 delay_ms: align_delay_ms + shift,
                 xo_hz,
                 align_delay_ms,
-                top_peq: top_peq
-                    .iter()
-                    .find(|(r, _)| r == role)
-                    .map_or_else(Vec::new, |(_, p)| p.clone()),
+                top_peq: RoleMap::get_from(&top_peq, role).map_or_else(Vec::new, Clone::clone),
             };
             let main = MainDesign {
                 role: role.clone(),
                 gain_db,
                 xo_hz,
                 align_delay_ms,
-                top_response: top_responses
-                    .iter()
-                    .find(|(r, _)| r == role)
-                    .map(|(_, p)| p.clone()),
+                top_response: RoleMap::get_from(&top_responses, role).cloned(),
                 response,
                 phase_strength: result.out.phase_strength,
                 phase_band: result.out.phase_band,
@@ -1056,14 +1047,15 @@ fn design_pass(
             .as_ref()
             .is_some_and(|p| p.fixed.contains(role))
         {
-            let m = &setup.sub_manual.iter().find(|(r, _)| r == role).unwrap().1;
+            let m = RoleMap::get_from(&setup.sub_manual, role)
+                .expect("role present: fixed sub settings");
             sub.gain_db = m.gain_db;
             sub.delay_ms = m.delay_ms;
             sub.polarity = if m.polarity < 0 { -1 } else { 1 };
             sub.allpass = m.allpass.iter().copied().take(2).collect();
             sub.mode = "fixed".into();
         }
-        if let Some((_, f)) = alignment.sub_filters.iter().find(|(r, _)| r == role) {
+        if let Some(f) = RoleMap::get_from(&alignment.sub_filters, role) {
             sub.hp_hz = f.hp_hz;
             sub.hp_type = f.hp_type;
             sub.lp_hz = f.lp_hz;

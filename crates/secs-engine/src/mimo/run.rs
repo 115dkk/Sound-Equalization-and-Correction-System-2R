@@ -12,7 +12,7 @@ use secs_types::{
 use super::{IirDerivatives, IirSolveOptions, IirSupport, MimoDesign, MimoRequest, support_path};
 use crate::{
     C, Design, EngineConfig, EngineError, MeasurementSet, Note, PeqDerivatives, Tuning,
-    grid::design_freqs, scorecard::Metrics,
+    grid::design_freqs, input::RoleMap, scorecard::Metrics,
 };
 
 /// Low-rate taps a FIR support solves for (upstream `mimo.FIR_TAPS_LOW`):
@@ -431,7 +431,7 @@ fn applied_response(
         })?
         .output;
     let mut extra = vec![C::new(0.0, 0.0); f.len()];
-    if let Some((_, sups)) = supports.iter().find(|(input, _)| input == at.role) {
+    if let Some(sups) = RoleMap::get_from(supports, at.role) {
         for (support, realization) in sups {
             check(ctx)?;
             let path = support_path(
@@ -472,17 +472,13 @@ pub(crate) fn assemble_prepared(
     for (input, sups) in &supports {
         for (support, sp) in sups {
             check(ctx)?;
-            let low_hz = ideal
-                .ranges
-                .iter()
-                .find(|(r, _)| r == support)
-                .and_then(|(_, r)| *r)
-                .map_or(50.0, |r| r.0);
-            let delay_ms = prepared
-                .align_delay_ms
-                .iter()
-                .find(|(r, _)| r == support)
-                .map_or(0.0, |(_, d)| *d)
+            let low_hz = RoleMap::get_from(&ideal.ranges, support)
+                .copied()
+                .flatten()
+                .map_or(50.0, |range| range.0);
+            let delay_ms = RoleMap::get_from(&prepared.align_delay_ms, support)
+                .copied()
+                .unwrap_or(0.0)
                 + design.chain.main_extra_ms;
             let filter = match sp {
                 Support::Iir(s) => MimoFilter::Iir {
