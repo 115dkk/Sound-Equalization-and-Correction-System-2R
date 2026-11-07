@@ -703,6 +703,13 @@ impl OriginalSnapshot {
         let project = store.project().clone();
         let plan_roles = plan_from_project(&project, std::iter::empty()).roles;
         let sources = load_project_sources(&project, &self.path);
+        for warning in &sources.warnings {
+            job.log(secs_types::ipc::Notice {
+                code: warning.code.to_owned(),
+                params: [("entry".into(), warning.entry.clone())].into(),
+            });
+        }
+        let sources = sources.values;
         let total = records
             .iter()
             .map(|record| record.ir.values().filter(|path| !path.is_empty()).count())

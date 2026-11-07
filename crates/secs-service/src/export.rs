@@ -504,6 +504,12 @@ impl Service {
             job.cancel()
                 .check()
                 .map_err(|_| IpcError::new(ErrorCode::Cancelled, "cancelled"))?;
+            for warning in &sources.warnings {
+                job.log(Notice {
+                    code: warning.code.to_owned(),
+                    params: [("entry".into(), warning.entry.clone())].into(),
+                });
+            }
             let ctx = super::calibration::compute_context(&job, memory, false);
             let folder = destination.as_path();
             let mut paths = match params.kind {
@@ -698,7 +704,7 @@ impl Service {
                             original_values,
                             folder,
                             mimo.as_ref(),
-                            Some(&sources),
+                            Some(&sources.values),
                             spl_offset,
                             now_ms,
                             uuid.as_mut(),

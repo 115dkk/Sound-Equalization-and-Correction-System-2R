@@ -749,16 +749,16 @@ fn source_info_bytes(info: &SourceInfo) -> usize {
         .saturating_add(info.format.as_ref().map_or(0, String::len))
 }
 
-pub fn load_project_sources(
-    project: &Project,
-    project_path: &Path,
-) -> BTreeMap<u32, BTreeMap<String, SourceInfo>> {
-    load_project_sources_within(project, project_path, MAX_PROJECT_SOURCE_BYTES).values
+/// Source sidecars loaded for a project and warnings for entries that were skipped.
+pub fn load_project_sources(project: &Project, project_path: &Path) -> LoadedProjectSources {
+    load_project_sources_within(project, project_path, MAX_PROJECT_SOURCE_BYTES)
 }
 
-struct LoadedProjectSources {
-    values: BTreeMap<u32, BTreeMap<String, SourceInfo>>,
-    warnings: Vec<MigrationWarning>,
+/// Source sidecars and non-fatal load warnings.
+#[derive(Debug, Default)]
+pub struct LoadedProjectSources {
+    pub values: BTreeMap<u32, BTreeMap<String, SourceInfo>>,
+    pub warnings: Vec<MigrationWarning>,
 }
 
 fn source_warning(code: &'static str, path: &Path) -> MigrationWarning {
@@ -802,11 +802,23 @@ fn load_project_sources_within(
             };
             let sidecar = source_path(&path);
             // F5: neither the IR nor its sidecar may lead outside the `.irs`.
-            if !path.is_file()
-                || !sidecar.is_file()
-                || confined_ir_path(project_path, &path).is_err()
-                || confined_ir_path(project_path, &sidecar).is_err()
-            {
+            if !path.is_file() || confined_ir_path(project_path, &path).is_err() {
+                continue;
+            }
+            match fs::symlink_metadata(&sidecar) {
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(_) => {
+                    warnings.push(source_warning("measurement.source.skipped", &sidecar));
+                    continue;
+                }
+                Ok(metadata) if !metadata.file_type().is_file() => {
+                    warnings.push(source_warning("measurement.source.skipped", &sidecar));
+                    continue;
+                }
+                Ok(_) => {}
+            }
+            if confined_ir_path(project_path, &sidecar).is_err() {
+                warnings.push(source_warning("measurement.source.skipped", &sidecar));
                 continue;
             }
             let key = sidecar.canonicalize().unwrap_or_else(|_| sidecar.clone());
@@ -1624,6 +1636,22 @@ mod source_budget_tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "uses temporary files")]
+    fn sidecar_that_is_a_directory_is_reported_as_skipped_td183() {
+        let (root, project_path, sidecar) = sidecar_project("directory", b"[]");
+        fs::remove_file(&sidecar).unwrap();
+        fs::create_dir(&sidecar).unwrap();
+
+        let store = MeasurementStore::open(&project_path).unwrap();
+
+        assert!(store.warnings().iter().any(|warning| {
+            warning.code == "measurement.source.skipped"
+                && warning.entry == sidecar.to_string_lossy()
+        }));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "uses temporary files")]
     fn budget_exhaustion_is_reported_td183() {
         let (root, project_path, sidecar) = sidecar_project("budget", b"[]");
 
@@ -1665,7 +1693,7 @@ mod source_budget_tests {
         project.measurements = PyJson::Array(entries);
 
         SOURCE_PARSE_COUNT.store(0, Ordering::Relaxed);
-        let sources = load_project_sources(&project, &project_path);
+        let sources = load_project_sources(&project, &project_path).values;
         let parsed = SOURCE_PARSE_COUNT.load(Ordering::Relaxed);
         assert!(parsed > 0);
         assert!(

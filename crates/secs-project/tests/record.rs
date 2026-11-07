@@ -271,7 +271,10 @@ fn measurement_source_writes_exact_bytes_reads_and_deletes_stale_file() {
     );
     assert_eq!(fs::read_to_string(&source).unwrap(), expected);
     assert_eq!(load_source(&wav), Some(info.clone()));
-    assert_eq!(load_project_sources(store.project(), &path)[&1]["L"], info);
+    assert_eq!(
+        load_project_sources(store.project(), &path).values[&1]["L"],
+        info
+    );
 
     store.record(result("L", 1, "two"), Some(&roles)).unwrap();
     assert!(!source.exists());
@@ -877,7 +880,7 @@ fn project_sources_are_read_only_inside_the_irs_folder_td43() {
     let mut project = Project::from_preset("2.0").unwrap();
     project.measurements = PyJson::Array(entries);
 
-    let sources = load_project_sources(&project, &path);
+    let sources = load_project_sources(&project, &path).values;
     assert_eq!(sources.keys().copied().collect::<Vec<_>>(), vec![1]);
     assert_eq!(sources[&1]["L"], info);
 }
@@ -940,7 +943,11 @@ fn oversized_measurement_source_sidecar_is_absent_on_open_td112() {
     fs::write(&project_path, project.save_text()).unwrap();
 
     let store = MeasurementStore::open(&project_path).unwrap();
-    assert!(load_project_sources(store.project(), &project_path).is_empty());
+    assert!(
+        load_project_sources(store.project(), &project_path)
+            .values
+            .is_empty()
+    );
 }
 
 #[test]
@@ -966,7 +973,7 @@ fn shared_source_materialisation_keeps_only_entries_within_budget_td112() {
     fs::write(&project_path, project.save_text()).unwrap();
 
     let store = MeasurementStore::open(&project_path).unwrap();
-    let sources = load_project_sources(store.project(), &project_path);
+    let sources = load_project_sources(store.project(), &project_path).values;
     assert!(!sources.is_empty());
     assert!(sources.len() < 9);
     assert!(sources.contains_key(&1));
@@ -999,7 +1006,7 @@ fn load_project_sources_skips_only_the_bad_sidecar_td112() {
         entry_at(2, "source-skip.irs/bad.wav"),
     ]);
 
-    let sources = load_project_sources(&project, &project_path);
+    let sources = load_project_sources(&project, &project_path).values;
     assert_eq!(sources.len(), 1);
     assert_eq!(sources[&1]["L"], info);
 }

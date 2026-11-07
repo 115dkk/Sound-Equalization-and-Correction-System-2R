@@ -622,6 +622,55 @@ fn side_mdat_failure_is_a_job_error_not_a_silent_save_td149() {
 }
 
 #[test]
+fn side_mdat_job_reports_sidecar_warnings_td183() {
+    let root = temp_root("side-mdat-sidecar-warning");
+    fs::create_dir_all(&root).unwrap();
+    let (path, _) = write_case(&root, "room");
+    let store = MeasurementStore::open(&path).unwrap();
+    let record = store.records().into_iter().next().unwrap();
+    let role = record.ir.keys().next().unwrap();
+    let wav = path.parent().unwrap().join(&record.ir[role]);
+    let sidecar = secs_project::source_path(&wav);
+    secs_project::save_source(&wav, Some(&secs_mdat::SourceInfo::default())).unwrap();
+    let service = deterministic_service();
+    open(&service, &path);
+    fs::remove_file(&sidecar).unwrap();
+    fs::create_dir(&sidecar).unwrap();
+    let events = Arc::new(Events::default());
+
+    call_ok(
+        &service,
+        Request::ProjectSave(secs_types::ipc::ProjectSaveParams { path: None }),
+        events.clone(),
+    );
+    let job = events.wait_started(JobKind::Export, Duration::from_secs(2));
+    assert!(matches!(
+        events.wait(job, Duration::from_secs(30)),
+        JobEvent::Finished {
+            status: JobStatus::Succeeded,
+            ..
+        }
+    ));
+    let expected_entry = sidecar
+        .components()
+        .collect::<PathBuf>()
+        .to_string_lossy()
+        .into_owned();
+    let values = lock(&events.values);
+    assert!(
+        values.iter().any(|event| {
+            matches!(event, JobEvent::Log { code, params, .. }
+                if code == "measurement.source.skipped"
+                    && params.get("entry") == Some(&expected_entry))
+        }),
+        "events: {values:?}; sidecar: {}",
+        sidecar.display()
+    );
+    drop(values);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn successive_saves_to_two_paths_write_both_side_mdats_td149() {
     let root = temp_root("side-mdat-two-paths");
     fs::create_dir_all(&root).unwrap();
