@@ -10,7 +10,11 @@ use secs_types::ipc::{
     ExportParams, ExportResult, IpcError, JobKind, JobResult, JobStarted, Notice, OutputRateChoice,
 };
 
-use crate::{EventSink, Service, lock, results::MimoView, session};
+use crate::{
+    EventSink, Service, lock,
+    results::{MimoView, ProjectKeys},
+    session,
+};
 
 fn log_leftover_backup(log: &crate::LogSink, leftover: Option<(std::path::PathBuf, String)>) {
     if let Some((path, error)) = leftover {
@@ -325,15 +329,6 @@ impl Service {
         );
         let replay_snapshot = (mdat && live.is_none()).then(|| session::ProjectSnapshot::of(ticket, open));
         let cached_sample_rate_policy = cached.map(|cache| cache.labels.sample_rate_policy);
-        let expected_mdat_input_key = (mdat && live.is_none()).then(|| {
-            let settings = secs_project::calibration_from_project(project);
-            super::calibration::run_key(
-                &super::calibration::signature_key(project),
-                &super::calibration::target_key_string(project),
-                &settings.engine_key(),
-                &super::calibration::config_key(project),
-            )
-        });
         let description = crate::export_run::describe(&open.results, project, compute_key, now)?;
         let (live_mimo, cached_mimo) = match open.results.mimo(project, compute_key).exported() {
             Some(MimoView::Live(result)) => (Some(result), None),
@@ -623,13 +618,8 @@ impl Service {
                             |open| {
                             let project = open.project();
                             let settings = secs_project::calibration_from_project(project);
-                            let current_input_key = super::calibration::run_key(
-                                &super::calibration::signature_key(project),
-                                &super::calibration::target_key_string(project),
-                                &settings.engine_key(),
-                                &super::calibration::config_key(project),
-                            );
-                            if expected_mdat_input_key.as_ref() != Some(&current_input_key) {
+                            let keys = ProjectKeys::of(project);
+                            if !open.results.inputs_unchanged_since(&keys, &settings) {
                                 return Err(IpcError::new(
                                     ErrorCode::StaleInputs,
                                     "project changed while computing",

@@ -5,9 +5,7 @@ use secs_engine::{
     CalibrationRequest, Design, Measurement, MeasurementSet, Metrics, ProjectView, Samples, Tuning,
     calibrate,
 };
-use secs_project::{
-    Project, calibration_from_project, measurement_signature, store_calibration, target_key,
-};
+use secs_project::{Project, calibration_from_project, store_calibration};
 use secs_types::calibration::CalibrationSettings;
 use secs_types::ipc::{
     CalibrateParams, CalibrationSummary, ChannelScore, ErrorCode, IpcError, JobKind, JobResult,
@@ -16,8 +14,7 @@ use secs_types::ipc::{
 };
 
 use crate::jobs::JobContext;
-use crate::measure::json::JsonExt;
-use crate::results::{CacheOwner, CalibrationRun, MimoResult, calibration_stale};
+use crate::results::{CacheOwner, CalibrationRun, MimoResult, ProjectKeys, calibration_stale};
 use crate::session::{self, ProjectSnapshot, ProjectTicket};
 use crate::{EventSink, Service, lock};
 
@@ -89,12 +86,12 @@ impl Service {
             // The 2 s export view is built outside the session lock.
             let late_energy = secs_engine::late_energy(&design).map_err(engine_error)?;
             let ticket = prepared.ticket;
-            let calibration_key = run_key(
-                &prepared.signature,
-                &prepared.target_key,
-                &prepared.settings.engine_key(),
-                &prepared.config_key,
-            );
+            let calibration_key = ProjectKeys {
+                config: prepared.config_key.clone(),
+                signature: prepared.signature.clone(),
+                target: prepared.target_key.clone(),
+            }
+            .run(&prepared.settings);
             let commit_calibration = |open: &mut session::OpenProject| {
                 let mut summary = summarize(&design, &prepared.settings, &late_energy);
                 summary.notes.extend(prepared.measurement_notices.clone());
@@ -425,11 +422,12 @@ impl Snapshot {
         let loaded = self.project.load_measurements(job, budget)?;
         check_rc_agreement(&loaded.project, &self.settings, &loaded.values)?;
         let project = loaded.project;
+        let keys = ProjectKeys::of(&project);
         Ok(Prepared {
             ticket: self.project.ticket,
-            signature: signature_key(&project),
-            target_key: target_key_string(&project),
-            config_key: config_key(&project),
+            signature: keys.signature,
+            target_key: keys.target,
+            config_key: keys.config,
             project,
             project_settings: self.project_settings,
             settings: self.settings,
@@ -489,10 +487,11 @@ fn settings_notice(settings: &CalibrationSettings, background: bool) -> Notice {
 pub(crate) fn xo_rec_key(project: &Project, settings: &CalibrationSettings) -> String {
     let mut settings = settings.clone();
     settings.xo.clear();
+    let keys = ProjectKeys::of(project);
     [
-        signature_key(project),
-        target_key_string(project),
-        config_key(project),
+        keys.signature,
+        keys.target,
+        keys.config,
         settings.engine_key(),
     ]
     .join("|")
@@ -806,80 +805,6 @@ fn metrics(value: Metrics) -> MetricsSummary {
         gd_30: value.gd_30,
         pre_db: value.pre_db,
     }
-}
-
-pub(crate) fn config_key(project: &Project) -> String {
-    format!("{:?}:{:?}", project.config, project.xo)
-}
-
-pub(crate) fn run_key(
-    signature: &str,
-    target_key: &str,
-    engine_key: &str,
-    config_key: &str,
-) -> String {
-    format!("{signature}\u{1f}{target_key}\u{1f}{engine_key}\u{1f}{config_key}")
-}
-
-pub(crate) fn signature_key(project: &Project) -> String {
-    // The upstream signature omits UUIDs, so replacing a waveform at the same
-    // role, position and t0 otherwise leaves a completed design looking current.
-    let identities = match &project.measurements {
-        secs_project::PyJson::Array(entries) => entries
-            .iter()
-            .map(|entry| match entry {
-                secs_project::PyJson::Object(fields) => fields
-                    .iter()
-                    .find(|(key, _)| key == "uuid")
-                    .map(|(_, value)| value),
-                _ => None,
-            })
-            .collect::<Vec<_>>(),
-        _ => vec![],
-    };
-    let base = format!("{:?}:{identities:?}", measurement_signature(project));
-    let has_ir = |position: i64, role: &str| {
-        match &project.measurements {
-            secs_project::PyJson::Array(entries) => entries.as_slice(),
-            _ => &[],
-        }
-        .iter()
-        .any(|entry| {
-            let matches_position = match entry.get("pos") {
-                Some(secs_project::PyJson::Int(value) | secs_project::PyJson::Str(value)) => {
-                    value.parse() == Ok(position)
-                }
-                Some(secs_project::PyJson::Float(value)) => {
-                    value.is_finite() && value.trunc() == position as f64
-                }
-                Some(secs_project::PyJson::Bool(value)) => i64::from(*value) == position,
-                _ => false,
-            };
-            matches_position
-                    && entry
-                        .get("ir")
-                        .and_then(secs_project::PyJson::object)
-                        .and_then(|values| values.iter().find(|(name, _)| name == role))
-                        .is_some_and(|(_, value)| {
-                            matches!(value, secs_project::PyJson::Str(path) if !path.is_empty())
-                        })
-        })
-    };
-    let calibration = project
-        .measurement_calibration
-        .iter()
-        .filter_map(|((position, role), fingerprint)| {
-            has_ir(*position, role).then_some((*position, role.as_str(), *fingerprint))
-        })
-        .collect::<Vec<_>>();
-    if calibration.is_empty() {
-        base
-    } else {
-        format!("{base}:cal{calibration:?}")
-    }
-}
-pub(crate) fn target_key_string(project: &Project) -> String {
-    format!("{:?}", target_key(project))
 }
 
 pub(crate) fn engine_error(error: secs_engine::EngineError) -> IpcError {

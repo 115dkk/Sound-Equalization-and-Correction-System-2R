@@ -689,7 +689,7 @@ mod tests {
             let mut session = lock(&service.session);
             let open = session.require_mut().unwrap();
             open.mark_saved();
-            crate::calibration::signature_key(open.project())
+            crate::results::ProjectKeys::of(open.project()).signature
         };
 
         let attached = service.mic_calibration_attach().unwrap();
@@ -698,7 +698,7 @@ mod tests {
         let open = session.require_mut().unwrap();
         assert!(!open.is_dirty());
         assert_ne!(
-            crate::calibration::signature_key(open.project()),
+            crate::results::ProjectKeys::of(open.project()).signature,
             old_signature
         );
         let bare = open.store_mut().source_of("L", 1).unwrap();
