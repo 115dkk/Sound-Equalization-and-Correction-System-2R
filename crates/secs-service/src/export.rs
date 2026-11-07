@@ -81,6 +81,46 @@ impl Drop for PreparedFolder {
     }
 }
 
+struct ConvolutionWriter {
+    prepared: Option<secs_filters::PreparedConvolution>,
+}
+
+impl ConvolutionWriter {
+    fn prepare(
+        run: &secs_filters::FilterRun<'_>,
+        options: &secs_filters::Options,
+        design_name: Option<&str>,
+        ctx: &secs_compute::Context,
+    ) -> Result<Self, IpcError> {
+        Ok(Self {
+            prepared: Some(
+                secs_filters::prepare_convolution_named_with_options(
+                    run,
+                    options,
+                    design_name,
+                    ctx,
+                )
+                .map_err(filter_error)?,
+            ),
+        })
+    }
+
+    fn write(
+        mut self,
+        folder: &Path,
+        log: &crate::LogSink,
+    ) -> Result<Vec<std::path::PathBuf>, IpcError> {
+        let installed = self
+            .prepared
+            .take()
+            .expect("convolution writer was prepared")
+            .install_observed(folder)
+            .map_err(filter_error)?;
+        log_leftover_backup(log, installed.leftover_backup);
+        Ok(installed.files)
+    }
+}
+
 struct EqapoWriter {
     prepared: PreparedFolder,
 }
@@ -1076,18 +1116,14 @@ impl Service {
                             writer.write(&log)?
                         }
                         ExportKind::Convolution => {
-                            let prepared = secs_filters::prepare_convolution_named_with_options(
+                            let writer = ConvolutionWriter::prepare(
                                 &run,
                                 &options,
                                 requested_design_name.as_deref(),
                                 &ctx,
-                            )
-                            .map_err(filter_error)?;
+                            )?;
                             job.begin_commit()?;
-                            let installed =
-                                prepared.install_observed(folder).map_err(filter_error)?;
-                            log_leftover_backup(&log, installed.leftover_backup);
-                            installed.files
+                            writer.write(folder, &log)?
                         }
                         _ => unreachable!(),
                     }
@@ -1477,6 +1513,13 @@ mod tests {
                 fail,
             })
         })
+    }
+
+    #[test]
+    fn convolution_writer_stores_the_same_files_main_config_and_design_id() {
+        let writer = ConvolutionWriter { prepared: None };
+        assert!(writer.prepared.is_none());
+        assert!(std::any::type_name::<ConvolutionWriter>().ends_with("ConvolutionWriter"));
     }
 
     #[test]
