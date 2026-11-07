@@ -67,6 +67,11 @@ impl From<secs_project::ProjectError> for MeasureError {
         Self::Project(e)
     }
 }
+impl From<secs_project::RecordError> for MeasureError {
+    fn from(error: secs_project::RecordError) -> Self {
+        Self::Project(error.into())
+    }
+}
 
 pub(crate) fn validate_samples(
     samples: &[f32],

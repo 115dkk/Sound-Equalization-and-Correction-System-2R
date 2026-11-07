@@ -119,9 +119,12 @@ impl StoreEdit<'_> {
         &mut self,
         result: secs_project::MeasurementResult,
         plan_roles: Option<&[String]>,
-    ) -> Result<secs_project::MeasurementRecord, secs_project::ProjectError> {
+    ) -> Result<secs_project::MeasurementRecord, secs_project::RecordError> {
         let result = self.store.record(result, plan_roles);
-        self.wrote |= result.is_ok();
+        self.wrote |= matches!(
+            &result,
+            Ok(_) | Err(secs_project::RecordError::SaveFailed(_))
+        );
         result
     }
 

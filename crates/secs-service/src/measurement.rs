@@ -458,7 +458,6 @@ impl Service {
             let mut done = 0;
             let info = session::commit(&session, ticket, &ctx, session::Finality::Final, |open| {
                 let existing = secs_project::measured_positions(open.project());
-                let was_dirty = open.is_dirty();
                 let mut store = open.store_mut();
                 for position in existing {
                     if !embedded || position != 1 {
@@ -470,9 +469,6 @@ impl Service {
                     for role in &roles {
                         if ctx.cancel().is_cancelled() {
                             drop(store);
-                            if !was_dirty {
-                                open.mark_saved();
-                            }
                             return Err(IpcError::new(ErrorCode::Cancelled, "cancelled"));
                         }
                         let (ir, sample_rate, t0_s) = if embedded {
@@ -603,7 +599,6 @@ impl Service {
                         let snr = result.snr_db;
                         let first = count == 0;
                         let record = |open: &mut session::OpenProject| -> Result<_, IpcError> {
-                            let was_dirty = open.is_dirty();
                             let outcome = {
                                 let mut store = open.store_mut();
                                 if first {
@@ -613,12 +608,7 @@ impl Service {
                                     .record(result, Some(&p.roles))
                                     .map_err(|e| measure_error(e.into(), "record", share))
                             };
-                            if let Err(error) = outcome {
-                                if !was_dirty {
-                                    open.mark_saved();
-                                }
-                                return Err(error);
-                            }
+                            outcome?;
                             // Each record is written to disk as it is made.
                             open.mark_saved();
                             Ok(((), false))
@@ -690,7 +680,6 @@ impl Service {
     ) -> Result<UndoResult, IpcError> {
         let mut session = lock(&self.session);
         let open = session.require_mut()?;
-        let was_dirty = open.is_dirty();
         let mut store = open.store_mut();
         let removed = store
             .remove_position(params.position)
@@ -700,9 +689,6 @@ impl Service {
                 .restore_position(removed)
                 .expect("nothing recorded the position since it was removed");
             drop(store);
-            if !was_dirty {
-                open.mark_saved();
-            }
             return Err(measure_error(
                 error.into(),
                 "position",
@@ -731,7 +717,6 @@ impl Service {
                         "measurement list changed",
                     ));
                 }
-                let was_dirty = open.is_dirty();
                 let position = removed.position();
                 let mut store = open.store_mut();
                 store.restore_position(removed).map_err(|_| {
@@ -740,9 +725,6 @@ impl Service {
                 if let Err(error) = store.save() {
                     store.remove_position(position);
                     drop(store);
-                    if !was_dirty {
-                        open.mark_saved();
-                    }
                     return Err(measure_error(
                         error.into(),
                         "undo",

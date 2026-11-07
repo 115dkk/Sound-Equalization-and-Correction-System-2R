@@ -8,6 +8,7 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::time::UNIX_EPOCH;
+use thiserror::Error;
 
 pub const IR_CACHE_LIMIT_BYTES: usize = 256 * 1024 * 1024;
 pub const MAX_PROJECT_BYTES: u64 = 64 * 1024 * 1024;
@@ -180,6 +181,23 @@ impl MeasurementRecord {
                 .and_then(|value| crate::project::integer(Some(value), 0, "sample_rate").ok())
                 .and_then(|value| u32::try_from(value).ok()),
         })
+    }
+}
+
+/// Failure before or after a measurement changed the in-memory project.
+#[derive(Debug, Error)]
+pub enum RecordError {
+    #[error("{0}")]
+    Invalid(#[source] ProjectError),
+    #[error("{0}")]
+    SaveFailed(#[source] ProjectError),
+}
+
+impl From<RecordError> for ProjectError {
+    fn from(error: RecordError) -> Self {
+        match error {
+            RecordError::Invalid(error) | RecordError::SaveFailed(error) => error,
+        }
     }
 }
 
@@ -407,7 +425,7 @@ impl MeasurementStore {
         &mut self,
         result: MeasurementResult,
         plan_roles: Option<&[String]>,
-    ) -> Result<MeasurementRecord, ProjectError> {
+    ) -> Result<MeasurementRecord, RecordError> {
         let source_info = result.source_info.clone();
         let source_fingerprint = source_info.as_ref().and_then(calibration_fingerprint);
         let path = save_ir(
@@ -416,9 +434,12 @@ impl MeasurementStore {
             result.pos,
             &result.ir,
             result.sample_rate,
-        )?;
-        save_source(&path, result.source_info.as_ref())?;
-        self.cache.remember(&path, &result.ir, result.sample_rate)?;
+        )
+        .map_err(RecordError::Invalid)?;
+        save_source(&path, result.source_info.as_ref()).map_err(RecordError::Invalid)?;
+        self.cache
+            .remember(&path, &result.ir, result.sample_rate)
+            .map_err(RecordError::Invalid)?;
         let relative = relative_to_project(&self.path, &path);
         let label = self.label_for(result.pos);
         let role = result.role.clone();
@@ -492,7 +513,7 @@ impl MeasurementStore {
         if let Some(value) = result.snr_db {
             self.snr_db.insert((result.pos, role), value);
         }
-        self.save()?;
+        self.save().map_err(RecordError::SaveFailed)?;
         Ok(self
             .entry_for(result.pos)
             .expect("recorded entry has a valid position"))

@@ -217,6 +217,69 @@ fn status_project_and_results_come_from_the_same_open_project() {
 }
 
 #[test]
+fn a_failed_project_save_after_a_recorded_measurement_leaves_the_project_dirty() {
+    let root = temp_root("failed-record-save");
+    fs::create_dir_all(&root).unwrap();
+    let path = root.join("room.secs");
+    let service = service();
+    call_ok(
+        &service,
+        Request::ProjectNew(ProjectNewParams {
+            path: path.to_string_lossy().into_owned(),
+            preset: "2.0".into(),
+            sub_count: 0,
+            sample: false,
+            tutorial: false,
+        }),
+        Arc::new(NoEvents),
+    );
+    call_ok(
+        &service,
+        Request::MeasureConfigure(secs_types::ipc::MeasureConfigureParams {
+            method: "mock".into(),
+            ..Default::default()
+        }),
+        Arc::new(NoEvents),
+    );
+    call_ok(
+        &service,
+        Request::ProjectSave(secs_types::ipc::ProjectSaveParams { path: None }),
+        Arc::new(NoEvents),
+    );
+    let Response::ProjectInfo(before) = call_ok(&service, Request::ProjectInfo, Arc::new(NoEvents))
+    else {
+        panic!()
+    };
+    assert!(!before.dirty);
+    fs::remove_file(&path).unwrap();
+    fs::create_dir(&path).unwrap();
+
+    let events = Arc::new(Events::default());
+    let Response::MeasurePosition(started) = call_ok(
+        &service,
+        Request::MeasurePosition(secs_types::ipc::MeasurePositionParams { position: 1 }),
+        events.clone(),
+    ) else {
+        panic!("measurement must start")
+    };
+    let JobEvent::Finished {
+        status: JobStatus::Failed,
+        error: Some(_),
+        ..
+    } = events.wait(started.job, Duration::from_secs(30))
+    else {
+        panic!("record must fail when the project destination is a directory")
+    };
+    let Response::ProjectInfo(info) = call_ok(&service, Request::ProjectInfo, Arc::new(NoEvents))
+    else {
+        panic!()
+    };
+    assert_eq!(info.positions, [1]);
+    assert!(info.dirty);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn opening_a_missing_project_names_the_path_td208() {
     let root = temp_root("missing-project-open");
     fs::create_dir_all(&root).unwrap();
