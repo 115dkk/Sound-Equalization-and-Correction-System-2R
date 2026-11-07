@@ -37,45 +37,30 @@ pub(crate) mod grid;
 pub mod input;
 
 // The stages are private: `design` is the one entry point and the values it
-// returns are re-exported below. Helpers only the oracle tests call yet keep
-// the dead-code allowance.
-#[allow(dead_code)]
+// returns are re-exported below.
 mod ba;
-#[allow(dead_code)]
 mod calibration;
-#[allow(dead_code)]
 mod chain;
-#[allow(dead_code)]
 mod decay;
-#[allow(dead_code)]
 mod design;
 pub(crate) mod display;
 pub(crate) mod export_view;
-#[allow(dead_code)]
 mod fit;
-#[allow(dead_code)]
 mod levels;
 mod low_protect;
-#[allow(dead_code)]
 mod measurement;
 mod memory;
-#[allow(dead_code)]
 pub mod mimo;
 mod normalize;
-#[allow(dead_code)]
 mod notes;
 pub(crate) mod pair_phase;
 pub(crate) mod polarity;
 pub mod preview;
-#[allow(dead_code)]
 mod rc;
 mod replay;
 mod replay_mimo;
-#[allow(dead_code)]
 mod scorecard;
-#[allow(dead_code)]
 mod setup;
-#[allow(dead_code)]
 pub mod xo;
 
 mod error;
@@ -99,6 +84,7 @@ pub use setup::SubFilter;
 
 pub(crate) use ba::LayoutInfo;
 pub(crate) use chain::{input_response, stage_responses};
+#[cfg(any(test, feature = "test-support"))]
 pub(crate) use design::production_fitters;
 pub(crate) use export_view::ExportView;
 pub(crate) use fit::PeqDerivatives;

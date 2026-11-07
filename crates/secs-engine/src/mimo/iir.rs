@@ -212,8 +212,11 @@ pub(crate) fn late_modes(xs: &[Vec<f64>], count: usize, lo: f64, hi: f64) -> Vec
 pub(crate) struct SeedResult {
     pub x: Vec<f64>,
     pub polarity: i8,
+    #[cfg_attr(not(test), allow(dead_code))]
     pub cost: f64,
+    #[cfg_attr(not(test), allow(dead_code))]
     pub nfev: usize,
+    #[cfg_attr(not(test), allow(dead_code))]
     pub status: i32,
 }
 
@@ -581,6 +584,8 @@ impl<'a> Objective<'a> {
         }
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn set_derivatives(&mut self, derivatives: IirDerivatives) {
         self.derivatives = derivatives;
         for part in &mut self.cache {
@@ -634,6 +639,8 @@ impl<'a> Objective<'a> {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn solve_joint(
     pb: &Problem,
     t: &Tuning,
@@ -719,15 +726,6 @@ pub(crate) fn solve_joint_with_options(
         status: -1,
         optimality: f64::NAN,
     })
-}
-
-pub(crate) fn solve_problem(
-    pb: &Problem,
-    t: &Tuning,
-    ctx: &Context,
-) -> Result<(Vec<f64>, Vec<i8>), EngineError> {
-    solve_problem_with_options(pb, t, ctx, &IirSolveOptions::default())
-        .map(|(x, pols, _)| (x, pols))
 }
 
 fn solve_problem_with_options(
@@ -892,6 +890,8 @@ impl BandGuard {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn worst_band_db(pb: &Problem, supports: &[(usize, IirSupport)]) -> f64 {
     BandGuard::new(pb).evaluate(pb, &applied(pb, supports))
 }
@@ -926,6 +926,8 @@ impl<'a> OutcomeGuard<'a> {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn outcome(
     pb: &Problem,
     supports: &[(usize, IirSupport)],
@@ -937,8 +939,11 @@ pub(crate) fn outcome(
 pub(crate) struct PostResult {
     pub supports: Vec<(usize, IirSupport)>,
     pub removed: Vec<String>,
+    #[cfg_attr(not(test), allow(dead_code))]
     pub level_cut: f64,
+    #[cfg_attr(not(test), allow(dead_code))]
     pub violations: Vec<f64>,
+    #[cfg_attr(not(test), allow(dead_code))]
     pub gain_steps: usize,
 }
 
@@ -1212,6 +1217,8 @@ pub fn design_mimo_iir_with_options(
     design_mimo_iir_prepared_with_options(design, &prepared, ideal, req, t, options, ctx)
 }
 
+#[cfg(any(test, feature = "test-support"))]
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn design_mimo_iir_prepared(
     design: &Design,
     prepared: &super::prepared::Prepared<'_>,

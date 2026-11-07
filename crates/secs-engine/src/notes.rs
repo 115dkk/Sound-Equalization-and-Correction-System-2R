@@ -15,6 +15,8 @@ pub struct NoteRecord {
 }
 
 /// Every stable record code produced by [`NoteRecords::record`] and [`MimoNoteRecords::record`].
+#[cfg(any(test, feature = "test-support"))]
+#[cfg_attr(not(test), allow(dead_code))]
 pub const RECORD_CODES: &[&str] = &[
     "polarity_reversed",
     "polarity_split",

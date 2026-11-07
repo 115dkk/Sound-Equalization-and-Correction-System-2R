@@ -7,6 +7,8 @@ use crate::{C, EngineConfig, EngineError, MeasurementSet, Samples};
 use secs_dsp::{fft, response};
 use std::{f64::consts::PI, sync::Arc};
 
+#[cfg(any(test, feature = "test-support"))]
+#[cfg_attr(not(test), allow(dead_code))]
 pub const WINDOW_MS: f64 = 500.0;
 
 /// Bytes of one design-grid spectrum (`BINS` complex values).
@@ -75,6 +77,8 @@ fn window(ir: &Samples, start: usize, length: usize, taper: f64) -> (Vec<f64>, u
     (w, a)
 }
 
+#[cfg(any(test, feature = "test-support"))]
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn windowed(ir: &Samples, start: usize) -> (Vec<f64>, usize) {
     window(ir, start, (WINDOW_MS / 1000.0 * SR_F) as usize, 0.2)
 }
@@ -177,6 +181,7 @@ impl Spectra {
 
 #[derive(Debug, Clone)]
 pub struct Prepared {
+    #[cfg_attr(not(test), allow(dead_code))]
     pub arrival_s: Vec<(String, f64)>,
     pub align_delay_ms: Vec<(String, f64)>,
     pub base_s: f64,

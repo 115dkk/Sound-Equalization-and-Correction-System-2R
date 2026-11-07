@@ -1,6 +1,8 @@
 //! Narrow derived state used by response exports.
 
-use crate::{EngineConfig, EngineError, MeasurementSet, Spectra, measurement, setup::SubFilter};
+#[cfg(any(test, feature = "test-support"))]
+use crate::EngineConfig;
+use crate::{EngineError, MeasurementSet, Spectra, measurement, setup::SubFilter};
 
 /// Long-window spectra and timing on the engine's internal axis.
 #[derive(Debug)]
@@ -12,6 +14,8 @@ pub struct ExportView {
 
 /// Rebuilds the 2 s spectra, reusing the design's preparation for matching inputs.
 /// New same-input callers use `design.replay.export_view(design)` directly.
+#[cfg(any(test, feature = "test-support"))]
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn export_view(
     design: &crate::Design,
     measurements: &MeasurementSet,

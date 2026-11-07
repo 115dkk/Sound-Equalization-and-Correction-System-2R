@@ -64,6 +64,7 @@ pub struct RcOutput {
     pub peq: Vec<Peq>,
     pub phase_strength: f64,
     pub phase_band: Option<f64>,
+    #[cfg_attr(not(test), allow(dead_code))]
     pub design_db: Vec<f64>,
     pub notes: Vec<Note>,
     pub lf_align: Option<LfAlignOutcome>,
@@ -807,6 +808,8 @@ impl Realizer<'_> {
         (h, f, rms, max, outcome)
     }
 }
+#[cfg(any(test, feature = "test-support"))]
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn correction(input: &RcInput<'_>, phase_frac: f64, fitter: &mut Fitter<'_>) -> RcOutput {
     correction_traced(input, phase_frac, fitter, &mut Trace::default())
 }
@@ -845,6 +848,8 @@ enum RcPreparation {
     Fir(FirPreparation),
 }
 
+#[cfg(any(test, feature = "test-support"))]
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn correction_traced(
     input: &RcInput<'_>,
     phase_frac: f64,

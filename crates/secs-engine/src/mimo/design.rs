@@ -533,6 +533,8 @@ impl BandGuard {
             .collect()
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn evaluate(&self, ys: &[Vec<f64>]) -> f64 {
         self.evaluate_band(ys).0
     }
@@ -1020,6 +1022,8 @@ pub(crate) fn rank_score_direct(
 
 /// The low-rate stage boundary used by the oracle: paths have lower-edge
 /// protection and arrival alignment, but not the common low-pass FIR yet.
+#[cfg(any(test, feature = "test-support"))]
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn design_input(
     xs: &[Vec<f64>],
     raw_paths: &[Vec<Vec<f64>>],
@@ -1031,6 +1035,8 @@ pub(crate) fn design_input(
     design_input_observed(xs, raw_paths, direct, candidates, req, ctx, &|_, _| {})
 }
 
+#[cfg(any(test, feature = "test-support"))]
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn design_input_observed(
     xs: &[Vec<f64>],
     raw_paths: &[Vec<Vec<f64>>],

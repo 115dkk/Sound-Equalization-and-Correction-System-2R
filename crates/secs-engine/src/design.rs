@@ -32,10 +32,11 @@ use crate::{
 #[derive(Debug)]
 pub enum FitStage<'a> {
     Ba,
-    Top(&'a str),
-    Rc(&'a str),
+    Top(#[cfg_attr(not(test), allow(dead_code))] &'a str),
+    Rc(#[cfg_attr(not(test), allow(dead_code))] &'a str),
 }
 pub type FitterFactory<'f> = dyn Fn(FitStage<'_>) -> Box<Fitter<'f>> + Sync + 'f;
+#[cfg(any(test, feature = "test-support"))]
 pub fn production_fitters(ctx: &Context) -> Box<FitterFactory<'_>> {
     production_fitters_with(ctx, PeqDerivatives::TwoPoint)
 }
@@ -203,21 +204,29 @@ pub struct MainDesign {
     pub response: Arc<[C]>,
     pub phase_strength: f64,
     pub phase_band: Option<f64>,
+    #[cfg_attr(not(test), allow(dead_code))]
     pub phase_frac_used: Option<f64>,
     pub(crate) before: Arc<[C]>,
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) combined: Arc<[C]>,
     pub(crate) after: Arc<[C]>,
 }
 #[derive(Debug)]
 pub struct SubDesign {
     pub rows: Vec<(String, BaRow)>,
+    #[cfg_attr(not(test), allow(dead_code))]
     pub bus_gain: f64,
+    #[cfg_attr(not(test), allow(dead_code))]
     pub bus_delay_ms: f64,
+    #[cfg_attr(not(test), allow(dead_code))]
     pub bus_polarity: i8,
     pub bus_response: Option<Arc<[C]>>,
+    #[cfg_attr(not(test), allow(dead_code))]
     pub sum_at_reference: Arc<[C]>,
+    #[cfg_attr(not(test), allow(dead_code))]
     pub sub_level_db: Option<f64>,
     pub layout_info: Vec<(String, LayoutInfo)>,
+    #[cfg_attr(not(test), allow(dead_code))]
     pub plan: Option<ManualPlan>,
 }
 #[derive(Debug)]
@@ -470,6 +479,8 @@ pub(crate) fn design_observed(
 /// main/sub membership and fixed sub filters, never XO or BA-derived filters.
 /// Candidates borrow the spectra; all candidate-dependent work stays below.
 /// Cloning Spectra at the output boundary copies Arc handles, not sample buffers.
+#[cfg(any(test, feature = "test-support"))]
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn design_prepared(
     req: &DesignRequest<'_>,
     ctx: &Context,

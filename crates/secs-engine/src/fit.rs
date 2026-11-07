@@ -152,6 +152,8 @@ pub(crate) fn seed(req: &FitRequest<'_>) -> Seed {
     Seed { bands, x0, lb, ub }
 }
 
+#[cfg(any(test, feature = "test-support"))]
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn residual(req: &FitRequest<'_>, x: &[f64]) -> Vec<f64> {
     let bands: Vec<_> = x
         .as_chunks::<3>()
@@ -320,6 +322,8 @@ pub(crate) fn result_bands(req: &FitRequest<'_>, x: &[f64]) -> Vec<Peq> {
 
 /// Fits the requested region, retaining upstream's out-of-region weight 0.15,
 /// default TRF tolerances, and 400/150 residual-evaluation caps.
+#[cfg(any(test, feature = "test-support"))]
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn fit_peq(req: &FitRequest<'_>) -> Vec<Peq> {
     fit_peq_until(req, &secs_compute::Context::serial())
 }
@@ -329,6 +333,8 @@ pub fn fit_peq(req: &FitRequest<'_>) -> Vec<Peq> {
 /// test instead of running to its evaluation cap; the bands it returns are
 /// meaningless and the caller discards them. Until then the arithmetic is
 /// exactly `fit_peq`'s.
+#[cfg(any(test, feature = "test-support"))]
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn fit_peq_until(req: &FitRequest<'_>, ctx: &secs_compute::Context) -> Vec<Peq> {
     fit_peq_with(req, ctx, PeqDerivatives::TwoPoint)
 }
@@ -450,6 +456,8 @@ fn sum(v: &[f64]) -> f64 {
     v[end..].iter().fold(s, |s, x| s + x)
 }
 
+#[cfg(any(test, feature = "test-support"))]
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn fit_gd_cuts(f: &[f64], h: &[C], lo: f64, hi: f64, n_max: usize, depth_db: f64) -> Vec<Peq> {
     fit_gd_cuts_until(
         f,
