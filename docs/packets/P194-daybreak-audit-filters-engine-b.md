@@ -381,12 +381,60 @@ Files: `crates/secs-engine/examples/engine_perf.rs`, `crates/secs-engine/src/tes
 Gate: `cargo build -p secs-engine --examples --features test-support --release`; `cargo test -p secs-engine --locked`.
 Commit subject: `refactor(audit): B-12 성능 예제가 소스를 다시 포함하지 않고 testkit의 훅을 씁니다 (#186 TD-250)`.
 
+## Section 2 addendum: the two P188 steps that were blocked on service files
+
+P188 (engine ADRs) left two steps undone because its file list excluded the
+service. Do them in section 2, before B-32 (the dead-code item depends on the
+narrowed surface), with the file allowance below.
+
+### X-5 · A5 · ADR 0046 steps 4 and 5 (the public surface)
+
+Follow P188 steps 4 and 5 verbatim (`docs/packets/P188-daybreak-audit-engine-adrs.md`,
+"Step 4" and "Step 5"): delete the re-exports ADR 0046 lists, make the named
+modules `pub(crate)`, put the test-only items behind
+`#[cfg(any(test, feature = "test-support"))]`, lower `Design`'s fields, and
+un-ignore `public_surface_is_the_adr_0046_list` in
+`crates/secs-engine/tests/surface.rs`. The compiler then names every outside
+read of `Design` internals; P188 found them in `crates/secs-service/src/{curves.rs, export.rs, export_run.rs, results.rs}`,
+the service tests, `crates/secs-export/examples/export_perf.rs`, the export
+goldens and the engine integration tests. Fix each with the `Design` methods
+P188 added (`config`, `main_position`, `latency_ms`, `rc_hi`, `measured`,
+`main_roles`/`sub_roles`, `fir`, `stage`, `export_ir`, `export_view`,
+`main_channels`, `sub_channels`, `layouts`, `measurements`); add a method only
+when no existing one serves and name it in the report; never re-add a
+re-export. Then step 5 (item-level `dead_code`, delete what is really dead).
+Two commits with P188's titles.
+
+### X-6 · A6 · ADR 0047 step 3 (`secs-filters` takes `&Context`)
+
+Follow P188 step 3 verbatim. The service's existing test
+`cancelled_convolution_compute_installs_no_files`
+(`crates/secs-service/tests/export_folder.rs`) waits for the `export.convolution`
+progress id to request the cancel; change that expectation to the new stable
+id `filters.convolution` (and nothing else in that file). The two tests P188
+wrote (`convolution_prepare_reports_progress_until_done_equals_total`,
+`convolution_prepare_cancelled_midway_writes_nothing`) go into
+`crates/secs-filters/tests/golden.rs` as the step says. One commit with P188's
+title.
+
+Allowance for this addendum only, beyond section 2's list:
+`crates/secs-service/src/{curves.rs, export.rs, export_run.rs, results.rs}`,
+`crates/secs-service/tests/**` (read sites and the one expectation above),
+`crates/secs-export/examples/export_perf.rs`, `crates/secs-export/tests/**`,
+`crates/secs-engine/tests/**`, `crates/secs-filters/**`, `Cargo.lock` (for the
+`secs-compute` dependency of `secs-filters`). Still forbidden: `secs-types`,
+`apps/**`, ADRs, `audit-state.md`.
+
 ## Section 2 verification (foreground)
+
+The workspace-wide commands are Claude's (disk); run these instead:
 
 ```
 cargo fmt --all -- --check
-cargo clippy --workspace --all-targets --locked -- -D warnings
-cargo test --workspace --locked
+cargo clippy -p secs-compute -p secs-engine -p secs-engine-testkit -p secs-export -p secs-filters -p secs-service -p secs-gpu --all-targets --locked -- -D warnings
+cargo test -p secs-compute -p secs-engine -p secs-engine-testkit -p secs-export -p secs-filters --locked
+cargo test -p secs-service --locked
+cargo build -p secs-engine --locked
 python3 .github/scripts/check_feature_tests.py
 git log --oneline fix/audit-186..audit/186-engine-b
 ```
