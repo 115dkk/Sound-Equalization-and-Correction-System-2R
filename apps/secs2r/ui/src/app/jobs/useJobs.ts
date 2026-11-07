@@ -6,7 +6,7 @@ import { useSession } from "../../state/react";
 import { useJobLedger } from "../../state/useJobLedger";
 
 export type JobView = LedgerJob & { id: JobId; stage: string | null; done: number; total: number };
-export type JobsState = Omit<LedgerState, "jobs"> & { jobs: JobView[] };
+type JobsState = Omit<LedgerState, "jobs"> & { jobs: JobView[] };
 export type JobsApi = { state: JobsState; cancel: (job: JobId) => void; clearHistory: () => void; now: number };
 
 /** Preserve the tray's view shape without retaining another copy of job state. */

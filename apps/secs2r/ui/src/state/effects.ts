@@ -56,7 +56,7 @@ export type EffectContext = Pick<Session, "host" | "stores" | "jobs" | "call" | 
     | { job: LedgerJob; event: Extract<JobEvent, { event: "log" }>; request: JobRequestContext | null };
   replaceProject: () => void;
 };
-export type Rule = {
+type Rule = {
   name: string;
   when: (trigger: Trigger) => boolean;
   reload?: readonly ResourceKey[];

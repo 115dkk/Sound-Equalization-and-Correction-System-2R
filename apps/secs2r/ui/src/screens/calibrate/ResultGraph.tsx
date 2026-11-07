@@ -15,7 +15,7 @@ import { Icon } from "../../ui/Icon";
 import { roleCode } from "../../ui/maps/geometry";
 import { bandLayout, type PlotBand } from "../../ui/plot/bands";
 import { colorTokens } from "../../ui/plot/series";
-import { filterSpec, groupName, groupOf, noticeText, signedNumber, subModeText, subRoles, xoGroups, type FormatNumber } from "./text";
+import { filterSpec, groupName, groupOf, noticeText, signedNumber, subModeText, subRoles, type FormatNumber } from "./text";
 import type { CalibrateActions, CalibrateView } from "./types";
 
 const PLOT_HEIGHT = 300;
@@ -317,7 +317,6 @@ export function ResultGraph({ view, actions, menuOpen = false }: { view: Calibra
   const tab: ResultTab = tabs.includes(view.tab) ? view.tab : "spl";
   const computed = view.results.calibration !== null;
   const subs = useMemo(() => subRoles(view.config), [view.config]);
-  const groups = useMemo(() => xoGroups(view.config), [view.config]);
   // Curves of another tab are not drawn (other axes); the empty slot waits instead.
   const curves = view.curves && view.curves.tab === tab ? view.curves : null;
   const drawn = useMemo(() => (curves ? drawCurves(curves, tab, computed, subs) : null), [curves, tab, computed, subs]);

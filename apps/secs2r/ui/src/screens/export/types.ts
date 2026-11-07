@@ -570,7 +570,7 @@ export function designNameFor(view: Pick<ExportView, "designName" | "tutorial">)
 }
 
 /** Why one side of the CamillaDSP devices cannot be written: an ASIO driver needs a name (the service's `camilla_asio_device`). */
-export type DeviceProblem = "asio_device";
+type DeviceProblem = "asio_device";
 
 export function deviceProblem(device: CamillaDevice): DeviceProblem | null {
   return device.type === "asio" && device.device.trim() === "" ? "asio_device" : null;

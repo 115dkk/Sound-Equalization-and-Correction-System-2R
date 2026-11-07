@@ -4,7 +4,7 @@
 import type { StepId } from "../../app/model";
 import type { MessageKey } from "../../i18n";
 
-export type QuestKind = "look" | "act";
+type QuestKind = "look" | "act";
 
 /** The 25 glossary terms (upstream tutorial_quests.py GLOSSARY), catalog keys tutorial.glossary.<term>. */
 export const GLOSSARY_TERMS = [

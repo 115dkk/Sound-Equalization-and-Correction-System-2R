@@ -5,7 +5,6 @@
 import type { ComputePreference } from "../../ipc/bindings/ComputePreference";
 import type { ComputeStatus } from "../../ipc/bindings/ComputeStatus";
 import type { StepState } from "../../app/model";
-import type { BandType } from "../../ipc/bindings/BandType";
 import type { CalibrationSettings } from "../../ipc/bindings/CalibrationSettings";
 import type { ConfigResult } from "../../ipc/bindings/ConfigResult";
 import type { IpcError } from "../../ipc/bindings/IpcError";
@@ -17,7 +16,6 @@ import type { ResultTab } from "../../ipc/bindings/ResultTab";
 import type { Notice } from "../../ipc/bindings/Notice";
 import type { SettingEdit } from "../../ipc/bindings/SettingEdit";
 import type { ResultsSummary } from "../../ipc/bindings/ResultsSummary";
-import type { SubEntry } from "../../ipc/bindings/SubEntry";
 import type { TargetResult } from "../../ipc/bindings/TargetResult";
 import type { XoRecommendation } from "../../ipc/bindings/XoRecommendation";
 import type { RangeRejection } from "./settingsView";

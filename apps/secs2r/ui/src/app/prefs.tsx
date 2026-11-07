@@ -11,7 +11,7 @@ import { LayerRoot } from "../ui/layer";
 import { ToastProvider } from "../ui/Toast";
 
 export type ThemeChoice = "system" | "light" | "dark";
-export type AccentChoice = "default" | "tutorial";
+type AccentChoice = "default" | "tutorial";
 /** The skin set (ADR 0010, docs/skins): the default tokens, Hardware Rack or Signal Matrix. */
 export type SkinChoice = AppSkin;
 export const SKINS: readonly SkinChoice[] = ["default", "rack", "matrix"];

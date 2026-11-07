@@ -12,8 +12,8 @@ import targetApplyPreset from "./recorded/target_apply_preset.json";
 
 type Method = Request["method"];
 type ParamsOf<M extends Method> = Extract<Request, { method: M }> extends { params: infer P } ? P : null;
-export type RecordedEntry<M extends Method> = { params: ParamsOf<M>; data: Extract<Response, { method: M }>["data"] };
-export type RecordedTable = { [M in Method]?: readonly RecordedEntry<M>[] };
+type RecordedEntry<M extends Method> = { params: ParamsOf<M>; data: Extract<Response, { method: M }>["data"] };
+type RecordedTable = { [M in Method]?: readonly RecordedEntry<M>[] };
 
 export const RECORDED = {
   mode_spec: modeSpec as RecordedEntry<"mode_spec">[],

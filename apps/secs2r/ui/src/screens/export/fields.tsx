@@ -138,7 +138,7 @@ const BACKEND_TEXT: Record<CamillaDevice["type"], MessageKey> = {
 const BACKENDS = ["file", "wasapi", "asio"] as const satisfies readonly CamillaDevice["type"][];
 
 /** One side as the summary names it: the backend and, for a device, its name. */
-export function deviceText(t: Translate, device: CamillaDevice): string {
+function deviceText(t: Translate, device: CamillaDevice): string {
   switch (device.type) {
     case "file":
       return t("export.devices.backend.file");
@@ -152,7 +152,7 @@ export function deviceText(t: Translate, device: CamillaDevice): string {
 }
 
 /** The closed disclosure's summary: one phrase when both sides read the same (file placeholders), else each side. */
-export function devicesSummary(t: Translate, devices: CamillaDevices): string {
+function devicesSummary(t: Translate, devices: CamillaDevices): string {
   const capture = deviceText(t, devices.capture);
   const playback = deviceText(t, devices.playback);
   return capture === playback ? capture : t("export.devices.summary.pair", { capture, playback });

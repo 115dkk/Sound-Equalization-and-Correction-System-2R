@@ -6,7 +6,7 @@
 // position) bold, other positions thin and faint, subwoofers thicker than
 // any main, the target dashed in the neutral ink. Hovering a chip keeps
 // that channel or position at full strength and dims the rest.
-export type CurveKind = "main" | "sub" | "target" | "before";
+type CurveKind = "main" | "sub" | "target" | "before";
 
 export type Curve = {
   /** Unique id (role + position + variant). */

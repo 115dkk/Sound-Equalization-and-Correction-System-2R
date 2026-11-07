@@ -143,7 +143,7 @@ function runKey(notice: Notice): string | null {
 const INDEXED: ReadonlySet<string> = new Set(["dip_limit", "pair_phase", "rc_bands"]);
 
 /** The notices as runs of one note's records (`runKey`). */
-export function noteRuns(notices: readonly Notice[]): Notice[][] {
+function noteRuns(notices: readonly Notice[]): Notice[][] {
   const runs: Notice[][] = [];
   for (let i = 0; i < notices.length; ) {
     const key = runKey(notices[i]!);
@@ -157,7 +157,7 @@ export function noteRuns(notices: readonly Notice[]): Notice[][] {
 }
 
 /** Each run of `noteRuns` as its sentence, or null when the screen has none for its code. */
-export function runTexts(t: Translate, number: FormatNumber, notices: readonly Notice[]): (string | null)[] {
+function runTexts(t: Translate, number: FormatNumber, notices: readonly Notice[]): (string | null)[] {
   return noteRuns(notices).map((run) => noticeText(t, number, run[0]!, run));
 }
 

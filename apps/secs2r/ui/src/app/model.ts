@@ -6,9 +6,9 @@ export const STEPS = ["system", "connect", "measure", "calibrate", "export"] as 
 export type StepId = (typeof STEPS)[number];
 
 /** done: finished; ready: can be worked on; blocked: needs an earlier step; skipped: not on this path (mdat import skips 연결·점검). */
-export type StepStatus = "done" | "ready" | "blocked" | "skipped";
+type StepStatus = "done" | "ready" | "blocked" | "skipped";
 
-export const BLOCKED_REASONS = ["no_project", "no_speakers", "config_invalid", "no_path", "no_measurements", "measuring", "no_result", "computing", "device_busy", "path_not_ready", "no_levels"] as const;
+const BLOCKED_REASONS = ["no_project", "no_speakers", "config_invalid", "no_path", "no_measurements", "measuring", "no_result", "computing", "device_busy", "path_not_ready", "no_levels"] as const;
 export type BlockedReason = (typeof BLOCKED_REASONS)[number];
 
 export type StepState = { status: StepStatus; reason?: BlockedReason; count?: number };

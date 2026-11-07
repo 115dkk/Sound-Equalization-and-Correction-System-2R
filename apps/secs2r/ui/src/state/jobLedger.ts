@@ -31,7 +31,7 @@ export type HistoryEntry =
   | { id: string; at: number; job: JobId; kind: JobKind; type: "finished"; status: JobStatus; error: IpcError | null }
   | { id: string; at: number; job: JobId | null; kind: JobKind | null; type: "request_failed"; error: IpcError };
 export type LedgerState = { jobs: LedgerJob[]; history: HistoryEntry[]; seq: number; observedOrder: number; retention: JobRetention };
-export type SnapshotFinish = { event: FinishedJob; at: number; order: number };
+type SnapshotFinish = { event: FinishedJob; at: number; order: number };
 export type LedgerAction =
   | { type: "snapshots"; jobs: readonly JobSnapshot[]; at: number; epoch: number; fence: SnapshotFence; finished: readonly SnapshotFinish[] }
   | { type: "event"; event: JobEvent; at: number; epoch?: number; order?: number }
@@ -156,7 +156,7 @@ export const errorCount = (state: LedgerState): number =>
   state.history.filter((entry) => (entry.type === "finished" && entry.status === "failed") || entry.type === "request_failed").length;
 
 type Observation = { job: JobId; kind: JobKind; finished: { event: FinishedJob; job: LedgerJob } | null };
-export type PendingStart = { context: JobRequestContext; kind: JobKind; observation: Observation | null; replied: boolean; afterId: number };
+type PendingStart = { context: JobRequestContext; kind: JobKind; observation: Observation | null; replied: boolean; afterId: number };
 const kindFor = (request: Request): JobKind | null => {
   switch (request.method) {
     case "measure_position": return "measure";

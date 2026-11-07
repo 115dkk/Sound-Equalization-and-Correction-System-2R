@@ -15,10 +15,6 @@
   padding: var(--space-4) 0;
 }
 
-.export-note {
-  color: var(--text-muted);
-}
-
 /* The result: four short facts, then the longer lines. */
 .export-facts {
   container-type: inline-size;

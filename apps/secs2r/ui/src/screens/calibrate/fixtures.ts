@@ -673,7 +673,7 @@ const FOUR_BANDS: RcBand[] = [
 ];
 
 /** The merged band set a calculation with these extra bands notes (`rc_bands`, one record per band), the RC band of these views included. */
-export function rcBandsNote(bands: readonly RcBand[], hi = 310.42): Notice[] {
+function rcBandsNote(bands: readonly RcBand[], hi = 310.42): Notice[] {
   const merged = bandLayout({ lo: RC[0], hi, extra: bands.map((band) => [band.lo_hz, band.hi_hz] as const) }).bands;
   return merged.map(([lo, top], index) => ({ code: "rc_bands", params: { index: String(index), lo_hz: String(lo), hi_hz: String(top) } }));
 }

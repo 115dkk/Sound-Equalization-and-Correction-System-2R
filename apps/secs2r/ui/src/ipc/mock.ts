@@ -196,7 +196,7 @@ function pairPhaseNotes(a: string, b: string, bands: readonly (readonly [number,
  * limit and the extra bands, sorted, with overlapping or touching bands
  * merged, one record per band. Without extra bands there is no note.
  */
-export function mockRcBandsNotes(settings: CalibrationSettings, positions: number): Notice[] {
+function mockRcBandsNotes(settings: CalibrationSettings, positions: number): Notice[] {
   if (settings.rc_bands.length === 0) return [];
   const hi = Number(rcLimitNote(settings, positions).params.hz);
   const all = [[settings.rc_lo, hi], ...settings.rc_bands.map((band) => [band.lo_hz, band.hi_hz])].sort((a, b) => a[0]! - b[0]!);
@@ -257,7 +257,7 @@ export function rcEditRefusal(settings: CalibrationSettings, edit: SettingEdit):
  * 200–2000 Hz; with no main measured, the first sub at its lowest measured
  * position over 40–120 Hz. `order` is the configuration's roles.
  */
-export function measurementReference(order: readonly string[], measured: readonly { role: string; position: number }[]): CurveReference | null {
+function measurementReference(order: readonly string[], measured: readonly { role: string; position: number }[]): CurveReference | null {
   const lowest = (role: string) => {
     const positions = measured.filter((curve) => curve.role === role).map((curve) => curve.position);
     return positions.length ? Math.min(...positions) : null;

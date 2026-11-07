@@ -24,7 +24,7 @@ export type UpdateView = {
   busy: boolean;
 };
 
-export type UpdateActions = {
+type UpdateActions = {
   check: () => Promise<void>;
   download: () => Promise<void>;
   restart: () => Promise<void>;

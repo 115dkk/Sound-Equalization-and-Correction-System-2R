@@ -33,7 +33,7 @@ import {
   type LegendChannel,
 } from "../../ui";
 import { isSubRole, orderRoles, roleCode } from "../../ui/maps/geometry";
-import { baseName, estimateText, micPoints, pad2, pointText, recordSources, sourceSummary, sweepName } from "./format";
+import { estimateText, micPoints, pad2, pointText, recordSources, sourceSummary, sweepName } from "./format";
 import { MdatAssignDialog, MdatFilesDialog } from "./MdatDialogs";
 import {
   OWN_JOBS,

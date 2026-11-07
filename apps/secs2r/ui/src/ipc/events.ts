@@ -4,7 +4,7 @@
 // it. P33 connects the Tauri channel to `emit`; the mock emits directly.
 import type { JobEvent } from "./bindings/JobEvent";
 
-export type JobEventListener = (event: JobEvent) => void;
+type JobEventListener = (event: JobEvent) => void;
 
 export interface JobEventSource {
   subscribe(listener: JobEventListener): () => void;

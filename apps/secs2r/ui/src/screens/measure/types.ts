@@ -26,7 +26,7 @@ import { isActiveJob } from "../../state/jobRetention";
  * `import`: the stored method is `mdat`, where
  * 연결·점검 is skipped and the primary action imports instead of measuring.
  */
-export type MeasurePath = "measure" | "none" | "import";
+type MeasurePath = "measure" | "none" | "import";
 
 /** `measurement_records.records`: per-position roles, completion and sources. */
 export type { PositionRecord } from "../../ipc/bindings/PositionRecord";
@@ -61,7 +61,7 @@ export type DeviceJob = {
 };
 
 /** The low S/N notices (`measurement_low_snr`) of the last measurement of one position. */
-export type PositionWarnings = { position: number; notices: Notice[] };
+type PositionWarnings = { position: number; notices: Notice[] };
 
 /** An mdat file picked and scanned, waiting in the assignment dialog. */
 export type MdatPending = {

@@ -13,7 +13,7 @@ export type PlotBand = {
   extra?: readonly (readonly [number, number])[] | undefined;
 };
 
-export type BandLayout = {
+type BandLayout = {
   /** The union, sorted and merged where bands overlap or touch; an open primary ends at Infinity. */
   bands: [number, number][];
   /**

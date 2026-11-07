@@ -36,7 +36,7 @@ type SessionCall = <M extends Request["method"]>(
  * `ownsFailure`: the caller shows this request's typed failure where it was
  * asked (the open project dialog), so it is not also a global notice.
  */
-export type CallContext = Pick<JobRequestContext, "calibrateOnFailure"> & { ownsFailure?: boolean };
+type CallContext = Pick<JobRequestContext, "calibrateOnFailure"> & { ownsFailure?: boolean };
 
 
 export function createSession(ipc: Ipc) {

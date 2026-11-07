@@ -22,7 +22,7 @@ export type TourOp =
   | { kind: "hover"; selector: string }
   | { kind: "page"; run: (ctx: TourContext) => void | Promise<void> }; // runs in the page (mock ticks and the like)
 
-export type TourContext = { mock: MockService };
+type TourContext = { mock: MockService };
 
 export type TourScene = {
   /** Lower case, dots and hyphens; the file name. */
