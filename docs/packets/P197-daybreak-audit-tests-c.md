@@ -65,7 +65,7 @@ changes only what is checked, never what the program does.
 
    <무엇을 검사하게 되는지 한두 문장. 동작은 바뀌지 않는다는 문장.>
 
-   Co-Authored-By: Claude Mythos 5.1 <noreply@anthropic.com>
+   Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
    ```
 
 ## Items

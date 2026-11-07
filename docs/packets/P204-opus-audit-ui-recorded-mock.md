@@ -7,7 +7,7 @@ in the tree; `git status` is clean when you start). Work only in
 `npm ci` only if `npm run typecheck` fails to find a package. No cargo
 commands: the bindings and recorded files are inputs, never regenerate or
 edit them. One commit per step with the title given, trailer
-`Co-Authored-By: Claude Mythos 5.1 <noreply@anthropic.com>`. Do not push, do
+`Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`. Do not push, do
 not rebase, do not touch ADRs, `docs/**`, `CHANGELOG.md`, `audit-state.md`,
 Rust files, `apps/secs2r/ui/src/ipc/bindings/**` or
 `apps/secs2r/ui/src/ipc/recorded/**`.

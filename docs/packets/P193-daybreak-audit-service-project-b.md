@@ -1,13 +1,28 @@
 # P193 (Daybreak): audit #186, Category B refactors in the service and project crates
 
 Phase 2 of `/115dkk-skills:resolve-audit` for issue #186. This packet runs
-AFTER Phase 1 (P183..P187) and the ADR implementation packets (P188..P192)
-have been rebased into `fix/audit-186`. Start from the then-current
-`fix/audit-186`: Claude creates the worktree `E:\wt\audit-svc` on a fresh
-branch `audit/186-svc-b` from it before handing you this packet. Work only
-there. Every cargo command runs with `CARGO_TARGET_DIR=C:\cargo-target\audit-svc`.
-Commit on that branch, one commit per finding, in the order below. Do not
-push, do not rebase, do not spawn sub-agents, do not touch `audit-state.md`.
+AFTER Phase 1 and every ADR implementation packet (P188..P192, P189, P203,
+P202) have landed on `fix/audit-186`. Claude created the worktree
+`E:\wt\audit-svc` on a fresh branch `audit/186-svc-b` from the current
+`fix/audit-186` (`git status` is clean when you start). Work only there.
+Every cargo command runs with `CARGO_TARGET_DIR=C:\cargo-target\audit-api`
+(a warm target; another worker on the ADR 0055 packet may share it, so
+"Blocking waiting for file lock" can appear: wait). Never run `cargo clean`,
+never delete anything under `C:\cargo-target`, and check after the first
+command that `E:\wt\audit-svc\target` does not exist. No workspace-wide
+`cargo test`; per-package (`-p`) only, plus one `cargo clippy --workspace`
+at the end. Commit on that branch, one commit per finding, in the order
+below. Do not push, do not rebase, do not spawn sub-agents, do not touch
+`audit-state.md`.
+
+Since this packet was written, P189, P203 and P202 changed the service a
+lot: `app_settings.rs` (the settings store), `export_plan.rs` and the six
+concrete writers in `export.rs`, `ProjectSnapshot` and `commit(.., Finality)`
+in `session.rs`, `JobContext::role_progress`, the source map and
+`RecordError` in `secs-project`, a private `measure` module with root
+re-exports, `secs_sys::native_deps` (X-12). Line numbers below are stale;
+search by the names, and read the current code of each file before you
+change it.
 
 Allowed files:
 
@@ -72,7 +87,7 @@ test-first later).
 
    <무엇을 어디로 옮겼는지 한두 문장. 동작은 바뀌지 않았고 시험 N개가 전후 같이 통과했다는 문장.>
 
-   Co-Authored-By: Claude Mythos 5.1 <noreply@anthropic.com>
+   Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
    ```
 
    Architecture deletions use the X id: `refactor(audit): X-n <한국어> (#186 A<n>)`.
@@ -82,6 +97,7 @@ test-first later).
 These rows of `audit-state.md` are closed by ADR packets. Do not redo them;
 check in the report that the current tree matches and note any leftover:
 
+- B-1 (TD-155) → P189 0ebbf415: `plan_export` reads the output-rate choice under the lock, resolves it with the device outside, and re-enters through `with_open_ticket`. Verify only; the one thing left for you is in the B-1 section below.
 - B-9 (TD-184 sidecar reparse) → ADR 0060, P189.
 - B-11 (TD-189 transitions) → ADR 0057, P191.
 - B-13 (TD-251 testkit copy) → ADR 0050, P188.
@@ -108,16 +124,17 @@ one copy; capture sidecar paths under the lock and read them in the job
 (like `original_snapshot`).
 
 After ADR 0043 (P189) the function is `Service::plan_export` plus the
-writer adapters, and ADR 0060 keeps the sidecars in the store (so the
-sidecar read under the lock is already gone). What remains for this item:
+writer adapters, ADR 0060 keeps the sidecars in the store, and P189 moved
+the device enumeration out of the lock (0ebbf415). What remains for this
+item is only the copies:
 
-- Before: `plan_export` calls `resolve_output_rate(choice, || deps.audio_backend().output_format(..))` inside the `lock(&self.session)` scope.
-- After: the lock scope reads `project.dsp.output_rate` into a local, drops the guard, calls `resolve_output_rate` with the device closure, and re-takes the lock only to build the plan (compare the project ticket: if it changed in between, answer the same `ProjectChanged`/stale error the commit path uses; search `session::` for the ticket check helper). The `MimoPaths` and `SignalChain` values the plan carries become `Arc<MimoPaths>` / `Arc<SignalChain>` and the manifest and description read through the `Arc` instead of cloning.
-- Deleted: the two `.clone()` of the chain and the three copies of `MimoPaths` (search `mimo.clone()` / `paths.clone()` in `export.rs`).
+- Before: in `crates/secs-service/src/export.rs`, `Arc::new(cached.calibration_chain.clone())`, `Arc::new(result.run.paths.clone())`, the `mimo.clone()` / `export_mimo.clone()` pair and the `paths.clone()` in the cached replay (search those strings).
+- After: where the cloned value is a whole `SignalChain` or `MimoPaths` (not an `Arc`), the source keeps it in an `Arc` so the plan, manifest and description share one copy (`ResultBook` or the cached result may need an `Arc` field; that is inside `crates/secs-service`). Where the clone is already an `Arc` clone, leave it and say so.
+- Deleted: the whole-value copies only.
 
 Files: `crates/secs-service/src/export.rs` (and the writer adapter files P189 created under `crates/secs-service/src/export/` if that is where they live).
 Gate: `cargo test -p secs-service --locked` (the export and device-fallback tests `output_rate_resolver_*` and `*export*` must pass unchanged).
-Commit subject: `refactor(audit): B-1 내보내기 계획이 장치 열거를 세션 잠금 밖에서 합니다 (#186 TD-155)`.
+Commit subject: `refactor(audit): B-1 내보내기 계획이 사슬과 MIMO 경로를 복제하지 않고 공유합니다 (#186 TD-155)`. If nothing whole-value is left, make no commit and say so in the report.
 Stop rule: if `resolve_output_rate` outside the lock changes which rate an existing test observes (a test fakes a device change between calls), reclassify.
 
 ### B-2 · TD-156 · `measurement_curves` reads every WAV under the lock and smooths without cancel or progress
@@ -183,7 +200,7 @@ Commit subject: `refactor(audit): B-18 모니터의 도우미 사본을 지우�
 
 Finding: "`secs_types::fs::write_atomic_bytes`로 넘기는 도우미 넷과 자기
 원자 교체 셋(TD-74는 둘만 고침)." Solution: "`ErrorCode`를 인자로 받는 도우미
-하나." The four service wrappers are `project_edit.rs::atomic_write(path, bytes) -> Result<(), IpcError>` (maps with `project_io`), `session.rs::atomic_replace(destination, bytes) -> io::Result<()>`, `deploy.rs` (maps with `io_error`), `apply.rs` (maps with `io_error`). The writer-crate copies (`secs-camilla::atomic_write`, `secs-export::atomic_replace`, `secs-project::record::atomic_write`) belong to ADR 0045/P194, not to you.
+하나." The service wrappers today (2026-11-08, `grep -rn write_atomic_bytes crates/secs-service/src`) are `app_settings.rs::atomic_write` and `project_edit.rs::atomic_write` (both map with `project_io`), `deploy.rs` and `apply.rs` (map with `io_error`), and `session.rs::atomic_replace` if it still exists; the direct calls in `design_export.rs` and `export.rs` stay direct unless the helper fits them without changing the error they return. The writer-crate copies (`secs-camilla::atomic_write`, `secs-export::atomic_replace`, `secs-project::record::atomic_write`) belong to ADR 0045/P194, not to you.
 
 - Before: four private wrappers in four files, two error mappers.
 - After: `crates/secs-service/src/fs.rs` with `pub(crate) fn write_atomic(path: &Path, bytes: &[u8], code: ErrorCode) -> Result<(), IpcError>` (calls `secs_types::fs::write_atomic_bytes`, maps the `io::Error` with the existing `io_error`/`project_io` shape: `path` param, `reason` from `io::ErrorKind` as those mappers already do; keep each call site's current `ErrorCode` exactly: `ProjectIo` for `project_edit.rs`/`session.rs`, the apply code for `deploy.rs`/`apply.rs`). The four call sites call it; `session.rs`'s `io::Result` caller maps at the call site as it does now.
@@ -361,10 +378,20 @@ Commit subject: `refactor(audit): B-17 링크 판정을 한 도우미로 모으�
 ```
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
-cargo test --workspace --locked
+cargo test -p secs-service -p secs-project -p secs-audio -p secs-rew -p secs-types -p secs2r -p secs2r-cli -p sound-equalization-and-correction-system-rust-api --locked --no-fail-fast
 python3 .github/scripts/check_feature_tests.py
 git log --oneline fix/audit-186..audit/186-svc-b
 ```
+
+The public API crate needs `--all-features` for its own tests
+(`cargo test -p sound-equalization-and-correction-system-rust-api --all-features --locked`).
+`cached_resample_replay_releases_read_memory_before_calibrating_td130` in
+`tests/service.rs` and the tutorial quests vitest are known to fail under a
+loaded parallel run on this machine and pass alone; rerun such a test alone
+before you treat it as yours, and report it either way. Changing the public
+items of `secs-project` (B-10, B-22, B-23) reaches crates outside your file
+list: the workspace clippy tells you; if a dependent crate outside the list
+breaks, stop that item and report it.
 
 `check_feature_tests.py` on Windows reports two known names it cannot list
 (`secs-local-api::token_files_are_created_and_tightened_to_owner_only_td109`,

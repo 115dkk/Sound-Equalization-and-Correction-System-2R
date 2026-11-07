@@ -146,7 +146,7 @@ change); Tidy (only this step's lines); gate; commit with
 
 <Red 시험이 무엇을 증명하는지 한두 문장. 바뀐 동작이나 구조 한 문장. ADR 0055 n단계.>
 
-Co-Authored-By: Claude Mythos 5.1 <noreply@anthropic.com>
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ```
 
 (하십시오체, no em-dash, no program-as-subject verbs 묻다/적다/넘기다, "추가하다"

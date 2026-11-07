@@ -51,7 +51,7 @@ a program doing a human act (묻다, 적다, 넘기다, 그리다, 채우다, �
 
    <무엇을 어떻게 고쳤는지 한두 문장. 코드는 바뀌지 않는다는 문장.>
 
-   Co-Authored-By: Claude Mythos 5.1 <noreply@anthropic.com>
+   Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
    ```
 
 ## Items
