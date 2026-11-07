@@ -1296,6 +1296,34 @@ fn save(path: &Path, role: &str, pos: i64) {
 }
 
 #[test]
+fn recorded_sources_past_the_budget_are_written_but_not_kept_and_release_on_remove() {
+    let (_directory, path, store, roles) = setup();
+    let mut store = store.with_source_budget(1_024);
+    let source = SourceInfo {
+        notes: Some("x".repeat(600)),
+        ..SourceInfo::default()
+    };
+
+    let mut first = result("L", 1, "first");
+    first.source_info = Some(source.clone());
+    store.record(first, Some(&roles)).unwrap();
+    assert!(store.source_of("L", 1).is_some());
+
+    let mut second = result("L", 2, "second");
+    second.source_info = Some(source.clone());
+    store.record(second, Some(&roles)).unwrap();
+    assert!(source_path(&path.with_extension("irs").join("L_P2.wav")).is_file());
+    assert!(store.source_of("L", 2).is_none());
+    assert!(store.warnings().iter().any(|warning| {
+        warning.code == "measurement.source.budget" && warning.entry == "position 2, role L"
+    }));
+
+    store.remove_position(1).unwrap();
+    store.replace_source("L", 2, Some(&source)).unwrap();
+    assert_eq!(store.source_of("L", 2).as_deref(), Some(&source));
+}
+
+#[test]
 fn record_replace_remove_and_restore_keep_the_source_map_in_step_with_the_files() {
     let (_directory, path, mut store, roles) = setup();
     let first = SourceInfo {

@@ -219,6 +219,7 @@ pub struct MeasurementStore {
     project: Project,
     snr_db: BTreeMap<(i64, String), f64>,
     sources: BTreeMap<(i64, String), Arc<SourceInfo>>,
+    source_budget: SourceBudget,
     warnings: Vec<MigrationWarning>,
     cache: IrCache,
     saves: u64,
@@ -278,6 +279,7 @@ impl MeasurementStore {
         warnings.extend(skipped.iter().map(source_warning));
         let mut store = Self::new(path, project);
         store.sources = sources;
+        store.source_budget = SourceBudget::from_sources(source_budget, &store.sources);
         store.warnings.extend(warnings);
         Ok(store)
     }
@@ -288,6 +290,7 @@ impl MeasurementStore {
             project,
             snr_db: BTreeMap::new(),
             sources: BTreeMap::new(),
+            source_budget: SourceBudget::new(MAX_PROJECT_SOURCE_BYTES),
             warnings: Vec::new(),
             cache: IrCache::default(),
             saves: 0,
@@ -298,7 +301,19 @@ impl MeasurementStore {
     pub fn relocated(&self, path: PathBuf, project: Project) -> Self {
         let mut relocated = Self::new(path, project);
         relocated.sources = self.sources.clone();
+        relocated.source_budget = self.source_budget.clone();
         relocated
+    }
+
+    /// Overrides the source-map budget for focused tests.
+    #[doc(hidden)]
+    pub fn with_source_budget(mut self, cap_bytes: usize) -> Self {
+        let sources = std::mem::take(&mut self.sources);
+        self.source_budget = SourceBudget::new(cap_bytes);
+        for ((pos, role), source) in sources {
+            self.keep_source((pos, role), source);
+        }
+        self
     }
 
     pub fn project(&self) -> &Project {
@@ -383,7 +398,14 @@ impl MeasurementStore {
             records.push(entry);
         }
         self.snr_db.retain(|(entry_pos, _), _| *entry_pos != pos);
+        let released = self
+            .sources
+            .iter()
+            .filter(|((entry_pos, _), _)| *entry_pos == pos)
+            .map(|(_, source)| source_info_bytes(source))
+            .sum();
         self.sources.retain(|(entry_pos, _), _| *entry_pos != pos);
+        self.source_budget.release(released);
         self.entry_for(pos).expect("new entry has a valid position")
     }
 
@@ -476,9 +498,9 @@ impl MeasurementStore {
         }
         let source_key = (result.pos, role.clone());
         if let Some(source) = source_info {
-            self.sources.insert(source_key, Arc::new(source));
+            self.keep_source(source_key, Arc::new(source));
         } else {
-            self.sources.remove(&source_key);
+            self.remove_source(&source_key);
         }
         if let Some(value) = result.snr_db {
             self.snr_db.insert((result.pos, role), value);
@@ -521,7 +543,13 @@ impl MeasurementStore {
             .iter()
             .filter(|((entry_pos, _), _)| *entry_pos == pos)
             .map(|((_, role), source)| (role.clone(), source.clone()))
-            .collect();
+            .collect::<Vec<_>>();
+        self.source_budget.release(
+            sources
+                .iter()
+                .map(|(_, source)| source_info_bytes(source))
+                .sum(),
+        );
         self.sources.retain(|(entry_pos, _), _| *entry_pos != pos);
         Some(RemovedPosition {
             pos,
@@ -555,11 +583,9 @@ impl MeasurementStore {
         }
         self.snr_db
             .extend(snr_db.into_iter().map(|(role, value)| ((pos, role), value)));
-        self.sources.extend(
-            sources
-                .into_iter()
-                .map(|(role, source)| ((pos, role), source)),
-        );
+        for (role, source) in sources {
+            self.keep_source((pos, role), source);
+        }
         Ok(())
     }
 
@@ -601,6 +627,27 @@ impl MeasurementStore {
     pub fn ir_of(&mut self, role: &str, pos: i64) -> Result<(Vec<f32>, u32), ProjectError> {
         let path = self.ir_path_of(role, pos)?;
         self.cache.load(&path)
+    }
+
+    fn remove_source(&mut self, key: &(i64, String)) -> Option<Arc<SourceInfo>> {
+        let source = self.sources.remove(key)?;
+        self.source_budget.release(source_info_bytes(&source));
+        Some(source)
+    }
+
+    fn keep_source(&mut self, key: (i64, String), source: Arc<SourceInfo>) -> bool {
+        self.remove_source(&key);
+        let bytes = source_info_bytes(&source);
+        if bytes > MAX_SOURCE_BYTES as usize || !self.source_budget.spend(bytes) {
+            self.warnings.push(MigrationWarning {
+                code: "measurement.source.budget",
+                entry: format!("position {}, role {}", key.0, key.1),
+            });
+            false
+        } else {
+            self.sources.insert(key, source);
+            true
+        }
     }
 
     pub fn sources_by_position(&self) -> BTreeMap<u32, BTreeMap<String, Arc<SourceInfo>>> {
@@ -673,9 +720,9 @@ impl MeasurementStore {
             self.project.measurement_calibration.remove(&key);
         }
         if let Some(info) = info {
-            self.sources.insert(key, Arc::new(info.clone()));
+            self.keep_source(key, Arc::new(info.clone()));
         } else {
-            self.sources.remove(&key);
+            self.remove_source(&key);
         }
         Ok(())
     }
@@ -836,28 +883,48 @@ pub(crate) struct LoadedSources {
     pub(crate) skipped: Vec<SourceSkip>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct SourceBudget {
-    remaining: usize,
+    limit: usize,
+    used: usize,
     exhausted: bool,
 }
 
 impl SourceBudget {
-    fn new(bytes: usize) -> Self {
+    fn new(limit: usize) -> Self {
         Self {
-            remaining: bytes,
+            limit,
+            used: 0,
             exhausted: false,
         }
     }
 
+    fn from_sources(limit: usize, sources: &BTreeMap<(i64, String), Arc<SourceInfo>>) -> Self {
+        let mut budget = Self::new(limit);
+        for source in sources.values() {
+            let spent = budget.spend(source_info_bytes(source));
+            debug_assert!(spent, "loaded sources exceed their map budget");
+        }
+        budget
+    }
+
     fn spend(&mut self, bytes: usize) -> bool {
-        if bytes > self.remaining {
+        let Some(used) = self.used.checked_add(bytes) else {
+            self.exhausted = true;
+            return false;
+        };
+        if used > self.limit {
             self.exhausted = true;
             false
         } else {
-            self.remaining -= bytes;
+            self.used = used;
             true
         }
+    }
+
+    fn release(&mut self, bytes: usize) {
+        self.used = self.used.saturating_sub(bytes);
+        self.exhausted = false;
     }
 }
 
