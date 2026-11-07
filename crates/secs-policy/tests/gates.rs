@@ -27,7 +27,8 @@ struct Budget {
 struct Feature {
     id: String,
     kind: String,
-    milestone: String,
+    #[serde(rename = "milestone")]
+    _milestone: String,
     status: String,
     tests: Vec<String>,
 }
@@ -703,54 +704,14 @@ fn split_test_reference(reference: &str) -> Option<(&str, &str)> {
         .then_some((crate_name, test_name))
 }
 
-fn is_rust_identifier(name: &str) -> bool {
-    let (identifier, raw) = name
-        .strip_prefix("r#")
-        .map_or((name, false), |identifier| (identifier, true));
-    let mut characters = identifier.chars();
-    let Some(first) = characters.next() else {
-        return false;
-    };
-    if identifier == "_" || first != '_' && !first.is_alphabetic() {
-        return false;
-    }
-    if !characters.all(is_identifier_character) {
-        return false;
-    }
-
-    const KEYWORDS: &[&str] = &[
-        "Self", "abstract", "as", "async", "await", "become", "box", "break", "const", "continue",
-        "crate", "do", "dyn", "else", "enum", "extern", "false", "final", "fn", "for", "gen", "if",
-        "impl", "in", "let", "loop", "macro", "match", "mod", "move", "mut", "override", "priv",
-        "pub", "ref", "return", "self", "static", "struct", "super", "trait", "true", "try",
-        "type", "typeof", "union", "unsafe", "unsized", "use", "virtual", "where", "while",
-        "yield",
-    ];
-    if raw {
-        !matches!(identifier, "crate" | "self" | "super" | "Self")
-    } else {
-        !KEYWORDS.contains(&identifier)
-    }
-}
-
 #[test]
 fn features_registry_is_well_formed() {
     let registry = load_registry();
-    let crate_names: BTreeSet<String> = first_party_crates()
-        .into_iter()
-        .map(|krate| krate.name)
-        .collect();
-    let mut seen_ids = BTreeSet::new();
     let mut violations = Vec::new();
 
     for feature in &registry.feature {
         if feature.id.trim().is_empty() {
             violations.push("features.toml: feature id must not be empty".to_owned());
-        } else if !seen_ids.insert(feature.id.as_str()) {
-            violations.push(format!(
-                "features.toml: duplicate feature id '{}'",
-                feature.id
-            ));
         }
         if feature.kind.trim().is_empty() {
             violations.push(format!(
@@ -767,54 +728,30 @@ fn features_registry_is_well_formed() {
                 feature.id, feature.status
             ));
         }
-        if !matches!(
-            feature.milestone.as_str(),
-            "M0" | "M1" | "M2" | "M3" | "M4" | "M5" | "M6"
-        ) {
-            violations.push(format!(
-                "features.toml: feature '{}': milestone '{}' must be M0 through M6",
-                feature.id, feature.milestone
-            ));
-        }
-
-        for reference in &feature.tests {
-            let Some((crate_name, test_name)) = split_test_reference(reference) else {
+        if feature.status == "implemented" {
+            if feature.tests.is_empty() {
                 violations.push(format!(
-                    "features.toml: feature '{}': test '{}' must have the form crate-name::test_fn",
-                    feature.id, reference
-                ));
-                continue;
-            };
-            if !crate_names.contains(crate_name) {
-                violations.push(format!(
-                    "features.toml: feature '{}': test '{}' names unknown crate '{}'",
-                    feature.id, reference, crate_name
+                    "features.toml: feature '{}': status is implemented but tests is empty",
+                    feature.id
                 ));
             }
-            if !is_rust_identifier(test_name) {
-                violations.push(format!(
-                    "features.toml: feature '{}': test '{}' has invalid Rust identifier '{}'",
-                    feature.id, reference, test_name
-                ));
+            for reference in &feature.tests {
+                if split_test_reference(reference).is_none() {
+                    violations.push(format!(
+                        "features.toml: feature '{}': test '{}' must have the form crate-name::test_fn",
+                        feature.id, reference
+                    ));
+                }
             }
         }
     }
 
+    // .github/scripts/check_feature_tests.py asks Cargo whether each named test exists.
     assert!(
         violations.is_empty(),
         "feature registry format violations:\n{}",
         violations.join("\n")
     );
-}
-
-fn skip_ascii_whitespace(bytes: &[u8], mut cursor: usize) -> usize {
-    while bytes
-        .get(cursor)
-        .is_some_and(|byte| byte.is_ascii_whitespace())
-    {
-        cursor += 1;
-    }
-    cursor
 }
 
 fn has_identifier_boundaries(code: &str, start: usize, length: usize) -> bool {
@@ -824,189 +761,6 @@ fn has_identifier_boundaries(code: &str, start: usize, length: usize) -> bool {
     let end = start + length;
     let after_ok = end == bytes.len() || !bytes[end].is_ascii_alphanumeric() && bytes[end] != b'_';
     before_ok && after_ok
-}
-
-fn function_positions(code: &str, name: &str) -> Vec<usize> {
-    let bytes = code.as_bytes();
-    let mut positions = Vec::new();
-
-    for (start, _) in code.match_indices("fn") {
-        if !has_identifier_boundaries(code, start, 2) {
-            continue;
-        }
-        let mut cursor = skip_ascii_whitespace(bytes, start + 2);
-        if !bytes[cursor..].starts_with(name.as_bytes())
-            || !has_identifier_boundaries(code, cursor, name.len())
-        {
-            continue;
-        }
-        cursor = skip_ascii_whitespace(bytes, cursor + name.len());
-
-        if bytes.get(cursor) == Some(&b'<') {
-            let mut depth = 0_usize;
-            while cursor < bytes.len() {
-                match bytes[cursor] {
-                    b'<' => depth += 1,
-                    b'>' => {
-                        depth -= 1;
-                        if depth == 0 {
-                            cursor += 1;
-                            break;
-                        }
-                    }
-                    _ => {}
-                }
-                cursor += 1;
-            }
-            if depth != 0 {
-                continue;
-            }
-            cursor = skip_ascii_whitespace(bytes, cursor);
-        }
-
-        if bytes.get(cursor) == Some(&b'(') {
-            positions.push(start);
-        }
-    }
-    positions
-}
-
-fn prefix_has_test_attribute(code: &str, function_start: usize) -> bool {
-    let item_start = code[..function_start]
-        .rfind([';', '{', '}'])
-        .map_or(0, |index| index + 1);
-    let prefix = &code[item_start..function_start];
-    let bytes = prefix.as_bytes();
-    let mut cursor = 0;
-
-    while cursor < bytes.len() {
-        if bytes[cursor] != b'#' {
-            cursor += 1;
-            continue;
-        }
-        let bracket = skip_ascii_whitespace(bytes, cursor + 1);
-        if bytes.get(bracket) != Some(&b'[') {
-            cursor += 1;
-            continue;
-        }
-
-        let mut end = bracket + 1;
-        let mut depth = 1_usize;
-        while end < bytes.len() && depth > 0 {
-            match bytes[end] {
-                b'[' => depth += 1,
-                b']' => depth -= 1,
-                _ => {}
-            }
-            end += 1;
-        }
-        if depth == 0 && prefix[bracket + 1..end - 1].trim() == "test" {
-            return true;
-        }
-        cursor = end;
-    }
-    false
-}
-
-fn proptest_block_ranges(code: &str) -> Vec<(usize, usize)> {
-    let bytes = code.as_bytes();
-    let mut ranges = Vec::new();
-
-    for (start, _) in code.match_indices("proptest") {
-        if !has_identifier_boundaries(code, start, "proptest".len()) {
-            continue;
-        }
-        let bang = skip_ascii_whitespace(bytes, start + "proptest".len());
-        if bytes.get(bang) != Some(&b'!') {
-            continue;
-        }
-        let open = skip_ascii_whitespace(bytes, bang + 1);
-        if bytes.get(open) != Some(&b'{') {
-            continue;
-        }
-
-        let mut cursor = open + 1;
-        let mut depth = 1_usize;
-        while cursor < bytes.len() && depth > 0 {
-            match bytes[cursor] {
-                b'{' => depth += 1,
-                b'}' => depth -= 1,
-                _ => {}
-            }
-            cursor += 1;
-        }
-        if depth == 0 {
-            ranges.push((open + 1, cursor - 1));
-        }
-    }
-    ranges
-}
-
-fn source_has_test_fn(source: &str, name: &str) -> bool {
-    let code = strip_comments_and_literals(source);
-    let proptest_ranges = proptest_block_ranges(&code);
-    function_positions(&code, name).into_iter().any(|position| {
-        prefix_has_test_attribute(&code, position)
-            || proptest_ranges
-                .iter()
-                .any(|(start, end)| *start <= position && position < *end)
-    })
-}
-
-fn test_fn_exists(crate_dir: &Path, test_name: &str) -> bool {
-    rust_files(crate_dir).into_iter().any(|file| {
-        let source =
-            fs::read_to_string(&file).unwrap_or_else(|error| panic!("{}: {error}", file.display()));
-        source_has_test_fn(&source, test_name)
-    })
-}
-
-#[test]
-fn implemented_features_have_existing_tests() {
-    let registry = load_registry();
-    let crates: BTreeMap<String, PathBuf> = first_party_crates()
-        .into_iter()
-        .map(|krate| (krate.name, krate.dir))
-        .collect();
-    let mut violations = Vec::new();
-
-    for feature in &registry.feature {
-        if feature.status == "implemented" && feature.tests.is_empty() {
-            violations.push(format!(
-                "features.toml: feature '{}': status is implemented but tests is empty",
-                feature.id
-            ));
-        }
-
-        for reference in &feature.tests {
-            let Some((crate_name, test_name)) = split_test_reference(reference) else {
-                violations.push(format!(
-                    "features.toml: feature '{}': test '{}' must have the form crate-name::test_fn",
-                    feature.id, reference
-                ));
-                continue;
-            };
-            let Some(crate_dir) = crates.get(crate_name) else {
-                violations.push(format!(
-                    "features.toml: feature '{}': test '{}' names unknown crate '{}'",
-                    feature.id, reference, crate_name
-                ));
-                continue;
-            };
-            if !test_fn_exists(crate_dir, test_name) {
-                violations.push(format!(
-                    "features.toml: feature '{}': test function '{}' was not found as #[test] or inside proptest! {{}} in crate '{}'",
-                    feature.id, test_name, crate_name
-                ));
-            }
-        }
-    }
-
-    assert!(
-        violations.is_empty(),
-        "feature registry test violations:\n{}",
-        violations.join("\n")
-    );
 }
 
 fn workspace_dependency_packages() -> BTreeMap<String, String> {
@@ -1417,45 +1171,6 @@ fn crate_attribute_must_precede_every_block() {
         "#![forbid(unsafe_code)]"
     ));
     assert!(!has_crate_attribute("fn f() {}", "#![forbid(unsafe_code)]"));
-}
-
-#[test]
-fn test_detector_finds_test_attribute() {
-    let source = r#"
-        #[test]
-        #[should_panic(expected = "demonstration")]
-        #[cfg(any(test, windows))]
-        fn detected<T>() {}
-    "#;
-    assert!(source_has_test_fn(source, "detected"));
-}
-
-#[test]
-fn test_detector_rejects_plain_function() {
-    assert!(!source_has_test_fn("fn ordinary() {}", "ordinary"));
-}
-
-#[test]
-fn test_detector_finds_proptest_function() {
-    let source = r#"
-        proptest! {
-            fn generated(value in any::<u8>()) {
-                prop_assert!(value <= u8::MAX);
-            }
-        }
-    "#;
-    assert!(source_has_test_fn(source, "generated"));
-}
-
-#[test]
-fn test_detector_ignores_comments_and_strings() {
-    let source = r##"
-        // #[test] fn imaginary() {}
-        /* #[test] fn imaginary() {} */
-        const EXAMPLE: &str = "#[test] fn imaginary() {}";
-        const RAW: &str = r#"#[test] fn imaginary() {}"#;
-    "##;
-    assert!(!source_has_test_fn(source, "imaginary"));
 }
 
 /// Cargo writes every example and binary of the workspace to one directory

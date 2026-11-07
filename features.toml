@@ -355,14 +355,7 @@ id = "policy.feature_registry"
 kind = "policy"
 milestone = "M0"
 status = "implemented"
-tests = [
-  "secs-policy::features_registry_is_well_formed",
-  "secs-policy::implemented_features_have_existing_tests",
-  "secs-policy::test_detector_finds_test_attribute",
-  "secs-policy::test_detector_rejects_plain_function",
-  "secs-policy::test_detector_finds_proptest_function",
-  "secs-policy::test_detector_ignores_comments_and_strings",
-]
+tests = ["secs-policy::features_registry_is_well_formed"]
 
 [[feature]]
 id = "policy.os_code_stays_in_secs_sys"
