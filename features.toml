@@ -1876,7 +1876,7 @@ kind = "app"
 milestone = "M6"
 status = "implemented"
 tests = [
-  "secs-types::access_table_covers_every_request_method_exactly",
+  "secs-types::method_names_match_the_wire",
   "secs-types::old_app_settings_without_local_api_use_the_disabled_default",
   "secs-service::observer_receives_every_caller_event_in_the_same_order",
   "secs-service::oracle_project_calibrates_recommends_xo_and_exports",
