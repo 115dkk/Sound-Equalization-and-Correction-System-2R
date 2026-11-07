@@ -2,7 +2,7 @@ import { HelpTip } from "../../ui/HelpTip";
 import { useProjectIdentity } from "../../state/react";
 // The settings that change the correction, in sections grouped by what they
 // change: 모드, 보정 범위, 크로스오버, 서브 정렬 (BA), 저음 도착과 울림,
-// MIMO. Every change goes through `changeSetting` (calibration_settings_set)
+// MIMO. Every change goes through `changeSetting` (calibration_settings_edit)
 // and only marks the result stale. Experiments, resource budgets and rare
 // setups sit under 고급 (ADR 0038); every correction mode is available in the
 // mode selector. MIMO is chosen beside 보정 계산 too

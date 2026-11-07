@@ -50,7 +50,7 @@ export type CalibrateView = {
    * `curves` dimmed meanwhile instead of showing them as the new selection.
    */
   curvesLoading: boolean;
-  /** `calibration_settings_get`, and the reply of every `calibration_settings_set`. */
+  /** `calibration_settings_get`, and the reply of every `calibration_settings_edit`. */
   settings: CalibrationSettings;
   /** `mode_spec { mode: settings.mode, ultra_ms: settings.ultra_ms, mimo_fir: settings.mimo_fir }`. */
   modeSpec: ModeSpecResult;

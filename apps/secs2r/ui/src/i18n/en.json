@@ -650,7 +650,7 @@
   "system.device.unknown": "Channel count unknown",
   "system.device.channels": "Channels: {count}",
   "system.device.over": "Exceeds {count} channels",
-  "system.notices.title": "Problems to fix in the setup: {count}.",
+  "system.notices.title": "{count} things to fix",
   "system.notices.more": "Show {count} more",
   "system.patch.caption": "Output patch",
   "system.patch.empty": "There are no speakers. Choose a preset or add a speaker.",

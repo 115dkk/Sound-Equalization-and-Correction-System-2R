@@ -650,7 +650,7 @@
   "system.device.unknown": "채널 수 미확인",
   "system.device.channels": "채널 {count}개",
   "system.device.over": "채널 {count}개 초과",
-  "system.notices.title": "구성에 고칠 곳이 {count}곳 있습니다.",
+  "system.notices.title": "고칠 곳 {count}곳",
   "system.notices.more": "외 {count}개 보기",
   "system.patch.caption": "출력 패치",
   "system.patch.empty": "스피커가 없습니다. 프리셋을 고르거나 스피커를 추가하십시오.",
