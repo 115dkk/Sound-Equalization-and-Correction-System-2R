@@ -9,7 +9,7 @@ import { HelpTip } from "../../ui/HelpTip";
 // rest (U8). The screen draws the view and reports what the user did; P33
 // wires the actions to the service.
 import { useMemo, useState, type ReactNode } from "react";
-import { JOB_NAME } from "../../app/jobs/jobText";
+import { JOB_NAME, MEASURE_PHASES, stageText } from "../../app/jobs/jobText";
 import { usePrefs } from "../../app/prefs";
 import type { PrimaryAction } from "../../app/StepHeader";
 import { useNumber, useT, type Translate } from "../../i18n/react";
@@ -266,12 +266,16 @@ function RunProgress({ job, roleCount, onCancel }: { job: DeviceJob; roleCount: 
   const cancelling = job.status === "cancel_requested";
   const total = countdown ? countdown.total : (progress?.total ?? roleCount);
   const doneCount = countdown ? countdown.done : (progress?.done ?? 0);
+  // A phase of the sweep (스윕 준비, 재생, 응답 처리) counts percent, not channels.
+  const phase = !countdown && progress && MEASURE_PHASES.has(progress.stage) ? progress : null;
   const line = countdown
     ? t("measure.run.countdown", { seconds: Math.max(0, countdown.total - countdown.done) })
-    : progress
-      ? t("measure.run.channels", { done: progress.done, total: progress.total })
-      : t("measure.run.starting");
-  const last = !countdown && progress ? roleCode(progress.stage) : null;
+    : phase
+      ? t("measure.run.phase", { phase: stageText(t, "measure", phase.stage) ?? "", percent: phase.done })
+      : progress
+        ? t("measure.run.channels", { done: progress.done, total: progress.total })
+        : t("measure.run.starting");
+  const last = !countdown && !phase && progress ? roleCode(progress.stage) : null;
   const hint = cancelling ? t("measure.run.cancelling") : countdown ? t("measure.run.countdown.hint", { n }) : null;
   return (
     <div className="measure-run" data-ui="measure.run">

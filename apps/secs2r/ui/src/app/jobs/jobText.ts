@@ -60,6 +60,33 @@ const ENGINE_INPUT_TEXT = {
   rc_agreement_positions: { cause: "error.engine_input.rc_agreement_positions", next: "error.engine_input.rc_agreement_positions.next", required: ["measured", "required"] },
 } as const satisfies Record<string, { cause: MessageKey; next: MessageKey; required: readonly string[] }>;
 
+/**
+ * Error reasons with their own sentence (`params.reason`), keyed by code and
+ * reason, and the params each sentence needs. A reason whose params did not
+ * arrive reads as its code's sentence.
+ */
+const REASON_TEXT: Readonly<Record<string, { cause: MessageKey; next: MessageKey; required: readonly string[] }>> = {
+  // Opening a project (secs-service `project_open_ipc`).
+  "project_io.not_found": { cause: "error.project_io.not_found", next: "error.project_io.not_found.next", required: ["path"] },
+  "project_io.io": { cause: "error.project_io.io", next: "error.project_io.io.next", required: ["path"] },
+  "project_io.json": { cause: "error.project_io.json", next: "error.project_io.json.next", required: ["path"] },
+  "project_io.invalid": { cause: "error.project_io.invalid", next: "error.project_io.invalid.next", required: ["path"] },
+  "project_io.wav": { cause: "error.project_io.wav", next: "error.project_io.wav.next", required: ["path"] },
+  "project_io.ir_path": { cause: "error.project_io.ir_path", next: "error.project_io.ir_path.next", required: ["path"] },
+  "permission_denied.permission_denied": { cause: "error.permission_denied.permission_denied", next: "error.permission_denied.permission_denied.next", required: ["path"] },
+  // The app settings file (secs-service project_edit.rs).
+  "unsupported.newer_version": { cause: "error.unsupported.newer_version", next: "error.unsupported.newer_version.next", required: ["path"] },
+  "unsupported.settings_unreadable": { cause: "error.unsupported.settings_unreadable", next: "error.unsupported.settings_unreadable.next", required: ["path"] },
+  // Equalizer APO's configuration (secs-service apply.rs).
+  "unsupported.eqapo_config_path": { cause: "error.unsupported.eqapo_config_path", next: "error.unsupported.eqapo_config_path.next", required: ["path"] },
+  "apply_failed.config_encoding": { cause: "error.apply_failed.config_encoding", next: "error.apply_failed.config_encoding.next", required: ["path"] },
+  // The export folder (`field: folder`).
+  "invalid_request.relative_folder": { cause: "error.invalid_request.relative_folder", next: "error.invalid_request.relative_folder.next", required: [] },
+  // A measurement's samples (secs-service `validate_samples`).
+  "measurement_input.empty": { cause: "error.measurement_input.empty", next: "error.measurement_input.empty.next", required: ["row"] },
+  "measurement_input.non_finite": { cause: "error.measurement_input.non_finite", next: "error.measurement_input.non_finite.next", required: ["row"] },
+};
+
 const isU32 = (value: string | undefined): boolean => typeof value === "string" && /^(0|[1-9]\d*)$/.test(value) && Number(value) <= 4_294_967_295;
 // Both supported locales (ko-KR/en-US) group these unsigned integers with commas.
 const integer = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
@@ -90,9 +117,21 @@ function codeText(t: Translate, error: IpcError): { cause: string; next: string;
       return { cause: t(keys.cause, params), next: t(keys.next, params), generic: false };
     }
   }
+  const reasoned = reason ? REASON_TEXT[`${error.code}.${reason}`] : undefined;
+  if (reasoned && reasoned.required.every((key) => typeof error.params[key] === "string" && error.params[key] !== "")) {
+    return { cause: withSubscribe(t, error, t(reasoned.cause, error.params)), next: t(reasoned.next, error.params), generic: false };
+  }
   const keys = ERROR_TEXT[error.code] ?? ERROR_TEXT.internal;
-  return { cause: t(keys.cause, error.params), next: t(keys.next, error.params), generic: error.code === "engine_input" || !ERROR_TEXT[error.code] };
+  return { cause: withSubscribe(t, error, t(keys.cause, error.params)), next: t(keys.next, error.params), generic: error.code === "engine_input" || !ERROR_TEXT[error.code] };
 }
+
+/** A REW failure that followed a lost progress subscription says so after its cause (`subscribe_error`). */
+function withSubscribe(t: Translate, error: IpcError, cause: string): string {
+  return error.params.subscribe_error ? `${cause} ${t("error.rew.subscribe_error")}` : cause;
+}
+
+/** The phases a measurement's progress names (secs-service measure/native.rs, rew.rs); any other measure stage is a role. */
+export const MEASURE_PHASES: ReadonlySet<string> = new Set(["sweep", "running", "process", "done", "cancelled"]);
 
 /** What a progress stage is doing. Measurement stages are role ids. */
 export function stageText(t: Translate, kind: JobKind, stage: string | null): string | null {
@@ -111,9 +150,18 @@ export function logText(t: Translate, code: string, params: Record<string, strin
   const key = `jobs.log.${code}`;
   const values: MessageParams = { ...params };
   if (typeof params.role === "string") values.code = roleCode(params.role);
+  // A level check burst that failed names its error code; the sentence is the code's, not the raw detail.
+  if (code === "level_play_end" && params.outcome === "failed") {
+    const failed = ERROR_TEXT[params.error_code as ErrorCode] ?? ERROR_TEXT.internal;
+    return { text: t("jobs.log.level_play_end.failed", { code: values.code ?? "", cause: t(failed.cause) }), known: true };
+  }
   if (isMessageKey(key)) return { text: t(key, values), known: true };
   return { text: t("jobs.log.unknown"), known: false };
 }
 
 /** Log codes that are warnings (the rest are notes). */
-export const WARNING_LOGS = new Set(["measurement_low_snr", "mdat_duplicate_roles", "mdat_nothing_selected"]);
+export const WARNING_LOGS = new Set([
+  "measurement_low_snr", "mdat_duplicate_roles", "mdat_nothing_selected",
+  "measurement_calibration_too_large", "measurement_calibration_unreadable", "measurement_subscribe_failed", "measurement_source_missing",
+  "measurement.source.skipped", "measurement.source.budget",
+]);

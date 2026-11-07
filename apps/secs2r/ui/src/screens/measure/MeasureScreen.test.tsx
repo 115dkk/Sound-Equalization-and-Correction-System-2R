@@ -284,6 +284,13 @@ describe("측정·가져오기 screen", () => {
     expect((ui("measure.redo") as HTMLButtonElement).disabled).toBe(true);
   });
 
+  it("names the sweep phase with its percent instead of reading it as a channel", () => {
+    renderStep({ ...measuringView, job: { ...measuringView.job!, progress: { stage: "running", done: 40, total: 100 } } });
+    expect(ui("measure.run").textContent).toContain("스윕 재생 40 %");
+    expect(ui("measure.run").textContent).not.toContain("측정함");
+    expect(ui("measure.run.progress").getAttribute("aria-valuenow")).toBe("40");
+  });
+
   it("counts the start delay down", () => {
     renderStep(countdownView);
     expect(ui("measure.run").textContent).toContain("7초 뒤 스윕 시작");

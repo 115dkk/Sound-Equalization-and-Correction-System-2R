@@ -286,6 +286,14 @@ export function noticeText(t: Translate, number: FormatNumber, notice: Notice, r
       });
       break;
     }
+    case "calibration_curve_invalid":
+      // A curve attached to a measurement's source that could not be read; the calculation left it out.
+      Object.assign(params, { code: code(), position: f("position") });
+      break;
+    case "mimo_iir_seed_fallback":
+      // The support fit for one input kept its starting filters (secs-engine mimo/iir.rs, status -1).
+      params.code = code("input");
+      break;
     case "input_hp":
       // Once per result (ADR 0031): the common cut on every input; its order is fixed at 8 (48 dB/oct).
       params.hz = f("hz");
