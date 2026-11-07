@@ -45,14 +45,12 @@ fn confirm_required(project: &Project) -> IpcError {
 }
 
 fn clear_measurements(open: &mut session::OpenProject) -> Option<String> {
-    let count = measurement_count(open.store.project());
+    let count = measurement_count(open.project());
     if count == 0 {
         return None;
     }
-    let previous = std::mem::replace(
-        &mut open.store.project_mut().measurements,
-        PyJson::Array(Vec::new()),
-    );
+    let previous = open
+        .edit(|project| std::mem::replace(&mut project.measurements, PyJson::Array(Vec::new())));
     Some(session::push_measurements_undo(open, previous))
 }
 
@@ -382,10 +380,10 @@ impl Service {
     ) -> Result<ConfigMutationResult, IpcError> {
         let mut session = lock(&self.session);
         let open = session.require_mut()?;
-        if measurement_count(open.store.project()) > 0 && !params.confirm {
-            return Err(confirm_required(open.store.project()));
+        if measurement_count(open.project()) > 0 && !params.confirm {
+            return Err(confirm_required(open.project()));
         }
-        let current = &open.store.project().config;
+        let current = &open.project().config;
         let config = if params.preset == "custom" {
             SpeakerConfig {
                 speakers: Vec::new(),
@@ -398,10 +396,9 @@ impl Service {
                 .map_err(|error| invalid("preset", error.to_string()))?
         };
         let undo_token = clear_measurements(open);
-        open.store.project_mut().config = config;
-        open.dirty = true;
+        open.edit(|project| project.config = config);
         Ok(ConfigMutationResult {
-            config: config_result(open.store.project()),
+            config: config_result(open.project()),
             undo_token,
         })
     }
@@ -413,19 +410,18 @@ impl Service {
         let mut session = lock(&self.session);
         let open = session.require_mut()?;
         let requested = params.count.clamp(0, 8) as usize;
-        let changed = open.store.project().config.sub_count() != requested;
-        if changed && measurement_count(open.store.project()) > 0 && !params.confirm {
-            return Err(confirm_required(open.store.project()));
+        let changed = open.project().config.sub_count() != requested;
+        if changed && measurement_count(open.project()) > 0 && !params.confirm {
+            return Err(confirm_required(open.project()));
         }
         let undo_token = if changed {
             clear_measurements(open)
         } else {
             None
         };
-        open.store.project_mut().config.set_sub_count(params.count);
-        open.dirty = true;
+        open.edit(|project| project.config.set_sub_count(params.count));
         Ok(ConfigMutationResult {
-            config: config_result(open.store.project()),
+            config: config_result(open.project()),
             undo_token,
         })
     }
@@ -436,32 +432,32 @@ impl Service {
     ) -> Result<ConfigResult, IpcError> {
         let mut session = lock(&self.session);
         let open = session.require_mut()?;
-        open.store
-            .project_mut()
-            .config
-            .set_speaker(
+        open.edit_if(|project| {
+            let result = project.config.set_speaker(
                 params.index,
                 params.role,
                 params.size,
                 params.band_index,
                 params.out,
                 params.pol,
-            )
-            .map_err(|error| invalid("speaker", error.to_string()))?;
-        open.dirty = true;
-        Ok(config_result(open.store.project()))
+            );
+            let changed = result.is_ok();
+            (result, changed)
+        })
+        .map_err(|error| invalid("speaker", error.to_string()))?;
+        Ok(config_result(open.project()))
     }
 
     pub(crate) fn config_add_speaker(&self) -> Result<ConfigResult, IpcError> {
         let mut session = lock(&self.session);
         let open = session.require_mut()?;
-        open.store
-            .project_mut()
-            .config
-            .add_speaker()
-            .map_err(|error| invalid("speaker", error.to_string()))?;
-        open.dirty = true;
-        Ok(config_result(open.store.project()))
+        open.edit_if(|project| {
+            let result = project.config.add_speaker();
+            let changed = result.is_ok();
+            (result, changed)
+        })
+        .map_err(|error| invalid("speaker", error.to_string()))?;
+        Ok(config_result(open.project()))
     }
 
     pub(crate) fn config_remove_speaker(
@@ -470,21 +466,20 @@ impl Service {
     ) -> Result<ConfigResult, IpcError> {
         let mut session = lock(&self.session);
         let open = session.require_mut()?;
-        open.store
-            .project_mut()
-            .config
-            .remove_speaker(params.index)
-            .map_err(|error| invalid("index", error.to_string()))?;
-        open.dirty = true;
-        Ok(config_result(open.store.project()))
+        open.edit_if(|project| {
+            let result = project.config.remove_speaker(params.index);
+            let changed = result.is_ok();
+            (result, changed)
+        })
+        .map_err(|error| invalid("index", error.to_string()))?;
+        Ok(config_result(open.project()))
     }
 
     pub(crate) fn config_renumber(&self) -> Result<ConfigResult, IpcError> {
         let mut session = lock(&self.session);
         let open = session.require_mut()?;
-        open.store.project_mut().config.renumber();
-        open.dirty = true;
-        Ok(config_result(open.store.project()))
+        open.edit(|project| project.config.renumber());
+        Ok(config_result(open.project()))
     }
 
     pub(crate) fn config_validate(&self) -> Result<Vec<Notice>, IpcError> {
@@ -539,16 +534,17 @@ impl Service {
         let open = session.require_mut()?;
         if let Some(preset) = params.preset {
             let mut presets = DspProfile::presets();
-            open.store.project_mut().dsp = presets
+            let dsp = presets
                 .remove(preset.as_str())
                 .ok_or_else(|| invalid("preset", "unknown DSP preset"))?;
+            open.edit(|project| project.dsp = dsp);
         } else if let Some(fields) = params.fields {
             if let OutputRateChoice::Fixed(rate) = fields.output_rate
                 && !secs_dsp::rate::is_output_rate(rate)
             {
                 return Err(invalid("output_rate", "unsupported output sample rate"));
             }
-            let current = &open.store.project().dsp;
+            let current = &open.project().dsp;
             if fields.output_rate != current.output_rate
                 && !matches!(current.profile.as_str(), "camilla" | "custom")
             {
@@ -576,19 +572,20 @@ impl Service {
                 && fields.iir_bands == current.iir_bands
                 && fields.allpass_bands == current.allpass_bands
                 && fields.bm_path_delays == current.bm_path_delays;
-            let dsp = &mut open.store.project_mut().dsp;
-            if !only_rate {
-                dsp.profile = "custom".into();
-            }
-            dsp.output_rate = fields.output_rate;
-            dsp.fir_taps = fields.fir_taps;
-            dsp.fir_budget = fields.fir_budget;
-            dsp.iir_bands = fields.iir_bands;
-            dsp.allpass_bands = fields.allpass_bands;
-            dsp.bm_path_delays = fields.bm_path_delays;
+            open.edit(|project| {
+                let dsp = &mut project.dsp;
+                if !only_rate {
+                    dsp.profile = "custom".into();
+                }
+                dsp.output_rate = fields.output_rate;
+                dsp.fir_taps = fields.fir_taps;
+                dsp.fir_budget = fields.fir_budget;
+                dsp.iir_bands = fields.iir_bands;
+                dsp.allpass_bands = fields.allpass_bands;
+                dsp.bm_path_delays = fields.bm_path_delays;
+            });
         }
-        open.dirty = true;
-        Ok(dsp_result(open.store.project()))
+        Ok(dsp_result(open.project()))
     }
 
     pub(crate) fn layout_get(&self) -> Result<LayoutResult, IpcError> {
@@ -620,39 +617,39 @@ impl Service {
         }
         let mut session = lock(&self.session);
         let open = session.require_mut()?;
-        let old_count = layout_result(open.store.project()).count;
+        let old_count = layout_result(open.project()).count;
         let arrangement_changed = params.count.is_some_and(|count| count != old_count);
-        if arrangement_changed && measurement_count(open.store.project()) > 0 && !params.confirm {
-            return Err(confirm_required(open.store.project()));
+        if arrangement_changed && measurement_count(open.project()) > 0 && !params.confirm {
+            return Err(confirm_required(open.project()));
         }
         let undo_token = if arrangement_changed {
             clear_measurements(open)
         } else {
             None
         };
-        let project = open.store.project_mut();
-        if let Some(count) = params.count {
-            set_extra(project, "array", PyJson::Int(count.to_string()));
-        }
-        if let Some(delay) = params.start_delay {
-            set_extra(project, "start_delay", PyJson::Str(delay));
-        }
-        if let Some(timing) = params.timing {
-            store_devices(
-                project,
-                vec![
-                    ("timing_reference".into(), PyJson::Str(timing.reference)),
-                    ("timing_ref_role".into(), PyJson::Str(timing.role)),
-                    (
-                        "timing_ref_output".into(),
-                        PyJson::Int(timing.output.to_string()),
-                    ),
-                ],
-            );
-        }
-        open.dirty = true;
+        open.edit(|project| {
+            if let Some(count) = params.count {
+                set_extra(project, "array", PyJson::Int(count.to_string()));
+            }
+            if let Some(delay) = params.start_delay {
+                set_extra(project, "start_delay", PyJson::Str(delay));
+            }
+            if let Some(timing) = params.timing {
+                store_devices(
+                    project,
+                    vec![
+                        ("timing_reference".into(), PyJson::Str(timing.reference)),
+                        ("timing_ref_role".into(), PyJson::Str(timing.role)),
+                        (
+                            "timing_ref_output".into(),
+                            PyJson::Int(timing.output.to_string()),
+                        ),
+                    ],
+                );
+            }
+        });
         Ok(LayoutMutationResult {
-            layout: layout_result(open.store.project()),
+            layout: layout_result(open.project()),
             undo_token,
         })
     }
@@ -681,10 +678,11 @@ impl Service {
         let target = checked_target(params.points)?;
         let mut session = lock(&self.session);
         let open = session.require_mut()?;
-        open.store.project_mut().target = target;
-        set_target_preset(open.store.project_mut(), None);
-        open.dirty = true;
-        Ok(target_result(open.store.project()))
+        open.edit(|project| {
+            project.target = target;
+            set_target_preset(project, None);
+        });
+        Ok(target_result(open.project()))
     }
 
     pub(crate) fn target_apply_preset(
@@ -697,10 +695,11 @@ impl Service {
             .ok_or_else(|| invalid("preset", "unknown target preset"))?;
         let mut session = lock(&self.session);
         let open = session.require_mut()?;
-        open.store.project_mut().target = target;
-        set_target_preset(open.store.project_mut(), Some(&params.preset));
-        open.dirty = true;
-        Ok(target_result(open.store.project()))
+        open.edit(|project| {
+            project.target = target;
+            set_target_preset(project, Some(&params.preset));
+        });
+        Ok(target_result(open.project()))
     }
 
     pub(crate) fn target_save(&self, params: PathParams) -> Result<PathResult, IpcError> {
@@ -723,10 +722,11 @@ impl Service {
         let target = checked_target(parsed.points)?;
         let mut session = lock(&self.session);
         let open = session.require_mut()?;
-        open.store.project_mut().target = target;
-        set_target_preset(open.store.project_mut(), None);
-        open.dirty = true;
-        Ok(target_result(open.store.project()))
+        open.edit(|project| {
+            project.target = target;
+            set_target_preset(project, None);
+        });
+        Ok(target_result(open.project()))
     }
 
     pub(crate) fn calibration_settings_get(&self) -> Result<CalibrationSettings, IpcError> {
@@ -740,9 +740,8 @@ impl Service {
     ) -> Result<CalibrationSettings, IpcError> {
         let mut session = lock(&self.session);
         let open = session.require_mut()?;
-        store_calibration(open.store.project_mut(), &params.settings);
-        open.dirty = true;
-        Ok(calibration_from_project(open.store.project()))
+        open.edit(|project| store_calibration(project, &params.settings));
+        Ok(calibration_from_project(open.project()))
     }
 
     pub(crate) fn mode_spec(&self, params: ModeSpecParams) -> ModeSpecResult {
