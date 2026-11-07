@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -24,6 +25,8 @@ struct State {
 struct AppEffects {
     revision: u64,
     settings: AppSettings,
+    pending: BTreeMap<u64, AppSettings>,
+    delivering: bool,
 }
 
 /// Receives one application-settings transition after it has been saved.
@@ -84,6 +87,8 @@ impl AppSettingsStore {
                 effects: Mutex::new(AppEffects {
                     revision: 1,
                     settings,
+                    pending: BTreeMap::new(),
+                    delivering: false,
                 }),
                 effects_changed: Condvar::new(),
                 registered: Mutex::new(Vec::new()),
@@ -154,23 +159,45 @@ impl AppSettingsStore {
             revision
         };
 
-        // Keep effect delivery in saved-revision order without holding the settings lock.
+        // One drainer delivers saved revisions in order. A re-entrant set only
+        // queues its revision, so no store lock is held while an effect runs.
         let mut effects = lock(&self.effects);
-        while revision != effects.revision + 1 {
-            effects = self
-                .effects_changed
-                .wait(effects)
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-        }
-        let previous = effects.settings.clone();
-        let registered = lock(&self.registered).clone();
-        for effect in &registered {
-            effect.changed(&previous, &settings);
-        }
-        effects.revision = revision;
-        effects.settings = settings.clone();
+        effects.pending.insert(revision, settings.clone());
         self.effects_changed.notify_all();
-        Ok(RevisedAppSettings { revision, settings })
+        if effects.delivering {
+            return Ok(RevisedAppSettings { revision, settings });
+        }
+        effects.delivering = true;
+        loop {
+            let next_revision = effects.revision + 1;
+            while !effects.pending.contains_key(&next_revision) {
+                if effects.pending.is_empty() {
+                    effects.delivering = false;
+                    self.effects_changed.notify_all();
+                    return Ok(RevisedAppSettings { revision, settings });
+                }
+                effects = self
+                    .effects_changed
+                    .wait(effects)
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+            }
+            let next = effects
+                .pending
+                .remove(&next_revision)
+                .expect("pending settings revision disappeared");
+            let previous = effects.settings.clone();
+            let registered = lock(&self.registered).clone();
+            drop(effects);
+
+            for effect in &registered {
+                effect.changed(&previous, &next);
+            }
+
+            effects = lock(&self.effects);
+            effects.revision = next_revision;
+            effects.settings = next;
+            self.effects_changed.notify_all();
+        }
     }
 
     pub fn apply(&self) -> ApplySettings {
@@ -494,6 +521,163 @@ mod tests {
         let expected = vec![("ko".into(), "en".into()), ("en".into(), "fr".into())];
         assert_eq!(*calls_a.lock().unwrap(), expected);
         assert_eq!(*calls_b.lock().unwrap(), expected);
+    }
+
+    #[derive(Debug)]
+    struct ReentrantEffect {
+        store: std::sync::Weak<AppSettingsStore>,
+        calls: Arc<Mutex<Vec<(String, String)>>>,
+        first: AtomicBool,
+    }
+
+    impl SettingsEffect for ReentrantEffect {
+        fn changed(&self, previous: &AppSettings, next: &AppSettings) {
+            self.calls
+                .lock()
+                .unwrap()
+                .push((previous.language.clone(), next.language.clone()));
+            if self.first.swap(false, Ordering::SeqCst) {
+                self.store
+                    .upgrade()
+                    .expect("settings store was dropped")
+                    .set(AppSettings {
+                        language: "fr".into(),
+                        ..next.clone()
+                    })
+                    .unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn an_effect_that_sets_again_is_delivered_after_the_current_revision_without_deadlock() {
+        let store = Arc::new(AppSettingsStore::open(None).store);
+        let reentrant_calls = Arc::new(Mutex::new(Vec::new()));
+        let recording_calls = Arc::new(Mutex::new(Vec::new()));
+        store.register(Arc::new(ReentrantEffect {
+            store: Arc::downgrade(&store),
+            calls: reentrant_calls.clone(),
+            first: AtomicBool::new(true),
+        }));
+        store.register(Arc::new(RecordingEffect {
+            calls: recording_calls.clone(),
+            entered: None,
+            release: None,
+            first: AtomicBool::new(false),
+        }));
+
+        let (finished_tx, finished_rx) = std::sync::mpsc::channel();
+        let worker_store = store.clone();
+        std::thread::spawn(move || {
+            let result = worker_store.set(AppSettings {
+                language: "en".into(),
+                ..AppSettings::default()
+            });
+            finished_tx.send(result).ok();
+        });
+        let result = finished_rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("re-entrant settings set timed out");
+        assert_eq!(result.unwrap().revision, 2);
+
+        let expected = vec![("ko".into(), "en".into()), ("en".into(), "fr".into())];
+        assert_eq!(*reentrant_calls.lock().unwrap(), expected);
+        assert_eq!(*recording_calls.lock().unwrap(), expected);
+        assert_eq!(store.revised().revision, 3);
+        assert_eq!(store.get().language, "fr");
+    }
+
+    #[derive(Debug)]
+    struct RecordingUpdates(Arc<Mutex<Vec<UpdatePolicy>>>);
+
+    impl UpdateAdapter for RecordingUpdates {
+        fn status(&self) -> secs_types::ipc::UpdateStatus {
+            secs_types::ipc::UpdateStatus {
+                current: String::new(),
+                policy: self
+                    .0
+                    .lock()
+                    .unwrap()
+                    .last()
+                    .copied()
+                    .unwrap_or(UpdatePolicy::Off),
+                phase: secs_types::ipc::UpdatePhase::Off,
+                checked_at: None,
+                notice: None,
+            }
+        }
+
+        fn check(&self) -> Result<secs_types::ipc::UpdateStatus, IpcError> {
+            unimplemented!()
+        }
+
+        fn download(&self) -> Result<secs_types::ipc::UpdateStatus, IpcError> {
+            unimplemented!()
+        }
+
+        fn restart(&self) -> Result<(), IpcError> {
+            unimplemented!()
+        }
+
+        fn dismiss_notice(&self) -> secs_types::ipc::UpdateStatus {
+            self.status()
+        }
+
+        fn set_policy(&self, policy: UpdatePolicy) {
+            self.0.lock().unwrap().push(policy);
+        }
+    }
+
+    #[test]
+    fn update_policy_effect_receives_the_last_policy_in_revision_order() {
+        let store = AppSettingsStore::open(None).store;
+        let entered = Arc::new((Mutex::new(false), Condvar::new()));
+        let release = Arc::new((Mutex::new(false), Condvar::new()));
+        store.register(Arc::new(RecordingEffect {
+            calls: Arc::new(Mutex::new(Vec::new())),
+            entered: Some(entered.clone()),
+            release: Some(release.clone()),
+            first: AtomicBool::new(true),
+        }));
+        let policies = Arc::new(Mutex::new(Vec::new()));
+        store.register(Arc::new(UpdatePolicyEffect(Arc::new(RecordingUpdates(
+            policies.clone(),
+        )))));
+        let store = Arc::new(store);
+
+        let first_store = store.clone();
+        let first = std::thread::spawn(move || {
+            first_store
+                .set(AppSettings {
+                    updates: UpdatePolicy::Notify,
+                    ..AppSettings::default()
+                })
+                .unwrap();
+        });
+        let mut did_enter = entered.0.lock().unwrap();
+        while !*did_enter {
+            did_enter = entered.1.wait(did_enter).unwrap();
+        }
+        drop(did_enter);
+        let second_store = store.clone();
+        let second = std::thread::spawn(move || {
+            second_store
+                .set(AppSettings {
+                    updates: UpdatePolicy::Off,
+                    ..AppSettings::default()
+                })
+                .unwrap();
+        });
+        *release.0.lock().unwrap() = true;
+        release.1.notify_all();
+        first.join().unwrap();
+        second.join().unwrap();
+
+        assert_eq!(
+            *policies.lock().unwrap(),
+            [UpdatePolicy::Notify, UpdatePolicy::Off]
+        );
+        assert_eq!(store.updates(), UpdatePolicy::Off);
     }
 
     #[test]
