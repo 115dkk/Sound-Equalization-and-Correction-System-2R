@@ -15,6 +15,7 @@ __pycache__/
 node_modules/
 apps/secs2r/ui/dist/
 apps/secs2r/gen/schemas/
+apps/secs2r-host-shell/gen/schemas/
 *.tsbuildinfo
 
 # Superloopy 루프 상태(실행 중 증거)
