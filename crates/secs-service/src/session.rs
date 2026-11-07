@@ -22,8 +22,8 @@ pub(crate) struct Session {
 #[derive(Debug)]
 pub(crate) struct OpenProject {
     pub path: PathBuf,
-    pub store: MeasurementStore,
-    pub dirty: bool,
+    store: MeasurementStore,
+    dirty: bool,
     pub tutorial: bool,
     /// A tutorial's private folder, removed with the session (TD-90).
     pub tutorial_folder: Option<TutorialFolder>,
@@ -31,10 +31,9 @@ pub(crate) struct OpenProject {
     /// Read only through [`Session::ticket`] and compared only by
     /// [`commit`] and [`apply`] (ADR 0009).
     identity: u64,
-    pub undo: std::collections::VecDeque<UndoEntry>,
+    undo: std::collections::VecDeque<UndoEntry>,
 }
 
-#[allow(dead_code)]
 impl OpenProject {
     pub(crate) fn project(&self) -> &Project {
         self.store.project()
@@ -103,7 +102,6 @@ pub(crate) struct StoreEdit<'a> {
     wrote: bool,
 }
 
-#[allow(dead_code)]
 impl StoreEdit<'_> {
     pub(crate) fn start_position(&mut self, pos: i64) -> secs_project::MeasurementRecord {
         self.wrote = true;
@@ -159,22 +157,6 @@ impl StoreEdit<'_> {
         let result = change(self.store);
         self.wrote |= result.is_ok();
         result
-    }
-
-    pub(crate) fn ir_path_of(
-        &mut self,
-        role: &str,
-        pos: i64,
-    ) -> Result<PathBuf, secs_project::ProjectError> {
-        self.store.ir_path_of(role, pos)
-    }
-
-    pub(crate) fn ir_of(
-        &mut self,
-        role: &str,
-        pos: i64,
-    ) -> Result<(Vec<f32>, u32), secs_project::ProjectError> {
-        self.store.ir_of(role, pos)
     }
 
     pub(crate) fn source_of(&mut self, role: &str, pos: i64) -> Option<secs_mdat::SourceInfo> {

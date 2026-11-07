@@ -656,7 +656,7 @@ impl Service {
 
     pub(crate) fn sub_warnings(&self) -> Result<Vec<Notice>, IpcError> {
         let session = lock(&self.session);
-        let project = session.require()?.store.project();
+        let project = session.require()?.project();
         let settings = calibration_from_project(project);
         let roles = project
             .config

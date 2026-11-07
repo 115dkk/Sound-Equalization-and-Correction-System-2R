@@ -524,13 +524,13 @@ mod tests {
         assert_eq!(selected.min_hz, 10.0);
         assert_eq!(selected.max_hz, 20_000.0);
         assert!(!selected.has_phase);
-        assert!(lock(&service.session).require().unwrap().dirty);
+        assert!(lock(&service.session).require().unwrap().is_dirty());
         assert_eq!(service.mic_calibration_get().unwrap().file, Some(selected));
 
-        lock(&service.session).require_mut().unwrap().dirty = false;
+        lock(&service.session).require_mut().unwrap().mark_saved();
         let cleared = service.mic_calibration_clear().unwrap();
         assert!(cleared.file.is_none());
-        assert!(lock(&service.session).require().unwrap().dirty);
+        assert!(lock(&service.session).require().unwrap().is_dirty());
 
         let missing = root.join("missing.cal");
         expect_issue(
@@ -599,7 +599,7 @@ mod tests {
             .unwrap();
         assert_eq!(decoded.file.unwrap().serial.as_deref(), Some("7000001"));
         let stored = device_value(
-            lock(&service.session).require().unwrap().store.project(),
+            lock(&service.session).require().unwrap().project(),
             "mic_calibration",
         )
         .unwrap()

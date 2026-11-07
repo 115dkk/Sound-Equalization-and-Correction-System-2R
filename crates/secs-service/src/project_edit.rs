@@ -371,7 +371,7 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), IpcError> {
 impl Service {
     pub(crate) fn config_get(&self) -> Result<ConfigResult, IpcError> {
         let session = lock(&self.session);
-        Ok(config_result(session.require()?.store.project()))
+        Ok(config_result(session.require()?.project()))
     }
 
     pub(crate) fn config_apply_preset(
@@ -484,17 +484,12 @@ impl Service {
 
     pub(crate) fn config_validate(&self) -> Result<Vec<Notice>, IpcError> {
         let session = lock(&self.session);
-        Ok(session
-            .require()?
-            .store
-            .project()
-            .config
-            .validation_notices())
+        Ok(session.require()?.project().config.validation_notices())
     }
 
     pub(crate) fn patch_sheet_csv(&self, params: PathParams) -> Result<PathResult, IpcError> {
         let session = lock(&self.session);
-        let project = session.require()?.store.project();
+        let project = session.require()?.project();
         let mut text = String::from("역할,이름,크기,대역,측정 출력,극성\n");
         for speaker in &project.config.speakers {
             for band in &speaker.bands {
@@ -520,7 +515,7 @@ impl Service {
 
     pub(crate) fn dsp_get(&self) -> Result<DspResult, IpcError> {
         let session = lock(&self.session);
-        Ok(dsp_result(session.require()?.store.project()))
+        Ok(dsp_result(session.require()?.project()))
     }
 
     pub(crate) fn dsp_set(&self, params: DspSetParams) -> Result<DspResult, IpcError> {
@@ -590,7 +585,7 @@ impl Service {
 
     pub(crate) fn layout_get(&self) -> Result<LayoutResult, IpcError> {
         let session = lock(&self.session);
-        Ok(layout_result(session.require()?.store.project()))
+        Ok(layout_result(session.require()?.project()))
     }
 
     pub(crate) fn layout_set(
@@ -656,7 +651,7 @@ impl Service {
 
     pub(crate) fn position_estimate(&self) -> Result<PositionEstimateResult, IpcError> {
         let session = lock(&self.session);
-        let project = session.require()?.store.project();
+        let project = session.require()?.project();
         let positions = layout_result(project).count;
         let per_position_seconds = position_seconds(project);
         Ok(PositionEstimateResult {
@@ -668,7 +663,7 @@ impl Service {
 
     pub(crate) fn target_get(&self) -> Result<TargetResult, IpcError> {
         let session = lock(&self.session);
-        Ok(target_result(session.require()?.store.project()))
+        Ok(target_result(session.require()?.project()))
     }
 
     pub(crate) fn target_set_points(
@@ -704,7 +699,7 @@ impl Service {
 
     pub(crate) fn target_save(&self, params: PathParams) -> Result<PathResult, IpcError> {
         let session = lock(&self.session);
-        let project = session.require()?.store.project();
+        let project = session.require()?.project();
         let path = PathBuf::from(params.path);
         let text = dumps(&project.target.to_json());
         atomic_write(&path, text.as_bytes())?;
@@ -731,7 +726,7 @@ impl Service {
 
     pub(crate) fn calibration_settings_get(&self) -> Result<CalibrationSettings, IpcError> {
         let session = lock(&self.session);
-        Ok(calibration_from_project(session.require()?.store.project()))
+        Ok(calibration_from_project(session.require()?.project()))
     }
 
     pub(crate) fn calibration_settings_set(

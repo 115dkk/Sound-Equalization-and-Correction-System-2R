@@ -203,10 +203,10 @@ impl Service {
         let mdat_scope = params.mdat_scope.unwrap_or_default();
         let now = (self.deps.clock)();
         let project_mode = secs_types::calibration::mode_tag(
-            secs_project::calibration_from_project(open.store.project()).mode,
+            secs_project::calibration_from_project(open.project()).mode,
         )
         .to_owned();
-        let output_rate_auto = open.store.project().dsp.output_rate == OutputRateChoice::Auto;
+        let output_rate_auto = open.project().dsp.output_rate == OutputRateChoice::Auto;
         let (output_rate, output_rate_notes) = if matches!(
             params.kind,
             ExportKind::BeforeAfterMdat | ExportKind::StagedMdat
@@ -214,7 +214,7 @@ impl Service {
             (48_000, Vec::new())
         } else {
             resolve_output_rate(
-                open.store.project().dsp.output_rate,
+                open.project().dsp.output_rate,
                 self.deps.audio_backend.as_ref(),
             )
         };
@@ -225,7 +225,7 @@ impl Service {
             && mdat_scope == secs_export::MdatScope::Measurements
         {
             if open
-                .store
+                .store()
                 .records()
                 .iter()
                 .all(|record| record.ir.values().all(String::is_empty))
@@ -302,7 +302,7 @@ impl Service {
             });
         }
         let stale = {
-            let calibration = open.results.calibration(open.store.project());
+            let calibration = open.results.calibration(open.project());
             if calibration.is_none() {
                 return Err(IpcError::new(
                     ErrorCode::EngineInput,
@@ -314,7 +314,7 @@ impl Service {
         let originals = (params.kind == ExportKind::BeforeAfterMdat
             && mdat_scope == secs_export::MdatScope::All)
             .then(|| session::original_snapshot(open));
-        let project = open.store.project();
+        let project = open.project();
         let project_name =
             (!project.name.trim().is_empty()).then(|| project.name.trim().to_owned());
         let app_version = self.deps.app_version.to_string();
@@ -618,7 +618,7 @@ impl Service {
                             .check()
                             .map_err(|_| IpcError::new(ErrorCode::Cancelled, "cancelled"))?;
                         session::apply(&session_for_design, ticket, |open| {
-                            let project = open.store.project();
+                            let project = open.project();
                             let settings = secs_project::calibration_from_project(project);
                             let current_input_key = super::calibration::run_key(
                                 &super::calibration::signature_key(project),

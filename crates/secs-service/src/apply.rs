@@ -454,7 +454,7 @@ impl Service {
         let compute = crate::compute::ComputeIdentity::from(&self.acceleration().status);
         let session = lock(&self.session);
         let open = session.require().ok()?;
-        let project = open.store.project();
+        let project = open.project();
         let chain = open
             .results
             .live_calibration()

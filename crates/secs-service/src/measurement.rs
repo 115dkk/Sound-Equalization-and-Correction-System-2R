@@ -254,7 +254,7 @@ impl Service {
 
     pub(crate) fn measure_config_get(&self) -> Result<MeasureConfigResult, IpcError> {
         let session = lock(&self.session);
-        settings(session.require()?.store.project())
+        settings(session.require()?.project())
     }
 
     pub(crate) fn measure_configure(
@@ -534,10 +534,7 @@ impl Service {
     ) -> Result<JobStarted, IpcError> {
         let (project, ticket) = {
             let session = lock(&self.session);
-            (
-                session.require()?.store.project().clone(),
-                session.ticket()?,
-            )
+            (session.require()?.project().clone(), session.ticket()?)
         };
         let active_method = method(&project);
         if matches!(active_method, "none" | "mdat") {
@@ -906,10 +903,7 @@ impl Service {
     ) -> Result<JobStarted, IpcError> {
         let (project, ticket) = {
             let session = lock(&self.session);
-            (
-                session.require()?.store.project().clone(),
-                session.ticket()?,
-            )
+            (session.require()?.project().clone(), session.ticket()?)
         };
         let session = self.session.clone();
         self.jobs.start(JobKind::MdatImport, events, move |ctx| {

@@ -91,9 +91,8 @@ fn live_and_reopened_results_have_equal_descriptions_for_every_export_kind() {
     let cached = lock(&reopened.session);
     let cached = cached.require().unwrap();
     // One description serves every export kind of a result.
-    let live_description = describe(&live.results, live.store.project(), &compute, now).unwrap();
-    let cached_description =
-        describe(&cached.results, cached.store.project(), &compute, now).unwrap();
+    let live_description = describe(&live.results, live.project(), &compute, now).unwrap();
+    let cached_description = describe(&cached.results, cached.project(), &compute, now).unwrap();
     assert_eq!(live_description, cached_description);
     assert_eq!(
         &live_description.rc_pieces[live_description.rc_pieces.len() - 5..],

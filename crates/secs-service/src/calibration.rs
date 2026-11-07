@@ -122,9 +122,9 @@ impl Service {
                 );
                 open.results.commit_calibration(run, subs_only);
                 let stores_settings =
-                    calibration_from_project(open.store.project()) == prepared.project_settings;
+                    calibration_from_project(open.project()) == prepared.project_settings;
                 if stores_settings {
-                    store_calibration(open.store.project_mut(), &prepared.settings);
+                    open.edit(|project| store_calibration(project, &prepared.settings));
                 }
                 Ok((
                     (open.path.clone(), open.results.cache_snapshot()),
@@ -194,7 +194,7 @@ impl Service {
                 candidates: result.candidates,
             };
             session::commit(&session, prepared.ticket, &job, |open| {
-                let mut settings = calibration_from_project(open.store.project());
+                let mut settings = calibration_from_project(open.project());
                 let xo_unchanged = settings.xo == prepared.settings.xo
                     && settings.xo_rec_include == prepared.settings.xo_rec_include;
                 if xo_unchanged {
@@ -207,7 +207,7 @@ impl Service {
                 }
                 settings.xo_rec = recommendation.best.clone();
                 settings.xo_rec_key.clone_from(&recommendation_key);
-                store_calibration(open.store.project_mut(), &settings);
+                open.edit(|project| store_calibration(project, &settings));
                 Ok(((), true))
             })?;
             Ok(JobResult::Xo(recommendation))
@@ -225,12 +225,12 @@ impl Service {
         let ticket = session_guard.ticket()?;
         let settings = params
             .settings
-            .unwrap_or_else(|| calibration_from_project(open.store.project()));
-        check_mimo_preconditions(open.store.project(), &settings)?;
+            .unwrap_or_else(|| calibration_from_project(open.project()));
+        check_mimo_preconditions(open.project(), &settings)?;
         let calibration = open.results.live_calibration().ok_or_else(|| {
             IpcError::new(ErrorCode::EngineInput, "calibration must run before MIMO")
         })?;
-        if calibration_stale(calibration, open.store.project()) {
+        if calibration_stale(calibration, open.project()) {
             return Err(IpcError::new(
                 ErrorCode::StaleInputs,
                 "calibration result is stale",
@@ -268,7 +268,7 @@ impl Service {
         let compute = crate::compute::ComputeIdentity::from(&self.acceleration().status);
         let session = lock(&self.session);
         let open = session.require().map_err(IpcError::from)?;
-        Ok(open.results.summary(open.store.project(), &compute))
+        Ok(open.results.summary(open.project(), &compute))
     }
 
     /// Holds the session lock only to copy the project; the WAVs are read by
@@ -280,7 +280,7 @@ impl Service {
     ) -> Result<Snapshot, IpcError> {
         let session = lock(&self.session);
         let open = session.require().map_err(IpcError::from)?;
-        let project = open.store.project().clone();
+        let project = open.project().clone();
         let project_settings = calibration_from_project(&project);
         let mut settings = override_settings.unwrap_or_else(|| project_settings.clone());
         // A request may carry settings the edit checks never saw; the run, its

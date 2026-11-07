@@ -788,7 +788,7 @@ impl Service {
         let project = session.info().ok();
         let results = session.require().ok().map(|open| {
             let compute = crate::compute::ComputeIdentity::from(&self.acceleration().status);
-            open.results.summary(open.store.project(), &compute)
+            open.results.summary(open.project(), &compute)
         });
         secs_types::local_api::Status {
             api: secs_types::local_api::API_VERSION,

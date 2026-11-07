@@ -69,10 +69,7 @@ impl Service {
     ) -> Result<JobStarted, IpcError> {
         let (project, ticket) = {
             let session = lock(&self.session);
-            (
-                session.require()?.store.project().clone(),
-                session.ticket()?,
-            )
+            (session.require()?.project().clone(), session.ticket()?)
         };
         let settings = MeasurementSettings::from_project(&project)
             .map_err(|error| level_error(error, "settings", secs_audio::SharePreference::Auto))?;
@@ -134,7 +131,7 @@ impl Service {
 
     pub(crate) fn levels_get(&self) -> Result<LevelsResult, IpcError> {
         let session = lock(&self.session);
-        let project = session.require()?.store.project();
+        let project = session.require()?.project();
         Ok(levels_result(project))
     }
 
@@ -211,7 +208,7 @@ fn sampled_loop(
     plan: secs_project::MeasurementPlan,
     job: &crate::jobs::JobContext,
 ) -> Result<JobResult, IpcError> {
-    let method = method(lock(session).require()?.store.project()).to_owned();
+    let method = method(lock(session).require()?.project()).to_owned();
     let share = settings.share;
     let mut measurer = match method.as_str() {
         "native" => SampledMeasurer::Native(Box::new(
