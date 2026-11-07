@@ -71,13 +71,6 @@ async fn secs_call(
     tauri::async_runtime::spawn_blocking(move || {
         let service = app.state::<Arc<Service>>();
         let envelope = handle(service.as_ref(), request, events);
-        if let Envelope::Ok(response) = &envelope
-            && matches!(response.as_ref(), Response::AppSettingsSet(_))
-        {
-            let revised = service.revised_app_settings();
-            app.state::<local_api::Manager>()
-                .apply_revision(app.state::<Mutex<AppEffects>>().inner(), revised);
-        }
         if let Envelope::Err(error) = &envelope {
             log.line(
                 applog::Level::Error,
@@ -185,6 +178,12 @@ fn main() {
                 second: Arc::new(log.clone()),
             });
             let service_log = log.clone();
+            let settings_app = handle.clone();
+            let on_app_settings = Arc::new(move |revised| {
+                settings_app
+                    .state::<local_api::Manager>()
+                    .apply_revision(settings_app.state::<Mutex<AppEffects>>().inner(), revised);
+            });
             let service = Arc::new(Service::new(Deps {
                 app_version: env!("CARGO_PKG_VERSION").into(),
                 acceleration: Arc::new(secs_gpu::select),
@@ -215,6 +214,7 @@ fn main() {
                 apply: Arc::new(apply::NativeApply),
                 managed_host: Arc::new(apply::NativeManagedHost),
                 updates: updates.clone(),
+                on_app_settings,
                 ..Deps::default()
             }));
             let start_service = service.clone();

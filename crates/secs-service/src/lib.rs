@@ -437,6 +437,8 @@ pub struct Deps {
     /// Milliseconds since the Unix epoch, for the measurement date REW reads
     /// from an mdat (upstream `time.time()`).
     pub unix_ms: Arc<dyn Fn() -> i64 + Send + Sync>,
+    /// Receives each successfully persisted application-settings revision.
+    pub on_app_settings: Arc<dyn Fn(RevisedAppSettings) + Send + Sync>,
 }
 
 impl Debug for Deps {
@@ -463,6 +465,7 @@ impl Debug for Deps {
             .field("clock", &"source")
             .field("clock_offset_seconds", &"source")
             .field("unix_ms", &"source")
+            .field("on_app_settings", &"observer")
             .finish()
     }
 }
@@ -538,6 +541,7 @@ impl Default for Deps {
             clock: Arc::new(|| LocalTime::from_system(SystemTime::now(), 0)),
             clock_offset_seconds: Arc::new(|| 0),
             unix_ms: Arc::new(|| unix_ms(SystemTime::now())),
+            on_app_settings: Arc::new(|_| {}),
         }
     }
 }

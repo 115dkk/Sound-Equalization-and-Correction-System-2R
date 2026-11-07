@@ -5969,3 +5969,52 @@ fn calibration_summary_notes_are_scalar_records_td162() {
     }
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn on_app_settings_runs_once_after_a_successful_set_and_never_after_a_refusal() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let root = temp_root("app-settings-observer");
+    fs::create_dir_all(&root).unwrap();
+    let path = root.join("settings.json");
+    let calls = Arc::new(AtomicUsize::new(0));
+    let observed = calls.clone();
+    let service = Service::new(Deps {
+        app_settings_path: Some(path.clone()),
+        on_app_settings: Arc::new(move |_| {
+            observed.fetch_add(1, Ordering::SeqCst);
+        }),
+        ..Deps::default()
+    });
+
+    let accepted = service.call(
+        Request::AppSettingsSet(AppSettingsParams {
+            settings: AppSettings {
+                language: "en".into(),
+                ..AppSettings::default()
+            },
+        }),
+        Arc::new(NoEvents),
+    );
+    assert!(matches!(accepted, Envelope::Ok(_)));
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+    fs::write(
+        &path,
+        serde_json::to_vec(&serde_json::json!({
+            "version": 2,
+            "settings": AppSettings::default(),
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let refused = service.call(
+        Request::AppSettingsSet(AppSettingsParams {
+            settings: AppSettings::default(),
+        }),
+        Arc::new(NoEvents),
+    );
+    assert!(matches!(refused, Envelope::Err(_)));
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    fs::remove_dir_all(root).unwrap();
+}

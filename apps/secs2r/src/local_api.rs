@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use secs_local_api::{EventHub, LocalApiError, Runtime};
 use secs_service::{AppEffects, LogLevel, RevisedAppSettings, Service};
 use secs_types::ipc::{ErrorCode, IpcError, LocalApiSettings, LocalApiStatus};
-use tauri::{AppHandle, Emitter, Manager as TauriManager};
+use tauri::{AppHandle, Emitter};
 
 pub(crate) struct Manager {
     runtime: Runtime,
@@ -30,17 +30,6 @@ impl Manager {
         let change_app = app.clone();
         let on_change = Arc::new(move |method: &str| {
             let _ = change_app.emit("secs://external-change", method.to_owned());
-            if method == "app_settings_set" {
-                let app = change_app.clone();
-                let _ = std::thread::Builder::new()
-                    .name("secs-local-api-settings".into())
-                    .spawn(move || {
-                        let service = app.state::<Arc<Service>>();
-                        let revised = service.revised_app_settings();
-                        app.state::<Manager>()
-                            .apply_revision(app.state::<Mutex<AppEffects>>().inner(), revised);
-                    });
-            }
         });
         let runtime_log = Arc::new(move |level: LogLevel, text: &str| {
             let level = match level {

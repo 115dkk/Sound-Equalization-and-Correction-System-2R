@@ -832,6 +832,8 @@ impl Service {
         {
             self.deps.updates.set_policy(params.settings.updates);
         }
+        drop(effects);
+        (self.deps.on_app_settings)(self.revised_app_settings());
         Ok(params.settings)
     }
 
