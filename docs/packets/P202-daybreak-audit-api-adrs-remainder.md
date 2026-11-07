@@ -61,7 +61,18 @@ already has.
    The UI mock rewrite that consumes them is a separate packet (Opus), not
    yours.
 
-Allowed files: P190's list plus `Cargo.lock`, `crates/secs-service/src/{calibration.rs,results.rs,curves.rs,jobs.rs,settings_edit.rs,lib.rs}`,
+5. **X-5 residue** (A5, from P201 item 5): `Design.chain`, `secs_engine::mimo`
+   and the two resampling constants are still `pub` because
+   `crates/secs-service/src/{compute.rs,export_run.rs,lib.rs}` read
+   `secs_engine::mimo::{AccelerationSelection, cap_text}` and `calibration.rs`
+   and `secs-gpu` read the others. Re-export what the service needs from the
+   engine root (`AccelerationSelection` is already on ADR 0046's list; add a
+   root-level `mimo_cap_text` or move `cap_text` behind a `Design` method),
+   switch the service and `secs-gpu` to those, make the three items
+   `pub(crate)`, and extend `public_surface_is_the_adr_0046_list`. Commit:
+   `refactor(audit): X-5 서비스와 GPU가 엔진 루트의 재수출만 읽고 남은 공개 항목을 비공개로 바꿉니다 (#186 A5)`.
+
+Allowed files: P190's list plus `Cargo.lock`, `crates/secs-engine/src/**`, `crates/secs-engine/tests/**`, `crates/secs-gpu/src/**`, `crates/secs-service/src/{compute.rs,export_run.rs}`, `crates/secs-service/src/{calibration.rs,results.rs,curves.rs,jobs.rs,settings_edit.rs,lib.rs}`,
 `crates/secs-service/tests/**`, `apps/secs2r/ui/src/ipc/bindings/**` and
 `apps/secs2r/ui/src/ipc/recorded/**` (generated), and for step 3 only the
 UI call sites named above. Forbidden: ADRs, `docs/**` other than the API
