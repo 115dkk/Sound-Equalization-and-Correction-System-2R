@@ -7,7 +7,8 @@ use secs_export::ExportRun;
 use secs_filters::FiltersError;
 use secs_types::ipc::{
     CamillaCaptureDevice, CamillaDevices, CamillaPlaybackDevice, ErrorCode, ExportKind,
-    ExportParams, ExportResult, IpcError, JobKind, JobResult, JobStarted, Notice, OutputRateChoice,
+    ExportParams, ExportResult as IpcExportResult, IpcError, JobKind, JobResult, JobStarted,
+    Notice, OutputRateChoice,
 };
 
 use crate::{
@@ -15,6 +16,29 @@ use crate::{
     results::{MimoView, ProjectKeys},
     session,
 };
+
+#[derive(Debug)]
+pub(crate) struct ExportResult {
+    pub files: Vec<String>,
+    pub output_rate: u32,
+    pub notes: Vec<Notice>,
+    pub folder: String,
+    pub stale: bool,
+    pub main_config: Option<std::path::PathBuf>,
+    pub design_id: Option<String>,
+}
+
+impl ExportResult {
+    fn into_ipc(self) -> IpcExportResult {
+        IpcExportResult {
+            files: self.files,
+            output_rate: self.output_rate,
+            notes: self.notes,
+            folder: self.folder,
+            stale: self.stale,
+        }
+    }
+}
 
 fn log_leftover_backup(log: &crate::LogSink, leftover: Option<(std::path::PathBuf, String)>) {
     if let Some((path, error)) = leftover {
@@ -104,8 +128,8 @@ impl Service {
         params: ExportParams,
         events: Arc<dyn EventSink>,
     ) -> Result<JobStarted, IpcError> {
-        self.start_export_with(params, events, JobKind::Export, true, |result, _| {
-            Ok(JobResult::Export(result))
+        self.start_export_with(params, events, JobKind::Export, true, |result| {
+            Ok(JobResult::Export(result.into_ipc()))
         })
     }
 
@@ -118,7 +142,7 @@ impl Service {
         complete: F,
     ) -> Result<JobStarted, IpcError>
     where
-        F: FnOnce(ExportResult, Option<String>) -> Result<JobResult, IpcError> + Send + 'static,
+        F: FnOnce(ExportResult) -> Result<JobResult, IpcError> + Send + 'static,
     {
         let ticket = lock(&self.session).ticket()?;
         self.with_open_ticket(ticket, |open, compute_key| {
@@ -280,7 +304,7 @@ impl Service {
                 if let Some(path) = write_compute_provenance(folder, None)? {
                     paths.push(path);
                 }
-                let result = ExportResult {
+                let result = IpcExportResult {
                     files: paths
                         .into_iter()
                         .map(|path| path.to_string_lossy().into_owned())
@@ -505,6 +529,7 @@ impl Service {
             }
             let ctx = super::calibration::compute_context(&job, false);
             let folder = destination.as_path();
+            let mut main_config = None;
             let mut paths = match params.kind {
                 ExportKind::CamillaDsp => {
                     let chain = if let Some(design) = &live_camilla {
@@ -539,6 +564,7 @@ impl Service {
                     options.latency_ms = Some(labels.latency_ms);
                     options.mode = labels.mode;
                     let name = format!("secs_{}", options.mode);
+                    main_config = Some(folder.join("configs").join(format!("{name}.yml")));
                     job.report_progress("export.camilla.prepare", 0, 1);
                     let prepared = secs_camilla::prepare_config(
                         chain,
@@ -706,7 +732,7 @@ impl Service {
             if let Some(path) = write_compute_provenance(folder, compute_report.as_ref())? {
                 paths.push(path);
             }
-            let mut design_id = None;
+            let mut written_design_id = None;
             if is_filter_export {
                 let metadata = crate::design_export::DesignMetadata {
                     design_name: display_design_name.clone(),
@@ -726,7 +752,7 @@ impl Service {
                 let (manifest, id) = crate::design_export::write_manifest(folder, &metadata)
                     .map_err(export_error)?;
                 paths.push(manifest);
-                design_id = Some(id);
+                written_design_id = Some(id);
             }
             if requested_design_name.is_some() {
                 crate::design_export::replace_folder_with_log(folder, &final_destination, &log)
@@ -735,6 +761,11 @@ impl Service {
                     if let Ok(relative) = path.strip_prefix(folder) {
                         *path = final_destination.join(relative);
                     }
+                }
+                if let Some(path) = &mut main_config
+                    && let Ok(relative) = path.strip_prefix(folder)
+                {
+                    *path = final_destination.join(relative);
                 }
             }
             if let Some(base) = &registry_base {
@@ -759,6 +790,8 @@ impl Service {
                 notes: output_rate_notes.clone(),
                 folder: final_destination.to_string_lossy().into_owned(),
                 stale,
+                main_config,
+                design_id: written_design_id.clone(),
             };
             if record_export {
                 lock(&session_for_design).record_export(secs_types::local_api::LastExport {
@@ -767,13 +800,13 @@ impl Service {
                     mimo: folder_includes_mimo,
                     mode: mode_name.to_owned(),
                     design_name: requested_design_name.clone(),
-                    design_id: design_id.clone(),
+                    design_id: written_design_id.clone(),
                     time: completion_clock()
                         .shift_seconds(completion_offset().saturating_neg())
                         .rfc3339_utc(),
                 });
             }
-            complete(result, design_id)
+            complete(result)
         })
         })
     }

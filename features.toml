@@ -1092,7 +1092,7 @@ id = "service.exports"
 kind = "service"
 milestone = "M4"
 status = "implemented"
-tests = ["secs-service::project_session_create_open_save_and_save_as", "secs-service::oracle_project_calibrates_recommends_xo_and_exports", "secs-service::filter_text_export_matches_direct_and_reopened_bytes_without_redesign", "secs-service::exports_after_reopening_match_pre_close_bytes", "secs-service::room_dba_mimo_runs_and_becomes_stale_after_recalibration", "secs-service::convolution_export_with_subs_and_mimo_reopens_byte_identically", "secs-service::stale_calibration_exports_with_flag_and_cache_survives_reopen", "secs-service::project_keys_strings_are_pinned", "secs-service::inputs_unchanged_since_is_false_after_a_config_settings_or_target_change"]
+tests = ["secs-service::project_session_create_open_save_and_save_as", "secs-service::oracle_project_calibrates_recommends_xo_and_exports", "secs-service::filter_text_export_matches_direct_and_reopened_bytes_without_redesign", "secs-service::exports_after_reopening_match_pre_close_bytes", "secs-service::room_dba_mimo_runs_and_becomes_stale_after_recalibration", "secs-service::convolution_export_with_subs_and_mimo_reopens_byte_identically", "secs-service::stale_calibration_exports_with_flag_and_cache_survives_reopen", "secs-service::project_keys_strings_are_pinned", "secs-service::inputs_unchanged_since_is_false_after_a_config_settings_or_target_change", "secs-service::camilla_apply_reads_the_main_config_from_the_export_result"]
 note = "Exports include CamillaDSP, staged and before/after mdat, filter text, Equalizer APO, and complete convolution bundles; filter formats enforce subs/MIMO scope synchronously and reuse cached designs after reopening."
 
 [[feature]]
@@ -1107,7 +1107,7 @@ id = "service.level_monitor"
 kind = "service"
 milestone = "M5"
 status = "partial"
-tests = ["secs-service::mock_monitor_emits_stores_excludes_and_stops", "secs-service::native_monitor_meters_while_idle_and_closes_it_before_a_play", "secs-service::generic_cancel_ends_monitor_during_an_active_burst", "secs-service::rew_level_monitor_survives_a_failed_play_td265"]
+tests = ["secs-service::mock_monitor_emits_stores_excludes_and_stops", "secs-service::native_monitor_meters_while_idle_and_closes_it_before_a_play", "secs-service::job_cancel_alone_stops_a_playing_level_monitor", "secs-service::rew_level_monitor_survives_a_failed_play_td265"]
 note = "mock readings arrive during a play, REW readings arrive at its callback rate, and the native path meters the idle input in 0.1 s windows while closing that input before each play."
 
 [[feature]]
@@ -1520,7 +1520,7 @@ id = "ipc.job_cancel"
 kind = "ipc"
 milestone = "M4"
 status = "implemented"
-tests = ["secs-types::every_method_name_is_listed_and_parses", "secs-service::cancelled_calibration_preserves_previous_results", "secs-service::generic_cancel_ends_monitor_during_an_active_burst"]
+tests = ["secs-types::every_method_name_is_listed_and_parses", "secs-service::cancelled_calibration_preserves_previous_results", "secs-service::job_cancel_alone_stops_a_playing_level_monitor"]
 
 [[feature]]
 id = "ipc.jobs"
@@ -1576,7 +1576,7 @@ id = "ipc.level_stop"
 kind = "ipc"
 milestone = "M5"
 status = "implemented"
-tests = ["secs-service::level_stop_cancels_only_the_active_burst_and_is_idempotent", "secs-service::rew_level_stop_stops_generator_but_keeps_subscription_alive"]
+tests = ["secs-service::level_stop_stops_only_the_play_and_keeps_the_monitor", "secs-service::rew_level_stop_stops_generator_but_keeps_subscription_alive"]
 
 [[feature]]
 id = "ipc.measure_position"

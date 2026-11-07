@@ -111,27 +111,22 @@ impl Service {
             events,
             JobKind::Apply,
             false,
-            move |result, design_id| {
-                let design_id = design_id.ok_or_else(|| {
+            move |result| {
+                let design_id = result.design_id.clone().ok_or_else(|| {
                     IpcError::new(ErrorCode::Internal, "CamillaDSP export has no design id")
                 })?;
                 let stage = PathBuf::from(&result.folder);
-                let relative = result
-                    .files
-                    .iter()
-                    .map(PathBuf::from)
-                    .find_map(|path| {
-                        let relative = path.strip_prefix(&stage).ok()?;
-                        let name = relative.file_name()?.to_str()?;
-                        (path.extension().and_then(|value| value.to_str()) == Some("yml")
-                            && !name.ends_with("_bypass.yml"))
-                        .then(|| relative.to_owned())
-                    })
-                    .ok_or_else(|| {
-                        IpcError::new(ErrorCode::Internal, "CamillaDSP export has no main config")
-                    })?;
-                let text = fs::read_to_string(stage.join(&relative))
-                    .map_err(|error| io_error(stage.join(&relative), &error))?;
+                let main_config = result.main_config.as_ref().ok_or_else(|| {
+                    IpcError::new(ErrorCode::Internal, "CamillaDSP export has no main config")
+                })?;
+                let relative = main_config.strip_prefix(&stage).map_err(|_| {
+                    IpcError::new(
+                        ErrorCode::Internal,
+                        "CamillaDSP main config is outside the export folder",
+                    )
+                })?;
+                let text = fs::read_to_string(stage.join(relative))
+                    .map_err(|error| io_error(stage.join(relative), &error))?;
                 // CamillaDSP identifies a convolution filter by its absolute file
                 // name, so every attempt gets another generation even when the
                 // design id is unchanged.
@@ -285,8 +280,8 @@ impl Service {
             events,
             JobKind::Apply,
             false,
-            move |result, design_id| {
-                let design_id = design_id.ok_or_else(|| {
+            move |result| {
+                let design_id = result.design_id.clone().ok_or_else(|| {
                     IpcError::new(ErrorCode::Internal, "Equalizer APO export has no design id")
                 })?;
                 let stage = PathBuf::from(&result.folder);

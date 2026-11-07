@@ -231,6 +231,45 @@ impl ApplyAdapter for DefaultReportApply {
     }
 }
 
+#[derive(Debug)]
+struct MainConfigApply {
+    paths: Arc<Mutex<Vec<PathBuf>>>,
+}
+
+impl ApplyAdapter for MainConfigApply {
+    fn camilla_status(
+        &self,
+        _address: &str,
+        _timeout: Duration,
+    ) -> Result<CamillaStatus, IpcError> {
+        Err(IpcError::new(ErrorCode::NotImplemented, "unused status"))
+    }
+
+    fn camilla_apply(
+        &self,
+        _address: &str,
+        config_path: &Path,
+        config_text: &str,
+        _timeout: Duration,
+    ) -> Result<ApplyOutcome, IpcError> {
+        assert!(config_text.contains("title:"));
+        self.paths.lock().unwrap().push(config_path.to_owned());
+        Ok(ApplyOutcome::Applied)
+    }
+
+    fn eqapo_include_state(&self, config_text: &str) -> IncludeState {
+        NativeApply.eqapo_include_state(config_text)
+    }
+
+    fn eqapo_with_include(&self, config_text: &str) -> Result<Option<String>, IpcError> {
+        NativeApply.eqapo_with_include(config_text)
+    }
+
+    fn eqapo_without_include(&self, config_text: &str) -> Result<Option<String>, IpcError> {
+        NativeApply.eqapo_without_include(config_text)
+    }
+}
+
 #[derive(Debug, Default)]
 struct BreakRetirement {
     previous: Mutex<Option<String>>,
@@ -727,6 +766,39 @@ fn apply_camilla_with(
         Request::ApplyCamilla(ApplyCamillaParams { camilla_devices }),
         events,
     )
+}
+
+#[test]
+fn camilla_apply_reads_the_main_config_from_the_export_result() {
+    let root = root("main-config-result");
+    let paths = Arc::new(Mutex::new(Vec::new()));
+    let service = calibrated_service_with_apply(
+        &root,
+        Deps::default(),
+        Arc::new(MainConfigApply {
+            paths: paths.clone(),
+        }),
+    );
+    set_apply(
+        &service,
+        CamillaApply {
+            level: ApplyLevel::Apply,
+            address: "unused:1234".into(),
+            exe_path: None,
+        },
+        EqApoApply::default(),
+    );
+
+    let events = Arc::new(Events::default());
+    let job = apply_camilla(&service, events.clone());
+    assert!(matches!(
+        succeeded(events.wait(job.job)),
+        JobResult::Apply(_)
+    ));
+    let paths = paths.lock().unwrap();
+    assert_eq!(paths.len(), 1);
+    assert!(paths[0].ends_with("configs/secs_mixed.yml"));
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
