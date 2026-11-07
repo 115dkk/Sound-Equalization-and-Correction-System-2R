@@ -117,6 +117,8 @@ pub(crate) enum Support {
     Fir { taps: Vec<f64>, fs_low: f64 },
 }
 pub(crate) type Supports = Vec<(String, Vec<(String, Support)>)>;
+type PathSpectra = Vec<(String, Vec<C>)>;
+type FilterResponses = Vec<(String, PathSpectra)>;
 
 pub(crate) fn fir_supports(ideal: &MimoDesign) -> Supports {
     ideal
@@ -414,8 +416,8 @@ struct ResponseAt<'a> {
 fn applied_response(
     design: &Design,
     prepared: &super::prepared::Prepared<'_>,
-    ideal: &MimoDesign,
-    supports: &Supports,
+    path_spectra: &PathSpectra,
+    filter_responses: &FilterResponses,
     lp: &[C],
     at: ResponseAt<'_>,
     ctx: &Context,
@@ -431,20 +433,11 @@ fn applied_response(
         })?
         .output;
     let mut extra = vec![C::new(0.0, 0.0); f.len()];
-    if let Some(sups) = RoleMap::get_from(supports, at.role) {
-        for (support, realization) in sups {
+    if let Some(responses) = RoleMap::get_from(filter_responses, at.role) {
+        for (support, response) in responses {
             check(ctx)?;
-            let path = support_path(
-                ideal,
-                support,
-                &prepared.spectra,
-                at.position,
-                &prepared.align_delay_ms,
-            )?;
-            let response = match realization {
-                Support::Iir(support) => support.response(f),
-                Support::Fir { taps, fs_low } => fir_response(taps, *fs_low, f),
-            };
+            let path = RoleMap::get_from(path_spectra, support)
+                .expect("support path precomputed for every position");
             for index in 0..f.len() {
                 extra[index] += path[index] * lp[index] * response[index];
             }
@@ -535,19 +528,73 @@ pub(crate) fn assemble_prepared(
         .input_hp_hz
         .map(|hz| secs_dsp::response::band_filter(f, hz, "HP", "BW48"))
         .transpose()?;
+    let mut support_roles = Vec::new();
+    for (_, input_supports) in &supports {
+        for (support, _) in input_supports {
+            if !support_roles.contains(support) {
+                support_roles.push(support.clone());
+            }
+        }
+    }
+    let cache_spectra = design
+        .spectra
+        .positions
+        .len()
+        .saturating_mul(support_roles.len())
+        .saturating_add(supports.len().saturating_mul(support_roles.len()));
+    let cache_bytes = (cache_spectra as u64).saturating_mul(crate::measurement::SPECTRUM_BYTES);
+    // These caches live beside the preparation's held spectra. The second
+    // amount makes the admission check include both before acquiring the cache.
+    let _cache_permit = crate::memory::reserve(ctx, cache_bytes, prepared.reserved)?;
+    let mut path_spectra = Vec::with_capacity(design.spectra.positions.len());
+    for &position in &design.spectra.positions {
+        let mut paths = Vec::with_capacity(support_roles.len());
+        for support in &support_roles {
+            check(ctx)?;
+            paths.push((
+                support.clone(),
+                support_path(
+                    &ideal,
+                    support,
+                    &prepared.spectra,
+                    position,
+                    &prepared.align_delay_ms,
+                )?,
+            ));
+        }
+        path_spectra.push((position, paths));
+    }
+    let filter_responses: Result<FilterResponses, EngineError> = supports
+        .iter()
+        .map(|(input, input_supports)| {
+            let responses = input_supports
+                .iter()
+                .map(|(support, realization)| {
+                    check(ctx)?;
+                    let response = match realization {
+                        Support::Iir(support) => support.response(f),
+                        Support::Fir { taps, fs_low } => fir_response(taps, *fs_low, f),
+                    };
+                    Ok((support.clone(), response))
+                })
+                .collect::<Result<Vec<_>, EngineError>>()?;
+            Ok((input.clone(), responses))
+        })
+        .collect();
+    let filter_responses = filter_responses?;
     let mut final_resp = Vec::new();
     let mut applied = Vec::new();
     let mut scorecard = Vec::new();
     let mut late_energy = Vec::new();
     let mut spl_mimo = Vec::new();
-    for &position in &design.spectra.positions {
+    for (&position, (_, paths_at_position)) in design.spectra.positions.iter().zip(&path_spectra) {
         for main in &design.chain.mains {
             let role = &main.role;
             let (base, sum) = applied_response(
                 design,
                 prepared,
-                &ideal,
-                &supports,
+                paths_at_position,
+                &filter_responses,
                 &lp,
                 ResponseAt { role, position },
                 ctx,
