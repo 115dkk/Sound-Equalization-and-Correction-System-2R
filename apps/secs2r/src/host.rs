@@ -31,36 +31,23 @@ impl TauriHost {
         .transpose()
     }
 
+    fn filtered_dialog(
+        &self,
+        filters: &'static [(&'static str, &'static [&'static str])],
+    ) -> FileDialogBuilder<Wry> {
+        let mut dialog = self.app.dialog().file();
+        for &(name, extensions) in filters {
+            dialog = dialog.add_filter(name, extensions);
+        }
+        dialog
+    }
+
     fn project_dialog(&self) -> FileDialogBuilder<Wry> {
-        self.app
-            .dialog()
-            .file()
-            .add_filter("SECS project", &["secs"])
+        self.filtered_dialog(OpenFileKind::project_filters())
     }
 
     fn file_dialog(&self, kind: OpenFileKind) -> FileDialogBuilder<Wry> {
-        match kind {
-            OpenFileKind::Target => self
-                .app
-                .dialog()
-                .file()
-                .add_filter("Target curve", &["json"]),
-            OpenFileKind::MicCalibration => self
-                .app
-                .dialog()
-                .file()
-                .add_filter("Mic calibration", &["txt", "cal", "frd"])
-                .add_filter("All files", &["*"]),
-            OpenFileKind::CamillaExe => {
-                let dialog = self.app.dialog().file();
-                let extensions = camilla_executable_extensions(std::env::consts::OS);
-                if extensions.is_empty() {
-                    dialog
-                } else {
-                    dialog.add_filter("Executable", extensions)
-                }
-            }
-        }
+        self.filtered_dialog(kind.filters(std::env::consts::OS))
     }
 
     fn save_dialog(&self, kind: SaveFileKind) -> FileDialogBuilder<Wry> {
@@ -92,12 +79,7 @@ impl Host for TauriHost {
 
     fn dialog_pick_mdat(&self) -> Result<Option<String>, IpcError> {
         Self::selected(
-            self.app
-                .dialog()
-                .file()
-                .add_filter("Measurements", &["mdat", "liveproject"])
-                .add_filter("REW measurement", &["mdat"])
-                .add_filter("Dirac Live project", &["liveproject"])
+            self.filtered_dialog(OpenFileKind::measurement_filters())
                 .blocking_pick_file(),
         )
     }
@@ -187,10 +169,6 @@ fn host_error(error: impl std::fmt::Display) -> IpcError {
 }
 
 // No URL is accepted from IPC. Only the operating system chooses a fixed guide.
-fn camilla_executable_extensions(os: &str) -> &'static [&'static str] {
-    if os == "windows" { &["exe"] } else { &[] }
-}
-
 fn gpu_help_url(os: &str) -> Option<&'static str> {
     match os {
         "windows" => Some(
@@ -204,13 +182,6 @@ fn gpu_help_url(os: &str) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn camilla_executable_filter_is_windows_only() {
-        assert_eq!(camilla_executable_extensions("windows"), &["exe"]);
-        assert!(camilla_executable_extensions("linux").is_empty());
-        assert!(camilla_executable_extensions("macos").is_empty());
-    }
 
     #[test]
     fn gpu_help_only_opens_the_two_fixed_official_platform_guides() {

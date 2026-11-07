@@ -2070,6 +2070,36 @@ pub enum OpenFileKind {
     /// CamillaDSP executable selected for managed launching.
     CamillaExe,
 }
+
+impl OpenFileKind {
+    /// File-dialog filter names and extensions in display order.
+    pub fn filters(self, os: &str) -> &'static [(&'static str, &'static [&'static str])] {
+        match self {
+            Self::Target => &[("Target curve", &["json"])],
+            Self::MicCalibration => &[
+                ("Mic calibration", &["txt", "cal", "frd"]),
+                ("All files", &["*"]),
+            ],
+            Self::CamillaExe if os == "windows" => &[("Executable", &["exe"])],
+            Self::CamillaExe => &[],
+        }
+    }
+
+    /// Project-file filters shared by open and save dialogs.
+    pub fn project_filters() -> &'static [(&'static str, &'static [&'static str])] {
+        &[("SECS project", &["secs"])]
+    }
+
+    /// Measurement-import filters in display order.
+    pub fn measurement_filters() -> &'static [(&'static str, &'static [&'static str])] {
+        &[
+            ("Measurements", &["mdat", "liveproject"]),
+            ("REW measurement", &["mdat"]),
+            ("Dirac Live project", &["liveproject"]),
+        ]
+    }
+}
+
 /// Typed open-file dialog parameters.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]
@@ -3577,6 +3607,13 @@ mod tests {
             assert_eq!(parsed.method(), request.method());
         }
     }
+    #[test]
+    fn camilla_executable_filter_is_windows_only() {
+        assert_eq!(OpenFileKind::CamillaExe.filters("windows")[0].1, &["exe"]);
+        assert!(OpenFileKind::CamillaExe.filters("linux").is_empty());
+        assert!(OpenFileKind::CamillaExe.filters("macos").is_empty());
+    }
+
     #[test]
     fn old_app_settings_without_local_api_use_the_disabled_default() {
         let settings: AppSettings = serde_json::from_str(
