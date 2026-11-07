@@ -55,21 +55,26 @@ fn main() -> secs::Result<()> {
 
 Calibration results can then be exported by calling `Request::Export` with `ExportKind::CamillaDsp` and waiting for the returned job in the same way.
 
+`CalibrationSummary::notes` and `MimoSummary::notes` contain `secs::types::notes::Note`. Match its `code`-tagged enum variants and read typed fields such as `DipLimit { role, dips }`; no collection is packed into a delimiter-separated string. Notices made by service adapters remain in each summary's `notices: Vec<Notice>` field.
+
 ## Control the running app
 
 ```rust,no_run
 use secs::types::local_api::DEFAULT_PORT;
-use secs::Client;
+use secs::{Client, Secs};
 
 fn main() -> secs::Result<()> {
     let client = Client::from_token_file(DEFAULT_PORT, Client::default_token_path())?;
     println!("{:#?}", client.status()?);
-    for event in client.events()? {
-        println!("{:#?}", event?);
+    let subscription = client.subscribe()?;
+    for event in subscription.receiver {
+        println!("{event:#?}");
     }
     Ok(())
 }
 ```
+
+Both adapters expose a 1024-event public subscription queue. Full queues drop new non-terminal events and increment `Subscription::dropped`; terminal, `Lagged`, and `Closed` events are retained. The local API server uses a separate 256-event queue. A client that falls behind it receives `Event::Lagged { missed }`, followed by `Event::Closed`; the server uses WebSocket close code 1013.
 
 ## Version policy
 
@@ -83,7 +88,7 @@ Repository: <https://github.com/115dkk/Sound-Equalization-and-Correction-System-
 
 ## 한국어
 
-SECS 2R은 스피커 측정값으로 방 보정 필터를 설계합니다. SECS 2를 Rust와 Tauri로 옮긴 프로그램입니다. 기본 `engine` 기능은 앱 없이 프로젝트를 열고 보정과 내보내기를 실행하며, `client` 기능은 실행 중인 앱의 로컬 API를 부릅니다.
+SECS 2R은 스피커 측정값으로 방 보정 필터를 설계합니다. SECS 2를 Rust와 Tauri로 옮긴 프로그램입니다. 기본 `engine` 기능은 앱 없이 프로젝트를 열고 보정과 내보내기를 실행하며, `client` 기능은 실행 중인 앱의 로컬 API를 호출합니다. 보정과 MIMO의 계산 메모는 `Note` enum으로 반환됩니다.
 
 ```sh
 cargo add sound-equalization-and-correction-system-rust-api --rename secs
