@@ -86,18 +86,20 @@
 //! # use sound_equalization_and_correction_system_rust_api as secs;
 //! # #[cfg(feature = "client")]
 //! # fn main() -> secs::Result<()> {
-//! use secs::types::local_api::{DEFAULT_PORT, ServerEvent};
-//! use secs::Client;
+//! use secs::types::local_api::DEFAULT_PORT;
+//! use secs::{Client, Event};
 //!
 //! let client = Client::from_token_file(DEFAULT_PORT, Client::default_token_path())?;
 //! let status = client.status()?;
 //! println!("{} {}", status.app_name, status.app_version);
 //!
-//! for event in client.events()?.take(10) {
-//!     match event? {
-//!         ServerEvent::Job { event } => println!("job: {event:?}"),
-//!         ServerEvent::Changed { method } => println!("changed: {method}"),
-//!         ServerEvent::Lagged { missed } => println!("missed: {missed}"),
+//! let subscription = client.subscribe()?;
+//! for event in subscription.receiver.iter().take(10) {
+//!     match event {
+//!         Event::Job(event) => println!("job: {event:?}"),
+//!         Event::Changed { method } => println!("changed: {method}"),
+//!         Event::Lagged { missed } => println!("missed: {missed}"),
+//!         Event::Closed { reason } => println!("closed: {reason}"),
 //!     }
 //! }
 //! # Ok(())
@@ -109,7 +111,7 @@
 use std::fmt;
 
 pub use secs_types as types;
-pub use secs_types::ipc::{ErrorCode, IpcError, JobEvent, Request, Response};
+pub use secs_types::ipc::{ErrorCode, IpcError, JobEvent, JobId, Request, Response};
 
 /// An error returned by the embedded engine or local-API client.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -120,6 +122,16 @@ pub enum Error {
     Transport(String),
     /// A peer returned data that does not follow the local-API protocol.
     Protocol(String),
+    /// A job did not finish before the requested deadline.
+    Timeout {
+        /// Job whose wait expired.
+        job: JobId,
+    },
+    /// A job is neither running nor retained by the adapter.
+    JobNotFound {
+        /// Job absent from the adapter's running and retained jobs.
+        job: JobId,
+    },
 }
 
 impl fmt::Display for Error {
@@ -168,6 +180,18 @@ impl From<&Error> for WireError {
                 Default::default(),
                 false,
             ),
+            Error::Timeout { job } => (
+                "timeout".into(),
+                format!("job {}", job.0),
+                Default::default(),
+                false,
+            ),
+            Error::JobNotFound { job } => (
+                "job_not_found".into(),
+                format!("job {}", job.0),
+                Default::default(),
+                false,
+            ),
         };
         let message = format!(
             "{code}: {}",
@@ -194,10 +218,87 @@ impl From<IpcError> for Error {
 /// Result type used by this crate.
 pub type Result<T> = std::result::Result<T, Error>;
 
+/// One event delivered by either public API adapter.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind", content = "event", rename_all = "snake_case")]
+pub enum Event {
+    /// A service job event.
+    Job(JobEvent),
+    /// A successful request changed observable state.
+    Changed {
+        /// Stable IPC method name.
+        method: String,
+    },
+    /// Events were lost before this subscriber could receive them.
+    Lagged {
+        /// Number of events no longer available.
+        missed: u64,
+    },
+    /// The event source ended the subscription.
+    Closed {
+        /// Peer-provided or local close reason.
+        reason: String,
+    },
+}
+
+/// Shared count of events dropped from one bounded subscription queue.
+#[derive(Clone, Debug, Default)]
+pub struct DroppedEventCount(std::sync::Arc<std::sync::atomic::AtomicU64>);
+
+impl DroppedEventCount {
+    /// Returns how many events were dropped because the queue was full.
+    #[must_use]
+    pub fn get(&self) -> u64 {
+        self.0.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    fn increment(&self) {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+/// Handle that interrupts a blocked subscription receiver.
+#[derive(Clone)]
+pub struct SubscriptionCloser(std::sync::Arc<dyn Fn() + Send + Sync>);
+
+impl std::fmt::Debug for SubscriptionCloser {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("SubscriptionCloser")
+            .finish_non_exhaustive()
+    }
+}
+
+impl SubscriptionCloser {
+    fn new(close: impl Fn() + Send + Sync + 'static) -> Self {
+        Self(std::sync::Arc::new(close))
+    }
+
+    /// Ends the subscription and wakes a blocked receiver.
+    pub fn close(&self) {
+        (self.0)();
+    }
+}
+
+/// Bounded event subscription returned by both public API adapters.
+#[derive(Debug)]
+pub struct Subscription {
+    /// Event receiver.
+    pub receiver: std::sync::mpsc::Receiver<Event>,
+    /// Count of non-terminal events dropped while the queue was full.
+    pub dropped: DroppedEventCount,
+    /// Handle used to interrupt a blocked receiver.
+    pub closer: SubscriptionCloser,
+}
+
 /// Common request interface implemented by the embedded engine and local client.
 pub trait Secs {
     /// Handles one typed request and turns an error envelope into [`Error::Api`].
     fn call(&self, request: Request) -> Result<Response>;
+    /// Waits for one job's terminal event.
+    fn wait_job(&self, job: JobId, timeout: std::time::Duration) -> Result<JobEvent>;
+    /// Subscribes to events emitted after this call.
+    fn subscribe(&self) -> Result<Subscription>;
 }
 
 #[cfg(feature = "engine")]
@@ -221,7 +322,10 @@ mod engine {
     use secs_types::compute::ComputePreference;
     use secs_types::ipc::{Envelope, JobEvent, JobId, Request, Response};
 
-    use crate::{Error, Result, Secs, envelope_result};
+    use crate::{
+        DroppedEventCount, Error, Event, Result, Secs, Subscription, SubscriptionCloser,
+        envelope_result,
+    };
 
     type AudioFactory = Arc<dyn Fn() -> Box<dyn secs_audio::AudioBackend> + Send + Sync>;
     type RewFactory = Arc<dyn Fn() -> Box<dyn secs_rew::Transport> + Send + Sync>;
@@ -230,7 +334,8 @@ mod engine {
     const SUBSCRIPTION_CAPACITY: usize = 1024;
 
     struct Subscriber {
-        sender: mpsc::SyncSender<JobEvent>,
+        id: u64,
+        sender: mpsc::SyncSender<Event>,
         dropped: DroppedEventCount,
     }
 
@@ -244,6 +349,7 @@ mod engine {
     struct Observer {
         state: Mutex<EventState>,
         changed: Condvar,
+        next_subscriber: AtomicU64,
         external: Option<Arc<dyn EventSink>>,
     }
 
@@ -264,21 +370,30 @@ mod engine {
             if let Some(external) = &self.external {
                 external.send(event.clone());
             }
+            let terminal_job = match &event {
+                JobEvent::Finished { job, .. } => Some(*job),
+                _ => None,
+            };
+            let wrapped = Event::Job(event.clone());
             let mut state = lock(&self.state);
             state.subscribers.retain(|subscriber| {
-                match subscriber.sender.try_send(event.clone()) {
+                let result = if terminal_job.is_some() {
+                    subscriber
+                        .sender
+                        .send(wrapped.clone())
+                        .map_err(|_| mpsc::TrySendError::Disconnected(wrapped.clone()))
+                } else {
+                    subscriber.sender.try_send(wrapped.clone())
+                };
+                match result {
                     Ok(()) => true,
                     Err(mpsc::TrySendError::Full(_)) => {
-                        subscriber.dropped.0.fetch_add(1, Ordering::Relaxed);
+                        subscriber.dropped.increment();
                         true
                     }
                     Err(mpsc::TrySendError::Disconnected(_)) => false,
                 }
             });
-            let terminal_job = match &event {
-                JobEvent::Finished { job, .. } => Some(*job),
-                _ => None,
-            };
             if let Some(job) = terminal_job {
                 if state.terminal.insert(job, event).is_none() {
                     state.terminal_order.push_back(job);
@@ -290,18 +405,6 @@ mod engine {
                 }
                 self.changed.notify_all();
             }
-        }
-    }
-
-    /// A shared count of events dropped from one bounded subscription queue.
-    #[derive(Clone, Debug, Default)]
-    pub struct DroppedEventCount(Arc<AtomicU64>);
-
-    impl DroppedEventCount {
-        /// Returns how many events were dropped because the queue was full.
-        #[must_use]
-        pub fn get(&self) -> u64 {
-            self.0.load(Ordering::Relaxed)
         }
     }
 
@@ -384,6 +487,7 @@ mod engine {
             let observer = Arc::new(Observer {
                 state: Mutex::new(EventState::default()),
                 changed: Condvar::new(),
+                next_subscriber: AtomicU64::new(1),
                 external: self.observer,
             });
             let mut deps = Deps {
@@ -451,45 +555,55 @@ mod engine {
             self.service.call_value(request, Arc::new(NoEvents))
         }
 
-        /// Subscribes to job events emitted after this call.
-        ///
-        /// The queue holds 1024 events. A full queue drops the incoming event
-        /// without blocking the service. Use [`Self::subscribe_with_drop_count`]
-        /// when the dropped-event count is needed.
-        #[must_use]
-        pub fn subscribe(&self) -> mpsc::Receiver<JobEvent> {
-            self.subscribe_with_drop_count().0
-        }
-
-        /// Subscribes to job events and returns a shared dropped-event count.
-        ///
-        /// This additive API keeps [`Self::subscribe`] compatible with its
-        /// original standard-library receiver return type.
-        #[must_use]
-        pub fn subscribe_with_drop_count(&self) -> (mpsc::Receiver<JobEvent>, DroppedEventCount) {
+        /// Subscribes to events emitted after this call.
+        pub fn subscribe(&self) -> Result<Subscription> {
             let (sender, receiver) = mpsc::sync_channel(SUBSCRIPTION_CAPACITY);
             let dropped = DroppedEventCount::default();
+            let id = self
+                .observer
+                .next_subscriber
+                .fetch_add(1, Ordering::Relaxed);
             lock(&self.observer.state).subscribers.push(Subscriber {
+                id,
                 sender,
                 dropped: dropped.clone(),
             });
-            (receiver, dropped)
+            let observer = Arc::downgrade(&self.observer);
+            let closer = SubscriptionCloser::new(move || {
+                if let Some(observer) = observer.upgrade() {
+                    lock(&observer.state)
+                        .subscribers
+                        .retain(|subscriber| subscriber.id != id);
+                }
+            });
+            Ok(Subscription {
+                receiver,
+                dropped,
+                closer,
+            })
         }
 
         /// Waits for the terminal event of `job_id` until `timeout` expires.
         pub fn wait_job(&self, job_id: JobId, timeout: Duration) -> Result<JobEvent> {
             let deadline = Instant::now() + timeout;
             let mut state = lock(&self.observer.state);
+            if !state.terminal.contains_key(&job_id)
+                && !self
+                    .service
+                    .status()
+                    .jobs
+                    .iter()
+                    .any(|job| job.job == job_id)
+            {
+                return Err(Error::JobNotFound { job: job_id });
+            }
             loop {
                 if let Some(event) = state.terminal.get(&job_id) {
                     return Ok(event.clone());
                 }
                 let remaining = deadline.saturating_duration_since(Instant::now());
                 if remaining.is_zero() {
-                    return Err(Error::Protocol(format!(
-                        "timed out waiting for job {}",
-                        job_id.0
-                    )));
+                    return Err(Error::Timeout { job: job_id });
                 }
                 let (next, wait) = self
                     .observer
@@ -498,15 +612,16 @@ mod engine {
                     .unwrap_or_else(|poisoned| poisoned.into_inner());
                 state = next;
                 if wait.timed_out() && !state.terminal.contains_key(&job_id) {
-                    return Err(Error::Protocol(format!(
-                        "timed out waiting for job {}",
-                        job_id.0
-                    )));
+                    return Err(Error::Timeout { job: job_id });
                 }
             }
         }
 
         /// Returns the underlying service for operations not wrapped by this crate.
+        ///
+        /// # Stability
+        /// This is an unstable escape hatch to an internal crate and is not covered by
+        /// the public API compatibility promise.
         #[must_use]
         pub fn service(&self) -> &Service {
             &self.service
@@ -516,6 +631,14 @@ mod engine {
     impl Secs for Engine {
         fn call(&self, request: Request) -> Result<Response> {
             envelope_result(self.service.call(request, Arc::new(NoEvents)))
+        }
+
+        fn wait_job(&self, job: JobId, timeout: Duration) -> Result<JobEvent> {
+            Engine::wait_job(self, job, timeout)
+        }
+
+        fn subscribe(&self) -> Result<Subscription> {
+            Engine::subscribe(self)
         }
     }
 
@@ -534,11 +657,13 @@ mod engine {
             let observer = Observer {
                 state: Mutex::new(EventState::default()),
                 changed: Condvar::new(),
+                next_subscriber: AtomicU64::new(1),
                 external: None,
             };
             let (sender, receiver) = mpsc::sync_channel(1024);
             let dropped = DroppedEventCount::default();
             lock(&observer.state).subscribers.push(Subscriber {
+                id: 1,
                 sender,
                 dropped: dropped.clone(),
             });
@@ -557,6 +682,7 @@ mod engine {
             let observer = Observer {
                 state: Mutex::new(EventState::default()),
                 changed: Condvar::new(),
+                next_subscriber: AtomicU64::new(1),
                 external: None,
             };
             for id in 0..40 {
@@ -577,23 +703,24 @@ mod engine {
 }
 
 #[cfg(feature = "engine")]
-pub use engine::{DroppedEventCount, Engine, EngineBuilder};
+pub use engine::{Engine, EngineBuilder};
 
 #[cfg(feature = "client")]
 mod client {
     use std::fs;
     use std::net::{SocketAddr, TcpStream};
     use std::path::{Path, PathBuf};
-    use std::time::Duration;
+    use std::sync::mpsc;
+    use std::time::{Duration, Instant};
 
-    use secs_types::ipc::{IpcError, Request, Response};
+    use secs_types::ipc::{IpcError, JobEvent, JobId, Request, Response};
     use secs_types::local_api::{self, ServerEvent, Status};
     use serde::Deserialize;
     use tungstenite::client::ClientRequestBuilder;
     use tungstenite::protocol::WebSocket;
     use tungstenite::stream::MaybeTlsStream;
 
-    use crate::{Error, Result, Secs};
+    use crate::{DroppedEventCount, Error, Event, Result, Secs, Subscription, SubscriptionCloser};
 
     const APP_IDENTIFIER: &str = "io.github.115dkk.secs2r";
     const BODY_LIMIT: u64 = 16 * 1024 * 1024;
@@ -682,7 +809,7 @@ mod client {
         }
 
         /// Opens a blocking iterator over local-API WebSocket events.
-        pub fn events(&self) -> Result<Events> {
+        fn open_events(&self) -> Result<RawEvents> {
             let uri = format!("ws://127.0.0.1:{}{}", self.port, local_api::EVENTS_PATH)
                 .parse()
                 .map_err(|error| Error::Protocol(format!("event URL: {error}")))?;
@@ -718,10 +845,73 @@ mod client {
                 stream.set_read_timeout(None).map_err(socket_error)?;
                 stream.set_write_timeout(None).map_err(socket_error)?;
             }
-            Ok(Events {
+            Ok(RawEvents {
                 socket,
                 finished: false,
             })
+        }
+
+        /// Opens a bounded event subscription.
+        pub fn subscribe(&self) -> Result<Subscription> {
+            const CAPACITY: usize = 1024;
+            let events = self.open_events()?;
+            let raw_closer = events.closer()?;
+            let (sender, receiver) = mpsc::sync_channel(CAPACITY);
+            let dropped = DroppedEventCount::default();
+            let pump_dropped = dropped.clone();
+            std::thread::spawn(move || pump(events, &sender, &pump_dropped));
+            let closer = SubscriptionCloser::new(move || raw_closer.close());
+            Ok(Subscription {
+                receiver,
+                dropped,
+                closer,
+            })
+        }
+
+        /// Waits for a terminal event, or reports an unknown job or timeout.
+        pub fn wait_job(&self, job: JobId, timeout: Duration) -> Result<JobEvent> {
+            let subscription = self.subscribe()?;
+            let snapshot = self.status()?.jobs.into_iter().find(|item| item.job == job);
+            let Some(snapshot) = snapshot else {
+                subscription.closer.close();
+                return Err(Error::JobNotFound { job });
+            };
+            if snapshot.status.is_terminal() {
+                subscription.closer.close();
+                return Ok(JobEvent::Finished {
+                    job,
+                    status: snapshot.status,
+                    result: None,
+                    error: snapshot.error,
+                });
+            }
+            let deadline = Instant::now() + timeout;
+            loop {
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                if remaining.is_zero() {
+                    subscription.closer.close();
+                    return Err(Error::Timeout { job });
+                }
+                match subscription.receiver.recv_timeout(remaining) {
+                    Ok(Event::Job(event @ JobEvent::Finished { job: found, .. }))
+                        if found == job =>
+                    {
+                        subscription.closer.close();
+                        return Ok(event);
+                    }
+                    Ok(Event::Closed { reason }) => {
+                        return Err(Error::Transport(format!("event stream closed: {reason}")));
+                    }
+                    Ok(_) => {}
+                    Err(mpsc::RecvTimeoutError::Timeout) => {
+                        subscription.closer.close();
+                        return Err(Error::Timeout { job });
+                    }
+                    Err(mpsc::RecvTimeoutError::Disconnected) => {
+                        return Err(Error::Transport("event stream closed".into()));
+                    }
+                }
+            }
         }
 
         fn get(&self, path: &str) -> Result<String> {
@@ -766,34 +956,36 @@ mod client {
                 .map_err(|error| Error::Protocol(format!("request value: {error}")))?;
             self.call_json(value)
         }
+
+        fn wait_job(&self, job: JobId, timeout: Duration) -> Result<JobEvent> {
+            Client::wait_job(self, job, timeout)
+        }
+
+        fn subscribe(&self) -> Result<Subscription> {
+            Client::subscribe(self)
+        }
     }
 
-    /// Blocking iterator over events sent by the local API WebSocket.
-    pub struct Events {
+    struct RawEvents {
         socket: WebSocket<MaybeTlsStream<TcpStream>>,
         finished: bool,
     }
 
-    impl std::fmt::Debug for Events {
+    impl std::fmt::Debug for RawEvents {
         fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
             formatter
-                .debug_struct("Events")
+                .debug_struct("RawEvents")
                 .field("finished", &self.finished)
                 .finish_non_exhaustive()
         }
     }
 
-    impl Events {
-        /// Returns a handle that closes this stream's connection from another thread.
-        ///
-        /// [`Iterator::next`] blocks until the server sends something; after
-        /// [`EventsCloser::close`] a thread blocked there returns `None` or a
-        /// transport error instead of waiting for the next event.
-        pub fn closer(&self) -> Result<EventsCloser> {
+    impl RawEvents {
+        fn closer(&self) -> Result<RawEventsCloser> {
             match self.socket.get_ref() {
                 MaybeTlsStream::Plain(stream) => stream
                     .try_clone()
-                    .map(|stream| EventsCloser { stream })
+                    .map(|stream| RawEventsCloser { stream })
                     .map_err(|error| Error::Transport(format!("event socket: {error}"))),
                 _ => Err(Error::Protocol(
                     "event socket is not a plain TCP stream".into(),
@@ -802,21 +994,19 @@ mod client {
         }
     }
 
-    /// Closes the connection of an [`Events`] stream from another thread.
     #[derive(Debug)]
-    pub struct EventsCloser {
+    struct RawEventsCloser {
         stream: TcpStream,
     }
 
-    impl EventsCloser {
-        /// Shuts the connection down; an [`Events`] iterator blocked on it returns.
+    impl RawEventsCloser {
         pub fn close(&self) {
             let _ = self.stream.shutdown(std::net::Shutdown::Both);
         }
     }
 
-    impl Iterator for Events {
-        type Item = Result<ServerEvent>;
+    impl Iterator for RawEvents {
+        type Item = Result<Event>;
 
         fn next(&mut self) -> Option<Self::Item> {
             if self.finished {
@@ -826,24 +1016,75 @@ mod client {
                 match self.socket.read() {
                     Ok(tungstenite::Message::Text(text)) => {
                         return Some(
-                            serde_json::from_str(text.as_ref()).map_err(|error| {
-                                Error::Protocol(format!("event response: {error}"))
-                            }),
+                            serde_json::from_str::<ServerEvent>(text.as_ref())
+                                .map(map_server_event)
+                                .map_err(|error| {
+                                    Error::Protocol(format!("event response: {error}"))
+                                }),
                         );
                     }
-                    Ok(tungstenite::Message::Close(_)) => {
+                    Ok(tungstenite::Message::Close(frame)) => {
                         self.finished = true;
-                        return None;
+                        let reason = frame
+                            .map(|frame| {
+                                if u16::from(frame.code) == 1013 && frame.reason.is_empty() {
+                                    "server closed a lagged subscription".to_owned()
+                                } else {
+                                    frame.reason.to_string()
+                                }
+                            })
+                            .unwrap_or_else(|| "server closed the subscription".into());
+                        return Some(Ok(Event::Closed { reason }));
                     }
                     Ok(_) => {}
                     Err(tungstenite::Error::ConnectionClosed) => {
                         self.finished = true;
-                        return None;
+                        return Some(Ok(Event::Closed {
+                            reason: "connection closed".into(),
+                        }));
                     }
                     Err(error) => {
                         self.finished = true;
                         return Some(Err(websocket_error(error)));
                     }
+                }
+            }
+        }
+    }
+
+    fn map_server_event(event: ServerEvent) -> Event {
+        match event {
+            ServerEvent::Job { event } => Event::Job(event),
+            ServerEvent::Changed { method } => Event::Changed { method },
+            ServerEvent::Lagged { missed } => Event::Lagged { missed },
+        }
+    }
+
+    fn pump(
+        events: impl Iterator<Item = Result<Event>>,
+        sender: &mpsc::SyncSender<Event>,
+        dropped: &DroppedEventCount,
+    ) {
+        for item in events {
+            let event = match item {
+                Ok(event) => event,
+                Err(error) => Event::Closed {
+                    reason: error.to_string(),
+                },
+            };
+            let terminal = matches!(
+                event,
+                Event::Lagged { .. } | Event::Closed { .. } | Event::Job(JobEvent::Finished { .. })
+            );
+            if terminal {
+                if sender.send(event).is_err() {
+                    return;
+                }
+            } else {
+                match sender.try_send(event) {
+                    Ok(()) => {}
+                    Err(mpsc::TrySendError::Full(_)) => dropped.increment(),
+                    Err(mpsc::TrySendError::Disconnected(_)) => return,
                 }
             }
         }
@@ -918,4 +1159,4 @@ mod client {
 }
 
 #[cfg(feature = "client")]
-pub use client::{Client, Events, EventsCloser};
+pub use client::Client;

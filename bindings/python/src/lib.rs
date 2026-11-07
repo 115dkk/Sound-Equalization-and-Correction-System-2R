@@ -6,12 +6,12 @@ use std::sync::{Mutex, mpsc};
 use std::time::{Duration, Instant};
 
 use pyo3::create_exception;
-use pyo3::exceptions::{PyException, PyValueError};
+use pyo3::exceptions::{PyException, PyTimeoutError, PyValueError};
 use pyo3::prelude::*;
-use secs::types::ipc::{Envelope, JobEvent, JobId};
+use secs::types::ipc::{Envelope, JobId};
 use secs::{
     Client as RustClient, DroppedEventCount, Engine as RustEngine, EngineBuilder,
-    Error as RustError,
+    Error as RustError, Event, SubscriptionCloser,
 };
 use serde_json::Value;
 
@@ -62,24 +62,35 @@ impl Engine {
     }
 
     #[pyo3(signature = (timeout=None))]
-    fn events(&self, timeout: Option<f64>) -> PyResult<EngineEvents> {
+    fn events(&self, py: Python<'_>, timeout: Option<f64>) -> PyResult<Events> {
         let timeout = event_timeout(timeout)?;
-        let (receiver, dropped) = self.inner.subscribe_with_drop_count();
-        Ok(EngineEvents {
-            receiver: EventReceiver::new(receiver, timeout),
-            dropped,
-        })
+        let subscription = self
+            .inner
+            .subscribe()
+            .map_err(|error| secs_error(py, error))?;
+        Ok(Events::new(subscription, timeout))
     }
 }
 
-#[pyclass(name = "_EngineEvents", module = "secs2r._secs2r")]
-struct EngineEvents {
-    receiver: EventReceiver<JobEvent>,
+#[pyclass(name = "_Events", module = "secs2r._secs2r")]
+struct Events {
+    receiver: EventReceiver<Event>,
     dropped: DroppedEventCount,
+    closer: SubscriptionCloser,
+}
+
+impl Events {
+    fn new(subscription: secs::Subscription, timeout: Option<Duration>) -> Self {
+        Self {
+            receiver: EventReceiver::new(subscription.receiver, timeout),
+            dropped: subscription.dropped,
+            closer: subscription.closer,
+        }
+    }
 }
 
 #[pymethods]
-impl EngineEvents {
+impl Events {
     fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
         slf
     }
@@ -89,19 +100,33 @@ impl EngineEvents {
     }
 
     fn __next__(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
-        self.receiver
-            .next(py)?
-            .map(|event| rust_to_python!(py, event))
-            .transpose()
+        match self.receiver.next(py) {
+            Ok(Some(event)) => rust_to_python!(py, event).map(Some),
+            Ok(None) => {
+                self.close();
+                Ok(None)
+            }
+            Err(error) => {
+                self.close();
+                Err(error)
+            }
+        }
     }
 
     fn close(&self) {
+        self.closer.close();
         self.receiver.close();
     }
 
     #[getter]
     fn closed(&self) -> bool {
         self.receiver.closed.load(Ordering::Acquire)
+    }
+}
+
+impl Drop for Events {
+    fn drop(&mut self) {
+        self.close();
     }
 }
 
@@ -151,67 +176,12 @@ impl Client {
     }
 
     #[pyo3(signature = (timeout=None))]
-    fn events(&self, py: Python<'_>, timeout: Option<f64>) -> PyResult<ClientEvents> {
+    fn events(&self, py: Python<'_>, timeout: Option<f64>) -> PyResult<Events> {
         let timeout = event_timeout(timeout)?;
-        let events = py
-            .detach(|| self.inner.events())
+        let subscription = py
+            .detach(|| self.inner.subscribe())
             .map_err(|error| secs_error(py, error))?;
-        let closer = events.closer().map_err(|error| secs_error(py, error))?;
-        let (sender, receiver) = mpsc::sync_channel(1024);
-        std::thread::spawn(move || {
-            for event in events {
-                if sender.send(event).is_err() {
-                    break;
-                }
-            }
-        });
-        Ok(ClientEvents {
-            receiver: EventReceiver::new(receiver, timeout),
-            closer,
-        })
-    }
-}
-
-#[pyclass(name = "_ClientEvents", module = "secs2r._secs2r")]
-struct ClientEvents {
-    receiver: EventReceiver<secs::Result<secs::types::local_api::ServerEvent>>,
-    closer: secs::EventsCloser,
-}
-
-#[pymethods]
-impl ClientEvents {
-    fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
-        slf
-    }
-
-    fn __next__(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
-        match self.receiver.next(py)? {
-            Some(Ok(event)) => rust_to_python!(py, event).map(Some),
-            Some(Err(error)) => {
-                self.close();
-                Err(secs_error(py, error))
-            }
-            None => {
-                self.close();
-                Ok(None)
-            }
-        }
-    }
-
-    fn close(&self) {
-        self.closer.close();
-        self.receiver.close();
-    }
-
-    #[getter]
-    fn closed(&self) -> bool {
-        self.receiver.closed.load(Ordering::Acquire)
-    }
-}
-
-impl Drop for ClientEvents {
-    fn drop(&mut self) {
-        self.close();
+        Ok(Events::new(subscription, timeout))
     }
 }
 
@@ -283,6 +253,9 @@ impl<T: Send> EventReceiver<T> {
                     if self
                         .timeout
                         .is_none_or(|timeout| started.elapsed() < timeout) => {}
+                Some(Err(mpsc::RecvTimeoutError::Timeout)) => {
+                    return Err(PyTimeoutError::new_err("event wait timed out"));
+                }
                 _ => {
                     self.close();
                     return Ok(None);
@@ -339,28 +312,7 @@ fn _secs2r(py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add("__version__", env!("CARGO_PKG_VERSION"))?;
     module.add("SecsError", py.get_type::<SecsError>())?;
     module.add_class::<Engine>()?;
-    module.add_class::<EngineEvents>()?;
+    module.add_class::<Events>()?;
     module.add_class::<Client>()?;
-    module.add_class::<ClientEvents>()?;
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn dropped_event_count_does_not_lock_the_blocking_receiver_td127() {
-        let (_sender, receiver) = mpsc::channel();
-        let events = EngineEvents {
-            receiver: EventReceiver::new(receiver, None),
-            dropped: DroppedEventCount::default(),
-        };
-        let _receiver = events
-            .receiver
-            .receiver
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        assert_eq!(events.dropped_events(), 0);
-    }
 }

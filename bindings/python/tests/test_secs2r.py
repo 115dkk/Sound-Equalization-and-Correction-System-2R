@@ -174,13 +174,18 @@ def test_events_close_ends_iteration_td150(client: bool) -> None:
 
 
 @pytest.mark.parametrize("client", [False, True])
-def test_events_timeout_returns_td150(client: bool) -> None:
+def test_events_timeout_raises_td150(client: bool) -> None:
     _run_event_probe('''
         import time, secs2r
         engine = secs2r.Engine()
         started = time.monotonic()
         events = engine.events(timeout=0.2)
-        assert next(events, None) is None
+        try:
+            next(events)
+        except TimeoutError:
+            pass
+        else:
+            raise AssertionError("event timeout must raise TimeoutError")
         assert 0.15 <= time.monotonic() - started < 1
         assert events.closed
     ''', client)
@@ -205,3 +210,56 @@ def test_keyboard_interrupt_reaches_a_blocked_next_td150(client: bool) -> None:
             timer.join()
             events.close()
     ''', client)
+
+
+
+def test_client_events_report_lagged_td161() -> None:
+    import base64
+    import hashlib
+    import json
+    import threading
+
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    port = listener.getsockname()[1]
+
+    def frame(payload: bytes) -> bytes:
+        assert len(payload) < 126
+        return bytes((0x81, len(payload))) + payload
+
+    def serve() -> None:
+        connection, _ = listener.accept()
+        with connection:
+            request = b""
+            while b"\r\n\r\n" not in request:
+                request += connection.recv(4096)
+            key = next(
+                line.split(b":", 1)[1].strip()
+                for line in request.split(b"\r\n")
+                if line.lower().startswith(b"sec-websocket-key:")
+            )
+            accept = base64.b64encode(
+                hashlib.sha1(
+                    key + b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+                ).digest()
+            )
+            connection.sendall(
+                b"HTTP/1.1 101 Switching Protocols\r\n"
+                b"Upgrade: websocket\r\nConnection: Upgrade\r\n"
+                b"Sec-WebSocket-Accept: " + accept + b"\r\n\r\n"
+            )
+            payload = json.dumps({"kind": "lagged", "missed": 7}).encode()
+            connection.sendall(frame(payload))
+            time.sleep(0.2)
+        listener.close()
+
+    worker = threading.Thread(target=serve)
+    worker.start()
+    events = secs2r.Client(port=port, token="test").events(timeout=2)
+    event = next(events)
+    assert event["kind"] == "lagged"
+    assert event["event"]["missed"] == 7
+    events.close()
+    worker.join(timeout=2)
+    assert not worker.is_alive()

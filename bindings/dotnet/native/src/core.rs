@@ -2,12 +2,11 @@ use std::any::Any;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, OnceLock, mpsc};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-use secs::types::ipc::{Envelope, JobEvent, JobId};
-use secs::types::local_api::ServerEvent;
-use secs::{Client, DroppedEventCount, Engine, EngineBuilder, Error, EventsCloser};
+use secs::types::ipc::{Envelope, JobId};
+use secs::{Client, Engine, EngineBuilder, Error};
 use serde_json::{Value, json};
 
 static NEXT_HANDLE: AtomicU64 = AtomicU64::new(1);
@@ -16,11 +15,6 @@ static CLIENTS: OnceLock<Mutex<HashMap<u64, Arc<Client>>>> = OnceLock::new();
 static SUBSCRIPTIONS: OnceLock<Mutex<HashMap<u64, Arc<Mutex<Subscription>>>>> = OnceLock::new();
 static RESULTS: OnceLock<Mutex<HashMap<u64, Arc<Vec<u8>>>>> = OnceLock::new();
 
-/// A client subscription queues as many events as an engine subscription
-/// does (secs-api); a reader that falls further behind loses the newest
-/// events and sees how many in `dropped`.
-const CLIENT_EVENT_QUEUE: usize = 1024;
-
 macro_rules! success {
     ($data:expr) => {
         store_value(json!({ "ok": true, "data": $data }))
@@ -28,37 +22,13 @@ macro_rules! success {
 }
 
 struct Subscription {
-    receiver: SubscriptionReceiver,
-    dropped: Dropped,
+    inner: secs::Subscription,
     closed: bool,
 }
 
-enum SubscriptionReceiver {
-    Engine(mpsc::Receiver<JobEvent>),
-    Client(mpsc::Receiver<secs::Result<ServerEvent>>, EventsCloser),
-}
-
-// A freed client subscription closes its WebSocket, so the pump thread blocked
-// reading it returns at once instead of at the next server event.
 impl Drop for Subscription {
     fn drop(&mut self) {
-        if let SubscriptionReceiver::Client(_, closer) = &self.receiver {
-            closer.close();
-        }
-    }
-}
-
-enum Dropped {
-    Engine(DroppedEventCount),
-    Client(Arc<AtomicU64>),
-}
-
-impl Dropped {
-    fn get(&self) -> u64 {
-        match self {
-            Self::Engine(count) => count.get(),
-            Self::Client(count) => count.load(Ordering::Relaxed),
-        }
+        self.inner.closer.close();
     }
 }
 
@@ -163,10 +133,12 @@ pub(crate) fn engine_subscribe(handle: u64) -> u64 {
         Some(engine) => engine,
         None => return invalid_handle("engine", handle),
     };
-    let (receiver, dropped) = engine.subscribe_with_drop_count();
+    let inner = match engine.subscribe() {
+        Ok(subscription) => subscription,
+        Err(error) => return api_error(error),
+    };
     let subscription = Subscription {
-        receiver: SubscriptionReceiver::Engine(receiver),
-        dropped: Dropped::Engine(dropped),
+        inner,
         closed: false,
     };
     let handle = insert(subscriptions(), Arc::new(Mutex::new(subscription)));
@@ -243,50 +215,16 @@ pub(crate) fn client_events(handle: u64) -> u64 {
         Some(client) => client,
         None => return invalid_handle("client", handle),
     };
-    let events = match client.events() {
-        Ok(events) => events,
+    let inner = match client.subscribe() {
+        Ok(subscription) => subscription,
         Err(error) => return api_error(error),
     };
-    let closer = match events.closer() {
-        Ok(closer) => closer,
-        Err(error) => return api_error(error),
-    };
-    let (sender, receiver) = mpsc::sync_channel(CLIENT_EVENT_QUEUE);
-    let dropped = Arc::new(AtomicU64::new(0));
-    let pump_dropped = Arc::clone(&dropped);
-    // Ends when the server closes the stream, or when the subscription is freed:
-    // its Drop closes the socket, and a closed queue stops the pump too.
-    std::thread::spawn(move || pump(events, &sender, &pump_dropped));
     let subscription = Subscription {
-        receiver: SubscriptionReceiver::Client(receiver, closer),
-        dropped: Dropped::Client(dropped),
+        inner,
         closed: false,
     };
     let handle = insert(subscriptions(), Arc::new(Mutex::new(subscription)));
     success!(json!({ "handle": handle }))
-}
-
-/// Moves client events into a subscription's bounded queue. A full queue
-/// drops the event and counts it, as an engine subscription does; the error
-/// that ends the stream waits for room, so the reader always sees it.
-fn pump<T>(
-    items: impl Iterator<Item = secs::Result<T>>,
-    sender: &mpsc::SyncSender<secs::Result<T>>,
-    dropped: &AtomicU64,
-) {
-    for item in items {
-        if item.is_err() {
-            let _ = sender.send(item);
-            return;
-        }
-        match sender.try_send(item) {
-            Ok(()) => {}
-            Err(mpsc::TrySendError::Full(_)) => {
-                dropped.fetch_add(1, Ordering::Relaxed);
-            }
-            Err(mpsc::TrySendError::Disconnected(_)) => return,
-        }
-    }
 }
 
 pub(crate) fn events_next(handle: u64, timeout_ms: u64) -> u64 {
@@ -299,39 +237,23 @@ pub(crate) fn events_next(handle: u64, timeout_ms: u64) -> u64 {
         Err(detail) => return invalid_argument(detail),
     };
     let mut subscription = lock(&subscription);
-    let dropped = subscription.dropped.get();
+    let dropped = subscription.inner.dropped.get();
     if subscription.closed {
         return success!(event_data(None, true, dropped));
     }
-    match &subscription.receiver {
-        SubscriptionReceiver::Engine(receiver) => match receiver.recv_timeout(timeout) {
-            Ok(event) => success!(event_data(
-                Some(serde_json::to_value(event).expect("job event serialization")),
-                false,
-                dropped,
-            )),
-            Err(mpsc::RecvTimeoutError::Timeout) => success!(event_data(None, false, dropped)),
-            Err(mpsc::RecvTimeoutError::Disconnected) => {
-                subscription.closed = true;
-                success!(event_data(None, true, dropped))
-            }
-        },
-        SubscriptionReceiver::Client(receiver, _) => match receiver.recv_timeout(timeout) {
-            Ok(Ok(event)) => success!(event_data(
-                Some(serde_json::to_value(event).expect("server event serialization")),
-                false,
-                dropped,
-            )),
-            Ok(Err(error)) => {
-                subscription.closed = true;
-                api_error(error)
-            }
-            Err(mpsc::RecvTimeoutError::Timeout) => success!(event_data(None, false, dropped)),
-            Err(mpsc::RecvTimeoutError::Disconnected) => {
-                subscription.closed = true;
-                success!(event_data(None, true, dropped))
-            }
-        },
+    match subscription.inner.receiver.recv_timeout(timeout) {
+        Ok(event) => success!(event_data(
+            Some(serde_json::to_value(event).expect("event serialization")),
+            false,
+            dropped,
+        )),
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+            success!(event_data(None, false, dropped))
+        }
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+            subscription.closed = true;
+            success!(event_data(None, true, dropped))
+        }
     }
 }
 
@@ -603,34 +525,6 @@ mod tests {
         assert_eq!(result["data"]["dropped"], 0);
         events_free(subscription);
         engine_free(engine);
-    }
-
-    #[test]
-    fn a_full_client_event_queue_drops_and_counts_the_newest_events() {
-        let (sender, receiver) = mpsc::sync_channel(2);
-        let dropped = AtomicU64::new(0);
-        pump((0..5).map(Ok::<u32, Error>), &sender, &dropped);
-        assert_eq!(dropped.load(Ordering::Relaxed), 3);
-        assert_eq!(receiver.try_recv().unwrap(), Ok(0));
-        assert_eq!(receiver.try_recv().unwrap(), Ok(1));
-        assert!(receiver.try_recv().is_err());
-    }
-
-    #[test]
-    fn the_error_that_ends_a_client_stream_waits_for_room() {
-        let (sender, receiver) = mpsc::sync_channel(1);
-        let pumping = std::thread::spawn(move || {
-            let dropped = AtomicU64::new(0);
-            let items = [Ok(0_u32), Err(Error::Transport("closed".to_owned()))];
-            pump(items.into_iter(), &sender, &dropped);
-            dropped.load(Ordering::Relaxed)
-        });
-        assert_eq!(receiver.recv().unwrap(), Ok(0));
-        assert_eq!(
-            receiver.recv().unwrap(),
-            Err(Error::Transport("closed".to_owned()))
-        );
-        assert_eq!(pumping.join().unwrap(), 0);
     }
 
     #[test]
