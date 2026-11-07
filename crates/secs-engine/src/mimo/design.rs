@@ -1309,6 +1309,53 @@ pub(crate) fn design_mimo_prepared(
     design_mimo_prepared_accelerated(design, prepared, req, ctx, input, observe, None)
 }
 
+struct Prelude {
+    out: MimoDesign,
+    usable: Vec<String>,
+}
+
+fn prepare_prelude(
+    design: &Design,
+    spectra: &Spectra,
+    req: &MimoRequest,
+    positions: &[u32],
+) -> Result<Prelude, EngineError> {
+    let mut out = MimoDesign {
+        ranges: support_ranges(design, spectra, req.fsiso, positions)?,
+        ..MimoDesign::default()
+    };
+    if let Some(low) = req.f_low.filter(|value| *value != 0.0) {
+        for (_, range) in &mut out.ranges {
+            *range =
+                range.and_then(|(lo, hi)| (lo.max(low) < hi * 0.8).then_some((lo.max(low), hi)));
+        }
+    }
+    let usable = out
+        .ranges
+        .iter()
+        .filter(|(role, range)| {
+            range.is_some()
+                && !req.exclude.contains(role)
+                && req.groups.as_ref().is_none_or(|groups| {
+                    design
+                        .groups
+                        .iter()
+                        .any(|(group, roles)| groups.contains(group) && roles.contains(role))
+                })
+        })
+        .map(|(role, _)| role.clone())
+        .collect();
+    if !req.exclude.is_empty() {
+        let mut excluded = req.exclude.clone();
+        excluded.sort();
+        out.notes.push(mimo_note(crate::MimoNote::ExcludedSupports {
+            roles: excluded,
+        }));
+    }
+    out.notes.push(support_ranges_note(&out.ranges));
+    Ok(Prelude { out, usable })
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn design_mimo_prepared_accelerated(
     design: &Design,
@@ -1332,36 +1379,7 @@ pub(crate) fn design_mimo_prepared_accelerated(
     validate_request(req)?;
     let spectra = &prepared.spectra;
     let started = std::time::Instant::now();
-    out.ranges = support_ranges(design, spectra, req.fsiso, positions)?;
-    if let Some(low) = req.f_low.filter(|v| *v != 0.0) {
-        for (_, range) in &mut out.ranges {
-            *range =
-                range.and_then(|(lo, hi)| (lo.max(low) < hi * 0.8).then_some((lo.max(low), hi)));
-        }
-    }
-    let usable: Vec<_> = out
-        .ranges
-        .iter()
-        .filter(|(r, range)| {
-            range.is_some()
-                && !req.exclude.contains(r)
-                && req.groups.as_ref().is_none_or(|groups| {
-                    design
-                        .groups
-                        .iter()
-                        .any(|(g, roles)| groups.contains(g) && roles.contains(r))
-                })
-        })
-        .map(|(r, _)| r.clone())
-        .collect();
-    if !req.exclude.is_empty() {
-        let mut excluded = req.exclude.clone();
-        excluded.sort();
-        out.notes.push(mimo_note(crate::MimoNote::ExcludedSupports {
-            roles: excluded,
-        }));
-    }
-    out.notes.push(support_ranges_note(&out.ranges));
+    let Prelude { mut out, usable } = prepare_prelude(design, spectra, req, positions)?;
     observe("ranges", started.elapsed());
     let started = std::time::Instant::now();
     let mains: Vec<_> = design
@@ -1548,51 +1566,12 @@ pub(crate) fn design_mimo_before(
             }));
         return Ok((out, Vec::new()));
     }
-    if !(0.0..300.0).contains(&req.fsiso)
-        || req.fsiso == 0.0
-        || !req.level_db.is_finite()
-        || req.taps_low == 0
-        || req.taps_low > 720
-        || req.f_low.is_some_and(|f| !f.is_finite())
-        || !req.mimo_early_ms.is_finite()
-        || !(5.0..=60.0).contains(&req.mimo_early_ms)
-    {
-        return Err(EngineError::Input("invalid MIMO request".into()));
-    }
+    validate_request(req)?;
     let prepared =
         crate::measurement::prepare(measurements, config, &crate::setup::Setup::new(config))?;
     let spectra =
         crate::export_view::export_view_prepared(design, measurements, &prepared, ctx)?.spectra;
-    out.ranges = support_ranges(design, &spectra, req.fsiso, positions)?;
-    if let Some(low) = req.f_low.filter(|v| *v != 0.0) {
-        for (_, range) in &mut out.ranges {
-            *range =
-                range.and_then(|(lo, hi)| (lo.max(low) < hi * 0.8).then_some((lo.max(low), hi)));
-        }
-    }
-    let usable: Vec<_> = out
-        .ranges
-        .iter()
-        .filter(|(r, range)| {
-            range.is_some()
-                && !req.exclude.contains(r)
-                && req.groups.as_ref().is_none_or(|groups| {
-                    design
-                        .groups
-                        .iter()
-                        .any(|(g, roles)| groups.contains(g) && roles.contains(r))
-                })
-        })
-        .map(|(r, _)| r.clone())
-        .collect();
-    if !req.exclude.is_empty() {
-        let mut excluded = req.exclude.clone();
-        excluded.sort();
-        out.notes.push(mimo_note(crate::MimoNote::ExcludedSupports {
-            roles: excluded,
-        }));
-    }
-    out.notes.push(support_ranges_note(&out.ranges));
+    let Prelude { mut out, usable } = prepare_prelude(design, &spectra, req, positions)?;
     let results = ctx
         .try_map(
             design
