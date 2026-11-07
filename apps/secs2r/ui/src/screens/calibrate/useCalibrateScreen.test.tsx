@@ -117,7 +117,7 @@ describe("useCalibrateScreen", () => {
 
   it("opens polarity settings for the first role of a split warning without flipping either group", async () => {
     installFakeCanvas();
-    session.stores.results.set({ ...resultsSummary, calibration: { ...resultsSummary.calibration!, notes: [{ code: "polarity_split", params: { a: "Ls,Rs", b: "L,R", confidence: "0.9" } }] } });
+    session.stores.results.set({ ...resultsSummary, calibration: { ...resultsSummary.calibration!, notes: [{ code: "polarity_split", groups: { a: ["Ls", "Rs"], b: ["L", "R"] }, confidence: 0.9 }] } });
     const openPolarity = vi.fn();
     function Live() {
       const { view, actions } = useCalibrateScreen(undefined, openPolarity);

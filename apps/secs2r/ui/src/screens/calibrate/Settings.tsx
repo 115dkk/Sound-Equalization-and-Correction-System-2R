@@ -1188,11 +1188,11 @@ function MimoSection({ view, actions, onSampleRateSettings }: FailureProps) {
           {state()}
           {mimo && <ComputeResult report={mimo.compute} />}
           {/* The MIMO run's own notes (guard reductions and the like), collapsed like the verdict's calculation notes. */}
-          {mimo && mimo.notes.length > 0 && (
+          {mimo && (mimo.notes.length > 0 || mimo.notices.length > 0) && (
             <details className="ui-details calibrate-notes" data-ui="calibrate.mimo.notes">
-              <summary>{t("calibrate.verdict.notes", { count: mimo.notes.length })}</summary>
+              <summary>{t("calibrate.verdict.notes", { count: mimo.notes.length + mimo.notices.length })}</summary>
               <ul>
-                {noteLines(t, number, mimo.notes, true).map((line, i) => (
+                {noteLines(t, number, [...mimo.notes, ...mimo.notices], true).map((line, i) => (
                   <li key={i}>{line}</li>
                 ))}
               </ul>

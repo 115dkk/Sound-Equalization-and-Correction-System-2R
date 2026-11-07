@@ -98,6 +98,31 @@ def test_oracle_project_round_trip_when_supplied(tmp_path: Path) -> None:
     assert any(tmp_path.iterdir())
 
 
+def test_calibration_notes_are_typed_td162(tmp_path: Path) -> None:
+    engine = secs2r.Engine(tmp_path / "settings.json")
+    engine.call(
+        {
+            "method": "project_new",
+            "params": {
+                "path": str(tmp_path / "typed-notes.secs"),
+                "preset": "2.0",
+                "sub_count": 0,
+                "sample": True,
+                "tutorial": False,
+            },
+        }
+    )
+    measured = engine.call({"method": "sample_load", "params": {"positions": 2}})
+    assert engine.wait_job(measured["data"]["job"], 600.0)["status"] == "succeeded"
+    calibrated = engine.call({"method": "calibrate", "params": {}})
+    assert engine.wait_job(calibrated["data"]["job"], 600.0)["status"] == "succeeded"
+
+    note = engine.call({"method": "results"})["data"]["calibration"]["notes"][0]
+    assert note["code"] == "rc_limit"
+    assert isinstance(note["hz"], float)
+    assert isinstance(note["auto"], bool)
+
+
 def test_python_error_carries_params_and_retryable_td160() -> None:
     with pytest.raises(secs2r.SecsError) as raised:
         secs2r.Engine().call({"method": "results"})

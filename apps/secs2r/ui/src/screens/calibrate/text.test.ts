@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { translate, type Locale } from "../../i18n";
 import type { Translate } from "../../i18n/react";
+import type { Note } from "../../ipc/bindings/Note";
 import type { Notice } from "../../ipc/bindings/Notice";
 import { ipcError } from "../../ipc/mock";
 import { baseSettings, lfNoteCases, lowProtectNotes, rcBandsNotes, rcLimitNotes, refusedBandEdit } from "./fixtures";
@@ -17,7 +18,7 @@ function words(locale: Locale): { t: Translate; number: FormatNumber } {
   return { t, number };
 }
 
-const lines = (locale: Locale, notices: Notice[], lfAlign = false, lfAlignAvailable = true) => {
+const lines = (locale: Locale, notices: (Notice | Note)[], lfAlign = false, lfAlignAvailable = true) => {
   const { t, number } = words(locale);
   return noteLines(t, number, notices, lfAlign, lfAlignAvailable);
 };
@@ -355,7 +356,7 @@ describe("저음 도착 맞추기, 방 울림 줄이기 and 고역 위상 맞추
 describe("extra correction bands (ADR 0024)", () => {
   it("rc_bands: every band of the merged set after the calculation, in both languages", () => {
     const [one, two, merged] = rcBandsNotes;
-    expect(one!.map((band) => band.params)).toEqual([{ index: "0", lo_hz: "20", hi_hz: "310.42" }, { index: "1", lo_hz: "15000", hi_hz: "20000" }]);
+    expect(one).toEqual([{ code: "rc_bands", bands: [{ lo_hz: 20, hi_hz: 310.42 }, { lo_hz: 15000, hi_hz: 20000 }] }]);
     expect(lines("ko", one!)).toEqual(["RC 보정 구간 20~310 Hz, 15,000~20,000 Hz"]);
     expect(lines("en", one!)).toEqual(["RC correction bands 20–310 Hz, 15,000–20,000 Hz"]);
     expect(lines("ko", two!)).toEqual(["RC 보정 구간 20~310 Hz, 2,000~4,000 Hz, 15,000~20,000 Hz"]);

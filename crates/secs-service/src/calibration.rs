@@ -95,9 +95,9 @@ impl Service {
             .run(&prepared.settings);
             let commit_calibration = |open: &mut session::OpenProject| {
                 let mut summary = summarize(&design, &prepared.settings, &late_energy);
-                summary.notes.extend(prepared.measurement_notices.clone());
+                let mut service_notices = prepared.measurement_notices.clone();
                 if calibration.resampled > 0 {
-                    summary.notes.push(Notice {
+                    service_notices.push(Notice {
                         code: "measurement_resampled".into(),
                         params: [
                             ("count".into(), calibration.resampled.to_string()),
@@ -106,6 +106,7 @@ impl Service {
                         .into(),
                     });
                 }
+                summary.notices.extend(service_notices);
                 let run = CalibrationRun::new(
                     summary,
                     prepared.settings.clone(),
@@ -345,7 +346,15 @@ fn compute_and_commit_mimo(
         session::Finality::Final,
         CacheOwner::Mimo,
         |open| {
-            let summary = summarize_mimo(&run);
+            let mut summary = summarize_mimo(&run);
+            let service_notices = (run.compute.fallbacks > 0)
+                .then(|| Notice {
+                    code: "compute_fallback".into(),
+                    params: [("count".into(), run.compute.fallbacks.to_string())].into(),
+                })
+                .into_iter()
+                .collect();
+            summary.notices = service_notices;
             open.results.commit_mimo(MimoResult {
                 summary,
                 settings_key: settings.mimo_key(),
@@ -371,19 +380,8 @@ fn summarize_mimo(run: &secs_engine::mimo::MimoRun) -> MimoSummary {
             .iter()
             .map(|path| path.filter.fir_len_48k())
             .sum(),
-        notes: run
-            .notes
-            .iter()
-            .flat_map(|note| {
-                secs_engine::NoteRecords::record(note)
-                    .into_iter()
-                    .map(notice_from_record)
-            })
-            .chain((run.compute.fallbacks > 0).then(|| Notice {
-                code: "compute_fallback".into(),
-                params: [("count".into(), run.compute.fallbacks.to_string())].into(),
-            }))
-            .collect(),
+        notes: run.notes.clone(),
+        notices: Vec::new(),
         input_count: run
             .paths
             .paths
@@ -753,35 +751,18 @@ fn summarize(
             within_1db_after_pct: average(|value| value.in1_20, true),
             low_band_time_spread_before_ms: average(|value| value.gd_20, false),
             low_band_time_spread_after_ms: average(|value| value.gd_20, true),
-            added_delay_ms: design.chain.latency_ms,
+            added_delay_ms: design.latency_ms(),
             position_spread_db: secs_engine::preview::sub_combine(design)
                 .and_then(|view| view.seat.map(|(_, after)| after))
                 .unwrap_or(0.0),
         },
         scorecard,
         late_energy,
-        latency_ms: design.chain.latency_ms,
-        notes: design
-            .notes
-            .iter()
-            .flat_map(|note| {
-                secs_engine::NoteRecords::record(note)
-                    .into_iter()
-                    .map(notice_from_record)
-            })
-            .collect(),
-        main_roles: design
-            .chain
-            .mains
-            .iter()
-            .map(|main| main.role.clone())
-            .collect(),
-        sub_roles: design
-            .chain
-            .subs
-            .iter()
-            .map(|sub| sub.role.clone())
-            .collect(),
+        latency_ms: design.latency_ms(),
+        notes: design.notes.clone(),
+        notices: Vec::new(),
+        main_roles: design.main_roles().map(str::to_owned).collect(),
+        sub_roles: design.sub_roles().map(str::to_owned).collect(),
     }
 }
 

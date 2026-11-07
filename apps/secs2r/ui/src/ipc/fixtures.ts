@@ -221,7 +221,8 @@ export const calibrationSummary: CalibrationSummary = {
   scorecard,
   late_energy: lateEnergy(SAMPLE_MAINS, projectInfo.positions),
   latency_ms: 9.8,
-  notes: [{ code: "rc_limit", params: { hz: "310", auto: "true", schroeder_hz: "310" } }],
+  notes: [{ code: "rc_limit", hz: 310, auto: true, schroeder_hz: 310, basis: "strict", factor: 1, band_hz: null, band_t60_s: null, positions: null }],
+  notices: [],
   main_roles: signalChain.mains.map((main) => main.role),
   sub_roles: signalChain.subs.map((sub) => sub.role),
 };
@@ -248,6 +249,7 @@ export const mimoSummary: MimoSummary = {
   support_count: 24,
   fir_taps_total: 0,
   notes: [],
+  notices: [],
   input_count: SAMPLE_MAINS.length,
   scorecard: scorecard.map((score) => ({ role: score.role,
     after_mimo: { ...score.after, in1_20: scoreFigures(score.role).within[2], gd_20: scoreFigures(score.role).gd[2] },

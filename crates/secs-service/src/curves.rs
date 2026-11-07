@@ -647,11 +647,16 @@ impl Service {
                         }
                     })
                 });
+            let (notes, notices) = summary.calibration.map_or_else(
+                || (Vec::new(), Vec::new()),
+                |value| (value.notes, value.notices),
+            );
             ResultLinesResult {
                 stale,
                 channels,
                 total_delay_ms,
-                notes: summary.calibration.map_or_else(Vec::new, |s| s.notes),
+                notes,
+                notices,
                 rc,
                 ba,
             }

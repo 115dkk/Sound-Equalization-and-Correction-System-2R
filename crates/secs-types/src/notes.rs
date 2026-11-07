@@ -450,7 +450,7 @@ mod tests {
     }
 
     #[test]
-    fn each_note_variant_round_trips_through_json_with_its_snake_case_code() {
+    fn every_note_variant_round_trips_json_with_its_snake_case_code() {
         let notes = [
             r#"{"code":"polarity_reversed","role":"L","confidence":0.9,"compared":2,"opposite":2}"#,
             r#"{"code":"polarity_split","groups":{"a":["L"],"b":["R"]},"confidence":0.8}"#,
@@ -463,7 +463,7 @@ mod tests {
             r#"{"code":"lf_align","role":"L","strength":0.75,"arrival_ms":null,"limited":false}"#,
             r#"{"code":"mode_decay","role":"L","target_t60_s":0.25,"modes":[{"hz":63.0,"t60_s":0.8,"cut_db":-6.5}]}"#,
             r#"{"code":"hf_phase","role":"L","rotation_deg":-90.0,"limited":false}"#,
-            r#"{"code":"dip_limit","role":"L","dips":[{"hz":90.0,"depth_db":7.0,"fill_db":4.5}]}"#,
+            r#"{"code":"dip_limit","role":"L","dips":[{"hz":80.0,"depth_db":6.1,"fill_db":3.0}]}"#,
             r#"{"code":"input_hp","hz":20.0}"#,
             r#"{"code":"latency","latency_ms":10.0,"lift_ms":2.0,"main_extra_ms":1.0}"#,
             r#"{"code":"phase_strength","values":[{"role":"L","value":0.5}]}"#,

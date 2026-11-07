@@ -776,3 +776,19 @@ fn read_only_token_folder_is_a_token_error() {
     assert!(matches!(runtime.status(), Err(LocalApiError::Token { .. })));
     let _ = std::fs::remove_file(root);
 }
+
+#[test]
+fn calibration_summary_notes_are_typed_on_the_wire() {
+    let note = secs_types::notes::Note::DipLimit {
+        role: "L".into(),
+        dips: vec![secs_types::notes::Dip {
+            hz: 80.0,
+            depth_db: 6.1,
+            fill_db: 3.0,
+        }],
+    };
+    let value = serde_json::to_value(note).unwrap();
+    assert_eq!(value["code"], "dip_limit");
+    assert_eq!(value["role"], "L");
+    assert_eq!(value["dips"][0]["hz"], 80.0);
+}

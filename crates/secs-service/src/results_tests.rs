@@ -59,6 +59,7 @@ fn calibration_summary() -> CalibrationSummary {
         late_energy: vec![],
         latency_ms: 0.0,
         notes: vec![],
+        notices: vec![],
         main_roles: vec!["L".into()],
         sub_roles: vec![],
     }
@@ -73,6 +74,7 @@ fn mimo_summary(supports: usize) -> MimoSummary {
         support_count: supports,
         fir_taps_total: 0,
         notes: vec![],
+        notices: vec![],
         input_count: usize::from(supports > 0),
         scorecard: vec![],
         late_energy: vec![],

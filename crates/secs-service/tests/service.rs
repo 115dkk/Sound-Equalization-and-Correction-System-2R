@@ -457,7 +457,7 @@ fn invalid_sidecar_curve_is_excluded_and_noticed_td262() {
     let job = start_calibration(&service, events.clone(), settings);
     finished_result(events.wait(job, Duration::from_secs(120)));
     let results = read_results(&service);
-    let notices = &results.calibration.unwrap().notes;
+    let notices = &results.calibration.unwrap().notices;
     assert!(notices.iter().any(|notice| {
         notice.code == "calibration_curve_invalid"
             && notice.params.get("role") == Some(&role)
@@ -504,7 +504,7 @@ fn reopening_after_calibrating_with_an_invalid_curve_keeps_results_fresh_td262()
     let live = read_results(&service).calibration.unwrap();
     assert!(!live.stale);
     assert_eq!(
-        live.notes
+        live.notices
             .iter()
             .filter(|notice| {
                 notice.code == "calibration_curve_invalid"
@@ -540,7 +540,7 @@ fn reopening_after_calibrating_with_an_invalid_curve_keeps_results_fresh_td262()
     );
     assert_eq!(
         cached
-            .notes
+            .notices
             .iter()
             .filter(|notice| notice.code == "calibration_curve_invalid")
             .count(),
@@ -2311,7 +2311,7 @@ fn resampled_calibration_and_cached_mdat_export_preserve_original_ir() {
     assert_eq!(fs::read(&ir_path).unwrap(), original);
     let summary = read_results(&service).calibration.unwrap();
     let notice = summary
-        .notes
+        .notices
         .iter()
         .find(|notice| notice.code == "measurement_resampled")
         .expect("converted measurements must be visible in the calculation notes");
@@ -2819,7 +2819,7 @@ fn oracle_project_calibrates_recommends_xo_and_exports() {
             .calibration
             .as_ref()
             .unwrap()
-            .notes
+            .notices
             .iter()
             .all(|notice| notice.code != "measurement_resampled")
     );
@@ -3122,21 +3122,23 @@ fn filter_text_export_matches_direct_and_reopened_bytes_without_redesign() {
         Arc::new(Events::default()),
     );
     let live_snapshot = snapshot_relative_files(&folder, &live.files);
-    let rc_note = summary
+    let secs_types::notes::Note::RcLimit {
+        hz: rc_hi_hz,
+        auto: rc_auto,
+        schroeder_hz,
+        ..
+    } = summary
         .notes
         .iter()
-        .find(|notice| notice.code == "rc_limit")
-        .unwrap();
-    let rc_hi_hz = rc_note.params["hz"].parse().unwrap();
-    let rc_auto = rc_note.params["auto"].parse().unwrap();
-    let schroeder_hz = rc_note
-        .params
-        .get("schroeder_hz")
-        .map(|value| value.parse().unwrap());
+        .find(|note| matches!(note, secs_types::notes::Note::RcLimit { .. }))
+        .unwrap()
+    else {
+        unreachable!("matched the RC limit variant")
+    };
     let rc_pieces = secs_export::rc_pieces_from_values(
-        rc_hi_hz,
-        rc_auto,
-        schroeder_hz,
+        *rc_hi_hz,
+        *rc_auto,
+        *schroeder_hz,
         settings.room_volume_m3,
         false,
     );
@@ -3145,7 +3147,7 @@ fn filter_text_export_matches_direct_and_reopened_bytes_without_redesign() {
         chain: &chain,
         mimo: None,
         mode: "mixed",
-        note: &secs_camilla::note::eqapo_note("mixed", summary.latency_ms, rc_hi_hz, None),
+        note: &secs_camilla::note::eqapo_note("mixed", summary.latency_ms, *rc_hi_hz, None),
         label: &label,
         latency_ms: summary.latency_ms,
         rc_pieces: &rc_pieces,
@@ -4789,7 +4791,7 @@ fn gpu_reports_survive_cache_and_fallback_exports() {
             );
             assert!(
                 summary
-                    .notes
+                    .notices
                     .iter()
                     .any(|notice| notice.code == "compute_fallback")
             );
@@ -6117,21 +6119,21 @@ fn commit_results_saves_the_cache_outside_the_lock_and_reports_a_failed_save_onc
     let mimo = results.mimo.unwrap();
     assert!(!calibration.stale && !mimo.stale);
     assert!(
-        has_cache_warning(&calibration.notes),
+        has_cache_warning(&calibration.notices),
         "{:?}",
-        calibration.notes
+        calibration.notices
     );
-    assert!(has_cache_warning(&mimo.notes), "{:?}", mimo.notes);
+    assert!(has_cache_warning(&mimo.notices), "{:?}", mimo.notices);
     assert_eq!(
         calibration
-            .notes
+            .notices
             .iter()
             .filter(|notice| notice.code == "cache_save_failed")
             .count(),
         1
     );
     assert_eq!(
-        mimo.notes
+        mimo.notices
             .iter()
             .filter(|notice| notice.code == "cache_save_failed")
             .count(),
@@ -6152,12 +6154,12 @@ fn commit_results_saves_the_cache_outside_the_lock_and_reports_a_failed_save_onc
     };
     finished_result(events.wait(started.job, Duration::from_secs(120)));
     let results = read_results(&service);
-    assert!(!has_cache_warning(&results.calibration.unwrap().notes));
-    assert!(!has_cache_warning(&results.mimo.unwrap().notes));
+    assert!(!has_cache_warning(&results.calibration.unwrap().notices));
+    assert!(!has_cache_warning(&results.mimo.unwrap().notices));
     let cached: secs_types::ipc::CalibrationSummary = cached_field(&path, "calibration");
     assert!(
         cached
-            .notes
+            .notices
             .iter()
             .all(|notice| notice.code != "cache_save_failed")
     );
@@ -6268,47 +6270,6 @@ fn typed_recommend_xo_can_ask_for_a_background_job_td157() {
         "recommend_xo"
     );
     drop(values);
-    fs::remove_dir_all(root).unwrap();
-}
-
-#[test]
-fn calibration_summary_notes_are_scalar_records_td162() {
-    let root = temp_root("scalar-note-records");
-    fs::create_dir_all(&root).unwrap();
-    let (path, mut settings) = write_case(&root, "room");
-    settings.dip_limit = true;
-    settings.rc_bands = vec![
-        secs_types::calibration::RcBand {
-            lo_hz: 1_000.0,
-            hi_hz: 1_200.0,
-        },
-        secs_types::calibration::RcBand {
-            lo_hz: 15_000.0,
-            hi_hz: 16_000.0,
-        },
-    ];
-    let service = service();
-    open(&service, &path);
-    let events = Arc::new(Events::default());
-    let job = start_calibration(&service, events.clone(), settings);
-    finished_result(events.wait(job, Duration::from_secs(120)));
-    let summary = read_results(&service).calibration.unwrap();
-    assert!(
-        summary
-            .notes
-            .iter()
-            .any(|notice| notice.code == "dip_limit")
-    );
-    assert!(summary.notes.iter().any(|notice| notice.code == "rc_bands"));
-    for notice in summary
-        .notes
-        .iter()
-        .filter(|notice| matches!(notice.code.as_str(), "dip_limit" | "rc_bands"))
-    {
-        for value in notice.params.values() {
-            assert!(!value.contains([',', ':']), "{}: {value}", notice.code);
-        }
-    }
     fs::remove_dir_all(root).unwrap();
 }
 

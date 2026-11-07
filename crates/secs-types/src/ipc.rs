@@ -17,6 +17,7 @@ use ts_rs::TS;
 use crate::calibration::{CalibrationSettings, Mode};
 use crate::compute::{ComputePreference, ComputeReport, ComputeStatus};
 use crate::local_api::MethodAccess;
+use crate::notes::Note;
 pub use crate::settings_edit::CalibrationSettingsEditParams;
 
 /// A call from the screen.
@@ -1229,8 +1230,10 @@ pub struct ResultLinesResult {
     pub channels: Vec<ChannelResultLine>,
     /// Total delay in milliseconds, absent before calibration.
     pub total_delay_ms: Option<f64>,
-    /// Engine notes as codes and arguments.
-    pub notes: Vec<Notice>,
+    /// Typed engine notes.
+    pub notes: Vec<Note>,
+    /// Notices produced by service adapters rather than the engine.
+    pub notices: Vec<Notice>,
     /// RC ceiling provenance and room-volume notices.
     pub rc: Vec<Notice>,
     /// BA metrics, table, layouts and warnings when at least two subs are available.
@@ -1644,8 +1647,11 @@ pub struct CalibrationSummary {
     pub late_energy: Vec<LateEnergy>,
     /// Total filter latency in milliseconds.
     pub latency_ms: f64,
-    /// Informational codes and values translated by the screen.
-    pub notes: Vec<Notice>,
+    /// Typed engine notes translated by the screen.
+    pub notes: Vec<Note>,
+    /// Notices produced by service adapters rather than the engine.
+    #[serde(default)]
+    pub notices: Vec<Notice>,
     /// Main-channel roles in design order; filter coefficients stay in Rust.
     pub main_roles: Vec<String>,
     /// Subwoofer roles in design order; filter coefficients stay in Rust.
@@ -1748,8 +1754,11 @@ pub struct MimoSummary {
     pub support_count: usize,
     /// Total FIR-tap budget across all generated paths.
     pub fir_taps_total: usize,
-    /// Informational codes and values translated by the screen.
-    pub notes: Vec<Notice>,
+    /// Typed engine notes translated by the screen.
+    pub notes: Vec<Note>,
+    /// Notices produced by service adapters rather than the engine.
+    #[serde(default)]
+    pub notices: Vec<Notice>,
     /// Number of distinct input roles with at least one generated support path.
     pub input_count: usize,
     /// Per-channel metrics after MIMO at the main position.

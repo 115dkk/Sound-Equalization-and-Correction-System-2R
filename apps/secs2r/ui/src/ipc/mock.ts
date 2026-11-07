@@ -30,6 +30,7 @@ import type { LevelsResult } from "./bindings/LevelsResult";
 import type { ExportFolderResult } from "./bindings/ExportFolderResult";
 import type { ResultCurvesResult } from "./bindings/ResultCurvesResult";
 import type { ResultLinesResult } from "./bindings/ResultLinesResult";
+import type { Note } from "./bindings/Note";
 import type { Notice } from "./bindings/Notice";
 import type { MicCalibrationStatus } from "./bindings/MicCalibrationStatus";
 import { umikFile } from "../screens/connect/fixtures";
@@ -150,22 +151,33 @@ const EXPORT_FOLDER_TAG: Record<ExportKind, string> = {
  * at 287 Hz. A Schroeder basis needs a room volume (500 Hz without one, no
  * factor); the factor multiplies within 100 Hz and 500 Hz × factor.
  */
-function rcLimitNote(settings: CalibrationSettings, positions: number): Notice {
-  const params: Record<string, string> = { auto: String(settings.rc_hi === null), basis: settings.rc_hi_basis, factor: String(settings.rc_hi_transition) };
-  if (settings.rc_hi !== null) return { code: "rc_limit", params: { ...params, hz: String(settings.rc_hi) } };
+type RcLimitNote = Extract<Note, { code: "rc_limit" }>;
+
+function rcLimitNote(settings: CalibrationSettings, positions: number): RcLimitNote {
+  const auto = settings.rc_hi === null;
   const volume = (settings.room_volume_m3 ?? 0) > 0;
-  if (volume) params.schroeder_hz = "154";
   const factor = settings.rc_hi_transition;
-  let hz = 500;
-  if (settings.rc_hi_basis === "agreement") {
+  let hz = settings.rc_hi ?? 500;
+  let bandHz: number | null = null;
+  let bandT60: number | null = null;
+  let agreementPositions: number | null = null;
+  if (auto && settings.rc_hi_basis === "agreement") {
     hz = 287;
-    params.positions = String(positions);
-  } else if (volume) {
+    agreementPositions = positions;
+  } else if (auto && volume) {
     const lenient = settings.rc_hi_basis === "lenient";
-    if (lenient) Object.assign(params, { band_hz: "200", band_t60_s: "0.5" });
+    if (lenient) {
+      bandHz = 200;
+      bandT60 = 0.5;
+    }
     hz = clamp((lenient ? 200 : 154) * factor, [100, 500 * factor]);
   }
-  return { code: "rc_limit", params: { ...params, hz: String(hz) } };
+  return {
+    code: "rc_limit", hz, auto,
+    schroeder_hz: auto && volume ? 154 : null,
+    basis: settings.rc_hi_basis, factor,
+    band_hz: bandHz, band_t60_s: bandT60, positions: agreementPositions,
+  };
 }
 
 /**
@@ -173,32 +185,31 @@ function rcLimitNote(settings: CalibrationSettings, positions: number): Notice {
  * rc_limit note, then how the room volume set an automatic Schroeder limit.
  * The agreement basis uses no volume.
  */
-function rcLines(limit: Notice | undefined, volume: number | null): Notice[] {
+function rcLines(limit: RcLimitNote | undefined, volume: number | null): Notice[] {
   if (!limit) return [];
-  if (limit.params.auto !== "true" || limit.params.basis === "agreement") return [limit];
-  return [limit, volume ? { code: "rc_room_volume", params: { volume_m3: String(volume) } } : { code: "rc_no_room_volume", params: {} }];
+  const params = Object.fromEntries(Object.entries(limit).filter(([key, value]) => key !== "code" && value !== null).map(([key, value]) => [key, String(value)]));
+  const record: Notice = { code: limit.code, params };
+  if (!limit.auto || limit.basis === "agreement") return [record];
+  return [record, volume ? { code: "rc_room_volume", params: { volume_m3: String(volume) } } : { code: "rc_no_room_volume", params: {} }];
 }
 
 /** The RC lines the mock's calibration leaves for these settings at this many measured positions (gallery views). */
 export const mockRcLines = (settings: CalibrationSettings, positions: number): Notice[] => rcLines(rcLimitNote(settings, positions), settings.room_volume_m3);
 
-/** A pair's phase note as the engine records it (secs-engine `NoteRecords`): one record per band, whole Hz and one-decimal degrees and dB. */
-function pairPhaseNotes(a: string, b: string, bands: readonly (readonly [number, number, number, number])[]): Notice[] {
-  return bands.map(([lo, hi, phase, loss], index) => ({
-    code: "pair_phase",
-    params: { a, b, index: String(index), lo_hz: lo.toFixed(0), hi_hz: hi.toFixed(0), phase_deg: phase.toFixed(1), loss_db: loss.toFixed(1) },
-  }));
+/** A pair's phase note as the engine sends it. */
+function pairPhaseNotes(a: string, b: string, bands: readonly (readonly [number, number, number, number])[]): Note[] {
+  return [{ code: "pair_phase", a, b, bands: bands.map(([lo_hz, hi_hz, phase_deg, loss_db]) => ({ lo_hz, hi_hz, phase_deg, loss_db })) }];
 }
 
 /**
  * The correction band set a calibration with extra bands notes (secs-engine
  * `Note::RcBands`, ADR 0024): the primary band up to its resolved upper
  * limit and the extra bands, sorted, with overlapping or touching bands
- * merged, one record per band. Without extra bands there is no note.
+ * merged. Without extra bands there is no note.
  */
-function mockRcBandsNotes(settings: CalibrationSettings, positions: number): Notice[] {
+function mockRcBandsNotes(settings: CalibrationSettings, positions: number): Note[] {
   if (settings.rc_bands.length === 0) return [];
-  const hi = Number(rcLimitNote(settings, positions).params.hz);
+  const hi = rcLimitNote(settings, positions).hz;
   const all = [[settings.rc_lo, hi], ...settings.rc_bands.map((band) => [band.lo_hz, band.hi_hz])].sort((a, b) => a[0]! - b[0]!);
   const merged: number[][] = [];
   for (const [lo, top] of all) {
@@ -206,7 +217,7 @@ function mockRcBandsNotes(settings: CalibrationSettings, positions: number): Not
     if (last && lo! <= last[1]!) last[1] = Math.max(last[1]!, top!);
     else merged.push([lo!, top!]);
   }
-  return merged.map(([lo, top], index) => ({ code: "rc_bands", params: { index: String(index), lo_hz: String(lo), hi_hz: String(top) } }));
+  return [{ code: "rc_bands", bands: merged.map(([lo_hz, hi_hz]) => ({ lo_hz: lo_hz!, hi_hz: hi_hz! })) }];
 }
 
 /**
@@ -318,24 +329,24 @@ const measurementKind = (role: string): MeasurementCurve["kind"] => (roleKind(ro
  * cannot hold its boost below the roll-off and keeps its fit (`limited`
  * false); raising the lower limit or lowering the boost limit clears it.
  */
-export function mockLowProtectNotes(settings: CalibrationSettings, roles: readonly string[]): Notice[] {
+export function mockLowProtectNotes(settings: CalibrationSettings, roles: readonly string[]): Note[] {
   if (!settings.low_protect) return [];
   const subs = roles.filter(isSubRole);
-  const notes: Notice[] = roles.map((role, i) => {
-    if (!isSubRole(role)) return { code: "low_protect", params: { role, rolloff_hz: String(28 + ((i * 3) % 7)), limited: "true" } };
+  const notes: Note[] = roles.map((role, i) => {
+    if (!isSubRole(role)) return { code: "low_protect", role, rolloff_hz: 28 + ((i * 3) % 7), hp_hz: null, limited: true, reduced: 0, cuts: 0 };
     const rolloff = 22 + 2 * subs.indexOf(role);
     const user = settings.subs_manual[role]?.hp_hz ?? 0;
-    return { code: "low_protect", params: { role, rolloff_hz: String(rolloff), hp_hz: String(user > 0 ? user : rolloff / Math.SQRT2), limited: "true" } };
+    return { code: "low_protect", role, rolloff_hz: rolloff, hp_hz: user > 0 ? user : rolloff / Math.SQRT2, limited: true, reduced: 0, cuts: 0 };
   });
   if (subs.length > 0 && settings.rc_lo < 20 && settings.boost_max_db > 6) {
-    notes.push({ code: "low_protect", params: { role: subs.join(" + "), rolloff_hz: "22", limited: "false" } });
+    notes.push({ code: "low_protect", role: subs.join(" + "), rolloff_hz: 22, hp_hz: null, limited: false, reduced: 0, cuts: 0 });
   }
   return notes;
 }
 
-/** The 입력 저역 컷 note a calibration with `input_hp_hz` leaves (ADR 0031, secs-service `scalar_notice`). */
-export function mockInputHpNotes(settings: CalibrationSettings): Notice[] {
-  return settings.input_hp_hz === null ? [] : [{ code: "input_hp", params: { hz: String(settings.input_hp_hz), order: "8" } }];
+/** The 입력 저역 컷 note a calibration with `input_hp_hz` leaves (ADR 0031). */
+export function mockInputHpNotes(settings: CalibrationSettings): Note[] {
+  return settings.input_hp_hz === null ? [] : [{ code: "input_hp", hz: settings.input_hp_hz }];
 }
 
 /** Settings edits that change only the MIMO result (secs-types `mimo_key`). */
@@ -791,7 +802,7 @@ export function createMockService(options: MockOptions = {}): MockService {
     stale: results.calibration?.stale ?? false,
     channels: results.calibration?.scorecard.map((s) => ({ role: s.role, within_1db_pct: [s.before.in1_20, s.after.in1_20], gd_spread_ms: [s.before.gd_20, s.after.gd_20], peq_count: 2,
       fir_taps: fx.modeSpec(results.calibration!.mode).fir_taps, xo_hz: settings.xo[fx.GROUP_KEYS[fx.groupOf(s.role)]!] ?? null, mimo_support_count: results.mimo ? 2 : null })) ?? [],
-    total_delay_ms: results.calibration?.latency_ms ?? null, notes: results.calibration?.notes ?? [],
+    total_delay_ms: results.calibration?.latency_ms ?? null, notes: results.calibration?.notes ?? [], notices: results.calibration?.notices ?? [],
     rc: rcLines(results.calibration?.notes.find((note) => note.code === "rc_limit"), settings.room_volume_m3),
     ba: results.calibration && results.calibration.sub_roles.length >= 2 ? {
       stale: results.calibration.stale, subs_only: subsOnly, band_hz: [20, 200], flatness_db: [6.2, 1.8], seat_spread_db: [4.5, 2.1], positions: records.length,
@@ -1005,7 +1016,7 @@ export function createMockService(options: MockOptions = {}): MockService {
           summary.latency_ms = spec.max_latency_ms;
           summary.verdict.added_delay_ms = spec.max_latency_ms;
           summary.notes = [rcLimitNote(captured, positions), ...mockRcBandsNotes(captured, positions), ...mockLowProtectNotes(captured, config.speakers.map((s) => s.role)), ...mockInputHpNotes(captured)];
-          summary.notes.push({ code: "polarity_reversed", params: { role: "Rs", confidence: "0.94", compared: "3", opposite: "3" } });
+          summary.notes.push({ code: "polarity_reversed", role: "Rs", confidence: 0.94, compared: 3, opposite: 3 });
           summary.notes.push(...pairPhaseNotes("L", "Ls", [[89, 112, 170, -20.3], [112, 141, 174, -24.1]]));
           summary.scorecard = roles.map((role) => ({ ...clone(fx.scorecard.find((score) => score.role === role) ?? fx.scorecard[0]!), role }));
           summary.late_energy = fx.lateEnergy(roles, needProject().positions);

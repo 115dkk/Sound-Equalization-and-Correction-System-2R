@@ -9,6 +9,7 @@ import type { ChannelResultLine } from "../../ipc/bindings/ChannelResultLine";
 import type { ConfigResult } from "../../ipc/bindings/ConfigResult";
 import type { MimoSummary } from "../../ipc/bindings/MimoSummary";
 import type { ModeSpecResult } from "../../ipc/bindings/ModeSpecResult";
+import type { Note } from "../../ipc/bindings/Note";
 import type { Notice } from "../../ipc/bindings/Notice";
 import type { RcBand } from "../../ipc/bindings/RcBand";
 import type { ResultCurve } from "../../ipc/bindings/ResultCurve";
@@ -365,26 +366,25 @@ const baDbaLines: SubResultLines = {
   layouts: [{ bundle: "A", kind: "dba", members: ["SW1", "SW2"], front: ["SW1"], rear: ["SW2"], rear_ms: 12.25, auto_ms: 11.75, trim_ms: 0.5, peq: [[42, 4.5, -3.5]] }],
 };
 
-/** The calculation notes as secs-service sends them: one record per role, filter or room mode, scalar params. */
-const NOTES: Notice[] = [
-  { code: "lift_capped", params: { from_ms: "8", taps: "2048", lift_ms: "7.5" } },
-  { code: "rc_limit", params: { hz: "310.42", auto: "true", schroeder_hz: "310.42" } },
-  ...fx.SAMPLE_MAINS.map((role) => ({ code: "phase_strength", params: { role, strength: role.startsWith("T") ? "0.5" : "0.9" } })),
+/** Typed calculation notes as secs-service sends them. */
+const NOTES: Note[] = [
+  { code: "lift_capped", from_ms: 8, taps: 2048, lift_ms: 7.5 },
+  { code: "rc_limit", hz: 310.42, auto: true, schroeder_hz: 310.42, basis: "strict", factor: 1, band_hz: null, band_t60_s: null, positions: null },
+  { code: "phase_strength", values: fx.SAMPLE_MAINS.map((role) => ({ role, value: role.startsWith("T") ? 0.5 : 0.9 })) },
   // The engine's phase_band is the same fraction as the strength (rc.rs), named `hz`.
-  ...fx.SAMPLE_MAINS.map((role) => ({ code: "phase_band", params: { role, enabled: "true", hz: role.startsWith("T") ? "0.5" : "0.9" } })),
-  { code: "long_mode_boost", params: { cap_db: "4", hz: "34.2", t60_s: "0.61" } },
-  { code: "long_mode_boost", params: { cap_db: "4", hz: "51.8", t60_s: "0.44" } },
-  { code: "ba_cost", params: { value: "0.8417" } },
-  { code: "ba_bus_pass", params: { first: "0.8417", second: "0.7952", kept_first: "false" } },
+  { code: "phase_band", values: fx.SAMPLE_MAINS.map((role) => ({ role, hz: role.startsWith("T") ? 0.5 : 0.9 })) },
+  { code: "long_mode_boost", cap_db: 4, modes: [{ hz: 34.2, t60_s: 0.61 }, { hz: 51.8, t60_s: 0.44 }] },
+  { code: "ba_cost", value: 0.8417 },
+  { code: "ba_bus_pass", first: 0.8417, second: 0.7952, kept_first: false },
 ];
 
-/** SW2's fixed filters (the BA view's fixed sub), as the engine notes them first. */
-const SW2_FILTERS: Notice[] = [
-  { code: "sub_filters", params: { role: "SW2", hp_hz: "40", hp_type: "LR24", lp_hz: "60", lp_type: "LR24", peq_count: "1" } },
-  { code: "sub_filter_peq", params: { role: "SW2", index: "0", hz: "38", q: "5", gain_db: "-4" } },
-];
+/** SW2's fixed filters (the BA view's fixed sub), as one typed engine note. */
+const SW2_FILTERS: Note[] = [{
+  code: "sub_filters",
+  filters: [{ role: "SW2", value: { hp_hz: 40, hp_type: "LR24", lp_hz: 60, lp_type: "LR24", peq: [{ hz: 38, q: 5, gain_db: -4 }] } }],
+}];
 
-const summary = (stale = false, notes: readonly Notice[] = NOTES, positions: readonly number[] = [1, 2, 3]): CalibrationSummary => ({
+const summary = (stale = false, notes: readonly Note[] = NOTES, positions: readonly number[] = [1, 2, 3]): CalibrationSummary => ({
   ...fx.calibrationSummary,
   stale,
   notes: [...notes],
@@ -395,10 +395,10 @@ const summary = (stale = false, notes: readonly Notice[] = NOTES, positions: rea
 });
 
 function lines({ roles = fx.SAMPLE_MAINS, mimo = false, stale = false, ba = baLines as SubResultLines | null }: { roles?: readonly string[]; mimo?: boolean; stale?: boolean; ba?: SubResultLines | null } = {}): ResultLinesResult {
-  return { stale, channels: channelLines(roles, mimo), total_delay_ms: 9.8, notes: summary().notes, rc: RC_NOTES, ba: ba ? { ...ba, stale } : null };
+  return { stale, channels: channelLines(roles, mimo), total_delay_ms: 9.8, notes: summary().notes, notices: [], rc: RC_NOTES, ba: ba ? { ...ba, stale } : null };
 }
 
-const noLines: ResultLinesResult = { stale: false, channels: [], total_delay_ms: null, notes: [], rc: [], ba: null };
+const noLines: ResultLinesResult = { stale: false, channels: [], total_delay_ms: null, notes: [], notices: [], rc: [], ba: null };
 
 /* ── Views ──────────────────────────────────────────────────────────────── */
 
@@ -673,9 +673,9 @@ const FOUR_BANDS: RcBand[] = [
 ];
 
 /** The merged band set a calculation with these extra bands notes (`rc_bands`, one record per band), the RC band of these views included. */
-function rcBandsNote(bands: readonly RcBand[], hi = 310.42): Notice[] {
+function rcBandsNote(bands: readonly RcBand[], hi = 310.42): Note[] {
   const merged = bandLayout({ lo: RC[0], hi, extra: bands.map((band) => [band.lo_hz, band.hi_hz] as const) }).bands;
-  return merged.map(([lo, top], index) => ({ code: "rc_bands", params: { index: String(index), lo_hz: String(lo), hi_hz: String(top) } }));
+  return [{ code: "rc_bands", bands: merged.map(([lo_hz, hi_hz]) => ({ lo_hz, hi_hz })) }];
 }
 
 /**
@@ -719,7 +719,7 @@ export const extraBandViews = {
 } satisfies Record<string, CalibrateView>;
 
 /** The `rc_bands` records for one extra band, two bands, and a band that merges with the RC band. */
-export const rcBandsNotes: Notice[][] = [
+export const rcBandsNotes: Note[][] = [
   rcBandsNote([{ lo_hz: 15000, hi_hz: 20000 }]),
   rcBandsNote(TWO_BANDS),
   rcBandsNote([{ lo_hz: 250, hi_hz: 800 }]),
@@ -732,10 +732,9 @@ export const rcBandsNotes: Notice[][] = [
  * limit filled only partly, as secs-engine records them (one record per
  * dip). Hand-made until the service's recorded answers carry these notes.
  */
-const POLARITY_DIP_NOTES: Notice[] = [
-  { code: "polarity_reversed", params: { role: "Rs", confidence: "0.94", compared: "3", opposite: "3" } },
-  { code: "dip_limit", params: { role: "L", index: "0", hz: "94.43", depth_db: "7.54", fill_db: "4.77" } },
-  { code: "dip_limit", params: { role: "L", index: "1", hz: "136.78", depth_db: "9.20", fill_db: "5.60" } },
+const POLARITY_DIP_NOTES: Note[] = [
+  { code: "polarity_reversed", role: "Rs", confidence: 0.94, compared: 3, opposite: 3 },
+  { code: "dip_limit", role: "L", dips: [{ hz: 94.43, depth_db: 7.54, fill_db: 4.77 }, { hz: 136.78, depth_db: 9.2, fill_db: 5.6 }] },
 ];
 
 /** The polarity warning with its flip button, and the dip-limit line among the calculation notes. */
@@ -805,21 +804,21 @@ export const inputHpViews = {
  * the band (not in Zero mode either). Mixed mode's short delay cuts the
  * alignment (`limited`).
  */
-function lfNotes(mode: "zero" | "mixed" | "linear", { align, decay, phase }: { align: boolean; decay: boolean; phase: boolean }): Notice[] {
-  return fx.SAMPLE_MAINS.flatMap((role, i): Notice[] => {
-    const notes: Notice[] = [];
+function lfNotes(mode: "zero" | "mixed" | "linear", { align, decay, phase }: { align: boolean; decay: boolean; phase: boolean }): Note[] {
+  return fx.SAMPLE_MAINS.flatMap((role, i): Note[] => {
+    const notes: Note[] = [];
     if (align && mode !== "zero") {
       const arrival = mode === "mixed" ? 2.4 + (i % 3) * 0.3 : (((i * 7) % 9) - 4) / 10;
-      notes.push({ code: "lf_align", params: { role, strength: mode === "mixed" ? "0.5" : role.startsWith("T") ? "0.75" : "1", arrival_ms: String(Math.round(arrival * 10) / 10), limited: String(mode === "mixed") } });
+      notes.push({ code: "lf_align", role, strength: mode === "mixed" ? 0.5 : role.startsWith("T") ? 0.75 : 1, arrival_ms: Math.round(arrival * 10) / 10, limited: mode === "mixed" });
     }
     if (decay) {
-      if (role.startsWith("T")) notes.push({ code: "mode_decay_none", params: { role, target_s: "0.31" } });
-      else {
-        notes.push({ code: "mode_decay", params: { role, hz: String(42 + (i % 2)), t60_s: "0.82", target_s: "0.31", depth_db: "-8.4" } });
-        if (i < 3) notes.push({ code: "mode_decay", params: { role, hz: "63", t60_s: "0.55", target_s: "0.31", depth_db: "-4.9" } });
-      }
+      const modes = role.startsWith("T") ? [] : [
+        { hz: 42 + (i % 2), t60_s: 0.82, cut_db: -8.4 },
+        ...(i < 3 ? [{ hz: 63, t60_s: 0.55, cut_db: -4.9 }] : []),
+      ];
+      notes.push({ code: "mode_decay", role, target_t60_s: 0.31, modes });
     }
-    if (phase && mode !== "zero") notes.push({ code: "hf_phase", params: { role, rotation_deg: String(((i * 67) % 340) - 170), limited: "false" } });
+    if (phase && mode !== "zero") notes.push({ code: "hf_phase", role, rotation_deg: ((i * 67) % 340) - 170, limited: false });
     return notes;
   });
 }

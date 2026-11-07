@@ -174,6 +174,37 @@ public sealed class PackageTests
     }
 
     [Fact]
+    public void CalibrationNotesAreTyped()
+    {
+        using var temp = new TestDirectory();
+        using var engine = new Engine(temp.SettingsPath);
+        Call(engine, "project_new", new Dictionary<string, object?>
+        {
+            ["path"] = Path.Combine(temp.Path, "typed-notes.secs"),
+            ["preset"] = "2.0",
+            ["sub_count"] = 0,
+            ["sample"] = true,
+            ["tutorial"] = false,
+        });
+        Call(engine, "measure_configure", new Dictionary<string, object?>
+        {
+            ["method"] = "mock",
+        });
+        WaitForJob(engine, Call(engine, "measure_position", new Dictionary<string, object?>
+        {
+            ["position"] = 1,
+        }));
+        WaitForJob(engine, Call(engine, "calibrate", new Dictionary<string, object?>()));
+
+        JsonElement note = Call(engine, "results")
+            .GetProperty("data").GetProperty("calibration")
+            .GetProperty("notes")[0];
+        Assert.Equal("rc_limit", note.GetProperty("code").GetString());
+        Assert.Equal(JsonValueKind.Number, note.GetProperty("hz").ValueKind);
+        Assert.Equal(JsonValueKind.True, note.GetProperty("auto").ValueKind);
+    }
+
+    [Fact]
     public async Task MockMeasurementCalibratesAndExportsEqualizerApoFiles()
     {
         using var temp = new TestDirectory();

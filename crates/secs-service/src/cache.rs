@@ -265,6 +265,7 @@ mod tests {
                 late_energy: vec![],
                 latency_ms: 4.0,
                 notes: vec![],
+                notices: vec![],
                 main_roles: vec![],
                 sub_roles: vec![],
             },
@@ -467,6 +468,7 @@ mod tests {
             support_count: 0,
             fir_taps_total: 0,
             notes: vec![],
+            notices: vec![],
             input_count: 0,
             scorecard: vec![],
             late_energy: vec![],
@@ -550,6 +552,7 @@ mod tests {
             input_count: path_count.div_ceil(12),
             fir_taps_total: path_count * taps,
             notes: vec![],
+            notices: vec![],
             scorecard: vec![],
             late_energy: vec![],
         });

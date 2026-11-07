@@ -1052,13 +1052,13 @@ describe("mock 극저역 보호 (ADR 0022)", () => {
       await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "sub", role: "SW2", patch: { hp_hz: 25 } } } });
       const notes = await calibrate(mock);
       const roles = (await mock.request({ method: "config_get" })).speakers.map((speaker) => speaker.role);
-      expect(notes.map((note) => note.params.role)).toEqual(roles);
-      expect(notes.every((note) => note.params.limited === "true" && Number(note.params.rolloff_hz) >= 20)).toBe(true);
-      expect(notes.find((note) => note.params.role === "L")!.params).not.toHaveProperty("hp_hz");
+      expect(notes.map((note) => note.role)).toEqual(roles);
+      expect(notes.every((note) => note.limited && note.rolloff_hz >= 20)).toBe(true);
+      expect(notes.find((note) => note.role === "L")!.hp_hz).toBeNull();
       // A sub without a high-pass of its own gets one at the roll-off over √2; SW2 keeps the user's.
-      const sw1 = notes.find((note) => note.params.role === "SW1")!.params;
-      expect(Number(sw1.hp_hz)).toBeCloseTo(Number(sw1.rolloff_hz) / Math.SQRT2, 9);
-      expect(notes.find((note) => note.params.role === "SW2")!.params.hp_hz).toBe("25");
+      const sw1 = notes.find((note) => note.role === "SW1")!;
+      expect(sw1.hp_hz).toBeCloseTo(sw1.rolloff_hz / Math.SQRT2, 9);
+      expect(notes.find((note) => note.role === "SW2")!.hp_hz).toBe(25);
     } finally { mock.dispose(); }
   });
 
@@ -1067,18 +1067,18 @@ describe("mock 극저역 보호 (ADR 0022)", () => {
     const edit = (edit: import("./bindings/SettingEdit").SettingEdit) => mock.request({ method: "calibration_settings_edit", params: { edit } });
     try {
       await edit({ kind: "low_protect", on: true });
-      expect((await calibrate(mock)).some((note) => note.params.limited === "false")).toBe(false);
+      expect((await calibrate(mock)).some((note) => !note.limited)).toBe(false);
       // An edit refuses 15 Hz (ADR 0024); a project saved by SECS 2 keeps it, as the settings set here.
       const stored = await mock.request({ method: "calibration_settings_get" });
       await mock.request({ method: "calibration_settings_set", params: { settings: { ...stored, rc_lo: 15 } } });
-      expect((await calibrate(mock)).filter((note) => note.params.limited === "false")).toEqual([
-        { code: "low_protect", params: { role: "SW1 + SW2", rolloff_hz: "22", limited: "false" } },
+      expect((await calibrate(mock)).filter((note) => !note.limited)).toEqual([
+        { code: "low_protect", role: "SW1 + SW2", rolloff_hz: 22, hp_hz: null, limited: false, reduced: 0, cuts: 0 },
       ]);
       await edit({ kind: "boost_max", db: 6 });
-      expect((await calibrate(mock)).some((note) => note.params.limited === "false")).toBe(false);
+      expect((await calibrate(mock)).some((note) => !note.limited)).toBe(false);
       await edit({ kind: "boost_max", db: 10 });
       await edit({ kind: "rc_lo", hz: 20 });
-      expect((await calibrate(mock)).some((note) => note.params.limited === "false")).toBe(false);
+      expect((await calibrate(mock)).some((note) => !note.limited)).toBe(false);
     } finally { mock.dispose(); }
   });
 });
@@ -1178,12 +1178,12 @@ describe("mock extra correction bands (ADR 0024)", () => {
       expect((await curves("gd")).rc_bands_hz).toEqual([[300, 800], [15000, 20000]]);
       expect((await curves("xo")).rc_bands_hz).toEqual([]);
       // The sample room's strict Schroeder limit is 154 Hz: 20–154 Hz, then the two bands.
-      expect((await notes()).map((note) => note.params)).toEqual([
-        { index: "0", lo_hz: "20", hi_hz: "154" }, { index: "1", lo_hz: "300", hi_hz: "800" }, { index: "2", lo_hz: "15000", hi_hz: "20000" },
-      ]);
+      expect(await notes()).toEqual([{ code: "rc_bands", bands: [
+        { lo_hz: 20, hi_hz: 154 }, { lo_hz: 300, hi_hz: 800 }, { lo_hz: 15000, hi_hz: 20000 },
+      ] }]);
       // A band reaching into the RC band merges with it.
       await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "rc_bands", bands: [{ lo_hz: 100, hi_hz: 400 }] } } });
-      expect(await notes()).toEqual([{ code: "rc_bands", params: { index: "0", lo_hz: "20", hi_hz: "400" } }]);
+      expect(await notes()).toEqual([{ code: "rc_bands", bands: [{ lo_hz: 20, hi_hz: 400 }] }]);
     } finally { mock.dispose(); }
   });
 });

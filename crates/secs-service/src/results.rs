@@ -430,12 +430,12 @@ impl ResultBook {
         let calibration = self.calibration.as_ref()?;
         Some(CachedResults {
             calibration: CalibrationSummary {
-                notes: cached_notes(&calibration.summary.notes),
+                notices: cached_notices(&calibration.summary.notices),
                 ..calibration.summary.clone()
             },
             calibration_chain: calibration.design().signal_chain().clone(),
             mimo: self.mimo.as_ref().map(|result| MimoSummary {
-                notes: cached_notes(&result.summary.notes),
+                notices: cached_notices(&result.summary.notices),
                 ..result.summary.clone()
             }),
             measurement_signature: calibration.signature.clone(),
@@ -493,9 +493,11 @@ impl ResultBook {
 
     pub(crate) fn all_notes_mut(&mut self) -> impl Iterator<Item = &mut Vec<Notice>> {
         [
-            self.calibration.as_mut().map(|run| &mut run.summary.notes),
-            self.subs.as_mut().map(|run| &mut run.summary.notes),
-            self.mimo.as_mut().map(|result| &mut result.summary.notes),
+            self.calibration
+                .as_mut()
+                .map(|run| &mut run.summary.notices),
+            self.subs.as_mut().map(|run| &mut run.summary.notices),
+            self.mimo.as_mut().map(|result| &mut result.summary.notices),
         ]
         .into_iter()
         .flatten()
@@ -503,9 +505,12 @@ impl ResultBook {
 
     pub(crate) fn owner_notes_mut(&mut self, owner: CacheOwner) -> Option<&mut Vec<Notice>> {
         match owner {
-            CacheOwner::Calibration => self.calibration.as_mut().map(|run| &mut run.summary.notes),
-            CacheOwner::Subs => self.subs.as_mut().map(|run| &mut run.summary.notes),
-            CacheOwner::Mimo => self.mimo.as_mut().map(|result| &mut result.summary.notes),
+            CacheOwner::Calibration => self
+                .calibration
+                .as_mut()
+                .map(|run| &mut run.summary.notices),
+            CacheOwner::Subs => self.subs.as_mut().map(|run| &mut run.summary.notices),
+            CacheOwner::Mimo => self.mimo.as_mut().map(|result| &mut result.summary.notices),
         }
     }
 }
@@ -565,8 +570,8 @@ fn stale_reason(
     }
 }
 
-fn cached_notes(notes: &[Notice]) -> Vec<Notice> {
-    notes
+fn cached_notices(notices: &[Notice]) -> Vec<Notice> {
+    notices
         .iter()
         .filter(|notice| notice.code != "cache_save_failed")
         .cloned()

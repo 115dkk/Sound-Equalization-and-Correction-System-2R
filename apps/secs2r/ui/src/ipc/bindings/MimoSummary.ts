@@ -2,6 +2,7 @@
 import type { ComputeReport } from "./ComputeReport";
 import type { MimoChannelScore } from "./MimoChannelScore";
 import type { MimoLateEnergy } from "./MimoLateEnergy";
+import type { Note } from "./Note";
 import type { Notice } from "./Notice";
 
 /**
@@ -33,9 +34,13 @@ support_count: number,
  */
 fir_taps_total: number, 
 /**
- * Informational codes and values translated by the screen.
+ * Typed engine notes translated by the screen.
  */
-notes: Array<Notice>, 
+notes: Array<Note>, 
+/**
+ * Notices produced by service adapters rather than the engine.
+ */
+notices: Array<Notice>, 
 /**
  * Number of distinct input roles with at least one generated support path.
  */

@@ -51,6 +51,7 @@ const exportMimo: MimoSummary = {
   // IIR supports carry no FIR taps.
   fir_taps_total: 0,
   notes: [],
+  notices: [],
   input_count: SAMPLE_MAINS.length,
   scorecard: [],
   late_energy: [],

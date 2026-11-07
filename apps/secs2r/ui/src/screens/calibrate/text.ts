@@ -5,8 +5,10 @@
 import { isMessageKey, type MessageKey, type MessageParams } from "../../i18n";
 import { plainNumber, signedNumber, type FormatNumber, type Translate } from "../../i18n/react";
 import type { ConfigResult } from "../../ipc/bindings/ConfigResult";
+import type { GuardCause } from "../../ipc/bindings/GuardCause";
 import type { Mode } from "../../ipc/bindings/Mode";
 import type { ModeSpecResult } from "../../ipc/bindings/ModeSpecResult";
+import type { Note } from "../../ipc/bindings/Note";
 import type { Notice } from "../../ipc/bindings/Notice";
 import { CALIBRATION_LIMITS } from "../../ipc/bindings/rules";
 import { roleCode } from "../../ui/maps/geometry";
@@ -100,6 +102,77 @@ export function groupOf(config: ConfigResult, role: string): string | null {
 
 const num = (value: string | undefined) => (value === undefined ? Number.NaN : Number(value));
 
+type NoticeValue = string | number | boolean | null | undefined;
+
+const record = (code: string, values: Record<string, NoticeValue>): Notice => ({
+  code,
+  params: Object.fromEntries(Object.entries(values).filter(([, value]) => value !== null && value !== undefined).map(([key, value]) => [key, String(value)])),
+});
+
+function guardValues(cause: GuardCause): Record<string, NoticeValue> {
+  return {
+    rejected_db: cause.rejected_db,
+    band_position: cause.band_position,
+    tail_position: cause.tail_position,
+    band_lo_hz: cause.band?.lo_hz,
+    band_hi_hz: cause.band?.hi_hz,
+    band_db: cause.band?.db,
+    mode_hz: cause.tail?.hz,
+    tail_db: cause.tail?.db,
+  };
+}
+
+/** Projects one typed engine note to the scalar records the catalog renderer consumes. */
+function noteRecords(note: Note): Notice[] {
+  switch (note.code) {
+    case "polarity_reversed": return [record(note.code, note)];
+    case "polarity_split": return [record(note.code, { a: note.groups.a.join(","), b: note.groups.b.join(","), confidence: note.confidence })];
+    case "pair_phase": return note.bands.map((band, index) => record(note.code, { a: note.a, b: note.b, index, ...band }));
+    case "lift_capped": return [record(note.code, note)];
+    case "sub_filters": return note.filters.flatMap(({ role, value }) => [
+      record(note.code, { role, hp_hz: value.hp_hz, hp_type: value.hp_type, lp_hz: value.lp_hz, lp_type: value.lp_type, peq_count: value.peq.length }),
+      ...value.peq.map((peq, index) => record("sub_filter_peq", { role, index, ...peq })),
+    ]);
+    case "low_protect": return [record(note.code, note)];
+    case "rc_limit": return [record(note.code, note)];
+    case "rc_bands": return note.bands.map((band, index) => record(note.code, { index, ...band }));
+    case "lf_align": return [record(note.code, note)];
+    case "mode_decay": return note.modes.length === 0
+      ? [record("mode_decay_none", { role: note.role, target_s: note.target_t60_s })]
+      : note.modes.map((mode) => record(note.code, { role: note.role, hz: mode.hz, t60_s: mode.t60_s, target_s: note.target_t60_s, depth_db: mode.cut_db }));
+    case "hf_phase": return [record(note.rotation_deg === null ? "hf_phase_none" : note.code, { role: note.role, rotation_deg: note.rotation_deg, limited: note.limited })];
+    case "dip_limit": return note.dips.map((dip, index) => record(note.code, { role: note.role, index, ...dip }));
+    case "input_hp": return [record(note.code, { hz: note.hz, order: 8 })];
+    case "latency": return [record(note.code, note)];
+    case "phase_strength": return note.values.map(({ role, value }) => record(note.code, { role, strength: value }));
+    case "phase_band": return note.values.map(({ role, hz }) => record(note.code, { role, enabled: hz !== null, hz }));
+    case "long_mode_boost": return note.modes.map((mode) => record(note.code, { cap_db: note.cap_db, ...mode }));
+    case "gd_cuts": return note.cuts.map((peq, index) => record(note.code, { role: note.role, index, ...peq }));
+    case "ba_cost": return [record(note.code, { value: note.value })];
+    case "ba_bus_pass": return [record(note.code, note)];
+    case "ba_manual": return [record(note.code, {})];
+    case "layout_fallback": return [record(note.code, { value: note.value })];
+    case "layout": return [record(note.code, { value: note.value })];
+    case "two_way": return note.roles.map((role) => record(note.code, { role, gain_db: note.gain_db, xo_hz: note.xo_hz }));
+    case "bus_gain_anchored": return [record(note.code, { value: note.value })];
+    case "mimo": {
+      const mimo = note.note;
+      switch (mimo.code) {
+        case "iir_seed_fallback": return [record("mimo_iir_seed_fallback", { input: mimo.support, status: mimo.status })];
+        case "insufficient_positions": return [record("mimo_insufficient_positions", { measured: mimo.measured, required: 3 })];
+        case "excluded_supports": return mimo.roles.map((role) => record("mimo_support_excluded", { role }));
+        case "support_ranges": return mimo.ranges.map(({ role, value }) => record("mimo_support_range", { role, enabled: value !== null, lo_hz: value?.lo_hz, hi_hz: value?.hi_hz }));
+        case "guard_reduced": return [record("mimo_guard_reduced", { role: mimo.role, gain_db: mimo.gain_db, ...guardValues(mimo.cause) })];
+        case "guard_disabled": return [record("mimo_guard_disabled", { role: mimo.role, ...guardValues(mimo.cause) })];
+        case "support_limit": return [record("mimo_support_limit", { max_supports: mimo.max_supports })];
+        case "fir_budget": return [record("mimo_fir_budget", { support_count: mimo.support_count, taps_total: mimo.taps_total, sample_rate_hz: 48000 })];
+      }
+    }
+  }
+}
+
+const noticeRecords = (notice: Notice | Note): Notice[] => "params" in notice ? [notice] : noteRecords(notice);
+
 /**
  * The service sends collection notes as one record per role, filter, mode,
  * dip or band (secs-engine `NoteRecords::record`, scalar params only, ADR
@@ -162,7 +235,8 @@ function runTexts(t: Translate, number: FormatNumber, notices: readonly Notice[]
 }
 
 /** Calculation notes as lines: runs of one collection note joined (`runKey`), every line a catalog sentence. */
-export function noteLines(t: Translate, number: FormatNumber, notices: readonly Notice[], lfAlign: boolean, lfAlignAvailable = true): string[] {
+export function noteLines(t: Translate, number: FormatNumber, notes: readonly (Notice | Note)[], lfAlign: boolean, lfAlignAvailable = true): string[] {
+  const notices = notes.flatMap(noticeRecords);
   const lines = runTexts(t, number, notices).map((line) => line ?? t("jobs.log.unknown"));
   // The hint names a setting the mode must allow: zero mode has no bass arrival alignment.
   if (!lfAlign && lfAlignAvailable && notices.some((notice) => notice.code === "pair_phase")) lines.push(t("notice.pair_phase.hint"));
@@ -174,7 +248,13 @@ export function noteLines(t: Translate, number: FormatNumber, notices: readonly 
  * screen has no sentence for its code. `run` is the notice with the records
  * of the same note that follow it (`noteLines`); a single notice reads alone.
  */
-export function noticeText(t: Translate, number: FormatNumber, notice: Notice, run: readonly Notice[] = [notice]): string | null {
+export function noticeText(t: Translate, number: FormatNumber, note: Notice | Note, run: readonly (Notice | Note)[] = [note]): string | null {
+  const notice = noticeRecords(note)[0];
+  if (!notice) return null;
+  return noticeRecordText(t, number, notice, run.flatMap(noticeRecords));
+}
+
+function noticeRecordText(t: Translate, number: FormatNumber, notice: Notice, run: readonly Notice[]): string | null {
   const p = notice.params;
   const f = (key: string, digits = 0) => {
     const value = num(p[key]);
@@ -403,8 +483,8 @@ export function noticeText(t: Translate, number: FormatNumber, notice: Notice, r
  * the bounded guard (ADR 0022, `limited` "false"): a warning with what to do,
  * never a calculation note.
  */
-export function lowProtectFailures(notices: readonly Notice[]): Notice[] {
-  return notices.filter((n) => n.code === "low_protect" && n.params.limited === "false");
+export function lowProtectFailures(notes: readonly (Notice | Note)[]): (Notice | Note)[] {
+  return notes.filter((note) => note.code === "low_protect" && ("params" in note ? note.params.limited === "false" : !note.limited));
 }
 
 /** The warning's next step for `lowProtectFailures`. */
@@ -417,8 +497,15 @@ export type PolarityCode = "polarity_reversed" | "polarity_split";
  * Polarity verdicts (ADR 0033): a warning with a fix, never a calculation
  * note. `polarity_reversed` names one main; `polarity_split` names two groups.
  */
-export function polarityWarnings(notices: readonly Notice[]): Notice[] {
-  return notices.filter((n) => n.code === "polarity_reversed" || n.code === "polarity_split");
+export function polarityWarnings(notes: readonly (Notice | Note)[]): (Notice | Note)[] {
+  return notes.filter((note) => note.code === "polarity_reversed" || note.code === "polarity_split");
+}
+
+/** The role a polarity warning's action opens or flips. */
+export function polarityRole(note: Notice | Note): string {
+  if ("params" in note) return note.code === "polarity_reversed" ? (note.params.role ?? "") : ((note.params.a ?? "").split(",")[0] ?? "");
+  if (note.code === "polarity_reversed") return note.role;
+  return note.code === "polarity_split" ? (note.groups.a[0] ?? "") : "";
 }
 
 /** The warning's next step for each polarity code. */

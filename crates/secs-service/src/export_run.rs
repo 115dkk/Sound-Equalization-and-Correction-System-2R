@@ -75,21 +75,15 @@ pub(crate) fn describe(
             }
         }
         RunView::Cached { cache, .. } => {
-            let rc_values = cache
-                .calibration
-                .notes
-                .iter()
-                .find(|notice| notice.code == "rc_limit")
-                .and_then(|notice| {
-                    Some((
-                        notice.params.get("hz")?.parse::<f64>().ok()?,
-                        notice.params.get("auto")?.parse::<bool>().ok()?,
-                        notice
-                            .params
-                            .get("schroeder_hz")
-                            .and_then(|value| value.parse::<f64>().ok()),
-                    ))
-                });
+            let rc_values = cache.calibration.notes.iter().find_map(|note| match note {
+                secs_types::notes::Note::RcLimit {
+                    hz,
+                    auto,
+                    schroeder_hz,
+                    ..
+                } => Some((*hz, *auto, *schroeder_hz)),
+                _ => None,
+            });
             let (rc_hi_hz, rc_auto, schroeder_hz, legacy_fallback) = match rc_values {
                 Some((hz, auto, schroeder)) => (hz, auto, schroeder, false),
                 None => (cache.labels.rc_hi_hz, settings.rc_hi.is_none(), None, true),
