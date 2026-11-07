@@ -6,8 +6,8 @@ mod support;
 use secs_camilla::note;
 use secs_camilla::pyfmt::{format_fixed, format_g, repr_f64, round_ndigits};
 use secs_camilla::{
-    CamillaError, Device, DeviceValue, Options, RunLabels, export, make_config, write_config,
-    write_config_observed,
+    CamillaError, Device, DeviceValue, Options, RunLabels, export, install_prepared, make_config,
+    prepare_config, write_config, write_config_observed,
 };
 use secs_oracle::{Fixture, goldens};
 use secs_types::calibration::RcBand;
@@ -42,6 +42,30 @@ impl Drop for TempDir {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.0);
     }
+}
+
+fn snapshot_files(root: &Path) -> std::collections::BTreeMap<PathBuf, Vec<u8>> {
+    fn visit(
+        root: &Path,
+        current: &Path,
+        files: &mut std::collections::BTreeMap<PathBuf, Vec<u8>>,
+    ) {
+        for entry in fs::read_dir(current).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                visit(root, &path, files);
+            } else {
+                files.insert(
+                    path.strip_prefix(root).unwrap().to_path_buf(),
+                    fs::read(path).unwrap(),
+                );
+            }
+        }
+    }
+
+    let mut files = std::collections::BTreeMap::new();
+    visit(root, root, &mut files);
+    files
 }
 
 fn number(value: &Value) -> f64 {
@@ -1146,6 +1170,28 @@ fn write_config_sanitizes_nonascii_name_like_oracle() {
             expected_blob(&fixture, &expected["bytes"])
         );
     }
+}
+
+#[test]
+fn prepared_config_installs_the_bytes_write_config_writes() {
+    let fixture = Fixture::load("camilla", "direct_no_subs");
+    let chain = chain(&fixture);
+    let prepared_folder = TempDir::new("prepared_config");
+    let direct_folder = TempDir::new("direct_config");
+    let mut options = direct_options(&fixture);
+    options.output_rate = 96_000;
+    options.bypass = true;
+
+    let prepared = prepare_config(&chain, &prepared_folder.0, "prepared", &options, None).unwrap();
+    let prepared_paths =
+        install_prepared(&prepared_folder.0, prepared, &|_, _| Ok(()), &|_, _| Ok(())).unwrap();
+    let direct_paths = write_config(&chain, &direct_folder.0, "prepared", &options, None).unwrap();
+
+    assert_eq!(prepared_paths.len(), direct_paths.len());
+    assert_eq!(
+        snapshot_files(&prepared_folder.0),
+        snapshot_files(&direct_folder.0)
+    );
 }
 
 #[test]

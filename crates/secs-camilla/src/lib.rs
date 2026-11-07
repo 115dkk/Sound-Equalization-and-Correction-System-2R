@@ -1549,6 +1549,113 @@ fn without_correction(chain: &SignalChain) -> SignalChain {
     chain
 }
 
+/// A CamillaDSP configuration whose validation and byte construction are complete.
+#[derive(Debug)]
+pub struct PreparedConfig {
+    bundle: Vec<(PathBuf, Vec<u8>)>,
+    entry: PathBuf,
+    write_input: bool,
+}
+
+/// Validates and constructs every byte of a CamillaDSP configuration before installation.
+pub fn prepare_config(
+    chain: &SignalChain,
+    out: &Path,
+    name: &str,
+    options: &Options,
+    mimo: Option<&MimoPaths>,
+) -> Result<PreparedConfig, CamillaError> {
+    let safe = guard::safe_component(name)?;
+    let config_dir = out.join(CONFIG_DIR);
+    let config = make_config(chain, out, &config_dir, &format!("{safe}_"), options, mimo)?;
+    let bypass = if options.bypass {
+        let bypass_chain = without_correction(chain);
+        let mut bypass_options = options.clone();
+        bypass_options.bypass = false;
+        if let Some(design) = &mut bypass_options.design {
+            design.bypass = true;
+        }
+        Some(make_config(
+            &bypass_chain,
+            out,
+            &config_dir,
+            &format!("{safe}_"),
+            &bypass_options,
+            None,
+        )?)
+    } else {
+        None
+    };
+    let entry = PathBuf::from(CONFIG_DIR).join(format!("{safe}.yml"));
+    let bypass_relative = PathBuf::from(CONFIG_DIR).join(format!("{safe}_bypass.yml"));
+    let write_input = options.capture.is_none() && !out.join("in.raw").exists();
+    let mut bundle = Vec::new();
+    if write_input {
+        bundle.push((PathBuf::from("in.raw"), vec![0_u8; 1024 * config.n_in * 4]));
+    }
+    for (path, bytes) in &config.coeffs {
+        let relative = path.strip_prefix(out).map_err(|_| {
+            CamillaError::Invalid(format!(
+                "coefficient path escapes export folder: {}",
+                path.display()
+            ))
+        })?;
+        bundle.push((relative.to_path_buf(), bytes.clone()));
+    }
+    if let Some(bypass) = &bypass {
+        if !bypass.coeffs.is_empty() {
+            return Err(CamillaError::Invalid(
+                "bypass configuration unexpectedly needs FIR coefficients".into(),
+            ));
+        }
+        bundle.push((bypass_relative, bypass.yaml.as_bytes().to_vec()));
+    }
+    bundle.push((entry.clone(), config.yaml.into_bytes()));
+    Ok(PreparedConfig {
+        bundle,
+        entry,
+        write_input,
+    })
+}
+
+/// Installs a configuration returned by [`prepare_config`].
+pub fn install_prepared(
+    out: &Path,
+    prepared: PreparedConfig,
+    after_stage_write: &dyn Fn(usize, &Path) -> std::io::Result<()>,
+    before_install: &dyn Fn(usize, &Path) -> std::io::Result<()>,
+) -> Result<Vec<PathBuf>, CamillaError> {
+    let PreparedConfig {
+        bundle,
+        entry,
+        write_input,
+    } = prepared;
+    let bypass = bundle
+        .iter()
+        .map(|(path, _)| path)
+        .find(|path| **path != entry && path.extension().is_some_and(|value| value == "yml"))
+        .cloned();
+    write_bundle_observed(out, &bundle, &entry, after_stage_write, before_install)?;
+
+    let mut written = vec![out.join(&entry)];
+    if let Some(bypass) = &bypass {
+        written.push(out.join(bypass));
+    }
+    let mut coefficient_paths = bundle
+        .into_iter()
+        .map(|(path, _)| path)
+        .filter(|path| {
+            path != &entry
+                && bypass.as_ref() != Some(path)
+                && !(write_input && path == Path::new("in.raw"))
+        })
+        .map(|path| out.join(path))
+        .collect::<Vec<_>>();
+    coefficient_paths.sort();
+    written.extend(coefficient_paths);
+    Ok(written)
+}
+
 /// Write `configs/<name>.yml`, coefficient WAVs, and a placeholder `in.raw` when needed.
 pub fn write_config(
     chain: &SignalChain,
@@ -1573,69 +1680,12 @@ pub fn write_config_observed(
     after_stage_write: &dyn Fn(usize, &Path) -> std::io::Result<()>,
     before_install: &dyn Fn(usize, &Path) -> std::io::Result<()>,
 ) -> Result<Vec<PathBuf>, CamillaError> {
-    let safe = guard::safe_component(name)?;
-    let config_dir = out.join(CONFIG_DIR);
-    let config = make_config(chain, out, &config_dir, &format!("{safe}_"), options, mimo)?;
-    let bypass = if options.bypass {
-        let bypass_chain = without_correction(chain);
-        let mut bypass_options = options.clone();
-        bypass_options.bypass = false;
-        if let Some(design) = &mut bypass_options.design {
-            design.bypass = true;
-        }
-        Some(make_config(
-            &bypass_chain,
-            out,
-            &config_dir,
-            &format!("{safe}_"),
-            &bypass_options,
-            None,
-        )?)
-    } else {
-        None
-    };
-    // All validation and pure construction have completed before the first write.
-    let config_relative = PathBuf::from(CONFIG_DIR).join(format!("{safe}.yml"));
-    let bypass_relative = PathBuf::from(CONFIG_DIR).join(format!("{safe}_bypass.yml"));
-    let mut bundle = Vec::new();
-    if options.capture.is_none() && !out.join("in.raw").exists() {
-        bundle.push((PathBuf::from("in.raw"), vec![0_u8; 1024 * config.n_in * 4]));
-    }
-    for (path, bytes) in &config.coeffs {
-        let relative = path.strip_prefix(out).map_err(|_| {
-            CamillaError::Invalid(format!(
-                "coefficient path escapes export folder: {}",
-                path.display()
-            ))
-        })?;
-        bundle.push((relative.to_path_buf(), bytes.clone()));
-    }
-    if let Some(bypass) = &bypass {
-        if !bypass.coeffs.is_empty() {
-            return Err(CamillaError::Invalid(
-                "bypass configuration unexpectedly needs FIR coefficients".into(),
-            ));
-        }
-        bundle.push((bypass_relative.clone(), bypass.yaml.as_bytes().to_vec()));
-    }
-    bundle.push((config_relative.clone(), config.yaml.into_bytes()));
-    write_bundle_observed(
+    install_prepared(
         out,
-        &bundle,
-        &config_relative,
+        prepare_config(chain, out, name, options, mimo)?,
         after_stage_write,
         before_install,
-    )?;
-
-    let config_path = out.join(&config_relative);
-    let mut written = vec![config_path];
-    if bypass.is_some() {
-        written.push(out.join(&bypass_relative));
-    }
-    let mut coeff_paths: Vec<_> = config.coeffs.into_iter().map(|(path, _)| path).collect();
-    coeff_paths.sort();
-    written.extend(coeff_paths);
-    Ok(written)
+    )
 }
 
 /// Calibration-level export wrapper.

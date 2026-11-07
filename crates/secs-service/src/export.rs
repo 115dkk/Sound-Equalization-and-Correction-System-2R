@@ -527,19 +527,17 @@ impl Service {
                     options.latency_ms = Some(labels.latency_ms);
                     options.mode = labels.mode;
                     let name = format!("secs_{}", options.mode);
-                    let safe = secs_camilla::safe_name(&name);
                     job.report_progress("export.camilla.prepare", 0, 1);
-                    secs_camilla::make_config(
+                    let prepared = secs_camilla::prepare_config(
                         chain,
                         folder,
-                        &folder.join("configs"),
-                        &format!("{safe}_"),
+                        &name,
                         &options,
                         export_mimo.as_ref(),
                     )
                     .map_err(export_error)?;
                     job.begin_commit()?;
-                    secs_camilla::write_config(chain, folder, &name, &options, export_mimo.as_ref())
+                    secs_camilla::install_prepared(folder, prepared, &|_, _| Ok(()), &|_, _| Ok(()))
                         .map_err(export_error)?
                 }
                 ExportKind::FilterText | ExportKind::EqualizerApo | ExportKind::Convolution => {
