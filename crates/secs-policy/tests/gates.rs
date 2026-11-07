@@ -1534,7 +1534,9 @@ fn example_and_binary_names_are_unique() {
 #[test]
 fn engine_note_codes_are_catalog_keys() {
     let root = repo_root();
-    let source = fs::read_to_string(root.join("crates/secs-engine/src/notes.rs")).unwrap();
+    let source = fs::read_to_string(root.join("crates/secs-engine/src/notes.rs"))
+        .unwrap()
+        .replace("\r\n", "\n");
     let records = source
         .split_once("pub const RECORD_CODES: &[&str] = &[")
         .expect("RECORD_CODES declaration")
