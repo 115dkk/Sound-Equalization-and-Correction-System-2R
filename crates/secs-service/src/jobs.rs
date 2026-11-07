@@ -109,6 +109,9 @@ impl JobContext {
             .iter_mut()
             .find(|job| job.snapshot.job == self.id && !job.snapshot.status.is_terminal())
         {
+            if job.snapshot.status == JobStatus::CancelRequested {
+                token.cancel();
+            }
             job.attached = Some(token);
         }
     }
@@ -565,6 +568,38 @@ mod tests {
         events.wait_finished(Duration::from_secs(2));
         assert!(!first.is_cancelled());
         assert!(second.is_cancelled());
+    }
+
+    #[test]
+    fn a_token_attached_after_the_cancel_request_is_cancelled_immediately() {
+        let registry = JobRegistry::default();
+        let events = Arc::new(Events::default());
+        let token = crate::measure::CancelToken::default();
+        let worker_token = token.clone();
+        let (ready_tx, ready_rx) = mpsc::channel();
+        let (attach_tx, attach_rx) = mpsc::channel();
+        let (attached_tx, attached_rx) = mpsc::channel();
+        let started = registry
+            .start(
+                JobKind::LevelMonitor,
+                events.clone(),
+                memory(),
+                move |job| {
+                    ready_tx.send(()).unwrap();
+                    attach_rx.recv().unwrap();
+                    job.attach_cancel(worker_token);
+                    attached_tx.send(()).unwrap();
+                    Ok(JobResult::Stopped)
+                },
+            )
+            .unwrap();
+        ready_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        registry.cancel(started.job).unwrap();
+        attach_tx.send(()).unwrap();
+        attached_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+
+        assert!(token.is_cancelled());
+        events.wait_finished(Duration::from_secs(2));
     }
 
     #[test]
