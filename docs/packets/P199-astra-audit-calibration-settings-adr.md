@@ -1,15 +1,49 @@
 # P199 (ASTRA): ADR 0055, calibration settings from one declaration, and the TD-248 entry checks
 
 Tree: `E:\wt\audit-api`, a git worktree on branch `audit/186-settings-adr`
-(Claude creates it from the then-current `fix/audit-186` after the Phase 1
-packets P183..P187 and the ADR packets P188/P189 have been rebased in; do not
-start before Claude says the branch exists). Every cargo command runs with
-`CARGO_TARGET_DIR=C:\cargo-target\audit-api` in the environment: export it
-once per shell and check it with `echo $CARGO_TARGET_DIR` before the first
-build (a build into the worktree's own `target/` fills drive E and stops the
-whole session). Commit on that branch, one commit per step below, in order.
-Do not push, do not rebase, do not spawn sub-agents, do not touch
-`audit-state.md`.
+(Claude created it from the current `fix/audit-186`; `git status` shows only
+an untracked `bindings/python/secs2r/_secs2r.pyd`, leave it). Every cargo
+command runs with `CARGO_TARGET_DIR=E:\cargo-target\audit-engine` in the
+environment: export it once per shell and check it with
+`echo $CARGO_TARGET_DIR` before the first build (a build into the
+worktree's own `target/` fills the drive and stops the whole session). That
+target is shared with Claude's verification runs ("Blocking waiting for
+file lock" means wait). Never run `cargo clean`, never delete anything under
+`E:\cargo-target`. No workspace-wide `cargo test`; per-package (`-p`) only,
+plus one `cargo clippy --workspace` at the end. Commit on that branch, one
+commit per step below, in order. Do not push, do not rebase, do not spawn
+sub-agents, do not touch `audit-state.md`. Another worker (P193, service and
+project Category B) runs at the same time in `E:\wt\audit-svc`: stay inside
+the allowed files so the branches merge.
+
+## Since this packet was written (2026-11-08)
+
+P202 (ADR 0052 step 1) already added to `crates/secs-types/src/rules.rs` a
+hand-written `pub const SCALAR_EDITS: &[ScalarEditRule]` (`ScalarEditRule
+{ kind, field, limit, policy }`, all `&'static str`), `SUB_LIMITS` with
+`filter_hz: (10.0, 300.0)`, `JOB_GROUPS` and the other tables, exported to
+`bindings/rules.ts`; `crates/secs-service/src/settings_edit.rs` and
+`jobs.rs` read them, and the screen's mock (packet P204, running now) looks
+`SCALAR_EDITS` up by `kind`. Consequences for this packet:
+
+- Step 1's macro generates `SCALAR_EDITS` and replaces the hand table. Keep
+  the Rust type name `ScalarEditRule`, its four fields and the exported
+  `rules.ts` shape; the rows may follow declaration order, but every `kind`
+  the hand table has must still be there with the same `field`, `limit` and
+  `policy` unless the current `validate_edit`/`apply` code proves the hand
+  table wrong (then say which row and why).
+- Decision 3's `sub_filter_hz` is `SUB_LIMITS.filter_hz` (one source, as the
+  decision already allows): do not add a second pair to `CalibrationLimits`.
+  Only `peq_bands: (0.0, 64.0)` is added there. Step 1's
+  `limits_table_has_the_two_new_entries` asserts
+  `CALIBRATION_LIMITS.peq_bands == (0.0, 64.0)` and
+  `SUB_LIMITS.filter_hz == (10.0, 300.0)`.
+- P189, P203 and P202 moved code in `secs-service` (settings store,
+  `commit(.., Finality)`, `ProjectSnapshot`), `secs-engine` (narrowed
+  public surface, ADR 0046) and the CLI (it now uses the public API and
+  `secs_sys::native_deps`). Line numbers below are stale; search by names.
+- `npm run typecheck` in `apps/secs2r/ui` must stay green: the bindings you
+  regenerate only add fields.
 
 Allowed files:
 
@@ -29,9 +63,10 @@ Allowed files:
   `calibration.settings_declaration` entry in the same style);
   `python3 .github/scripts/check_feature_tests.py` must accept it.
 
-Forbidden: `crates/secs-project/**` (ADR 0055 step 2, the `KNOWN_KEYS` round
-trip of the project file, is a later packet: the project adapter keeps its
-hand-written reads and writes for now and must keep passing), the screens
+- `crates/secs-project/src/calibration.rs` and its tests (step 5 only).
+
+Forbidden: the rest of `crates/secs-project/**` (P193 changes `record.rs`,
+`irs.rs`, `pyjson.rs` and `lib.rs` at the same time), the screens
 (`apps/secs2r/ui/**` beyond the regenerated bindings), `crates/secs-engine`
 outside the three paths above, `CHANGELOG.md`, `docs/**`.
 
@@ -153,8 +188,8 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 not "더하다"). Gate per step: `cargo fmt --all -- --check`,
 `cargo clippy -p <touched crates> --all-targets --locked -- -D warnings`,
 `cargo test -p <touched crates> --locked`; after step 3 and at the end
-`cargo test --workspace --locked` in the foreground (the engine goldens take
-about ten minutes; wait for them). The `engine_key`, `manual_key` and
+the per-package list of the Verification section in the foreground (the
+engine goldens take about ten minutes; wait for them). The `engine_key`, `manual_key` and
 `mimo_key` bytes must not change: the key tests in
 `secs-types/src/calibration.rs:734-930` and the service cache tests pin them.
 
@@ -302,8 +337,8 @@ bit-identical, which the recorded-stage tests prove; if any golden differs,
 stop and report (that would mean a guard changed a result, which this step
 must not do).
 
-Gate: `cargo test -p secs-engine -p secs-service --locked`, then
-`cargo test --workspace --locked`.
+Gate: `cargo test -p secs-engine -p secs-service --locked`, then the
+per-package list of the Verification section.
 
 Commit subject: `fix(audit): A-25 엔진 입구가 범위 밖 설정을 필드 이름과 함께 거부합니다 (#186 TD-248)`.
 
@@ -332,15 +367,41 @@ Gate: `cargo test -p secs2r-cli --locked`, `python3 .github/scripts/check_featur
 
 Commit subject: `refactor(audit): X-14 CLI의 project set이 표 한 줄로 편집을 만듭니다 (#186 A14)`.
 
-## Hand-off to the UI packet (P192 addendum; not yours)
+### Step 5 · X-14 · the project file's scalar round trip through `KNOWN_KEYS` (ADR 0055 step 2)
+
+This is a structural step inside the ADR: the upstream JSON bytes of a
+`.secs` file must not change, and the existing round-trip goldens of
+`secs-project` are the gate (no new behaviour, so no Red test; if a golden
+or an existing test has to change, undo the step and report it).
+
+- Before: `crates/secs-project/src/calibration.rs` `calibration_from_project`
+  reads every scalar and boolean by hand (`num(.., low, high)`,
+  `as_float`, the flag reads) and `calibration_json` writes them back in a
+  fixed key order.
+- After: the scalar and boolean reads and writes iterate `KNOWN_KEYS` (the
+  project-file key order step 1 generated) with the accessors the step-1
+  macro generates (one getter and one setter per scalar field over
+  `CalibrationSettings`, plus the JSON key and the read clamp the hand code
+  uses today); the structured fields (`subs_manual`, `bundle_layouts`, `xo`,
+  `rc_bands`, `room_dims_m`) keep their hand-written functions. The read
+  clamps stay the ones the hand code applies on load (for example
+  `RC_LO_READ` for the RC low edge), not the edit limits.
+- Deleted: the per-field scalar read and write lines the loop replaces.
+
+Gate: `cargo test -p secs-project -p secs-types -p secs-service --locked`
+(the oracle round-trip goldens in `crates/secs-project/tests` must pass
+byte-identical).
+
+Commit subject: `refactor(audit): X-14 KNOWN_KEYS 한 표로 프로젝트 파일의 스칼라 설정을 읽고 저장합니다 (#186 A14)`.
+
+## Hand-off to the UI packet (not yours)
 
 After step 1 the screen can read, from the regenerated bindings:
 
-- `bindings/CalibrationLimits.ts` with the two new keys `peq_bands` and
-  `sub_filter_hz` (the screen's `SUB_LIMITS.filterHz` becomes
-  `CALIBRATION_LIMITS.sub_filter_hz`);
-- `bindings/rules.ts` `SCALAR_EDITS: readonly { kind, field, limit, policy }[]`
-  and `KNOWN_KEYS`;
+- `bindings/CalibrationLimits.ts` with the new key `peq_bands` (the sub
+  filter corners are `SUB_LIMITS.filter_hz`, already generated by P202);
+- `bindings/rules.ts` `SCALAR_EDITS` in the same shape as today, and
+  `KNOWN_KEYS`;
 - `bindings/SettingEdit.ts` unchanged in shape.
 
 The screen step of ADR 0055 (`screens/calibrate/settingRows.ts` with about
@@ -348,31 +409,27 @@ The screen step of ADR 0055 (`screens/calibrate/settingRows.ts` with about
 disabledWhen, hint }` and one `SettingRow` component; the range-bands editor,
 the sub editor and the XO card stay hand-written; a test iterating the rows
 checks the 54 controls' ids, limits and edit kinds, and the `REACH_IDS` of
-`CalibrateScreen.test.tsx:1217-1328` for those rows come from the table) is
-Opus's work in P192. The mock service looks up `SCALAR_EDITS` to clamp or
-refuse (ADR 0052). List in your report every `SettingEdit` kind and the limit
-key it carries so Claude can paste the table into P192.
+`CalibrateScreen.test.tsx` for those rows come from the table) is a later
+Opus packet. The mock service looks up `SCALAR_EDITS` to clamp or refuse
+(ADR 0052). List in your report every `SettingEdit` kind and the limit key
+it carries so Claude can paste the table into that packet.
 
 ## Left out of this packet
 
-- ADR 0055 step 2 (`secs-project/src/calibration.rs` reading and writing the
-  scalars through `KNOWN_KEYS` and generated accessors): that crate is not in
-  this packet's files; `KNOWN_KEYS` is generated now so the later step only
-  swaps the reads. The hand-written project adapter must keep passing its
-  oracle round-trip goldens untouched.
 - The `CHANGELOG.md` line for the public-API behaviour change (out-of-range
   settings are now clamped or refused): Claude writes it.
 
 ## Verification (foreground; do not end the turn before they finish)
 
 ```
-echo $CARGO_TARGET_DIR                       # must print C:\cargo-target\audit-api
+echo $CARGO_TARGET_DIR                       # must print E:\cargo-target\audit-engine
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
-cargo test --workspace --locked
+cargo test -p secs-types -p secs-service -p secs-engine -p secs-project -p secs2r-cli -p secs-local-api --locked --no-fail-fast
+cargo test -p sound-equalization-and-correction-system-rust-api --all-features --locked
 cargo test -p secs-types --locked            # bindings and rules.ts regenerated and committed?
-git status --short apps/secs2r/ui/src/ipc/bindings  # commit content changes only (the generator writes LF)
-(cd apps/secs2r/ui && npm run typecheck)     # red only on consumers P192 owns; list every error in the report
+git -c core.safecrlf=false diff --ignore-cr-at-eol --stat -- apps/secs2r/ui/src/ipc/bindings  # commit content changes only
+(cd apps/secs2r/ui && npm run typecheck)     # must be green
 python3 .github/scripts/check_feature_tests.py
 git log --oneline fix/audit-186..audit/186-settings-adr
 ```
