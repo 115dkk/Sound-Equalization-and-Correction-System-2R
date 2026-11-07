@@ -85,13 +85,11 @@ pub enum Input {
     ConfigChanged {
         owner_session: Option<u32>,
     },
-    #[cfg_attr(not(test), allow(dead_code))]
     ChildExited {
         pid: Option<u32>,
         exit_code: i32,
         now: Instant,
     },
-    #[cfg_attr(not(test), allow(dead_code))]
     PortBusy {
         reason: &'static str,
         detail: String,
@@ -137,7 +135,6 @@ pub struct PendingTakeover {
 pub struct State {
     pub managed: HostManaged,
     pub running_child_session: Option<u32>,
-    pub restart_scheduled: bool,
     pub restart_due: Option<Instant>,
     restart: Supervisor,
     pub eqapo_error: Option<String>,
@@ -153,7 +150,6 @@ impl State {
         Self {
             managed,
             running_child_session,
-            restart_scheduled: false,
             restart_due: None,
             restart: Supervisor::new(),
             eqapo_error: None,
@@ -250,7 +246,6 @@ fn schedule_restart(state: &mut State, effects: &mut Vec<Effect>, now: Instant) 
         RestartDecision::RestartAfter(delay) => {
             state.restart_due = Some(now + delay);
             // Kept only until service_loop is routed through restart_due in the next step.
-            state.restart_scheduled = true;
             let until = (chrono::Utc::now()
                 + chrono::Duration::from_std(delay).unwrap_or_default())
             .to_rfc3339();
@@ -265,7 +260,6 @@ fn schedule_restart(state: &mut State, effects: &mut Vec<Effect>, now: Instant) 
         }
         RestartDecision::GiveUp => {
             state.restart_due = None;
-            state.restart_scheduled = false;
             effects.push(Effect::SetCamillaState(ManagedProcessState::GivenUp {
                 reason: GIVE_UP_REASON.into(),
             }));
@@ -324,7 +318,6 @@ pub fn decide(state: &State, input: Input) -> (State, Vec<Effect>) {
         }
         Input::StopManaging => {
             next.managed = HostManaged::default();
-            next.restart_scheduled = false;
             next.restart_due = None;
             next.eqapo_error = None;
             next.pending_takeover = None;
@@ -380,20 +373,17 @@ pub fn decide(state: &State, input: Input) -> (State, Vec<Effect>) {
                         effects.push(Effect::StopChild);
                     }
                     next.pending_takeover = None;
-                    next.restart_scheduled = false;
                     next.restart_due = None;
                 }
                 SessionEvent::Logoff | SessionEvent::ConsoleDisconnect if owner_matches => {
                     next.other_user = false;
                     if next.running_child_session.is_some()
-                        || next.restart_scheduled
                         || next.restart_due.is_some()
                         || next.pending_takeover.is_some()
                     {
                         effects.push(Effect::StopChild);
                     }
                     next.pending_takeover = None;
-                    next.restart_scheduled = false;
                     next.restart_due = None;
                 }
                 SessionEvent::Logoff | SessionEvent::ConsoleDisconnect => {
@@ -406,7 +396,6 @@ pub fn decide(state: &State, input: Input) -> (State, Vec<Effect>) {
                     {
                         effects.push(Effect::StopChild);
                         next.pending_takeover = None;
-                        next.restart_scheduled = false;
                         next.restart_due = None;
                     }
                 }
@@ -465,7 +454,6 @@ pub fn decide(state: &State, input: Input) -> (State, Vec<Effect>) {
             }));
         }
         Input::RestartTick { owner_session } => {
-            next.restart_scheduled = false;
             next.restart_due = None;
             if let (Some(session), Some(target)) = (owner_session, next.managed.camilla.clone()) {
                 schedule_takeover(&mut next, &mut effects, session, target);
@@ -1115,7 +1103,7 @@ mod tests {
             },
             Some(7),
         );
-        state.restart_scheduled = true;
+        state.restart_due = Some(Instant::now());
         let mut platform = FakePlatform::default();
 
         let (next, effects) = decide(
@@ -1130,7 +1118,7 @@ mod tests {
         drive(&mut state, effects, &mut platform).unwrap();
 
         assert_eq!(state.running_child_session, Some(7));
-        assert!(state.restart_scheduled);
+        assert!(state.restart_due.is_some());
         assert_eq!(platform.stops, 0);
 
         let (next, effects) = decide(
@@ -1144,7 +1132,7 @@ mod tests {
         state = next;
         drive(&mut state, effects, &mut platform).unwrap();
         assert_eq!(state.running_child_session, None);
-        assert!(!state.restart_scheduled);
+        assert_eq!(state.restart_due, None);
         assert_eq!(platform.stops, 1);
     }
 
@@ -1159,7 +1147,7 @@ mod tests {
             },
             None,
         );
-        state.restart_scheduled = true;
+        state.restart_due = Some(Instant::now());
         let mut platform = FakePlatform::default();
 
         let (next, effects) = decide(
@@ -1173,7 +1161,7 @@ mod tests {
         state = next;
         drive(&mut state, effects, &mut platform).unwrap();
 
-        assert!(!state.restart_scheduled);
+        assert_eq!(state.restart_due, None);
         assert_eq!(platform.stops, 1);
     }
 

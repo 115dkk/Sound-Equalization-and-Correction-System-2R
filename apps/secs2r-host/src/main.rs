@@ -21,7 +21,7 @@ use std::time::{Duration, Instant};
 
 use clap::{Parser, Subcommand};
 #[cfg(target_os = "windows")]
-use rules::{Core, ProcessAction, ProcessEvent, ProcessRules};
+use rules::Core;
 #[cfg(target_os = "windows")]
 use secs_types::ipc::{
     ErrorCode, HostManaged, HostRequest, HostResponse, IncludeState, IpcError, ManagedProcessState,
@@ -483,13 +483,6 @@ fn service_loop(
     {
         mark_other_user(&mut core, paths, session)?;
     }
-    // Whether anyone is logged on to the console, not whether that user owns
-    // the targets: a freshly installed service has no owner yet, and taking
-    // the owner check here made it ignore every later exit of the CamillaDSP
-    // it launched (no restart; manage-e2e step 6, 2026-10-30). Launches
-    // still check the owner through managing_session.
-    let mut process_rules = ProcessRules::new(secs_sys::host::active_console_session().is_some());
-    let mut restart_at = None;
     let mut transition_state = TransitionState::new(core.managed.clone(), None);
     if core.managed.camilla.is_some() && active_session.is_some() {
         let (next, effects) = transitions::decide(
@@ -504,9 +497,7 @@ fn service_loop(
             effects,
             &mut core,
             &mut child,
-            &mut process_rules,
             &mut watcher,
-            &mut restart_at,
             &config_sender,
             &work_sender,
             paths,
@@ -525,9 +516,7 @@ fn service_loop(
             effects,
             &mut core,
             &mut child,
-            &mut process_rules,
             &mut watcher,
-            &mut restart_at,
             &config_sender,
             &work_sender,
             paths,
@@ -542,9 +531,7 @@ fn service_loop(
             effects,
             &mut core,
             &mut child,
-            &mut process_rules,
             &mut watcher,
-            &mut restart_at,
             &config_sender,
             &work_sender,
             paths,
@@ -576,17 +563,6 @@ fn service_loop(
                         _ => unreachable!("matched a console connection event"),
                     };
                     let owner_matches = managing_session_or_none(&mut core, paths) == Some(session);
-                    let process_action = process_rules.apply(
-                        if owner_matches {
-                            ProcessEvent::Logon
-                        } else {
-                            ProcessEvent::Logoff
-                        },
-                        Instant::now(),
-                    );
-                    if process_action == ProcessAction::Launch {
-                        transition_state.running_child_session = None;
-                    }
                     let (next, effects) = transitions::decide(
                         &transition_state,
                         TransitionInput::Session {
@@ -601,9 +577,7 @@ fn service_loop(
                         effects,
                         &mut core,
                         &mut child,
-                        &mut process_rules,
                         &mut watcher,
-                        &mut restart_at,
                         &config_sender,
                         &work_sender,
                         paths,
@@ -627,9 +601,6 @@ fn service_loop(
                         transition_state.running_child_session() == Some(session);
                     let owner_session_ended =
                         transition_state.managed.owner_session_id == Some(session);
-                    if child_session_ended || owner_session_ended {
-                        let _ = process_rules.apply(ProcessEvent::Logoff, Instant::now());
-                    }
                     let (next, effects) = transitions::decide(
                         &transition_state,
                         TransitionInput::Session {
@@ -644,9 +615,7 @@ fn service_loop(
                         effects,
                         &mut core,
                         &mut child,
-                        &mut process_rules,
                         &mut watcher,
-                        &mut restart_at,
                         &config_sender,
                         &work_sender,
                         paths,
@@ -668,8 +637,9 @@ fn service_loop(
                 &mut core,
                 &mut child,
                 &mut transition_state,
-                &mut process_rules,
-                &mut restart_at,
+                &mut watcher,
+                &config_sender,
+                &work_sender,
                 paths,
             )?;
         }
@@ -686,9 +656,7 @@ fn service_loop(
                 effects,
                 &mut core,
                 &mut child,
-                &mut process_rules,
                 &mut watcher,
-                &mut restart_at,
                 &config_sender,
                 &work_sender,
                 paths,
@@ -709,9 +677,7 @@ fn service_loop(
                 effects,
                 &mut core,
                 &mut child,
-                &mut process_rules,
                 &mut watcher,
-                &mut restart_at,
                 &config_sender,
                 &work_sender,
                 paths,
@@ -720,7 +686,7 @@ fn service_loop(
 
         let child_exit = match child.as_ref() {
             Some(running) => match running.wait(Duration::ZERO) {
-                Ok(Some(exit_code)) => Some(Some(exit_code)),
+                Ok(Some(exit_code)) => Some(i32::try_from(exit_code).unwrap_or(i32::MAX)),
                 Ok(None) => None,
                 Err(error) => {
                     record(
@@ -728,7 +694,7 @@ fn service_loop(
                         paths,
                         rules::log_line("wait_failed", [("detail".to_owned(), error.detail)]),
                     )?;
-                    Some(None)
+                    Some(-1_i32)
                 }
             },
             None => None,
@@ -736,58 +702,31 @@ fn service_loop(
         if let Some(exit_code) = child_exit {
             let pid = core.camilla.pid.take();
             child = None;
-            transition_state.running_child_session = None;
-            record(
+            let (next, effects) = transitions::decide(
+                &transition_state,
+                TransitionInput::ChildExited {
+                    pid,
+                    exit_code,
+                    now: Instant::now(),
+                },
+            );
+            transition_state = next;
+            drive_transition(
+                &mut transition_state,
+                effects,
                 &mut core,
+                &mut child,
+                &mut watcher,
+                &config_sender,
+                &work_sender,
                 paths,
-                rules::log_line(
-                    "exit",
-                    [
-                        (
-                            "pid".to_owned(),
-                            pid.map_or_else(String::new, |pid| pid.to_string()),
-                        ),
-                        (
-                            "code".to_owned(),
-                            exit_code.map_or_else(|| "unknown".to_owned(), |code| code.to_string()),
-                        ),
-                    ],
-                ),
             )?;
-            match process_rules.apply(ProcessEvent::Exit, Instant::now()) {
-                ProcessAction::RestartAfter(delay) => {
-                    let deadline = Instant::now() + delay;
-                    restart_at = Some(deadline);
-                    transition_state.restart_scheduled = true;
-                    core.camilla.restarts_in_window += 1;
-                    core.camilla.state = ManagedProcessState::BackingOff {
-                        until: (chrono::Utc::now()
-                            + chrono::Duration::from_std(delay).unwrap_or_default())
-                        .to_rfc3339(),
-                    };
-                    record(
-                        &mut core,
-                        paths,
-                        rules::log_line(
-                            "restart",
-                            [("after_ms".to_owned(), delay.as_millis().to_string())],
-                        ),
-                    )?;
-                }
-                ProcessAction::GiveUp => {
-                    transition_state.restart_scheduled = false;
-                    let reason = "five exits within five minutes";
-                    core.camilla.state = ManagedProcessState::GivenUp {
-                        reason: reason.into(),
-                    };
-                    record(&mut core, paths, rules::given_up_line(reason))?;
-                }
-                _ => {}
-            }
         }
 
-        if restart_at.is_some_and(|deadline| Instant::now() >= deadline) {
-            restart_at = None;
+        if transition_state
+            .restart_due
+            .is_some_and(|deadline| Instant::now() >= deadline)
+        {
             let owner_session = managing_session_or_none(&mut core, paths);
             let (next, effects) = transitions::decide(
                 &transition_state,
@@ -799,9 +738,7 @@ fn service_loop(
                 effects,
                 &mut core,
                 &mut child,
-                &mut process_rules,
                 &mut watcher,
-                &mut restart_at,
                 &config_sender,
                 &work_sender,
                 paths,
@@ -835,9 +772,7 @@ fn service_loop(
                         &mut core,
                         &mut transition_state,
                         &mut child,
-                        &mut process_rules,
                         &mut watcher,
-                        &mut restart_at,
                         &config_sender,
                         &work_sender,
                         paths,
@@ -873,7 +808,6 @@ struct RealTransitionPlatform<'a> {
     core: &'a mut Core,
     child: &'a mut Option<secs_sys::host::ManagedChild>,
     watcher: &'a mut Option<secs_sys::host::ConfigWatcher>,
-    restart_at: &'a mut Option<Instant>,
     config_sender: &'a mpsc::Sender<()>,
     work_sender: &'a mpsc::Sender<HostWorkResult>,
     paths: &'a Paths,
@@ -904,7 +838,6 @@ impl TransitionPlatform for RealTransitionPlatform<'_> {
     }
 
     fn stop_child(&mut self) -> Result<(), IpcError> {
-        *self.restart_at = None;
         if let Some(running) = self.child.take() {
             running.stop()?;
         }
@@ -933,7 +866,6 @@ impl TransitionPlatform for RealTransitionPlatform<'_> {
         session: u32,
         target: &secs_types::ipc::ManagedCamilla,
     ) -> Result<(), IpcError> {
-        *self.restart_at = None;
         let pending = transitions::PendingTakeover {
             session,
             target: target.clone(),
@@ -958,9 +890,7 @@ fn drive_transition(
     effects: Vec<transitions::Effect>,
     core: &mut Core,
     child: &mut Option<secs_sys::host::ManagedChild>,
-    _process_rules: &mut ProcessRules,
     watcher: &mut Option<secs_sys::host::ConfigWatcher>,
-    restart_at: &mut Option<Instant>,
     config_sender: &mpsc::Sender<()>,
     work_sender: &mpsc::Sender<HostWorkResult>,
     paths: &Paths,
@@ -970,7 +900,6 @@ fn drive_transition(
         core,
         child,
         watcher,
-        restart_at,
         config_sender,
         work_sender,
         paths,
@@ -990,9 +919,7 @@ fn handle_request(
     core: &mut Core,
     transition_state: &mut TransitionState,
     child: &mut Option<secs_sys::host::ManagedChild>,
-    process_rules: &mut ProcessRules,
     watcher: &mut Option<secs_sys::host::ConfigWatcher>,
-    restart_at: &mut Option<Instant>,
     config_sender: &mpsc::Sender<()>,
     work_sender: &mpsc::Sender<HostWorkResult>,
     paths: &Paths,
@@ -1027,9 +954,7 @@ fn handle_request(
                 effects,
                 core,
                 child,
-                process_rules,
                 watcher,
-                restart_at,
                 config_sender,
                 work_sender,
                 paths,
@@ -1050,9 +975,7 @@ fn handle_request(
                 effects,
                 core,
                 child,
-                process_rules,
                 watcher,
-                restart_at,
                 config_sender,
                 work_sender,
                 paths,
@@ -1389,60 +1312,15 @@ fn takeover_work(pending: &transitions::PendingTakeover) -> Result<TakeoverWorkR
 
 #[cfg(target_os = "windows")]
 #[allow(clippy::too_many_arguments)]
-fn schedule_failed_launch(
-    reason: &str,
-    core: &mut Core,
-    transition_state: &mut TransitionState,
-    process_rules: &mut ProcessRules,
-    restart_at: &mut Option<Instant>,
-    paths: &Paths,
-) -> Result<(), IpcError> {
-    transition_state.running_child_session = None;
-    core.camilla.pid = None;
-    match process_rules.apply(ProcessEvent::Exit, Instant::now()) {
-        ProcessAction::RestartAfter(delay) => {
-            *restart_at = Some(Instant::now() + delay);
-            transition_state.restart_scheduled = true;
-            core.camilla.restarts_in_window += 1;
-            core.camilla.state = ManagedProcessState::BackingOff {
-                until: (chrono::Utc::now() + chrono::Duration::from_std(delay).unwrap_or_default())
-                    .to_rfc3339(),
-            };
-            record(
-                core,
-                paths,
-                rules::log_line(
-                    "restart",
-                    [
-                        ("after_ms".to_owned(), delay.as_millis().to_string()),
-                        ("reason".to_owned(), reason.to_owned()),
-                    ],
-                ),
-            )?;
-        }
-        ProcessAction::GiveUp => {
-            *restart_at = None;
-            transition_state.restart_scheduled = false;
-            core.camilla.state = ManagedProcessState::GivenUp {
-                reason: reason.into(),
-            };
-            record(core, paths, rules::given_up_line(reason))?;
-        }
-        _ => {}
-    }
-    Ok(())
-}
-
-#[cfg(target_os = "windows")]
-#[allow(clippy::too_many_arguments)]
 fn finish_takeover_work(
     pending: transitions::PendingTakeover,
     result: Result<TakeoverWorkResult, IpcError>,
     core: &mut Core,
     child: &mut Option<secs_sys::host::ManagedChild>,
     transition_state: &mut TransitionState,
-    process_rules: &mut ProcessRules,
-    restart_at: &mut Option<Instant>,
+    watcher: &mut Option<secs_sys::host::ConfigWatcher>,
+    config_sender: &mpsc::Sender<()>,
+    work_sender: &mpsc::Sender<HostWorkResult>,
     paths: &Paths,
 ) -> Result<(), IpcError> {
     if transition_state.pending_takeover.as_ref() != Some(&pending) {
@@ -1485,7 +1363,6 @@ fn finish_takeover_work(
             if let Some(previous) = child.replace(running) {
                 let _ = previous.stop();
             }
-            process_rules.launched();
             transition_state.running_child_session = Some(pending.session);
             core.camilla.state = ManagedProcessState::Running;
             core.camilla.pid = Some(pid);
@@ -1502,26 +1379,27 @@ fn finish_takeover_work(
             )
         }
         Ok(TakeoverWorkResult::Busy { reason, detail }) => {
-            record(
-                core,
-                paths,
-                rules::log_line(
-                    "port_busy",
-                    [
-                        ("port".to_owned(), pending.target.port.to_string()),
-                        ("reason".to_owned(), reason.to_owned()),
-                        ("detail".to_owned(), detail),
-                    ],
-                ),
-            )?;
-            schedule_failed_launch(
-                "port_busy",
-                core,
+            core.camilla.pid = None;
+            let (next, effects) = transitions::decide(
                 transition_state,
-                process_rules,
-                restart_at,
+                TransitionInput::PortBusy {
+                    reason,
+                    detail,
+                    now: Instant::now(),
+                },
+            );
+            *transition_state = next;
+            drive_transition(
+                transition_state,
+                effects,
+                core,
+                child,
+                watcher,
+                config_sender,
+                work_sender,
                 paths,
-            )
+            )?;
+            Ok(())
         }
         Ok(TakeoverWorkResult::NoSession) => {
             transition_state.running_child_session = None;
@@ -1530,19 +1408,32 @@ fn finish_takeover_work(
             Ok(())
         }
         Err(error) => {
+            let detail = error.detail;
             record(
                 core,
                 paths,
-                rules::log_line("launch_failed", [("detail".to_owned(), error.detail)]),
+                rules::log_line("launch_failed", [("detail".to_owned(), detail.clone())]),
             )?;
-            schedule_failed_launch(
-                "launch_failed",
-                core,
+            let (next, effects) = transitions::decide(
                 transition_state,
-                process_rules,
-                restart_at,
+                TransitionInput::PortBusy {
+                    reason: "launch_failed",
+                    detail,
+                    now: Instant::now(),
+                },
+            );
+            *transition_state = next;
+            drive_transition(
+                transition_state,
+                effects,
+                core,
+                child,
+                watcher,
+                config_sender,
+                work_sender,
                 paths,
-            )
+            )?;
+            Ok(())
         }
     }
 }
@@ -1554,8 +1445,9 @@ fn finish_host_work(
     core: &mut Core,
     child: &mut Option<secs_sys::host::ManagedChild>,
     transition_state: &mut TransitionState,
-    process_rules: &mut ProcessRules,
-    restart_at: &mut Option<Instant>,
+    watcher: &mut Option<secs_sys::host::ConfigWatcher>,
+    config_sender: &mpsc::Sender<()>,
+    work_sender: &mpsc::Sender<HostWorkResult>,
     paths: &Paths,
 ) -> Result<(), IpcError> {
     match work {
@@ -1565,8 +1457,9 @@ fn finish_host_work(
             core,
             child,
             transition_state,
-            process_rules,
-            restart_at,
+            watcher,
+            config_sender,
+            work_sender,
             paths,
         ),
         HostWorkResult::Repair { target, result } => {

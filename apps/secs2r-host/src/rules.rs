@@ -2,10 +2,9 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use base64::Engine;
-use secs_apply::supervise::{Decision, RestartPolicy, Supervisor};
 use secs_types::ipc::{
     ErrorCode, HostLogLine, HostManaged, HostRequest, HostResponse, HostStatus, IncludeState,
     IpcError, ManagedProcess, ManagedProcessState,
@@ -738,75 +737,6 @@ pub fn after_exit_decision(still_answering: bool) -> TakeoverDecision {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ProcessEvent {
-    Exit,
-    Logon,
-    Logoff,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ProcessAction {
-    Launch,
-    Stop,
-    RestartAfter(std::time::Duration),
-    GiveUp,
-    None,
-}
-
-#[derive(Debug)]
-pub struct ProcessRules {
-    supervisor: Supervisor,
-    has_session: bool,
-    running: bool,
-}
-
-impl ProcessRules {
-    pub fn new(has_session: bool) -> Self {
-        Self {
-            supervisor: Supervisor::new(RestartPolicy::default()),
-            has_session,
-            running: false,
-        }
-    }
-
-    pub fn launched(&mut self) {
-        self.running = true;
-    }
-
-    pub fn apply(&mut self, event: ProcessEvent, now: Instant) -> ProcessAction {
-        match event {
-            ProcessEvent::Logoff => {
-                self.has_session = false;
-                if std::mem::replace(&mut self.running, false) {
-                    ProcessAction::Stop
-                } else {
-                    ProcessAction::None
-                }
-            }
-            ProcessEvent::Logon => {
-                self.has_session = true;
-                self.supervisor.on_stable();
-                if self.running {
-                    ProcessAction::None
-                } else {
-                    ProcessAction::Launch
-                }
-            }
-            ProcessEvent::Exit => {
-                self.running = false;
-                if !self.has_session {
-                    return ProcessAction::None;
-                }
-                match self.supervisor.on_exit(now) {
-                    Decision::RestartAfter(delay) => ProcessAction::RestartAfter(delay),
-                    Decision::GiveUp => ProcessAction::GiveUp,
-                }
-            }
-        }
-    }
-}
-
 pub fn mark_other_user(process: &mut ManagedProcess) -> bool {
     process.pid = None;
     if process.state == ManagedProcessState::OtherUser {
@@ -815,10 +745,6 @@ pub fn mark_other_user(process: &mut ManagedProcess) -> bool {
         process.state = ManagedProcessState::OtherUser;
         true
     }
-}
-
-pub fn given_up_line(reason: &str) -> HostLogLine {
-    log_line("given_up", [("reason".to_owned(), reason.to_owned())])
 }
 
 pub fn log_line(event: &str, fields: impl IntoIterator<Item = (String, String)>) -> HostLogLine {
@@ -832,7 +758,7 @@ pub fn log_line(event: &str, fields: impl IntoIterator<Item = (String, String)>)
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
 
     use secs_types::ipc::{ManagedCamilla, ManagedEqApo};
 
@@ -1192,38 +1118,6 @@ mod tests {
             takeover_decision(true, None),
             TakeoverDecision::KeepOwnChild
         );
-
-        let now = Instant::now();
-        let mut process = ProcessRules::new(true);
-        assert_eq!(
-            process.apply(ProcessEvent::Exit, now),
-            ProcessAction::RestartAfter(Duration::from_secs(1))
-        );
-    }
-
-    #[test]
-    fn exit_logon_and_logoff_choose_supervision_actions() {
-        let start = Instant::now();
-        let mut rules = ProcessRules::new(true);
-        assert_eq!(
-            rules.apply(ProcessEvent::Logon, start),
-            ProcessAction::Launch
-        );
-        rules.launched();
-        assert_eq!(
-            rules.apply(ProcessEvent::Exit, start),
-            ProcessAction::RestartAfter(Duration::from_secs(1))
-        );
-        rules.launched();
-        assert_eq!(
-            rules.apply(ProcessEvent::Logoff, start),
-            ProcessAction::Stop
-        );
-        assert_eq!(rules.apply(ProcessEvent::Exit, start), ProcessAction::None);
-        assert_eq!(
-            rules.apply(ProcessEvent::Logon, start),
-            ProcessAction::Launch
-        );
     }
 
     #[test]
@@ -1294,7 +1188,7 @@ mod tests {
     }
 
     #[test]
-    fn other_user_changes_state_once_and_given_up_log_names_the_reason() {
+    fn other_user_changes_state_once() {
         let mut process = ManagedProcess {
             state: ManagedProcessState::Running,
             pid: Some(42),
@@ -1304,13 +1198,6 @@ mod tests {
         assert_eq!(process.state, ManagedProcessState::OtherUser);
         assert_eq!(process.pid, None);
         assert!(!mark_other_user(&mut process));
-
-        let line = given_up_line("port_busy");
-        assert_eq!(line.event, "given_up");
-        assert_eq!(
-            line.fields.get("reason").map(String::as_str),
-            Some("port_busy")
-        );
     }
 
     #[test]
