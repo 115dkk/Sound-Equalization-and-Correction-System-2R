@@ -6,16 +6,9 @@ import type { JobEvent } from "../ipc/bindings/JobEvent";
 import type { MeasureConfigureParams } from "../ipc/bindings/MeasureConfigureParams";
 import type { ResultCurvesParams } from "../ipc/bindings/ResultCurvesParams";
 import type { ResultCurvesResult } from "../ipc/bindings/ResultCurvesResult";
-import type { CamillaDevices } from "../ipc/bindings/CamillaDevices";
-import type { ExportKind } from "../ipc/bindings/ExportKind";
-import type { MdatScope } from "../ipc/bindings/MdatScope";
-import type { XoRecommendation } from "../ipc/bindings/XoRecommendation";
-import type { ConnectPath, MeterReading, MicCalibrationView, MonitorState, RewProblem } from "../screens/connect/types";
-import type { CalibrateActions, CalibrateView } from "../screens/calibrate/types";
+import type { CalibrateActions } from "../screens/calibrate/types";
 import { isRangeEdit, rangeRejection } from "../screens/calibrate/settingsView";
 import { createBandTargets, settingEdit } from "./settingsEdits";
-import type { ApplyRun, ApplyTarget, ExportRun, HostFailure } from "../screens/export/types";
-import type { MeasureView } from "../screens/measure/types";
 import { createResource as resource, createStore, type Failure } from "./store";
 import { isActiveJob } from "./jobRetention";
 import { createJobLedger, type FinishedJob, type JobRequestContext, type LedgerJob } from "./jobLedger";
@@ -29,6 +22,7 @@ import type { DspFields } from "../ipc/bindings/DspFields";
 import type { LayoutSetParams } from "../ipc/bindings/LayoutSetParams";
 import { wrongOutput } from "../screens/tutorial/questHost";
 import { coalesceExternalChanges, externalRefresh } from "./externalChanges";
+import { PROJECT_RESOURCES, replaceProject, type HostState } from "./projectScope";
 
 /** A DSP edit: a preset to select, or fields over the latest ones (`preset: null`). */
 type DspEdit = DspFields & { preset: string | null };
@@ -44,31 +38,6 @@ type SessionCall = <M extends Request["method"]>(
  */
 export type CallContext = Pick<JobRequestContext, "calibrateOnFailure"> & { ownsFailure?: boolean };
 
-type HostState = Pick<MeasureView, "selected" | "graphHidden" | "plotRange" | "mdat" | "warnings"> & {
-  computeLoading: boolean; computeSaving: boolean; computeError: import("../ipc/bindings/IpcError").IpcError | null;
-  current: StepId; path: ConnectPath | null;
-  tab: CalibrateView["tab"]; channel: string | null; xoGroup: string | null; previewHz: number | null;
-  targetEdit: CalibrateView["targetEdit"]; xoEdit: CalibrateView["xoEdit"];
-  meter: MeterReading | null; monitor: MonitorState; playing: string | null; playingAll: boolean; masterDbfs: number;
-  /** Why the level monitor job failed (the level check shows it); null once the monitor starts again or is switched off. */
-  monitorError: import("../ipc/bindings/IpcError").IpcError | null;
-  xoRecTurnedOffByEdit: boolean;
-  xoRecommendation: XoRecommendation | null; runs: Partial<Record<ExportKind, ExportRun>>; mdatScope: MdatScope;
-  /** 내보내기: the design name field's text (`""` = no name) and the CamillaDSP devices (file placeholders by default). */
-  designName: string; camillaDevices: CamillaDevices;
-  /** 내보내기: the convolution IR's extra rates in Hz (none by default); like the devices, kept for the session across projects. */
-  extraRates: number[];
-  /** 내보내기의 적용 (ADR 0018): how each target's last apply ended, the CamillaDSP address field's unsaved text, an apply_status read and a revert_eqapo in flight. */
-  applyRuns: Partial<Record<ApplyTarget, ApplyRun>>; applyAddressDraft: string | null; applyChecking: boolean; applyReverting: boolean;
-  /** 관리: the CamillaDSP executable field's unsaved text, a host_install or host_stop_managing in flight, and the last of them that failed. */
-  applyExeDraft: string | null; hostInstalling: boolean; hostStopping: boolean; hostFailure: HostFailure | null;
-  failure: CalibrateView["failure"]; rangeRejection: CalibrateView["rangeRejection"]; rewLaunch: "idle" | "checking" | "launching";
-  rewProblem: RewProblem | null; rewProblemDetail: string | null; readingRew: boolean;
-  switchingRewDriver: boolean;
-  micCalBusy: MicCalibrationView["busy"]; micCalError: MicCalibrationView["error"];
-  /** Projects opened or created in this window; screens reset what they hid for the previous one when it changes. */
-  opened: number;
-};
 
 export function createSession(ipc: Ipc) {
   let pending = 0;
@@ -169,13 +138,16 @@ export function createSession(ipc: Ipc) {
       return value;
     }, (error) => { report(error); appSettingsFailure = errors.getSnapshot()?.id ?? null; }),
   };
-  function clearProjectResources() {
+  /** The session's own part of a project replacement (ADR 0056); `replaceProject` empties the table's stores and host fields after it. */
+  function resetProjectRuntime() {
+    jobs.replaceProject();
     projectFailures.clear();
     invalidateProjectFollowUps();
-    for (const key of ["project", "config", "notices", "dsp", "layout", "estimate", "measurementSettings", "records", "curves", "levels", "settings", "micCalibration", "modeSpec", "target", "results", "lines", "subWarnings", "folder", "applyStatus"] as const) {
-      stores[key].set(null);
-    }
+    autoRefresh?.changed();
+    curveVersion++;
+    tutorialReady.set(false);
   }
+  const scope = { host, stores, resetProjectRuntime };
   function curveParams(): ResultCurvesParams {
     const h = host.getSnapshot();
     return { tab: h.tab, channel: h.channel, group: h.xoGroup, xo_hz: h.previewHz, corrected: null };
@@ -274,7 +246,7 @@ export function createSession(ipc: Ipc) {
         if (["undo", "redo"].includes(request.method)) host.set({ xoRecTurnedOffByEdit: false });
         const effects = effectsOf({ request: request.method });
         const ctx: EffectContext = { host, stores, jobs, call, configure, run, canContinueRefresh, source: { request, data },
-          replaceProject: () => { jobs.replaceProject(); clearProjectResources(); autoRefresh?.changed(); epoch = jobs.epoch; curveVersion++; curveState.set(null); tutorialReady.set(false); },
+          replaceProject: () => { replaceProject(scope, "request"); epoch = jobs.epoch; },
         };
         for (const rule of effects.rules) rule.beforeReload?.(ctx);
         await reload(effects.reload);
@@ -639,10 +611,7 @@ export function createSession(ipc: Ipc) {
     if (methods.some((method) => refreshInputs.includes(method as Request["method"]))) autoRefresh?.changed();
     const replacesProject = plans.some((plan) => plan.replaceProject);
     if (replacesProject) {
-      jobs.replaceProject(); clearProjectResources(); autoRefresh?.changed(); curveVersion++; curveState.set(null); tutorialReady.set(false);
-      for (const store of Object.values(stores)) if ("invalidate" in store) store.invalidate();
-      stores.measurementSettings.set(null); stores.micCalibration.set(null);
-      host.set({ micCalBusy: null, micCalError: null, path: null, selected: null, mdat: null, warnings: [], runs: {}, applyRuns: {}, mdatScope: "all", channel: null, xoGroup: null, xoRecommendation: null, xoRecTurnedOffByEdit: false, failure: null, rangeRejection: null, opened: host.getSnapshot().opened + 1 });
+      replaceProject(scope, "external");
     }
     const replacementVersion = projectVersion;
     const keys = [...new Set(plans.flatMap((plan) => plan.resources))];
@@ -685,7 +654,8 @@ export function createSession(ipc: Ipc) {
       try { stores.project.set(await ipc.request({ method: "project_info" })); }
       catch (error) { report(error); }
       if (stores.project.getSnapshot()) {
-        await reload(Object.keys(stores).filter((key) => !["bootstrap", "measurementSettings", "appSettings", "computeStatus", "methods", "rew", "applyStatus"].includes(key)) as (keyof typeof stores)[]);
+        // The project's resources: measurementSettings comes from measure_config_get below, apply_status only when a target is set to 적용.
+        await reload(PROJECT_RESOURCES.filter((key) => key !== "measurementSettings" && key !== "applyStatus"));
         // A window reloaded over a project the service still holds reads its
         // stored method, as opening it does; call() reports a failure.
         await call({ method: "measure_config_get" }).catch(() => {});
@@ -714,7 +684,7 @@ export function createSession(ipc: Ipc) {
       startPromise = null;
     });
   }
-  return { ipc, stores, host, jobs, errors, ready, tutorialReady, call, run, settled, writers, configure, startTutorial, refreshCurves, ensureSaved, monitor, start, dispose,
+  return { ipc, stores, host, jobs, errors, ready, tutorialReady, call, run, settled, writers, configure, startTutorial, refreshCurves, ensureSaved, monitor, start, dispose, resetProjectRuntime,
     canContinueRefresh, projectEditsSettled, projectGuard, editSetting,
     setSavePromptOpen: (open: boolean) => { savePromptOpen = open; autoRefresh?.check(); },
     hasPendingProjectEdits: () => pendingProjectEdits > 0,

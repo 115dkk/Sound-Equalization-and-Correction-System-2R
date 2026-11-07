@@ -79,13 +79,8 @@ export const RULES: readonly Rule[] = [
   },
   {
     name: "project.replace", when: requested("project_new", "project_open"),
-    // The epoch, curve generation and host selection reset before reloads.
-    beforeReload: (ctx) => {
-      ctx.replaceProject();
-      ctx.stores.measurementSettings.set(null);
-      ctx.stores.micCalibration.set(null);
-      ctx.host.set({ micCalBusy: null, micCalError: null, path: null, selected: null, mdat: null, warnings: [], runs: {}, applyRuns: {}, mdatScope: "all", designName: "", channel: null, xoGroup: null, xoRecommendation: null, xoRecTurnedOffByEdit: false, failure: null, rangeRejection: null, opened: ctx.host.getSnapshot().opened + 1 });
-    },
+    // The epoch, curve generation, project resources and host fields reset before reloads (projectScope.ts, ADR 0056).
+    beforeReload: (ctx) => { ctx.replaceProject(); },
     // Project replacement reads the stored method; tutorial setup owns writes.
     apply: async ({ call }) => { await call({ method: "measure_config_get" }); },
   },
