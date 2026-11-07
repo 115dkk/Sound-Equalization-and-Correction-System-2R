@@ -45,6 +45,51 @@ impl ExportResult {
     }
 }
 
+struct StagedMdatWriter {
+    destination: std::path::PathBuf,
+    bytes: Vec<u8>,
+}
+
+impl StagedMdatWriter {
+    fn prepare(
+        run: &ExportRun<'_>,
+        folder: &Path,
+        mimo: Option<&secs_export::MimoResponses>,
+        spl_offset: Option<f64>,
+        now_ms: i64,
+        uuid: &crate::UuidSource,
+    ) -> Result<Self, IpcError> {
+        let label = run.settings.label();
+        let items = match mimo {
+            Some(mimo) => secs_export::stage_items_mimo(run, mimo, Some(&label)),
+            None => secs_export::stage_items(run, Some(&label)),
+        }
+        .map_err(export_error)?;
+        let mut uuid = lock(uuid);
+        let uuids = (0..items.len())
+            .map(|_| uuid.as_mut()())
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(export_error)?;
+        let mut uuids = uuids.into_iter();
+        let bytes = secs_mdat::build(&items, secs_mdat::TEMPLATE, spl_offset, now_ms, &mut || {
+            uuids.next().expect("one UUID per staged mdat item")
+        })
+        .map_err(export_error)?;
+        Ok(Self {
+            destination: folder.join(format!("SECS 보정 설계 {label}.mdat")),
+            bytes,
+        })
+    }
+
+    fn write(self) -> Result<std::path::PathBuf, IpcError> {
+        if let Some(parent) = self.destination.parent() {
+            std::fs::create_dir_all(parent).map_err(export_error)?;
+        }
+        secs_types::fs::write_atomic_bytes(&self.destination, &self.bytes).map_err(export_error)?;
+        Ok(self.destination)
+    }
+}
+
 struct CamillaWriter<'a> {
     chain: &'a secs_types::chain::SignalChain,
     folder: &'a Path,
@@ -955,37 +1000,39 @@ impl Service {
                     let original_values = originals
                         .as_ref()
                         .map_or(&[][..], |loaded| loaded.values.as_slice());
-                    job.begin_commit()?;
                     let run = ExportRun {
                         design: &design,
                         settings: &settings,
                     };
-                    let mut uuid = lock(&uuid);
-                    let destination = if kind == ExportKind::StagedMdat {
-                        secs_export::export_mdat_with_mimo_using(
+                    if kind == ExportKind::StagedMdat {
+                        let writer = StagedMdatWriter::prepare(
                             &run,
                             folder,
                             mimo.as_ref(),
                             spl_offset,
                             now_ms,
-                            uuid.as_mut(),
-                        )
-                        .map_err(export_error)?
+                            &uuid,
+                        )?;
+                        job.begin_commit()?;
+                        vec![writer.write()?]
                     } else {
-                        secs_export::export_rew_mdat_using(
-                            Some(&run),
-                            mdat_scope,
-                            original_values,
-                            folder,
-                            mimo.as_ref(),
-                            Some(&sources.values),
-                            spl_offset,
-                            now_ms,
-                            uuid.as_mut(),
-                        )
-                        .map_err(rew_export_error)?
-                    };
-                    vec![destination]
+                        job.begin_commit()?;
+                        let mut uuid = lock(&uuid);
+                        vec![
+                            secs_export::export_rew_mdat_using(
+                                Some(&run),
+                                mdat_scope,
+                                original_values,
+                                folder,
+                                mimo.as_ref(),
+                                Some(&sources.values),
+                                spl_offset,
+                                now_ms,
+                                uuid.as_mut(),
+                            )
+                            .map_err(rew_export_error)?,
+                        ]
+                    }
                 }
             };
             if let Some(path) = write_compute_provenance(folder, compute_report.as_ref())? {
@@ -1266,6 +1313,20 @@ mod tests {
                 fail,
             })
         })
+    }
+
+    #[test]
+    fn staged_mdat_writer_stores_the_same_files_main_config_and_design_id() {
+        let folder =
+            std::env::temp_dir().join(format!("secs-staged-writer-{}", std::process::id()));
+        let destination = folder.join("SECS 보정 설계 mixed.mdat");
+        let writer = StagedMdatWriter {
+            destination: destination.clone(),
+            bytes: vec![1, 2, 3],
+        };
+        assert_eq!(writer.write().unwrap(), destination);
+        assert_eq!(std::fs::read(&destination).unwrap(), [1, 2, 3]);
+        std::fs::remove_dir_all(folder).unwrap();
     }
 
     #[test]
