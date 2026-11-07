@@ -314,7 +314,7 @@ fn verify_items(name: &str, actual: &[MeasurementInput], expected: &Value) {
 #[test]
 fn public_item_builders_return_errors_for_invalid_design_td225() {
     let mut case = replay_case("dolby");
-    case.design.chain.mains[0].role = "missing".into();
+    case.design.signal_chain_mut().mains[0].role = "missing".into();
     let settings: CalibrationSettings = serde_json::from_value(case.settings).unwrap();
     let run = ExportRun {
         design: &case.design,
@@ -399,7 +399,7 @@ fn export_items_and_source_environments_match_oracle() {
             &output["before_after"],
         );
         if let Some(sources) = sources {
-            let role_sources = &sources[&run.design.replay.config().main_position];
+            let role_sources = &sources[&run.design.main_position()];
             assert!(before_after.iter().any(|item| item.source_info.is_some()));
             for (role, source) in role_sources {
                 let measured = before_after
@@ -489,8 +489,8 @@ fn rew_mdat_scopes_choose_items_and_names() {
         design: &case.design,
         settings: &settings,
     };
-    let position = run.design.replay.config().main_position;
-    let role = run.design.chain.mains[0].role.as_str();
+    let position = run.design.main_position();
+    let role = run.design.main_roles().next().unwrap();
     let originals = vec![
         original(position, role, 96_000, SourceInfo::default()),
         original(position + 1, role, 44_100, SourceInfo::default()),
@@ -551,8 +551,8 @@ fn all_scope_takes_stored_originals_and_strips_curves_from_results() {
         design: &case.design,
         settings: &settings,
     };
-    let position = run.design.replay.config().main_position;
-    let role = run.design.chain.mains[0].role.clone();
+    let position = run.design.main_position();
+    let role = run.design.main_roles().next().unwrap().to_owned();
     let stored = original(position, &role, 96_000, meter_source());
     let mut sources = Sources::default();
     sources
@@ -658,7 +658,7 @@ fn public_exports_use_oracle_filenames_and_replace_existing_files() {
 #[test]
 fn invalid_build_does_not_create_destination_folder() {
     let mut case = replay_case("room_filters");
-    case.design.chain.mains.clear();
+    case.design.signal_chain_mut().mains.clear();
     let settings: CalibrationSettings = serde_json::from_value(case.settings).unwrap();
     let run = ExportRun {
         design: &case.design,

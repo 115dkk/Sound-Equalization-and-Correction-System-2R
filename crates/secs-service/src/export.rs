@@ -515,7 +515,7 @@ impl Service {
             let mut paths = match params.kind {
                 ExportKind::CamillaDsp => {
                     let chain = if let Some(design) = &live_camilla {
-                        &design.chain
+                        design.signal_chain()
                     } else {
                         cached_camilla.as_ref().ok_or_else(|| {
                             IpcError::new(ErrorCode::Internal, "run cache disappeared")
@@ -667,8 +667,7 @@ impl Service {
                                 description.mimo_responses(
                                     paths.clone(),
                                     design
-                                        .replay
-                                        .mimo_responses(&design, paths)
+                                        .mimo_responses(paths)
                                         .map_err(super::calibration::engine_error)?,
                                 ),
                             );

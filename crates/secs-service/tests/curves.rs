@@ -110,7 +110,7 @@ fn measurement_curves_match_oracle_and_selection() {
                 .unwrap();
             let (samples, rate) =
                 secs_project::load_ir(&path, &curve.role, curve.position).unwrap();
-            let upstream = secs_engine::display::magnitude_db(
+            let upstream = secs_engine::Design::magnitude_db(
                 &samples
                     .iter()
                     .map(|&sample| f64::from(sample))
@@ -128,7 +128,7 @@ fn measurement_curves_match_oracle_and_selection() {
             );
             // U17 preserves upstream's curve shape while sharing one reference:
             // applying its per-curve midrange reference recovers magnitude_db.
-            let own_reference = secs_engine::display::midrange_reference(&curve.values);
+            let own_reference = secs_engine::Design::midrange_reference(&curve.values);
             let normalized: Vec<_> = curve
                 .values
                 .iter()
@@ -279,7 +279,7 @@ fn measurement_curves_share_the_configured_reference() {
     let sub_curve = curve_at(&result, "SW1", 1);
     let sub_passband = value_at(&result, sub_curve, 40.0);
     assert!((-1.0..0.5).contains(&sub_passband), "{sub_passband}");
-    let upstream_sub = secs_engine::display::magnitude_db(
+    let upstream_sub = secs_engine::Design::magnitude_db(
         &sub_f32
             .iter()
             .map(|&sample| f64::from(sample))
@@ -420,7 +420,7 @@ fn measurement_curves_use_the_corrected_ir() {
     let corrected = secs_audio::ResponseCorrection::new(Some(curve), vec![], false)
         .apply(&raw, 48_000)
         .unwrap();
-    let expected = secs_engine::display::magnitude_db(
+    let expected = secs_engine::Design::magnitude_db(
         &corrected
             .iter()
             .map(|sample| f64::from(*sample))
@@ -442,7 +442,7 @@ fn measurement_curves_use_the_corrected_ir() {
         result.curves[0]
             .values
             .iter()
-            .zip(secs_engine::display::magnitude_db(
+            .zip(secs_engine::Design::magnitude_db(
                 &raw.iter()
                     .map(|sample| f64::from(*sample))
                     .collect::<Vec<_>>(),
@@ -725,7 +725,7 @@ fn curve_requests_validate_and_require_project() {
         ));
     }
     assert_eq!(
-        secs_engine::display::magnitude_db(&[], 48000.0),
+        secs_engine::Design::magnitude_db(&[], 48000.0),
         vec![0.0; 280]
     );
 }

@@ -64,6 +64,16 @@ fn public_items(source: &str) -> BTreeSet<String> {
         .join(" ");
     let mut items = BTreeSet::new();
     for statement in source.split(';').map(str::trim) {
+        if statement.starts_with("#[cfg") {
+            continue;
+        }
+        let mut statement = statement;
+        while let Some(rest) = statement.strip_prefix("#[") {
+            let Some((_, tail)) = rest.split_once(']') else {
+                break;
+            };
+            statement = tail.trim_start();
+        }
         if let Some(rest) = statement.strip_prefix("pub mod ") {
             items.insert(format!("mod {}", rest.trim()));
         } else if let Some(rest) = statement.strip_prefix("pub use ") {
@@ -82,12 +92,12 @@ fn public_items(source: &str) -> BTreeSet<String> {
 }
 
 #[test]
-#[ignore = "ADR 0046 step 4"]
 fn public_surface_is_the_adr_0046_list() {
     let source = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/lib.rs"))
         .expect("engine lib.rs");
     let expected = BTreeSet::from([
         "mod input".to_owned(),
+        "mod mimo".to_owned(),
         "mod preview".to_owned(),
         "mod xo".to_owned(),
         "use AccelerationSelection".to_owned(),
@@ -98,6 +108,8 @@ fn public_surface_is_the_adr_0046_list() {
         "use EngineError".to_owned(),
         "use ExportAxis".to_owned(),
         "use GuardCause".to_owned(),
+        "use MAX_RESAMPLE_RATE".to_owned(),
+        "use MIN_RESAMPLE_RATE".to_owned(),
         "use Measurement".to_owned(),
         "use MeasurementSet".to_owned(),
         "use Metrics".to_owned(),

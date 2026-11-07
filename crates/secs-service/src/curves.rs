@@ -5,7 +5,7 @@ mod tests;
 use std::sync::Arc;
 
 use secs_engine::{
-    Design, display,
+    Design,
     preview::{XoPreview, sub_combine},
 };
 use secs_project::{MeasurementRecord, Project, calibration_from_project, store_calibration};
@@ -16,6 +16,9 @@ use secs_types::{
 };
 
 use crate::{Service, lock};
+
+#[cfg(test)]
+use secs_engine::Design as display;
 
 pub(crate) fn dispatch(service: &Service, request: Request) -> Result<Response, IpcError> {
     match request {
@@ -106,8 +109,8 @@ fn extra_bands(settings: &CalibrationSettings) -> Vec<(f64, f64)> {
     bands
 }
 fn offset(design: &Design) -> f64 {
-    let target = design.target.sample(&display::spl_grid());
-    display::percentile(
+    let target = design.target.sample(&Design::spl_grid());
+    Design::percentile(
         &design
             .target_display
             .iter()
@@ -165,7 +168,7 @@ fn measurement_reference(
 }
 
 fn sub_reference(curve: &[f64]) -> f64 {
-    let band: Vec<_> = display::measurement_grid()
+    let band: Vec<_> = Design::measurement_grid()
         .into_iter()
         .zip(curve)
         .filter(|(frequency, _)| (40.0..=120.0).contains(frequency))
@@ -211,7 +214,7 @@ impl Service {
                     kind: kind.into(),
                     role,
                     position,
-                    values: display::smoothed_db(
+                    values: Design::smoothed_db(
                         &samples.iter().map(|&v| f64::from(v)).collect::<Vec<_>>(),
                         rate as f64,
                     ),
@@ -223,7 +226,7 @@ impl Service {
                 .iter()
                 .find(|curve| curve.role == reference.role && curve.position == reference.position)
                 .map(|curve| match reference.band {
-                    CurveReferenceBand::Mid => display::midrange_reference(&curve.values),
+                    CurveReferenceBand::Mid => Design::midrange_reference(&curve.values),
                     CurveReferenceBand::Sub => sub_reference(&curve.values),
                 })
         }) {
@@ -242,7 +245,7 @@ impl Service {
                     .is_none_or(|roles| roles.contains(&curve.role))
         });
         Ok(MeasurementCurvesResult {
-            grid: display::measurement_grid(),
+            grid: Design::measurement_grid(),
             curves,
             reference,
             axes: axes([5.0, 22000.0], [-35.0, 20.0], "db"),
@@ -314,23 +317,21 @@ impl Service {
                     let target = project.target.clone();
                     let (samples, rate) =
                         crate::calibration::measured_ir(&mut open.store, &role, 1)?;
-                    let curve = display::measurement_spl(
+                    let curve = Design::measurement_spl(
                         &samples.iter().map(|&v| f64::from(v)).collect::<Vec<_>>(),
                         rate as f64,
                     );
-                    result.grid = display::spl_grid();
+                    result.grid = Design::spl_grid();
                     let target = target.sample(&result.grid);
-                    let level = display::percentile(
-                        &band_values(&result.grid, &curve, 200.0, 2000.0),
-                        50.0,
-                    ) - display::percentile(
-                        &band_values(&result.grid, &target, 200.0, 2000.0),
-                        50.0,
-                    );
-                    let mid = display::percentile(
-                        &band_values(&result.grid, &curve, 20.0, 20000.0),
-                        50.0,
-                    ) - level;
+                    let level =
+                        Design::percentile(&band_values(&result.grid, &curve, 200.0, 2000.0), 50.0)
+                            - Design::percentile(
+                                &band_values(&result.grid, &target, 200.0, 2000.0),
+                                50.0,
+                            );
+                    let mid =
+                        Design::percentile(&band_values(&result.grid, &curve, 20.0, 20000.0), 50.0)
+                            - level;
                     result.axes.value = [mid - 30.0, mid + 15.0];
                     result.curves = vec![
                         series("before", None, &curve, level),
@@ -353,7 +354,7 @@ impl Service {
                     return Ok(result);
                 };
                 if params.tab == ResultTab::Spl {
-                    result.grid = display::spl_grid();
+                    result.grid = Design::spl_grid();
                     result.curves = vec![
                         series("before", None, &score.spl_before, offset),
                         series("after", None, &score.spl_after, offset),
@@ -366,13 +367,13 @@ impl Service {
                     {
                         result.curves.push(series("mimo", None, values, offset));
                     }
-                    let mid = display::percentile(
+                    let mid = Design::percentile(
                         &band_values(&result.grid, &design.target_display, 20.0, 20000.0),
                         50.0,
                     ) - offset;
                     result.axes.value = [mid - 30.0, mid + 15.0];
                 } else {
-                    result.grid = display::gd_grid();
+                    result.grid = Design::gd_grid();
                     result.curves = vec![
                         series("before", None, &score.gd_before, 0.0),
                         series("after", None, &score.gd_after, 0.0),
@@ -386,8 +387,8 @@ impl Service {
                         .collect();
                     if !both.is_empty() {
                         result.axes.value = [
-                            (display::percentile(&both, 1.0) - 5.0).clamp(-50.0, -5.0),
-                            (display::percentile(&both, 99.0) + 10.0).clamp(30.0, 400.0),
+                            (Design::percentile(&both, 1.0) - 5.0).clamp(-50.0, -5.0),
+                            (Design::percentile(&both, 99.0) + 10.0).clamp(30.0, 400.0),
                         ];
                     }
                 }
@@ -404,7 +405,7 @@ impl Service {
                 });
                 if let Some(group) =
                     group.filter(|g| design.groups.iter().any(|(name, _)| name == g))
-                    && design.subs.is_some()
+                    && design.has_sub_design()
                 {
                     let hz = params.xo_hz.unwrap_or_else(|| {
                         settings
@@ -421,7 +422,7 @@ impl Service {
                         params.corrected.unwrap_or(true),
                         role,
                     );
-                    let mid = display::percentile(&view.target, 50.0) - offset;
+                    let mid = Design::percentile(&view.target, 50.0) - offset;
                     result.axes.value = [mid - 30.0, mid + 12.0];
                     result.grid = view.grid;
                     result.xo_hz = Some(hz);
@@ -473,7 +474,7 @@ impl Service {
                 }
             }
         }
-        if let Some(hz) = design.chain.input_hp_hz {
+        if let Some(hz) = design.signal_chain().input_hp_hz {
             match params.tab {
                 ResultTab::Spl | ResultTab::Ba => {
                     let adjustment = input_hp_spl(&result.grid, hz);
@@ -512,7 +513,7 @@ impl Service {
                     .scores
                     .iter()
                     .filter_map(|score| {
-                        let main = design.chain.mains.iter().find(|m| m.role == score.role)?;
+                        let main = design.main_channels().find(|m| m.role == score.role)?;
                         Some(ChannelResultLine {
                             role: score.role.clone(),
                             within_1db_pct: [score.before.in1_20, score.after.in1_20],
@@ -581,7 +582,7 @@ impl Service {
                 (
                     crate::results::calibration_stale(run, project),
                     channels,
-                    Some(design.chain.latency_ms),
+                    Some(design.latency_ms()),
                     rc,
                 )
             },
@@ -696,7 +697,7 @@ impl Service {
 }
 
 fn take_values(settings: &mut CalibrationSettings, design: &Design) {
-    for sub in &design.chain.subs {
+    for sub in design.sub_channels() {
         if !settings.subs_manual.iter().any(|(r, _)| r == &sub.role) {
             settings
                 .subs_manual
@@ -713,7 +714,7 @@ fn take_values(settings: &mut CalibrationSettings, design: &Design) {
         entry.polarity = sub.polarity;
         entry.allpass = sub.allpass.clone();
     }
-    settings.sub_main_delay_ms = design.chain.main_extra_ms;
+    settings.sub_main_delay_ms = design.signal_chain().main_extra_ms;
     // set_sub calls sub_entry upstream: reuse the project's normalization
     // rather than duplicating the manual-setting bounds here.
     let mut project = Project::default();

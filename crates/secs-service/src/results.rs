@@ -53,7 +53,7 @@ impl CalibrationRun {
             target_key,
             config_key,
             run_key,
-            positions: design.spectra.positions.len(),
+            positions: design.positions().count(),
             design: CalibrationDesign::Computed(design),
         }
     }
@@ -333,7 +333,7 @@ impl ResultBook {
                 notes: cached_notes(&calibration.summary.notes),
                 ..calibration.summary.clone()
             },
-            calibration_chain: calibration.design().chain.clone(),
+            calibration_chain: calibration.design().signal_chain().clone(),
             mimo: self.mimo.as_ref().map(|result| MimoSummary {
                 notes: cached_notes(&result.summary.notes),
                 ..result.summary.clone()
@@ -358,8 +358,8 @@ impl ResultBook {
                 }
                 .into(),
                 ultra_ms: calibration.settings.ultra_ms,
-                latency_ms: calibration.design().chain.latency_ms,
-                rc_hi_hz: calibration.design().rc_hi,
+                latency_ms: calibration.design().latency_ms(),
+                rc_hi_hz: calibration.design().rc_hi(),
                 rc_bands: calibration.settings.rc_bands.clone(),
                 lf_align: calibration.settings.lf_align,
                 mode_decay: calibration.settings.mode_decay,

@@ -11,7 +11,7 @@ use secs_dsp::{
 };
 use secs_types::{
     calibration::RcHiBasis,
-    chain::{BandType, MainChannel, SignalChain, SubChannel},
+    chain::{BandType, MainChannel, MimoPaths, SignalChain, SubChannel},
     target::TargetCurve,
 };
 
@@ -65,10 +65,10 @@ pub struct DesignRequest<'a> {
 }
 #[derive(Debug)]
 pub struct Design {
-    pub replay: Arc<crate::DesignReplay>,
+    pub(crate) replay: Arc<crate::replay::DesignReplay>,
     pub chain: SignalChain,
-    pub mains: Vec<MainDesign>,
-    pub subs: Option<SubDesign>,
+    pub(crate) mains: Vec<MainDesign>,
+    pub(crate) subs: Option<SubDesign>,
     pub ref_level: f64,
     pub rc_hi: f64,
     /// Merged correction bands; empty when no extra bands were requested.
@@ -77,7 +77,7 @@ pub struct Design {
     pub schroeder_hz: Option<f64>,
     pub target_db: Arc<[f64]>,
     pub target_display: Vec<f64>,
-    pub spectra: DesignSpectra,
+    pub(crate) spectra: DesignSpectra,
     pub notes: Vec<Note>,
     pub adapter_notes: Vec<String>,
     pub scores: Vec<RoleScores>,
@@ -116,12 +116,29 @@ impl Design {
         self.replay.export_view(self)
     }
 
+    pub fn signal_chain(&self) -> &SignalChain {
+        &self.chain
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn signal_chain_mut(&mut self) -> &mut SignalChain {
+        &mut self.chain
+    }
+
     pub fn main_channels(&self) -> impl Iterator<Item = &MainChannel> {
         self.chain.mains.iter()
     }
 
     pub fn sub_channels(&self) -> impl Iterator<Item = &SubChannel> {
         self.chain.subs.iter()
+    }
+
+    pub fn positions(&self) -> impl Iterator<Item = u32> + '_ {
+        self.spectra.positions.iter().copied()
+    }
+
+    pub fn has_sub_design(&self) -> bool {
+        self.subs.is_some()
     }
 
     pub fn layouts(&self) -> impl Iterator<Item = (&str, &LayoutInfo)> {
@@ -163,6 +180,10 @@ impl Design {
             t0,
         )
     }
+
+    pub fn mimo_responses(&self, paths: &MimoPaths) -> Result<Vec<(String, Vec<C>)>, EngineError> {
+        self.replay.mimo_responses(self, paths)
+    }
 }
 
 #[derive(Debug)]
@@ -183,9 +204,9 @@ pub struct MainDesign {
     pub phase_strength: f64,
     pub phase_band: Option<f64>,
     pub phase_frac_used: Option<f64>,
-    pub before: Arc<[C]>,
-    pub combined: Arc<[C]>,
-    pub after: Arc<[C]>,
+    pub(crate) before: Arc<[C]>,
+    pub(crate) combined: Arc<[C]>,
+    pub(crate) after: Arc<[C]>,
 }
 #[derive(Debug)]
 pub struct SubDesign {

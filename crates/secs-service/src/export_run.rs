@@ -62,8 +62,8 @@ pub(crate) fn describe(
                 filter_note: String::new(),
                 ultra_ms: run.settings.ultra_ms,
                 label: mode_label(run.settings.mode, Some(run.settings.ultra_ms)),
-                latency_ms: design.chain.latency_ms,
-                rc_hi_hz: design.rc_hi,
+                latency_ms: design.latency_ms(),
+                rc_hi_hz: design.rc_hi(),
                 rc_bands: run.settings.rc_bands.clone(),
                 rc_pieces: secs_export::rc_pieces(&ExportRun {
                     design,

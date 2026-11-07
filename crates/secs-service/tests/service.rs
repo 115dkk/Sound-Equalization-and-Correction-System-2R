@@ -2221,7 +2221,7 @@ fn rew_mdat_scope_names_say_what_the_file_holds() {
         design: &direct.design,
         settings: &settings,
     };
-    let main_position = direct.design.replay.config().main_position;
+    let main_position = direct.design.main_position();
     let before_after =
         secs_export::rew_mdat_items(Some(&run), MdatScope::All, &[], None, None).unwrap();
     assert_eq!(
@@ -2306,8 +2306,8 @@ fn exported_measurements_keep_their_curves_and_results_drop_them() {
     fs::create_dir_all(&root).unwrap();
     let (path, settings) = write_case(&root, "room_dba");
     let direct = secs_engine_testkit::production_case("room_dba", 1);
-    let position = direct.design.replay.config().main_position;
-    let role = direct.design.chain.mains[0].role.clone();
+    let position = direct.design.main_position();
+    let role = direct.design.main_roles().next().unwrap().to_owned();
     let ir_path = secs_project::ir_file(&path, &role, i64::from(position));
     let (raw, _) = secs_project::read_wav_float32(&fs::read(&ir_path).unwrap()).unwrap();
     secs_project::save_source(
@@ -2550,7 +2550,7 @@ fn oracle_project_calibrates_recommends_xo_and_exports() {
     );
     assert_eq!(results.calibration.as_ref().unwrap().main_roles.len(), 11);
     let direct = secs_engine_testkit::production_case("dolby", 1);
-    assert_eq!(cached_chain(&path), direct.design.chain);
+    assert_eq!(cached_chain(&path), *direct.design.signal_chain());
     let blocked_folder = root.join("blocked-filter-text-subs");
     let Envelope::Err(error) = service.call(
         Request::Export(ExportParams {
@@ -2658,11 +2658,11 @@ fn oracle_project_calibrates_recommends_xo_and_exports() {
                     mode: export_mode(&settings),
                     note: secs_camilla::note::camilla_note(
                         settings.mode,
-                        direct.design.chain.latency_ms,
+                        direct.design.latency_ms(),
                         direct.design.rc_hi,
                         None,
                     ),
-                    latency_ms: direct.design.chain.latency_ms,
+                    latency_ms: direct.design.latency_ms(),
                 };
                 let project_name = {
                     let store = secs_project::MeasurementStore::open(&path).unwrap();
@@ -2670,13 +2670,13 @@ fn oracle_project_calibrates_recommends_xo_and_exports() {
                         .then(|| store.project().name.trim().to_owned())
                 };
                 let design_id = secs_graph::design::design_id(
-                    &direct.design.chain,
+                    direct.design.signal_chain(),
                     None,
                     secs_graph::LfeChoice::DOLBY,
                 )
                 .unwrap();
                 let direct_files = secs_camilla::export_with_options(
-                    &direct.design.chain,
+                    direct.design.signal_chain(),
                     &folder,
                     &labels,
                     None,
@@ -2745,17 +2745,17 @@ fn oracle_project_calibrates_recommends_xo_and_exports() {
                 let rc_pieces = secs_export::rc_pieces(&export_run);
                 let label = settings.label();
                 let filter_run = secs_filters::FilterRun {
-                    chain: &direct.design.chain,
+                    chain: direct.design.signal_chain(),
                     mimo: None,
                     mode: &export_mode(&settings),
                     note: &secs_camilla::note::eqapo_note(
                         &export_mode(&settings),
-                        direct.design.chain.latency_ms,
+                        direct.design.latency_ms(),
                         direct.design.rc_hi,
                         None,
                     ),
                     label: &label,
-                    latency_ms: direct.design.chain.latency_ms,
+                    latency_ms: direct.design.latency_ms(),
                     rc_pieces: &rc_pieces,
                     stamp: "2024-01-02 03:04",
                 };
@@ -4037,9 +4037,10 @@ fn room_dba_mimo_runs_and_becomes_stale_after_recalibration() {
     .unwrap();
     assert_eq!(cached_paths(&path), direct_mimo.paths);
     assert!(summary.support_count > 0);
-    let expected_rows = direct.design.spectra.positions.len() * direct.design.chain.mains.len();
+    let expected_mains = direct.design.main_roles().count();
+    let expected_rows = direct.design.positions().count() * expected_mains;
     assert_eq!(calibration_summary.late_energy.len(), expected_rows);
-    assert_eq!(summary.scorecard.len(), direct.design.chain.mains.len());
+    assert_eq!(summary.scorecard.len(), expected_mains);
     assert_eq!(summary.late_energy.len(), expected_rows);
     for score in &direct_mimo.scorecard {
         let restored = summary
@@ -4056,7 +4057,7 @@ fn room_dba_mimo_runs_and_becomes_stale_after_recalibration() {
             score.after_mimo.gd_20.to_bits()
         );
     }
-    let main_position = direct.design.spectra.main_position;
+    let main_position = direct.design.main_position();
     for role in direct_mimo
         .paths
         .paths
