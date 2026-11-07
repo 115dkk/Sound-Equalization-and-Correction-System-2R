@@ -34,6 +34,160 @@ pub(crate) struct OpenProject {
     pub undo: std::collections::VecDeque<UndoEntry>,
 }
 
+#[allow(dead_code)]
+impl OpenProject {
+    pub(crate) fn project(&self) -> &Project {
+        self.store.project()
+    }
+
+    pub(crate) fn store(&self) -> &MeasurementStore {
+        &self.store
+    }
+
+    pub(crate) fn edit<T>(&mut self, change: impl FnOnce(&mut Project) -> T) -> T {
+        let value = change(self.store.project_mut());
+        self.dirty = true;
+        value
+    }
+
+    pub(crate) fn edit_if<T>(&mut self, change: impl FnOnce(&mut Project) -> (T, bool)) -> T {
+        let (value, changed) = change(self.store.project_mut());
+        if changed {
+            self.dirty = true;
+        }
+        value
+    }
+
+    pub(crate) fn store_mut(&mut self) -> StoreEdit<'_> {
+        StoreEdit {
+            store: &mut self.store,
+            dirty: &mut self.dirty,
+            wrote: false,
+        }
+    }
+
+    pub(crate) fn record_undo(&mut self, payload: UndoPayload) -> String {
+        static TOKEN: AtomicU64 = AtomicU64::new(1);
+        let token = format!(
+            "{}-{}",
+            self.identity,
+            TOKEN.fetch_add(1, Ordering::Relaxed)
+        );
+        self.undo.push_back(UndoEntry {
+            token: token.clone(),
+            payload,
+        });
+        if self.undo.len() > 16 {
+            self.undo.pop_front();
+        }
+        token
+    }
+
+    pub(crate) fn take_undo(&mut self, token: &str) -> Option<UndoPayload> {
+        let index = self.undo.iter().position(|entry| entry.token == token)?;
+        self.undo.remove(index).map(|entry| entry.payload)
+    }
+
+    pub(crate) fn is_dirty(&self) -> bool {
+        self.dirty
+    }
+
+    pub(crate) fn mark_saved(&mut self) {
+        self.dirty = false;
+    }
+}
+
+pub(crate) struct StoreEdit<'a> {
+    store: &'a mut MeasurementStore,
+    dirty: &'a mut bool,
+    wrote: bool,
+}
+
+#[allow(dead_code)]
+impl StoreEdit<'_> {
+    pub(crate) fn start_position(&mut self, pos: i64) -> secs_project::MeasurementRecord {
+        self.wrote = true;
+        self.store.start_position(pos)
+    }
+
+    pub(crate) fn clear_position(&mut self, pos: i64) -> bool {
+        self.wrote = true;
+        self.store.clear_position(pos)
+    }
+
+    pub(crate) fn record(
+        &mut self,
+        result: secs_project::MeasurementResult,
+        plan_roles: Option<&[String]>,
+    ) -> Result<secs_project::MeasurementRecord, secs_project::ProjectError> {
+        self.wrote = true;
+        self.store.record(result, plan_roles)
+    }
+
+    pub(crate) fn remove_position(&mut self, pos: i64) -> Option<RemovedPosition> {
+        self.wrote = true;
+        self.store.remove_position(pos)
+    }
+
+    pub(crate) fn restore_position(
+        &mut self,
+        removed: RemovedPosition,
+    ) -> Result<(), secs_project::ProjectError> {
+        self.wrote = true;
+        self.store.restore_position(removed)
+    }
+
+    pub(crate) fn replace_source(
+        &mut self,
+        role: &str,
+        pos: i64,
+        info: Option<&secs_mdat::SourceInfo>,
+    ) -> Result<(), secs_project::ProjectError> {
+        self.wrote = true;
+        self.store.replace_source(role, pos, info)
+    }
+
+    pub(crate) fn ir_path_of(
+        &mut self,
+        role: &str,
+        pos: i64,
+    ) -> Result<PathBuf, secs_project::ProjectError> {
+        self.store.ir_path_of(role, pos)
+    }
+
+    pub(crate) fn ir_of(
+        &mut self,
+        role: &str,
+        pos: i64,
+    ) -> Result<(Vec<f32>, u32), secs_project::ProjectError> {
+        self.store.ir_of(role, pos)
+    }
+
+    pub(crate) fn source_of(&mut self, role: &str, pos: i64) -> Option<secs_mdat::SourceInfo> {
+        self.store.source_of(role, pos)
+    }
+
+    pub(crate) fn save(&mut self) -> Result<(), secs_project::ProjectError> {
+        self.store.save()
+    }
+}
+
+impl std::ops::Deref for StoreEdit<'_> {
+    type Target = MeasurementStore;
+
+    fn deref(&self) -> &Self::Target {
+        self.store
+    }
+}
+
+impl Drop for StoreEdit<'_> {
+    fn drop(&mut self) {
+        if self.wrote {
+            *self.dirty = true;
+        }
+    }
+}
+
 /// The private folder a tutorial session writes its measurements and
 /// results into instead of the given path (under the user's app-data folder).
 /// Dropping it removes the folder, best effort, so closing, replacing or
@@ -361,28 +515,11 @@ fn next_identity() -> u64 {
 }
 
 pub(crate) fn push_position_undo(open: &mut OpenProject, removed: RemovedPosition) -> String {
-    push_undo(open, UndoPayload::Position(removed))
+    open.record_undo(UndoPayload::Position(removed))
 }
 
 pub(crate) fn push_measurements_undo(open: &mut OpenProject, measurements: PyJson) -> String {
-    push_undo(open, UndoPayload::Measurements(measurements))
-}
-
-fn push_undo(open: &mut OpenProject, payload: UndoPayload) -> String {
-    static TOKEN: AtomicU64 = AtomicU64::new(1);
-    let token = format!(
-        "{}-{}",
-        open.identity,
-        TOKEN.fetch_add(1, Ordering::Relaxed)
-    );
-    open.undo.push_back(UndoEntry {
-        token: token.clone(),
-        payload,
-    });
-    if open.undo.len() > 16 {
-        open.undo.pop_front();
-    }
-    token
+    open.record_undo(UndoPayload::Measurements(measurements))
 }
 
 pub(crate) fn info(open: &OpenProject) -> ProjectInfo {
@@ -1093,6 +1230,7 @@ mod commit_tests {
     use std::sync::{Arc, Condvar};
     use std::time::{Duration, Instant};
 
+    use secs_project::MeasurementResult;
     use secs_types::ipc::{JobEvent, JobId, JobKind, JobResult, JobStatus};
 
     use super::*;
@@ -1150,6 +1288,78 @@ mod commit_tests {
             open: Some(project()),
             last_export: None,
         }))
+    }
+
+    #[test]
+    fn edit_marks_dirty_and_edit_if_marks_only_when_told() {
+        let mut open = project();
+        open.edit(|project| project.name = "edited".into());
+        assert!(open.is_dirty());
+        assert_eq!(open.project().name, "edited");
+
+        open.mark_saved();
+        assert!(!open.is_dirty());
+        open.edit_if(|_| ((), false));
+        assert!(!open.is_dirty());
+    }
+
+    #[test]
+    fn store_mut_marks_dirty_only_when_a_write_method_ran() {
+        let root =
+            std::env::temp_dir().join(format!("secs-service-store-edit-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("room.secs");
+        let mut open = OpenProject {
+            store: MeasurementStore::new(&path, Project::default()),
+            path,
+            dirty: false,
+            tutorial: false,
+            tutorial_folder: None,
+            results: crate::results::ResultBook::default(),
+            identity: next_identity(),
+            undo: Default::default(),
+        };
+
+        drop(open.store_mut());
+        assert!(!open.is_dirty());
+        open.store_mut()
+            .record(
+                MeasurementResult {
+                    role: "L".into(),
+                    pos: 1,
+                    ir: vec![0.0, 1.0, 0.0],
+                    sample_rate: 48_000,
+                    t0_s: 0.0,
+                    spl_db: None,
+                    spl_offset_db: None,
+                    snr_db: None,
+                    uuid: None,
+                    source: None,
+                    source_info: None,
+                },
+                None,
+            )
+            .unwrap();
+        assert!(open.is_dirty());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn record_undo_hands_the_payload_back_once_and_caps_at_sixteen() {
+        let mut open = project();
+        let first = open.record_undo(UndoPayload::Measurements(PyJson::Int("0".into())));
+        assert!(first.starts_with(&format!("{}-", open.identity)));
+        for value in 1..=16 {
+            open.record_undo(UndoPayload::Measurements(PyJson::Int(value.to_string())));
+        }
+        assert!(open.take_undo(&first).is_none());
+
+        let token = open.record_undo(UndoPayload::Measurements(PyJson::Int("once".into())));
+        assert!(matches!(
+            open.take_undo(&token),
+            Some(UndoPayload::Measurements(PyJson::Int(value))) if value == "once"
+        ));
+        assert!(open.take_undo(&token).is_none());
     }
 
     /// Opens another project, as `project_new` or `project_open` would.
