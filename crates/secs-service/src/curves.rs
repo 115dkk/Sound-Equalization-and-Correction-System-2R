@@ -186,12 +186,11 @@ impl Service {
             let mut inputs = Vec::new();
             let mut session = lock(&self.session);
             let open = session.require_mut().map_err(IpcError::from)?;
-            let records = open.store.records();
-            let reference = measurement_reference(open.store.project(), &records);
+            let records = open.store().records();
+            let reference = measurement_reference(open.project(), &records);
             for record in records {
                 for role in record.ir.keys() {
-                    let (samples, rate) =
-                        crate::calibration::measured_ir(&mut open.store, role, record.pos)?;
+                    let (samples, rate) = open.store_mut().measured_ir(role, record.pos)?;
                     inputs.push((role.clone(), record.pos, samples, rate));
                 }
             }
@@ -270,7 +269,7 @@ impl Service {
         } else {
             open.results.live_calibration()
         };
-        let project = open.store.project();
+        let project = open.project();
         let settings = calibration_from_project(project);
         let mut result = ResultCurvesResult {
             tab: params.tab,
@@ -299,7 +298,7 @@ impl Service {
         let Some(run) = run else {
             if params.tab == ResultTab::Spl {
                 let roles = open
-                    .store
+                    .store()
                     .records()
                     .into_iter()
                     .find(|r| r.pos == 1)
@@ -315,8 +314,7 @@ impl Service {
                 });
                 if let Some(role) = role.filter(|r| roles.contains_key(r)) {
                     let target = project.target.clone();
-                    let (samples, rate) =
-                        crate::calibration::measured_ir(&mut open.store, &role, 1)?;
+                    let (samples, rate) = open.store_mut().measured_ir(&role, 1)?;
                     let curve = Design::measurement_spl(
                         &samples.iter().map(|&v| f64::from(v)).collect::<Vec<_>>(),
                         rate as f64,
@@ -499,7 +497,7 @@ impl Service {
         let compute_key = crate::compute::ComputeIdentity::from(&self.acceleration().status);
         let session = lock(&self.session);
         let open = session.require().map_err(IpcError::from)?;
-        let project = open.store.project();
+        let project = open.project();
         let live_mimo = match open.results.mimo(project, &compute_key).shown() {
             Some(crate::results::MimoView::Live(result)) => Some(result),
             _ => None,
@@ -688,10 +686,9 @@ impl Service {
                 "calibration must run before taking sub values",
             )
         })?;
-        let mut settings = calibration_from_project(open.store.project());
+        let mut settings = calibration_from_project(open.project());
         take_values(&mut settings, run.design());
-        store_calibration(open.store.project_mut(), &settings);
-        open.dirty = true;
+        open.edit(|project| store_calibration(project, &settings));
         Ok(settings)
     }
 }

@@ -146,12 +146,11 @@ impl Service {
         let edit = validate_edit(params.edit)?;
         let mut session = lock(&self.session);
         let open = session.require_mut()?;
-        let mut settings = calibration_from_project(open.store.project());
+        let mut settings = calibration_from_project(open.project());
         validate_against_settings(&settings, &edit)?;
-        apply(&mut settings, edit, open.store.project());
-        store_calibration(open.store.project_mut(), &settings);
-        open.dirty = true;
-        Ok(calibration_from_project(open.store.project()))
+        apply(&mut settings, edit, open.project());
+        open.edit(|project| store_calibration(project, &settings));
+        Ok(calibration_from_project(open.project()))
     }
 }
 

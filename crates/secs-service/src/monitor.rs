@@ -141,20 +141,20 @@ impl Service {
     pub(crate) fn levels_fill_defaults(&self) -> Result<LevelsResult, IpcError> {
         let mut session = lock(&self.session);
         let open = session.require_mut()?;
-        let roles = plan_for(open.store.project(), &Default::default()).roles;
-        let existing = levels_result(open.store.project()).levels;
-        let mut changed = false;
-        for role in roles {
-            if !existing.contains_key(&role) {
-                let default = -22.0 - f64::from(((role.len() * 7) % 6) as u8);
-                put_extra_map(open.store.project_mut(), "levels", &role, default);
-                changed = true;
+        let roles = plan_for(open.project(), &Default::default()).roles;
+        let existing = levels_result(open.project()).levels;
+        open.edit_if(|project| {
+            let mut changed = false;
+            for role in roles {
+                if !existing.contains_key(&role) {
+                    let default = -22.0 - f64::from(((role.len() * 7) % 6) as u8);
+                    put_extra_map(project, "levels", &role, default);
+                    changed = true;
+                }
             }
-        }
-        if changed {
-            open.dirty = true;
-        }
-        Ok(levels_result(open.store.project()))
+            ((), changed)
+        });
+        Ok(levels_result(open.project()))
     }
 
     pub(crate) fn level_play(&self, params: LevelPlayParams) -> Result<(), IpcError> {
@@ -453,10 +453,12 @@ fn store_level(
     spl_db: Option<f64>,
 ) -> Result<(), IpcError> {
     let stored = session::apply(session, ticket, |open| {
-        put_extra_map(open.store.project_mut(), "levels", role, dbfs);
-        if let Some(spl) = spl_db {
-            put_extra_map(open.store.project_mut(), "spl", role, spl);
-        }
+        open.edit(|project| {
+            put_extra_map(project, "levels", role, dbfs);
+            if let Some(spl) = spl_db {
+                put_extra_map(project, "spl", role, spl);
+            }
+        });
         Ok(((), true))
     });
     match stored {

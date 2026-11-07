@@ -181,6 +181,14 @@ impl StoreEdit<'_> {
         self.store.source_of(role, pos)
     }
 
+    pub(crate) fn measured_ir(
+        &mut self,
+        role: &str,
+        pos: i64,
+    ) -> Result<(Vec<f32>, u32), crate::ServiceError> {
+        crate::calibration::measured_ir(self.store, role, pos)
+    }
+
     pub(crate) fn save(&mut self) -> Result<(), secs_project::ProjectError> {
         self.store.save()
     }
@@ -367,7 +375,7 @@ impl Session {
         } else {
             open.store.save()?;
         }
-        open.dirty = false;
+        open.mark_saved();
         self.info()
     }
 
@@ -517,10 +525,7 @@ fn run_change<T>(
     change: impl FnOnce(&mut OpenProject) -> Result<(T, bool), IpcError>,
 ) -> Result<T, IpcError> {
     let (value, changed) = change(open)?;
-    if changed {
-        open.dirty = true;
-    }
-    Ok(value)
+    Ok(open.edit_if(|_| (value, changed)))
 }
 
 fn next_identity() -> u64 {
@@ -537,7 +542,7 @@ pub(crate) fn push_measurements_undo(open: &mut OpenProject, measurements: PyJso
 }
 
 pub(crate) fn info(open: &OpenProject) -> ProjectInfo {
-    let project = open.store.project();
+    let project = open.project();
     let path = open
         .tutorial_folder
         .as_ref()
@@ -548,10 +553,10 @@ pub(crate) fn info(open: &OpenProject) -> ProjectInfo {
         preset: project.config.preset.clone(),
         sub_count: project.config.sub_count(),
         positions: measured_positions(project),
-        dirty: open.dirty,
+        dirty: open.is_dirty(),
         tutorial: open.tutorial,
         migration_warnings: open
-            .store
+            .store()
             .warnings()
             .iter()
             .map(|warning| MigrationWarning {
@@ -600,7 +605,7 @@ fn prepare_save_as(open: &OpenProject, destination: &Path) -> Result<PreparedSav
         if source_irs.is_dir() {
             copy_tree_contents(&source_irs, &temporary_irs)?;
         }
-        let mut project = open.store.project().clone();
+        let mut project = open.project().clone();
         rewrite_ir_directory(&mut project, &open.path, destination);
         let mut staged = MeasurementStore::new(&temporary_project, project.clone());
         staged.save()?;
@@ -772,14 +777,14 @@ pub(crate) struct LoadedMeasurements {
 pub(crate) fn original_snapshot(open: &OpenProject) -> OriginalSnapshot {
     OriginalSnapshot {
         path: open.path.clone(),
-        project: open.store.project().clone(),
+        project: open.project().clone(),
     }
 }
 
 pub(crate) fn measurement_snapshot(open: &OpenProject) -> MeasurementSnapshot {
     MeasurementSnapshot {
         path: open.path.clone(),
-        project: open.store.project().clone(),
+        project: open.project().clone(),
     }
 }
 
