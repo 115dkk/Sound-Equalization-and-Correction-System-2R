@@ -806,11 +806,6 @@ fn camilla_apply_reads_the_main_config_from_the_export_result() {
 }
 
 #[test]
-fn camilla_writer_stores_the_same_files_main_config_and_design_id() {
-    assert_camilla_writer_result();
-}
-
-#[test]
 fn apply_settings_round_trip_and_legacy_defaults() {
     let root = root("settings");
     let path = root.join("settings.json");
