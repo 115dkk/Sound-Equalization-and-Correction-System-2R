@@ -154,6 +154,7 @@ pub fn fir_to_48k(taps_low: &[f64], fs_low: f64) -> Vec<f64> {
     secs_dsp::fir::lowrate_to_48k(taps_low, fs_low)
 }
 
+// UI text by design: the service shows these sentences unchanged (audit #186 TD-254, maintainer decision 2026-11-06).
 pub fn availability(positions: usize) -> (bool, String) {
     if positions < 3 {
         (
