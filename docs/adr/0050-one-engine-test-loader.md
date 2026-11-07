@@ -19,12 +19,13 @@
 ### `secs_engine::testkit`이 로더를 소유합니다
 
 - `crates/secs-engine/src/test_support.rs`의 내용을 `crates/secs-engine/src/testkit.rs`로 옮깁니다. module은 `#[cfg(any(test, feature = "test-support"))] pub mod testkit;`으로 컴파일됩니다. 안쪽 시험은 `crate::testkit`을, 바깥은 `secs_engine::testkit`을 쓰므로 타입이 한 벌입니다.
-- 로더가 쓰는 `secs-oracle`과 `serde_json`은 `test-support` 기능이 켜는 선택적 의존(`optional = true`)이 되고 dev-dependency로도 남습니다. `secs-engine`은 게시 크레이트이므로 `secs-oracle`(게시하지 않음)은 기본 기능에 들어가지 않습니다. `cargo publish --dry-run`이 이것을 확인합니다(ADR 0016의 게시 게이트).
+- 로더는 오라클 파일을 직접 읽지 않고 `testkit::FixtureStore`(사례 JSON, 이름 목록, 기록된 호출, 플랫폼 허용 오차, libm 종류)를 인자로 받습니다. `serde_json`만 `test-support` 기능이 켜는 선택적 의존이고, `secs-oracle`은 dev-dependency로만 남습니다. 게시 크레이트는 게시하지 않는 워크스페이스 크레이트를 선택적으로라도 의존할 수 없기 때문입니다(`secs-policy`의 `published_versions_and_dependencies_are_closed`). 2026-11-07 보완. 처음 결정은 `secs-oracle`을 선택적 의존으로 두는 것이었는데 그 게이트가 거부했습니다.
+- `FixtureStore`의 구현은 둘입니다. facade 크레이트의 `Oracle`(바깥 소비자용, 저장소 인자 없는 기존 함수 모양을 유지)과 엔진 안쪽 시험의 `tests::support::Oracle`(dev-dependency의 `secs-oracle`로 만든 어댑터)입니다. 로더 본문은 한 벌이고, 어댑터는 각각 열다섯 줄 안팎입니다.
 - 공개 interface는 지금 두 로더가 공통으로 가진 것입니다. `names()`, `load(name) -> Case`, `load_fixture(&Fixture) -> Case`, `production_case(name, threads) -> ReplayCase`, `replay_case(name) -> ReplayCase`, `Replay::for_case(name)`, `pairs`, `manual`, `peq`, `MimoAcousticMetrics`, `mimo_acoustic_metrics`. `read_recorded_fit`·`same_recorded_fit`·`replay`·`replay_with_context`처럼 안쪽 시험만 쓰는 것은 `pub(crate)`로 두고, 그 가운데 `replay`와 `replay_with_context`는 리뷰대로 `tests/mod.rs`에 남깁니다.
 
 ### testkit 크레이트는 facade입니다
 
-`crates/secs-engine-testkit/src/lib.rs`는 `pub use secs_engine::testkit::*;` 한 줄과 crate 문서만 남습니다. 바깥 소비자 둘의 `use` 경로는 바뀌지 않습니다. 크레이트를 지우지 않는 까닭은 `secs-export`·`secs-service`가 `secs-engine`의 `test-support` 기능을 직접 켜면 그 크레이트들의 보통 빌드에 기능이 새어 들어가기 때문입니다(feature unification). dev-dependency인 facade가 그 경계입니다.
+`crates/secs-engine-testkit/src/lib.rs`는 `pub use secs_engine::testkit::*;`, `Oracle` 저장소, 그리고 저장소 인자 없이 부르던 기존 함수 모양을 지키는 얇은 함수들만 남습니다. 바깥 소비자 둘의 `use` 경로는 바뀌지 않습니다. 크레이트를 지우지 않는 까닭은 `secs-export`·`secs-service`가 `secs-engine`의 `test-support` 기능을 직접 켜면 그 크레이트들의 보통 빌드에 기능이 새어 들어가기 때문입니다(feature unification). dev-dependency인 facade가 그 경계입니다.
 
 ### 바뀌지 않는 것
 
@@ -50,5 +51,5 @@
 
 - 오라클 사례 형식이 바뀌면 한 파일만 고칩니다. `EngineConfig`의 새 필드도 한 곳입니다.
 - `secs-engine-testkit`은 이름만 남는 facade가 됩니다. 다음 리뷰가 '이름만 바꾼 module'로 다시 제안하지 않도록, 이 ADR이 그 이유(feature unification의 경계)를 기록합니다.
-- 위험: `test-support` 기능이 켜진 `secs-engine`은 `secs-oracle`을 의존합니다. 워크스페이스 안에서는 `secs-export`와 `secs-service`의 시험 빌드가 이미 그렇게 돌고 있으므로 새로운 것은 아닙니다.
+- `test-support` 기능이 켜진 `secs-engine`도 `secs-oracle`을 의존하지 않습니다(`cargo tree -p secs-engine -e normal --features test-support`에 없음). 오라클은 facade와 dev-dependency에서만 들어옵니다.
 - 편차 항목은 없습니다.
