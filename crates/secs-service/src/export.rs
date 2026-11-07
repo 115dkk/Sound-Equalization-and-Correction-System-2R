@@ -34,7 +34,7 @@ pub(crate) struct ExportResult {
 }
 
 impl ExportResult {
-    fn into_ipc(self) -> IpcExportResult {
+    pub(crate) fn into_ipc(self) -> IpcExportResult {
         IpcExportResult {
             files: self.files,
             output_rate: self.output_rate,
@@ -362,6 +362,14 @@ impl CamillaWriter<'_> {
         log_leftover_backup(log, installed.leftover_backup);
         Ok((installed.files, self.main_config))
     }
+}
+
+fn commit_write<T>(
+    job: &crate::jobs::JobContext,
+    write: impl FnOnce() -> Result<T, IpcError>,
+) -> Result<T, IpcError> {
+    job.begin_commit()?;
+    write()
 }
 
 fn log_leftover_backup(log: &crate::LogSink, leftover: Option<(std::path::PathBuf, String)>) {
@@ -840,31 +848,7 @@ impl Service {
             })
         })
     }
-    pub(crate) fn start_export(
-        &self,
-        params: ExportParams,
-        events: Arc<dyn EventSink>,
-    ) -> Result<JobStarted, IpcError> {
-        self.start_export_with(params, events, ExportPurpose::Export, |result| {
-            Ok(JobResult::Export(result.into_ipc()))
-        })
-    }
-
-    pub(crate) fn start_export_with<F>(
-        &self,
-        params: ExportParams,
-        events: Arc<dyn EventSink>,
-        purpose: ExportPurpose,
-        complete: F,
-    ) -> Result<JobStarted, IpcError>
-    where
-        F: FnOnce(ExportResult) -> Result<JobResult, IpcError> + Send + 'static,
-    {
-        let plan = self.plan_export(params, purpose)?;
-        self.start_export_plan(plan, events, complete)
-    }
-
-    fn start_export_plan<F>(
+    pub(crate) fn start_export<F>(
         &self,
         plan: ExportPlan,
         events: Arc<dyn EventSink>,
@@ -927,8 +911,7 @@ impl Service {
                     now_ms,
                     &uuid,
                 )?;
-                job.begin_commit()?;
-                let mut paths = vec![writer.write()?];
+                let mut paths = vec![commit_write(&job, || writer.write())?];
                 if let Some(path) = write_compute_provenance(folder, None)? {
                     paths.push(path);
                 }
@@ -1090,8 +1073,7 @@ impl Service {
                         main_config: std::path::PathBuf::new(),
                     };
                     writer.prepare(&job)?;
-                    job.begin_commit()?;
-                    let (files, config) = writer.write(&log)?;
+                    let (files, config) = commit_write(&job, || writer.write(&log))?;
                     main_config = Some(config);
                     files
                 }
@@ -1107,13 +1089,11 @@ impl Service {
                     match kind {
                         ExportKind::FilterText => {
                             let writer = FilterTextWriter::prepare(&run, folder, &options, &job)?;
-                            job.begin_commit()?;
-                            writer.write(&log)?
+                            commit_write(&job, || writer.write(&log))?
                         }
                         ExportKind::EqualizerApo => {
                             let writer = EqapoWriter::prepare(&run, folder, &options, &job)?;
-                            job.begin_commit()?;
-                            writer.write(&log)?
+                            commit_write(&job, || writer.write(&log))?
                         }
                         ExportKind::Convolution => {
                             let writer = ConvolutionWriter::prepare(
@@ -1122,8 +1102,7 @@ impl Service {
                                 requested_design_name.as_deref(),
                                 &ctx,
                             )?;
-                            job.begin_commit()?;
-                            writer.write(folder, &log)?
+                            commit_write(&job, || writer.write(folder, &log))?
                         }
                         _ => unreachable!(),
                     }
@@ -1216,8 +1195,7 @@ impl Service {
                             now_ms,
                             &uuid,
                         )?;
-                        job.begin_commit()?;
-                        vec![writer.write()?]
+                        vec![commit_write(&job, || writer.write())?]
                     } else {
                         let writer = BeforeAfterMdatWriter::prepare(
                             Some(&run),
@@ -1230,8 +1208,7 @@ impl Service {
                             now_ms,
                             &uuid,
                         )?;
-                        job.begin_commit()?;
-                        vec![writer.write()?]
+                        vec![commit_write(&job, || writer.write())?]
                     }
                 }
             };

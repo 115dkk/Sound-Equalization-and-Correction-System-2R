@@ -47,7 +47,14 @@ pub(crate) fn dispatch(
             .map(Response::RecommendXo),
         Request::Mimo(params) => service.start_mimo(params, events).map(Response::Mimo),
         Request::Results => service.results().map(Response::Results),
-        Request::Export(params) => service.start_export(params, events).map(Response::Export),
+        Request::Export(params) => service
+            .plan_export(params, crate::export_plan::ExportPurpose::Export)
+            .and_then(|plan| {
+                service.start_export(plan, events, |result| {
+                    Ok(secs_types::ipc::JobResult::Export(result.into_ipc()))
+                })
+            })
+            .map(Response::Export),
         Request::MeasureMethods => Ok(Response::MeasureMethods(service.measure_methods())),
         Request::MeasureConfigure(params) => service
             .measure_configure(params)

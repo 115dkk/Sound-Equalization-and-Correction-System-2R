@@ -99,7 +99,7 @@ impl Service {
         let apply = self.deps.apply.clone();
         let managed_host = self.deps.managed_host.clone();
         let log = self.deps.log.clone();
-        self.start_export_with(
+        let plan = self.plan_export(
             ExportParams {
                 kind: ExportKind::CamillaDsp,
                 folder: stage.to_string_lossy().into_owned(),
@@ -109,143 +109,134 @@ impl Service {
                 // Applying writes one rate: the profile's output rate.
                 extra_rates: Vec::new(),
             },
-            events,
             ExportPurpose::Apply,
-            move |result| {
-                let design_id = result.design_id.clone().ok_or_else(|| {
-                    IpcError::new(ErrorCode::Internal, "CamillaDSP export has no design id")
-                })?;
-                let stage = PathBuf::from(&result.folder);
-                let main_config = result.main_config.as_ref().ok_or_else(|| {
-                    IpcError::new(ErrorCode::Internal, "CamillaDSP export has no main config")
-                })?;
-                let relative = main_config.strip_prefix(&stage).map_err(|_| {
-                    IpcError::new(
-                        ErrorCode::Internal,
-                        "CamillaDSP main config is outside the export folder",
-                    )
-                })?;
-                let text = fs::read_to_string(stage.join(relative))
-                    .map_err(|error| io_error(stage.join(relative), &error))?;
-                // CamillaDSP identifies a convolution filter by its absolute file
-                // name, so every attempt gets another generation even when the
-                // design id is unchanged.
-                if let Err(error) = apply.before_generation_install(&final_for_job, &stage) {
-                    if let Err(cleanup) = remove_stage(&stage) {
-                        log(
-                            LogLevel::Warn,
-                            "apply",
-                            &format!(
-                                "could not remove staging folder {}: {}",
-                                stage.display(),
-                                cleanup.detail
-                            ),
-                        );
-                    }
-                    return Err(error);
+        )?;
+        self.start_export(plan, events, move |result| {
+            let design_id = result.design_id.clone().ok_or_else(|| {
+                IpcError::new(ErrorCode::Internal, "CamillaDSP export has no design id")
+            })?;
+            let stage = PathBuf::from(&result.folder);
+            let main_config = result.main_config.as_ref().ok_or_else(|| {
+                IpcError::new(ErrorCode::Internal, "CamillaDSP export has no main config")
+            })?;
+            let relative = main_config.strip_prefix(&stage).map_err(|_| {
+                IpcError::new(
+                    ErrorCode::Internal,
+                    "CamillaDSP main config is outside the export folder",
+                )
+            })?;
+            let text = fs::read_to_string(stage.join(relative))
+                .map_err(|error| io_error(stage.join(relative), &error))?;
+            // CamillaDSP identifies a convolution filter by its absolute file
+            // name, so every attempt gets another generation even when the
+            // design id is unchanged.
+            if let Err(error) = apply.before_generation_install(&final_for_job, &stage) {
+                if let Err(cleanup) = remove_stage(&stage) {
+                    log(
+                        LogLevel::Warn,
+                        "apply",
+                        &format!(
+                            "could not remove staging folder {}: {}",
+                            stage.display(),
+                            cleanup.detail
+                        ),
+                    );
                 }
-                let generation =
-                    crate::deploy::install(&final_for_job, design_folder(&design_id), &stage)?;
-                let config = generation.dir.join(relative);
-                let marker_before = marker_generation(&final_for_job, &current_marker);
-                let (outcome, reported_previous) =
-                    match apply.camilla_apply_report(&address, &config, &text, TIMEOUT) {
-                        Ok(result) => result,
-                        Err(error)
-                            if managed_exe.is_some()
-                                && error
-                                    .params
-                                    .get("reason")
-                                    .is_some_and(|reason| reason == "connection_refused") =>
-                        {
-                            (ApplyOutcome::HandedOver, None)
-                        }
-                        Err(error) => {
-                            let reported_previous =
-                                error.params.get("previous_path").and_then(|path| {
-                                    applied_generation(&final_for_job, Path::new(path))
-                                });
-                            let mut retained = vec![generation.name.as_str()];
-                            if let Some(previous) = marker_before.as_deref() {
-                                retained.push(previous);
-                            }
-                            if let Some(previous) = reported_previous.as_deref() {
-                                retained.push(previous);
-                            }
-                            remember_retained(&final_for_job, &retained, &log);
-                            mark_generation_uncertain(&current_marker, &generation.name, &log);
-                            return Err(error);
-                        }
-                    };
-                let reported_generation = reported_previous
-                    .as_deref()
-                    .and_then(|path| applied_generation(&final_for_job, Path::new(path)));
-                if matches!(&outcome, ApplyOutcome::RolledBack { .. }) {
-                    // Reload may have opened this generation before the old path was
-                    // restored. Keep it through the next successful apply.
-                    remember_retained(&final_for_job, &[generation.name.as_str()], &log);
-                } else {
-                    if let Err(error) =
-                        apply
-                            .before_camilla_marker_write(&current_marker)
-                            .and_then(|()| {
-                                crate::deploy::write_entry(
-                                    &current_marker,
-                                    generation.name.as_bytes(),
-                                )
-                            })
+                return Err(error);
+            }
+            let generation =
+                crate::deploy::install(&final_for_job, design_folder(&design_id), &stage)?;
+            let config = generation.dir.join(relative);
+            let marker_before = marker_generation(&final_for_job, &current_marker);
+            let (outcome, reported_previous) =
+                match apply.camilla_apply_report(&address, &config, &text, TIMEOUT) {
+                    Ok(result) => result,
+                    Err(error)
+                        if managed_exe.is_some()
+                            && error
+                                .params
+                                .get("reason")
+                                .is_some_and(|reason| reason == "connection_refused") =>
                     {
-                        log(
-                            LogLevel::Error,
-                            "apply",
-                            &format!(
-                                "could not record active CamillaDSP generation {}: {}",
-                                generation.name, error.detail
-                            ),
-                        );
+                        (ApplyOutcome::HandedOver, None)
                     }
-                    if let Some(exe_path) = managed_exe
-                        && let Err(error) = managed_host
-                            .call(&HostRequest::SetManaged(HostManaged {
-                                camilla: Some(ManagedCamilla {
-                                    exe_path,
-                                    config_path: config.to_string_lossy().into_owned(),
-                                    port: managed_port,
-                                    design_id: design_id.clone(),
-                                }),
-                                eqapo: None,
-                                ..HostManaged::default()
-                            }))
-                            .and_then(expect_host_ok)
-                    {
-                        let mut retained = Vec::new();
-                        if let Some(previous) = reported_generation.as_deref() {
+                    Err(error) => {
+                        let reported_previous = error
+                            .params
+                            .get("previous_path")
+                            .and_then(|path| applied_generation(&final_for_job, Path::new(path)));
+                        let mut retained = vec![generation.name.as_str()];
+                        if let Some(previous) = marker_before.as_deref() {
+                            retained.push(previous);
+                        }
+                        if let Some(previous) = reported_previous.as_deref() {
                             retained.push(previous);
                         }
                         remember_retained(&final_for_job, &retained, &log);
+                        mark_generation_uncertain(&current_marker, &generation.name, &log);
                         return Err(error);
                     }
-                    // The marker is diagnostic only. Retirement follows the path
-                    // CamillaDSP reported during this apply (audit #155 TD-108).
-                    let mut keep = vec![generation.name.as_str()];
-                    if let Some(previous) = reported_generation.as_deref() {
-                        keep.push(previous);
-                    }
-                    retire_after_success(
-                        &final_for_job,
-                        &keep,
-                        reported_generation.is_some(),
-                        &log,
+                };
+            let reported_generation = reported_previous
+                .as_deref()
+                .and_then(|path| applied_generation(&final_for_job, Path::new(path)));
+            if matches!(&outcome, ApplyOutcome::RolledBack { .. }) {
+                // Reload may have opened this generation before the old path was
+                // restored. Keep it through the next successful apply.
+                remember_retained(&final_for_job, &[generation.name.as_str()], &log);
+            } else {
+                if let Err(error) =
+                    apply
+                        .before_camilla_marker_write(&current_marker)
+                        .and_then(|()| {
+                            crate::deploy::write_entry(&current_marker, generation.name.as_bytes())
+                        })
+                {
+                    log(
+                        LogLevel::Error,
+                        "apply",
+                        &format!(
+                            "could not record active CamillaDSP generation {}: {}",
+                            generation.name, error.detail
+                        ),
                     );
                 }
-                Ok(JobResult::Apply(ApplyResult {
-                    outcome,
-                    design_id,
-                    folder: generation.dir.to_string_lossy().into_owned(),
-                    stale: result.stale,
-                }))
-            },
-        )
+                if let Some(exe_path) = managed_exe
+                    && let Err(error) = managed_host
+                        .call(&HostRequest::SetManaged(HostManaged {
+                            camilla: Some(ManagedCamilla {
+                                exe_path,
+                                config_path: config.to_string_lossy().into_owned(),
+                                port: managed_port,
+                                design_id: design_id.clone(),
+                            }),
+                            eqapo: None,
+                            ..HostManaged::default()
+                        }))
+                        .and_then(expect_host_ok)
+                {
+                    let mut retained = Vec::new();
+                    if let Some(previous) = reported_generation.as_deref() {
+                        retained.push(previous);
+                    }
+                    remember_retained(&final_for_job, &retained, &log);
+                    return Err(error);
+                }
+                // The marker is diagnostic only. Retirement follows the path
+                // CamillaDSP reported during this apply (audit #155 TD-108).
+                let mut keep = vec![generation.name.as_str()];
+                if let Some(previous) = reported_generation.as_deref() {
+                    keep.push(previous);
+                }
+                retire_after_success(&final_for_job, &keep, reported_generation.is_some(), &log);
+            }
+            Ok(JobResult::Apply(ApplyResult {
+                outcome,
+                design_id,
+                folder: generation.dir.to_string_lossy().into_owned(),
+                stale: result.stale,
+            }))
+        })
     }
 
     pub(crate) fn start_apply_eqapo(
@@ -267,7 +258,7 @@ impl Service {
         let managed = settings.level == ApplyLevel::Manage;
         let managed_host = self.deps.managed_host.clone();
         let log = self.deps.log.clone();
-        self.start_export_with(
+        let plan = self.plan_export(
             ExportParams {
                 kind: ExportKind::EqualizerApo,
                 folder: stage.to_string_lossy().into_owned(),
@@ -277,91 +268,90 @@ impl Service {
                 // Applying writes one rate: the profile's output rate.
                 extra_rates: Vec::new(),
             },
-            events,
             ExportPurpose::Apply,
-            move |result| {
-                let design_id = result.design_id.clone().ok_or_else(|| {
-                    IpcError::new(ErrorCode::Internal, "Equalizer APO export has no design id")
-                })?;
-                let stage = PathBuf::from(&result.folder);
-                let entry = final_for_job.join("SECS.txt");
-                let previous_entry = match fs::read(&entry) {
-                    Ok(bytes) => Some(bytes),
-                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-                    Err(error) => return Err(io_error(&entry, &error)),
+        )?;
+        self.start_export(plan, events, move |result| {
+            let design_id = result.design_id.clone().ok_or_else(|| {
+                IpcError::new(ErrorCode::Internal, "Equalizer APO export has no design id")
+            })?;
+            let stage = PathBuf::from(&result.folder);
+            let entry = final_for_job.join("SECS.txt");
+            let previous_entry = match fs::read(&entry) {
+                Ok(bytes) => Some(bytes),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+                Err(error) => return Err(io_error(&entry, &error)),
+            };
+            let previous_generation = previous_entry.as_deref().and_then(entry_generation);
+            if let Err(error) = apply.before_generation_install(&final_for_job, &stage) {
+                if let Err(cleanup) = remove_stage(&stage) {
+                    log(
+                        LogLevel::Warn,
+                        "apply",
+                        &format!(
+                            "could not remove staging folder {}: {}",
+                            stage.display(),
+                            cleanup.detail
+                        ),
+                    );
+                }
+                return Err(error);
+            }
+            let generation =
+                crate::deploy::install(&final_for_job, design_folder(&design_id), &stage)?;
+            let entry_text = secs_filters::generation_entry(&generation.name);
+            let config = config_root.join("config.txt");
+            let switched = crate::deploy::write_entry(&entry, entry_text.as_bytes())
+                .and_then(|()| ensure_eqapo_include(&config, apply.as_ref()));
+            if let Err(error) = switched {
+                let restore = match previous_entry {
+                    Some(bytes) => crate::deploy::write_entry(&entry, &bytes),
+                    None => match fs::remove_file(&entry) {
+                        Ok(()) => Ok(()),
+                        Err(remove) if remove.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                        Err(remove) => Err(io_error(&entry, &remove)),
+                    },
                 };
-                let previous_generation = previous_entry.as_deref().and_then(entry_generation);
-                if let Err(error) = apply.before_generation_install(&final_for_job, &stage) {
-                    if let Err(cleanup) = remove_stage(&stage) {
-                        log(
-                            LogLevel::Warn,
-                            "apply",
-                            &format!(
-                                "could not remove staging folder {}: {}",
-                                stage.display(),
-                                cleanup.detail
-                            ),
-                        );
-                    }
-                    return Err(error);
-                }
-                let generation =
-                    crate::deploy::install(&final_for_job, design_folder(&design_id), &stage)?;
-                let entry_text = secs_filters::generation_entry(&generation.name);
-                let config = config_root.join("config.txt");
-                let switched = crate::deploy::write_entry(&entry, entry_text.as_bytes())
-                    .and_then(|()| ensure_eqapo_include(&config, apply.as_ref()));
-                if let Err(error) = switched {
-                    let restore = match previous_entry {
-                        Some(bytes) => crate::deploy::write_entry(&entry, &bytes),
-                        None => match fs::remove_file(&entry) {
-                            Ok(()) => Ok(()),
-                            Err(remove) if remove.kind() == std::io::ErrorKind::NotFound => Ok(()),
-                            Err(remove) => Err(io_error(&entry, &remove)),
-                        },
-                    };
-                    let mut retained = vec![generation.name.as_str()];
-                    if let Some(previous) = previous_generation.as_deref() {
-                        retained.push(previous);
-                    }
-                    remember_retained(&final_for_job, &retained, &log);
-                    if let Err(rollback) = restore {
-                        return Err(IpcError::new(
-                            ErrorCode::ApplyFailed,
-                            format!(
-                                "entry switch failed ({}); rollback failed ({})",
-                                error.detail, rollback.detail
-                            ),
-                        ));
-                    }
-                    // SECS.txt may already have pointed at this generation. A reader that
-                    // opened it before the rollback can still resolve the nested include
-                    // (audit #155 TD-105).
-                    return Err(error);
-                }
-                let mut keep = vec!["SECS.txt", generation.name.as_str()];
+                let mut retained = vec![generation.name.as_str()];
                 if let Some(previous) = previous_generation.as_deref() {
-                    keep.push(previous);
+                    retained.push(previous);
                 }
-                retire_after_success(&final_for_job, &keep, previous_generation.is_some(), &log);
-                if managed {
-                    expect_host_ok(managed_host.call(&HostRequest::SetManaged(HostManaged {
-                        camilla: None,
-                        eqapo: Some(ManagedEqApo {
-                            config_path: config_root.to_string_lossy().into_owned(),
-                            design_id: design_id.clone(),
-                        }),
-                        ..HostManaged::default()
-                    }))?)?;
+                remember_retained(&final_for_job, &retained, &log);
+                if let Err(rollback) = restore {
+                    return Err(IpcError::new(
+                        ErrorCode::ApplyFailed,
+                        format!(
+                            "entry switch failed ({}); rollback failed ({})",
+                            error.detail, rollback.detail
+                        ),
+                    ));
                 }
-                Ok(JobResult::Apply(ApplyResult {
-                    outcome: ApplyOutcome::Applied,
-                    design_id,
-                    folder: generation.dir.to_string_lossy().into_owned(),
-                    stale: result.stale,
-                }))
-            },
-        )
+                // SECS.txt may already have pointed at this generation. A reader that
+                // opened it before the rollback can still resolve the nested include
+                // (audit #155 TD-105).
+                return Err(error);
+            }
+            let mut keep = vec!["SECS.txt", generation.name.as_str()];
+            if let Some(previous) = previous_generation.as_deref() {
+                keep.push(previous);
+            }
+            retire_after_success(&final_for_job, &keep, previous_generation.is_some(), &log);
+            if managed {
+                expect_host_ok(managed_host.call(&HostRequest::SetManaged(HostManaged {
+                    camilla: None,
+                    eqapo: Some(ManagedEqApo {
+                        config_path: config_root.to_string_lossy().into_owned(),
+                        design_id: design_id.clone(),
+                    }),
+                    ..HostManaged::default()
+                }))?)?;
+            }
+            Ok(JobResult::Apply(ApplyResult {
+                outcome: ApplyOutcome::Applied,
+                design_id,
+                folder: generation.dir.to_string_lossy().into_owned(),
+                stale: result.stale,
+            }))
+        })
     }
 
     pub(crate) fn revert_eqapo(&self) -> Result<(), IpcError> {
