@@ -49,6 +49,25 @@ IGNORED_CI_TESTS = {
 }
 
 
+# Features the workspace build turns on for a crate through another member
+# (resolver 3 unifies them), which a lone ``cargo test -p`` would leave off:
+# the public API crate's ``client`` feature comes from the Python binding,
+# so its client tests run in CI's workspace run and must be listed with it.
+CRATE_FEATURES = {
+    "sound-equalization-and-correction-system-rust-api": ["--all-features"],
+}
+
+
+def list_command(crate: str, ignored_only: bool) -> list[str]:
+    """The ``cargo test -- --list`` invocation for one crate."""
+    command = ["cargo", "test", "--locked", "-q", "-p", crate, "--all-targets",
+               *CRATE_FEATURES.get(crate, []),
+               "--", "--list", "--format", "terse"]
+    if ignored_only:
+        command.append("--ignored")
+    return command
+
+
 def missing(wanted: dict[str, set[str]], listed: dict[str, set[str]],
             ignored: dict[str, set[str]]) -> list[str]:
     return sorted(
@@ -68,10 +87,7 @@ def main() -> int:
     ignored = {}
     for crate in sorted(wanted):
         for ignored_only, destination in ((False, listed), (True, ignored)):
-            command = ["cargo", "test", "--locked", "-q", "-p", crate, "--all-targets",
-                       "--", "--list", "--format", "terse"]
-            if ignored_only:
-                command.append("--ignored")
+            command = list_command(crate, ignored_only)
             result = subprocess.run(command, capture_output=True, text=True, encoding="utf-8")
             if result.returncode != 0:
                 print(result.stderr)

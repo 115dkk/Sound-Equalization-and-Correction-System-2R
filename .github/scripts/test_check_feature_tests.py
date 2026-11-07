@@ -30,6 +30,14 @@ class CheckTest(unittest.TestCase):
         ignored = {"secs-engine": {"manual_only"}}
         self.assertEqual(c.missing(wanted, listed, ignored), ["secs-engine::manual_only"])
 
+    def test_public_api_crate_is_listed_with_its_workspace_features(self):
+        api = "sound-equalization-and-correction-system-rust-api"
+        self.assertIn("--all-features", c.list_command(api, False))
+        self.assertEqual(c.list_command(api, True)[-1], "--ignored")
+        plain = c.list_command("secs-graph", False)
+        self.assertNotIn("--all-features", plain)
+        self.assertEqual(plain[-3:], ["--list", "--format", "terse"])
+
     def test_eqapo_playback_job_allows_its_ignored_test(self):
         wanted = {"secs-filters": {"exported_configs_play_as_designed"}}
         listed = {"secs-filters": {"exported_configs_play_as_designed"}}
