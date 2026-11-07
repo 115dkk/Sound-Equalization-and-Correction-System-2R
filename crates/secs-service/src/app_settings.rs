@@ -152,6 +152,18 @@ impl AppSettingsStore {
                 IpcError::new(ErrorCode::Internal, "app settings revision exhausted")
             })?;
             if let Some(path) = &self.path {
+                if read_bounded(path)
+                    .ok()
+                    .and_then(|bytes| serde_json::from_slice::<AppSettingsVersion>(&bytes).ok())
+                    .is_some_and(|file| file.version > APP_SETTINGS_VERSION)
+                {
+                    state.read_only_reason = Some("newer_version");
+                    return Err(IpcError::new(
+                        ErrorCode::Unsupported,
+                        "existing settings cannot be overwritten",
+                    )
+                    .with_param("reason", "app_settings_newer"));
+                }
                 atomic_write(path, &bytes)?;
             }
             state.revision = revision;

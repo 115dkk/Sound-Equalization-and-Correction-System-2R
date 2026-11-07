@@ -441,7 +441,7 @@ tests = [
   "secs2r::queued_icon_callback_uses_the_latest_desired_icon_td115",
   "secs2r::callback_rechecks_a_request_between_read_and_mark_td115",
   "secs-service::damaged_settings_file_is_reported_and_not_overwritten_until_set_td169",
-  "secs-service::newer_settings_file_is_never_overwritten_td169", "secs-service::unreadable_settings_file_is_never_overwritten_td169",
+  "secs-service::newer_settings_file_is_never_overwritten_td169", "secs-service::newer_settings_file_written_while_running_is_never_overwritten_td169", "secs-service::unreadable_settings_file_is_never_overwritten_td169",
 ]
 upstream = "wizard/branding.py, window.py _sidebar, SECS.spec icon="
 note = "upstream's confirmed logo (logo_b8, 'expert mode') is the program icon and the default rail mark; the app settings may pick SECS 2R's own 'civilian mode' logo (apps/secs2r/icons/logo) for the rail and the window icon (docs/DEVIATIONS.md U12). apps/secs2r/ui src/state/flow.test.tsx and src/app/logo.test.ts pin the rail and the choice."

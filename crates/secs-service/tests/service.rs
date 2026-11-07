@@ -514,6 +514,59 @@ fn newer_settings_file_is_never_overwritten_td169() {
 }
 
 #[test]
+fn newer_settings_file_written_while_running_is_never_overwritten_td169() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[derive(Debug)]
+    struct CountingEffect(Arc<AtomicUsize>);
+
+    impl SettingsEffect for CountingEffect {
+        fn changed(&self, _previous: &AppSettings, _next: &AppSettings) {
+            self.0.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    let root = temp_root("newer-settings-while-running");
+    fs::create_dir_all(&root).unwrap();
+    let path = root.join("settings.json");
+    let service = Service::new(Deps {
+        app_settings_path: Some(path.clone()),
+        ..Deps::default()
+    });
+    let calls = Arc::new(AtomicUsize::new(0));
+    service.register_settings_effect(Arc::new(CountingEffect(calls.clone())));
+    let original = serde_json::to_vec(&serde_json::json!({
+        "version": 2,
+        "settings": AppSettings {
+            language: "newer".into(),
+            ..AppSettings::default()
+        },
+    }))
+    .unwrap();
+    fs::write(&path, &original).unwrap();
+
+    let Envelope::Err(error) = service.call(
+        Request::AppSettingsSet(AppSettingsParams {
+            settings: AppSettings {
+                language: "replacement".into(),
+                ..AppSettings::default()
+            },
+        }),
+        Arc::new(NoEvents),
+    ) else {
+        panic!("a settings file that became newer while running must not be overwritten")
+    };
+    assert_eq!(error.code, ErrorCode::Unsupported);
+    assert_eq!(
+        error.params.get("reason").map(String::as_str),
+        Some("app_settings_newer")
+    );
+    assert_eq!(fs::read(&path).unwrap(), original);
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn unreadable_settings_file_is_never_overwritten_td169() {
     // A valid file over the 1 MiB read bound: this app cannot tell which
     // version wrote it, so an explicit set must not replace it (audit #186 A-14).
