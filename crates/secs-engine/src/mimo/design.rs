@@ -4,6 +4,7 @@
 use secs_dsp::{
     fft,
     fir::firwin,
+    grid::geomspace,
     iir::{BType, Sos, butter, sosfilt},
     interp, pairwise_sum,
     response::hp2,
@@ -88,16 +89,6 @@ pub fn lowpass_fir(fc: f64, taps: usize) -> Result<Vec<f64>, EngineError> {
     Ok(firwin(taps, fc, FS_LOW)?)
 }
 
-fn geomspace(start: f64, end: f64) -> Vec<f64> {
-    let step = (end.log10() - start.log10()) / 199.0;
-    let mut values: Vec<_> = (0..200)
-        .map(|k| 10f64.powf(start.log10() + k as f64 * step))
-        .collect();
-    values[0] = start;
-    values[199] = end;
-    values
-}
-
 /// Position-mean one-third-octave support ranges, in main then sub order.
 /// Long spectra must already include the sub's fixed and bundle filters.
 pub fn support_ranges(
@@ -174,12 +165,12 @@ pub fn support_ranges(
             reference = db[k];
             start = f[k];
         }
-        let low = geomspace(start, 15.0)
+        let low = geomspace(start, 15.0, 200)
             .into_iter()
             .find(|&v| interp(v, f, &db) < reference - 10.0)
             .unwrap_or(15.0)
             .max(if sub.is_some() { 20.0 } else { 50.0 });
-        let high = geomspace(start, fsiso)
+        let high = geomspace(start, fsiso, 200)
             .into_iter()
             .find(|&v| interp(v, f, &db) < reference - 10.0)
             .unwrap_or(fsiso);

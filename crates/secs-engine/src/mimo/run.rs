@@ -528,7 +528,7 @@ pub(crate) fn assemble_prepared(
     } else {
         lr4(f, key.fsiso, "LP")
     };
-    let spl_grid = crate::design::geomspace(5.0, 20000.0, 1390);
+    let spl_grid = secs_dsp::grid::geomspace(5.0, 20000.0, 1390);
     let target = design.target.sample(
         &f.iter()
             .map(|frequency| frequency.max(1.0))

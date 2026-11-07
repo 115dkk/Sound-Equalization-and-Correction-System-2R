@@ -6,6 +6,7 @@ use crate::{
     grid::design_freqs,
 };
 use secs_dsp::{
+    grid::geomspace,
     interp, pairwise_sum,
     smooth::{Fraction, PowerSmoother},
 };
@@ -238,16 +239,6 @@ pub struct SubCombine {
     pub layout_info: Vec<(String, LayoutInfo)>,
 }
 
-fn geomspace(lo: f64, hi: f64, n: usize) -> Vec<f64> {
-    let start = lo.log10();
-    let step = (hi.log10() - start) / (n - 1) as f64;
-    let mut out: Vec<_> = (0..n)
-        .map(|i| 10f64.powf(start + i as f64 * step))
-        .collect();
-    out[0] = lo;
-    out[n - 1] = hi;
-    out
-}
 fn mean(v: &[f64]) -> f64 {
     pairwise_sum(v) / v.len() as f64
 }

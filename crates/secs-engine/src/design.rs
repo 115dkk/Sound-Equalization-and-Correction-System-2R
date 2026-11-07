@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use secs_compute::Context;
 use secs_dsp::{
+    grid::geomspace,
     interp, response,
     smooth::{self, Fraction},
 };
@@ -399,16 +400,6 @@ impl DesignBytes {
             },
         }
     }
-}
-pub(crate) fn geomspace(lo: f64, hi: f64, n: usize) -> Vec<f64> {
-    let start = lo.log10();
-    let step = (hi.log10() - start) / (n - 1) as f64;
-    let mut out: Vec<_> = (0..n)
-        .map(|i| 10f64.powf(start + i as f64 * step))
-        .collect();
-    out[0] = lo;
-    out[n - 1] = hi;
-    out
 }
 pub(crate) fn spl_db(h: &[C], grid: &[f64]) -> Vec<f64> {
     let p: Vec<_> = h

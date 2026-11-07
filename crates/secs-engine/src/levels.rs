@@ -42,17 +42,8 @@ pub fn target_db(target: &TargetCurve, f: &[f64]) -> Vec<f64> {
     target.sample(f)
 }
 
-pub(crate) fn median(mut values: Vec<f64>) -> f64 {
-    if values.is_empty() || values.iter().any(|v| v.is_nan()) {
-        return f64::NAN;
-    }
-    values.sort_by(f64::total_cmp);
-    let mid = values.len() / 2;
-    if values.len().is_multiple_of(2) {
-        (values[mid - 1] + values[mid]) / 2.0
-    } else {
-        values[mid]
-    }
+pub(crate) fn median(values: Vec<f64>) -> f64 {
+    secs_dsp::stats::median(&values)
 }
 
 pub fn band_level(

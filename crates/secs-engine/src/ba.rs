@@ -15,6 +15,7 @@ use secs_dsp::optimize::{DifferentialEvolutionOptions, differential_evolution};
 use secs_dsp::{
     fft, pairwise_sum, response,
     smooth::{self, Fraction},
+    stats::median,
 };
 use std::{f64::consts::PI, sync::Arc};
 
@@ -85,15 +86,6 @@ fn row(gain_db: f64, delay_ms: f64, polarity: i8, allpass: Vec<(f64, f64)>) -> B
 }
 fn mean(x: &[f64]) -> f64 {
     pairwise_sum(x) / x.len() as f64
-}
-fn median(mut x: Vec<f64>) -> f64 {
-    x.sort_by(f64::total_cmp);
-    let m = x.len() / 2;
-    if x.len().is_multiple_of(2) {
-        (x[m - 1] + x[m]) / 2.0
-    } else {
-        x[m]
-    }
 }
 fn mag(x: C) -> f64 {
     x.re.hypot(x.im)
@@ -313,7 +305,8 @@ fn gd_variance(h: &[C], f: &[f64]) -> f64 {
     for v in &mut gd {
         *v = -*v * 1000.0;
     }
-    let m = median(gd.clone());
+    assert!(!gd.is_empty(), "BA group delay median requires samples");
+    let m = median(&gd);
     mean(&gd.iter().map(|v| (v - m).powi(2)).collect::<Vec<_>>())
 }
 
@@ -599,12 +592,13 @@ impl Search {
         let off = if plan.fixed.is_empty() {
             0.0
         } else {
-            median(
-                out.constants
-                    .iter()
-                    .map(|(r, v)| v.delay_ms - base(input, r))
-                    .collect(),
-            )
+            let values = out
+                .constants
+                .iter()
+                .map(|(r, v)| v.delay_ms - base(input, r))
+                .collect::<Vec<_>>();
+            assert!(!values.is_empty(), "fixed-delay median requires values");
+            median(&values)
         };
         let mut anchored = plan.fixed.clone();
         if input.tuning.bundle_gain == BundleGain::Fixed {
@@ -748,13 +742,13 @@ fn level(input: &BaInput<'_>, by_pos: &[(u32, Arc<[C]>)]) -> f64 {
         .config
         .target
         .sample(&gather(design_freqs(), &indices));
-    median(
-        indices
-            .iter()
-            .zip(target)
-            .map(|(&i, t)| 20.0 * (mag(h[i]) + 1e-20).log10() - t)
-            .collect(),
-    )
+    let values = indices
+        .iter()
+        .zip(target)
+        .map(|(&i, t)| 20.0 * (mag(h[i]) + 1e-20).log10() - t)
+        .collect::<Vec<_>>();
+    assert!(!values.is_empty(), "BA level median requires samples");
+    median(&values)
 }
 #[allow(clippy::too_many_arguments)]
 fn target_peq(
@@ -930,11 +924,12 @@ fn layout_stage(
                         }
                     }
                 }
-                median(
-                    pw.iter()
-                        .map(|v| 10.0 * (v / total + 1e-30).log10())
-                        .collect(),
-                )
+                let values = pw
+                    .iter()
+                    .map(|v| 10.0 * (v / total + 1e-30).log10())
+                    .collect::<Vec<_>>();
+                assert!(!values.is_empty(), "bundle level median requires samples");
+                median(&values)
             })
             .collect();
         let low = levels.iter().copied().fold(f64::INFINITY, f64::min);
@@ -1206,7 +1201,13 @@ fn two_way(input: &BaInput<'_>, h: &Spectra, out: &mut SubAlignment) -> Result<u
             .zip(&target)
             .map(|(p, t)| 10.0 * (p + 1e-30).log10() - t)
             .collect();
-        let diff = median(gather(&db, &hi)) - median(gather(&db, &lo));
+        let high = gather(&db, &hi);
+        let low = gather(&db, &lo);
+        assert!(
+            !high.is_empty() && !low.is_empty(),
+            "infra-band median requires samples"
+        );
+        let diff = median(&high) - median(&low);
         let step = diff.clamp(-24.0 - total, input.config.infra_boost_max_db - total);
         if step.abs() < 0.1 {
             break;

@@ -5,8 +5,11 @@
 use crate::grid::{SR_F, design_freqs};
 use faer::Mat;
 use secs_dsp::{
-    Complex64 as C, optimize, response,
+    Complex64 as C,
+    grid::geomspace,
+    optimize, response,
     smooth::{self, Fraction},
+    stats::median,
 };
 use secs_types::{chain::Peq, target::TargetCurve};
 use std::{cell::RefCell, f64::consts::PI};
@@ -406,16 +409,6 @@ fn argmax(v: &[f64]) -> usize {
     assert!(!v.is_empty());
     (1..v.len()).fold(0, |k, i| if v[i] > v[k] { i } else { k })
 }
-fn geomspace(lo: f64, hi: f64, n: usize) -> Vec<f64> {
-    let start = lo.log10();
-    let step = (hi.log10() - start) / (n - 1) as f64;
-    let mut g: Vec<_> = (0..n)
-        .map(|i| 10_f64.powf(i as f64 * step + start))
-        .collect();
-    g[0] = lo;
-    g[n - 1] = hi;
-    g
-}
 fn interp(x: f64, f: &[f64], y: &[f64]) -> f64 {
     let i = f.partition_point(|v| *v <= x).saturating_sub(1);
     if x <= f[0] {
@@ -424,16 +417,6 @@ fn interp(x: f64, f: &[f64], y: &[f64]) -> f64 {
         y[i]
     } else {
         (y[i + 1] - y[i]) / (f[i + 1] - f[i]) * (x - f[i]) + y[i]
-    }
-}
-fn median(v: &[f64]) -> f64 {
-    let mut v = v.to_vec();
-    v.sort_by(f64::total_cmp);
-    let k = v.len() / 2;
-    if v.len().is_multiple_of(2) {
-        (v[k - 1] + v[k]) / 2.0
-    } else {
-        v[k]
     }
 }
 // NumPy's pairwise contiguous sum, used by the GD improvement decision.
@@ -522,7 +505,11 @@ fn gd_cuts_on_grid(
         }
         let gd = response::gd_curve(&cur, f, g, Fraction::Scalar(24.0)).expect("valid GD grid");
         let base: Vec<_> = (0..g.len())
-            .map(|i| median(&gd[i.saturating_sub(40)..(i + 40).min(g.len())]))
+            .map(|i| {
+                let values = &gd[i.saturating_sub(40)..(i + 40).min(g.len())];
+                assert!(!values.is_empty(), "GD median requires samples");
+                median(values)
+            })
             .collect();
         let mut exc: Vec<_> = gd.iter().zip(&base).map(|(g, b)| g - b).collect();
         // With correction bands, skip a peak that lies in no band or leaves

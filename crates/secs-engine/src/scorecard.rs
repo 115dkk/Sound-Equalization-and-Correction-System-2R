@@ -5,7 +5,9 @@ use crate::{
     decay::{energy, first_max, fit_slope, median, percentile},
 };
 use secs_dsp::{
-    fft, interp,
+    fft,
+    grid::geomspace,
+    interp,
     response::gd_curve_with_peak,
     smooth::{Fraction, smooth_complex, smooth_power},
 };
@@ -31,17 +33,6 @@ pub struct Metrics {
     pub gd24_span: f64,
     pub gd_30: f64,
     pub pre_db: f64,
-}
-
-fn geomspace(start: f64, stop: f64, n: usize) -> Vec<f64> {
-    let lo = start.log10();
-    let step = (stop.log10() - lo) / (n - 1) as f64;
-    let mut out: Vec<_> = (0..n)
-        .map(|i| 10.0_f64.powf(i as f64 * step + lo))
-        .collect();
-    out[0] = start;
-    out[n - 1] = stop;
-    out
 }
 
 fn unwrap(phase: &mut [f64]) {

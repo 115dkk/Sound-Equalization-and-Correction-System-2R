@@ -45,6 +45,7 @@ pub mod rate;
 pub mod resample;
 pub mod response;
 pub mod smooth;
+pub mod stats;
 
 /// Data-dependent errors corresponding to upstream invalid inputs.
 #[derive(Debug, thiserror::Error)]

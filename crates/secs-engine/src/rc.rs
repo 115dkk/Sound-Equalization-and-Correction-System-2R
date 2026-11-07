@@ -11,7 +11,9 @@ use crate::{
     setup::Setup,
 };
 use secs_dsp::{
-    complex_div as divide, fft, interp, lowrate,
+    complex_div as divide, fft,
+    grid::geomspace,
+    interp, lowrate,
     minphase::minimum_phase,
     pairwise_sum,
     response::{self, magnitude},
@@ -354,16 +356,6 @@ pub(crate) fn phase_error_band(f: f64, lo_fir: f64, setup: &Setup) -> bool {
                 .any(|&(lo, hi)| f >= lo && f <= (hi * 2_f64.sqrt()).min(SR_F / 2.0 * 0.99)))
 }
 
-fn geomspace(lo: f64, hi: f64, n: usize) -> Vec<f64> {
-    let start = lo.log10();
-    let step = (hi.log10() - start) / (n - 1) as f64;
-    let mut g: Vec<_> = (0..n)
-        .map(|i| 10_f64.powf(i as f64 * step + start))
-        .collect();
-    g[0] = lo;
-    g[n - 1] = hi;
-    g
-}
 fn db(h: C) -> f64 {
     20.0 * (magnitude(h) + 1e-12).log10()
 }
