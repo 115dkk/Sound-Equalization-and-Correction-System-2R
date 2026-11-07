@@ -126,34 +126,19 @@ impl Service {
                 if stores_settings {
                     open.edit(|project| store_calibration(project, &prepared.settings));
                 }
-                Ok((
-                    (open.path.clone(), open.results.cache_snapshot()),
-                    stores_settings,
-                ))
+                Ok(((), stores_settings))
             };
-            let (path, cached) = if run_mimo {
-                session::commit(
-                    &session,
-                    ticket,
-                    &job,
-                    session::Finality::Phase,
-                    commit_calibration,
-                )?
+            let finality = if run_mimo {
+                session::Finality::Phase
             } else {
-                session::commit(
-                    &session,
-                    ticket,
-                    &job,
-                    session::Finality::Final,
-                    commit_calibration,
-                )?
+                session::Finality::Final
             };
             let owner = if subs_only {
                 CacheOwner::Subs
             } else {
                 CacheOwner::Calibration
             };
-            persist_cache(cached, &path, ticket, &session, &job, owner);
+            session::commit_results(&session, ticket, &job, finality, owner, commit_calibration)?;
             if let Some(selection) = selection {
                 compute_and_commit_mimo(
                     &session,
@@ -352,18 +337,24 @@ fn compute_and_commit_mimo(
         &selection,
     )
     .map_err(|error| engine_error(error).with_param("stage", "mimo"))?;
-    let (path, cached) = session::commit(session, ticket, job, session::Finality::Final, |open| {
-        let summary = summarize_mimo(&run);
-        open.results.commit_mimo(MimoResult {
-            summary,
-            settings_key: settings.mimo_key(),
-            compute_key,
-            calibration_key,
-            run,
-        });
-        Ok(((open.path.clone(), open.results.cache_snapshot()), false))
-    })?;
-    persist_cache(cached, &path, ticket, session, job, CacheOwner::Mimo);
+    session::commit_results(
+        session,
+        ticket,
+        job,
+        session::Finality::Final,
+        CacheOwner::Mimo,
+        |open| {
+            let summary = summarize_mimo(&run);
+            open.results.commit_mimo(MimoResult {
+                summary,
+                settings_key: settings.mimo_key(),
+                compute_key,
+                calibration_key,
+                run,
+            });
+            Ok(((), false))
+        },
+    )?;
     Ok(())
 }
 
@@ -815,56 +806,6 @@ fn metrics(value: Metrics) -> MetricsSummary {
         gd24_span: value.gd24_span,
         gd_30: value.gd_30,
         pre_db: value.pre_db,
-    }
-}
-
-/// The notice a calculation carries when its results stay in memory but
-/// could not be written to the project folder (TD-38).
-const CACHE_SAVE_FAILED: &str = "cache_save_failed";
-
-/// Saves the cache after the results were committed in memory. A failure is
-/// not a failed calculation: the owner's summary carries a
-/// `cache_save_failed` notice until a later save succeeds (TD-38).
-fn persist_cache(
-    cached: Option<crate::cache::CachedResults>,
-    path: &std::path::Path,
-    ticket: ProjectTicket,
-    session: &Arc<std::sync::Mutex<crate::session::Session>>,
-    job: &JobContext,
-    owner: CacheOwner,
-) {
-    let Some(cached) = cached else {
-        return;
-    };
-    match crate::cache::save(path, &cached) {
-        Ok(()) => {
-            // Another project opened since the commit, or this one saved
-            // under another path, keeps its own cache: only the in-memory
-            // copy is skipped.
-            let _ = session::commit(session, ticket, job, session::Finality::Streaming, |open| {
-                if open.path == path {
-                    open.results.replace_cache(cached);
-                    for notes in open.results.all_notes_mut() {
-                        notes.retain(|notice| notice.code != CACHE_SAVE_FAILED);
-                    }
-                }
-                Ok(((), false))
-            });
-        }
-        Err(error) => {
-            let _ = session::commit(session, ticket, job, session::Finality::Streaming, |open| {
-                if open.path == path
-                    && let Some(notes) = open.results.owner_notes_mut(owner)
-                {
-                    notes.retain(|notice| notice.code != CACHE_SAVE_FAILED);
-                    notes.push(Notice {
-                        code: CACHE_SAVE_FAILED.into(),
-                        params: [("error".into(), error.to_string())].into(),
-                    });
-                }
-                Ok(((), false))
-            });
-        }
     }
 }
 

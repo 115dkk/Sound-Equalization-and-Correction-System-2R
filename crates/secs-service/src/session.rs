@@ -8,9 +8,10 @@ use secs_project::{
     DspProfile, MeasurementStore, Project, PyJson, RemovedPosition, load_project_sources,
     measured_positions, plan_from_project,
 };
-use secs_types::ipc::{ErrorCode, IpcError, MigrationWarning, ProjectInfo};
+use secs_types::ipc::{ErrorCode, IpcError, MigrationWarning, Notice, ProjectInfo};
 
 use crate::jobs::JobContext;
+use crate::results::CacheOwner;
 use crate::{EventSink, Service, ServiceError, lock};
 
 #[derive(Debug, Default)]
@@ -512,6 +513,54 @@ pub(crate) fn commit<T>(
         Finality::Streaming => {}
     }
     run_change(open, change)
+}
+
+const CACHE_SAVE_FAILED: &str = "cache_save_failed";
+
+pub(crate) fn commit_results<T>(
+    session: &Arc<Mutex<Session>>,
+    ticket: ProjectTicket,
+    job: &JobContext,
+    finality: Finality,
+    owner: CacheOwner,
+    change: impl FnOnce(&mut OpenProject) -> Result<(T, bool), IpcError>,
+) -> Result<T, IpcError> {
+    let (value, path, cached) = commit(session, ticket, job, finality, |open| {
+        let (value, changed) = change(open)?;
+        Ok((
+            (value, open.path.clone(), open.results.cache_snapshot()),
+            changed,
+        ))
+    })?;
+    let Some(cached) = cached else {
+        return Ok(value);
+    };
+
+    let saved = crate::cache::save(&path, &cached);
+    let _ = commit(session, ticket, job, Finality::Streaming, |open| {
+        if open.path != path {
+            return Ok(((), false));
+        }
+        match saved {
+            Ok(()) => {
+                open.results.replace_cache(cached);
+                for notes in open.results.all_notes_mut() {
+                    notes.retain(|notice| notice.code != CACHE_SAVE_FAILED);
+                }
+            }
+            Err(error) => {
+                if let Some(notes) = open.results.owner_notes_mut(owner) {
+                    notes.retain(|notice| notice.code != CACHE_SAVE_FAILED);
+                    notes.push(Notice {
+                        code: CACHE_SAVE_FAILED.into(),
+                        params: [("error".into(), error.to_string())].into(),
+                    });
+                }
+            }
+        }
+        Ok(((), false))
+    });
+    Ok(value)
 }
 
 fn run_change<T>(

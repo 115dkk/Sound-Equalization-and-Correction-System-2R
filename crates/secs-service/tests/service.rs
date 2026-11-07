@@ -5771,7 +5771,7 @@ fn has_cache_warning(notes: &[secs_types::ipc::Notice]) -> bool {
 }
 
 #[test]
-fn cache_save_failure_is_a_warning_on_a_successful_calculation() {
+fn commit_results_saves_the_cache_outside_the_lock_and_reports_a_failed_save_once() {
     let root = temp_root("cache-save-warning");
     fs::create_dir_all(&root).unwrap();
     let (path, mut settings) = write_case(&root, "room_dba");
@@ -5795,6 +5795,21 @@ fn cache_save_failure_is_a_warning_on_a_successful_calculation() {
         calibration.notes
     );
     assert!(has_cache_warning(&mimo.notes), "{:?}", mimo.notes);
+    assert_eq!(
+        calibration
+            .notes
+            .iter()
+            .filter(|notice| notice.code == "cache_save_failed")
+            .count(),
+        1
+    );
+    assert_eq!(
+        mimo.notes
+            .iter()
+            .filter(|notice| notice.code == "cache_save_failed")
+            .count(),
+        1
+    );
 
     // Once a save succeeds the warning goes, and it is never written to the cache.
     fs::remove_dir_all(&obstacle).unwrap();
