@@ -111,8 +111,9 @@ impl StoreEdit<'_> {
     }
 
     pub(crate) fn clear_position(&mut self, pos: i64) -> bool {
-        self.wrote = true;
-        self.store.clear_position(pos)
+        let changed = self.store.clear_position(pos);
+        self.wrote |= changed;
+        changed
     }
 
     pub(crate) fn record(
@@ -120,21 +121,24 @@ impl StoreEdit<'_> {
         result: secs_project::MeasurementResult,
         plan_roles: Option<&[String]>,
     ) -> Result<secs_project::MeasurementRecord, secs_project::ProjectError> {
-        self.wrote = true;
-        self.store.record(result, plan_roles)
+        let result = self.store.record(result, plan_roles);
+        self.wrote |= result.is_ok();
+        result
     }
 
     pub(crate) fn remove_position(&mut self, pos: i64) -> Option<RemovedPosition> {
-        self.wrote = true;
-        self.store.remove_position(pos)
+        let removed = self.store.remove_position(pos);
+        self.wrote |= removed.is_some();
+        removed
     }
 
     pub(crate) fn restore_position(
         &mut self,
         removed: RemovedPosition,
     ) -> Result<(), secs_project::ProjectError> {
-        self.wrote = true;
-        self.store.restore_position(removed)
+        let result = self.store.restore_position(removed);
+        self.wrote |= result.is_ok();
+        result
     }
 
     pub(crate) fn replace_source(
@@ -143,8 +147,18 @@ impl StoreEdit<'_> {
         pos: i64,
         info: Option<&secs_mdat::SourceInfo>,
     ) -> Result<(), secs_project::ProjectError> {
-        self.wrote = true;
-        self.store.replace_source(role, pos, info)
+        let result = self.store.replace_source(role, pos, info);
+        self.wrote |= result.is_ok();
+        result
+    }
+
+    pub(crate) fn write_result<T, E>(
+        &mut self,
+        change: impl FnOnce(&mut MeasurementStore) -> Result<T, E>,
+    ) -> Result<T, E> {
+        let result = change(self.store);
+        self.wrote |= result.is_ok();
+        result
     }
 
     pub(crate) fn ir_path_of(

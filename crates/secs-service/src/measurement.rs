@@ -275,7 +275,7 @@ impl Service {
         }
         let mut session = lock(&self.session);
         let open = session.require_mut()?;
-        let mut project = open.store.project().clone();
+        let mut project = open.project().clone();
         let mut values = vec![("method".into(), PyJson::Str(params.method))];
         for (key, value) in [
             ("input", params.input_device),
@@ -373,8 +373,7 @@ impl Service {
         // A cable reference without a native loopback input is no longer an
         // error: only REW reads the timing reference (U15).
         let result = settings(&project)?;
-        *open.store.project_mut() = project;
-        open.dirty = true;
+        open.edit(|stored| *stored = project);
         drop(session);
 
         if open_rew_devices {
@@ -401,9 +400,9 @@ impl Service {
     pub(crate) fn measurement_records(&self) -> Result<MeasurementRecordsResult, IpcError> {
         let session = lock(&self.session);
         let open = session.require()?;
-        let project = open.store.project();
+        let project = open.project();
         let planned = plan_for(project, &Default::default()).roles;
-        let records = open.store.records();
+        let records = open.store().records();
         Ok(MeasurementRecordsResult {
             records: (1..=measure::position_count(project))
                 .map(|position| {
@@ -443,7 +442,7 @@ impl Service {
         let (roles, ticket) = {
             let session = lock(&self.session);
             let open = session.require()?;
-            let roles = plan_for(open.store.project(), &Default::default()).roles;
+            let roles = plan_for(open.project(), &Default::default()).roles;
             (roles, session.ticket()?)
         };
         // 17 is the largest measurement layout (패밀리); checked before any allocation.
@@ -458,23 +457,22 @@ impl Service {
             let total = (roles.len() * positions.len()) as u64;
             let mut done = 0;
             let info = session::commit(&session, ticket, &ctx, |open| {
-                if embedded {
-                    let existing = secs_project::measured_positions(open.store.project());
-                    for position in existing {
-                        if position != 1 {
-                            open.store.clear_position(position);
-                        }
-                    }
-                } else {
-                    let existing = secs_project::measured_positions(open.store.project());
-                    for position in existing {
-                        open.store.clear_position(position);
+                let existing = secs_project::measured_positions(open.project());
+                let was_dirty = open.is_dirty();
+                let mut store = open.store_mut();
+                for position in existing {
+                    if !embedded || position != 1 {
+                        store.clear_position(position);
                     }
                 }
                 for position in positions {
-                    open.store.start_position(position);
+                    store.start_position(position);
                     for role in &roles {
                         if ctx.cancel().is_cancelled() {
+                            drop(store);
+                            if !was_dirty {
+                                open.mark_saved();
+                            }
                             return Err(IpcError::new(ErrorCode::Cancelled, "cancelled"));
                         }
                         let (ir, sample_rate, t0_s) = if embedded {
@@ -491,7 +489,7 @@ impl Service {
                                 0.0,
                             )
                         };
-                        open.store
+                        store
                             .record(
                                 secs_project::MeasurementResult {
                                     role: role.clone(),
@@ -520,8 +518,9 @@ impl Service {
                         ctx.role_progress(role, done, total);
                     }
                 }
+                drop(store);
                 // Each record is written to disk as it is made.
-                open.dirty = false;
+                open.mark_saved();
                 Ok((session::info(open), false))
             })?;
             Ok(JobResult::Measurement(info))
@@ -613,14 +612,24 @@ impl Service {
                         let snr = result.snr_db;
                         let first = count == 0;
                         let record = |open: &mut session::OpenProject| -> Result<_, IpcError> {
-                            if first {
-                                open.store.start_position(params.position);
+                            let was_dirty = open.is_dirty();
+                            let outcome = {
+                                let mut store = open.store_mut();
+                                if first {
+                                    store.start_position(params.position);
+                                }
+                                store
+                                    .record(result, Some(&p.roles))
+                                    .map_err(|e| measure_error(e.into(), "record", share))
+                            };
+                            if let Err(error) = outcome {
+                                if !was_dirty {
+                                    open.mark_saved();
+                                }
+                                return Err(error);
                             }
-                            open.store
-                                .record(result, Some(&p.roles))
-                                .map_err(|e| measure_error(e.into(), "record", share))?;
                             // Each record is written to disk as it is made.
-                            open.dirty = false;
+                            open.mark_saved();
                             Ok(((), false))
                         };
                         // An atomic method's position becomes non-cancellable
@@ -672,22 +681,28 @@ impl Service {
     ) -> Result<UndoResult, IpcError> {
         let mut session = lock(&self.session);
         let open = session.require_mut()?;
-        let removed = open
-            .store
+        let was_dirty = open.is_dirty();
+        let mut store = open.store_mut();
+        let removed = store
             .remove_position(params.position)
             .ok_or_else(|| IpcError::new(ErrorCode::InvalidRequest, "position has no record"))?;
-        if let Err(error) = open.store.save() {
-            open.store
+        if let Err(error) = store.save() {
+            store
                 .restore_position(removed)
                 .expect("nothing recorded the position since it was removed");
+            drop(store);
+            if !was_dirty {
+                open.mark_saved();
+            }
             return Err(measure_error(
                 error.into(),
                 "position",
                 secs_audio::SharePreference::Auto,
             ));
         }
+        drop(store);
         let token = session::push_position_undo(open, removed);
-        open.dirty = false;
+        open.mark_saved();
         Ok(UndoResult {
             token,
             project: session::info(open),
@@ -696,48 +711,48 @@ impl Service {
     pub(crate) fn undo(&self, params: UndoParams) -> Result<ProjectInfo, IpcError> {
         let mut session = lock(&self.session);
         let open = session.require_mut()?;
-        let index = open
-            .undo
-            .iter()
-            .position(|entry| entry.token == params.token)
-            .ok_or_else(|| {
-                IpcError::new(ErrorCode::InvalidRequest, "unknown or used undo token")
-            })?;
-        let payload = open.undo[index].payload.clone();
+        let payload = open.take_undo(&params.token).ok_or_else(|| {
+            IpcError::new(ErrorCode::InvalidRequest, "unknown or used undo token")
+        })?;
         match payload {
             session::UndoPayload::Position(removed) => {
-                if !matches!(open.store.project().measurements, PyJson::Array(_)) {
+                if !matches!(open.project().measurements, PyJson::Array(_)) {
                     return Err(IpcError::new(
                         ErrorCode::InvalidRequest,
                         "measurement list changed",
                     ));
                 }
+                let was_dirty = open.is_dirty();
                 let position = removed.position();
-                open.store.restore_position(removed).map_err(|_| {
+                let mut store = open.store_mut();
+                store.restore_position(removed).map_err(|_| {
                     IpcError::new(ErrorCode::InvalidRequest, "position was recorded again")
                 })?;
-                if let Err(error) = open.store.save() {
-                    open.store.remove_position(position);
+                if let Err(error) = store.save() {
+                    store.remove_position(position);
+                    drop(store);
+                    if !was_dirty {
+                        open.mark_saved();
+                    }
                     return Err(measure_error(
                         error.into(),
                         "undo",
                         secs_audio::SharePreference::Auto,
                     ));
                 }
-                open.dirty = false;
+                drop(store);
+                open.mark_saved();
             }
             session::UndoPayload::Measurements(measurements) => {
-                if !measurement_entries(open.store.project()).is_empty() {
+                if !measurement_entries(open.project()).is_empty() {
                     return Err(IpcError::new(
                         ErrorCode::InvalidRequest,
                         "measurements changed after destructive edit",
                     ));
                 }
-                open.store.project_mut().measurements = measurements;
-                open.dirty = true;
+                open.edit(|project| project.measurements = measurements);
             }
         }
-        open.undo.remove(index);
         Ok(session::info(open))
     }
     pub(crate) fn rew_info(&self) -> RewInfoResult {
@@ -968,11 +983,14 @@ impl Service {
             }
             let file_name = measurement_file::file_name(path);
             let (count, info) = session::commit(&session, ticket, &ctx, |open| {
-                let count =
-                    measurement_file::import(&mut open.store, &*reader, &file_name, &assignments)
-                        .map_err(path_error)?;
+                let count = open
+                    .store_mut()
+                    .write_result(|store| {
+                        measurement_file::import(store, &*reader, &file_name, &assignments)
+                    })
+                    .map_err(path_error)?;
                 // The import writes its records to disk.
-                open.dirty = false;
+                open.mark_saved();
                 Ok(((count, session::info(open)), false))
             })?;
             ctx.report_progress("mdat_import", count as u64, count as u64);
