@@ -45,6 +45,71 @@ impl ExportResult {
     }
 }
 
+struct CamillaWriter<'a> {
+    chain: &'a secs_types::chain::SignalChain,
+    folder: &'a Path,
+    devices: Option<&'a CamillaDevices>,
+    output_rate: u32,
+    project_name: Option<String>,
+    design_name: String,
+    design_id: String,
+    labels: secs_camilla::RunLabels,
+    mimo: Option<&'a secs_types::chain::MimoPaths>,
+    prepared: Option<secs_camilla::PreparedConfig>,
+    main_config: std::path::PathBuf,
+}
+
+impl CamillaWriter<'_> {
+    fn prepare(&mut self, job: &crate::jobs::JobContext) -> Result<(), IpcError> {
+        let (capture, playback) = camilla_options(
+            self.devices,
+            self.chain.mains.len() + usize::from(!self.chain.subs.is_empty()),
+            self.chain.mains.len() + self.chain.subs.len(),
+        );
+        let mut options = CamillaOptions {
+            capture,
+            playback,
+            output_rate: self.output_rate,
+            design: Some(DesignLabels {
+                project_name: self.project_name.clone(),
+                design_name: self.design_name.clone(),
+                design_id: self.design_id.clone(),
+                bypass: false,
+            }),
+            headroom: true,
+            labels: true,
+            bypass: true,
+            ..CamillaOptions::default()
+        };
+        options.note = self.labels.note.clone();
+        options.latency_ms = Some(self.labels.latency_ms);
+        options.mode = self.labels.mode.clone();
+        let name = format!("secs_{}", options.mode);
+        self.main_config = self.folder.join("configs").join(format!("{name}.yml"));
+        job.report_progress("export.camilla.prepare", 0, 1);
+        self.prepared = Some(
+            secs_camilla::prepare_config(self.chain, self.folder, &name, &options, self.mimo)
+                .map_err(export_error)?,
+        );
+        Ok(())
+    }
+
+    fn write(
+        self,
+        log: &crate::LogSink,
+    ) -> Result<(Vec<std::path::PathBuf>, std::path::PathBuf), IpcError> {
+        let installed = secs_camilla::install_prepared(
+            self.folder,
+            self.prepared.expect("CamillaDSP writer was prepared"),
+            &|_, _| Ok(()),
+            &|_, _| Ok(()),
+        )
+        .map_err(export_error)?;
+        log_leftover_backup(log, installed.leftover_backup);
+        Ok((installed.files, self.main_config))
+    }
+}
+
 fn log_leftover_backup(log: &crate::LogSink, leftover: Option<(std::path::PathBuf, String)>) {
     if let Some((path, error)) = leftover {
         log(
@@ -759,51 +824,24 @@ impl Service {
                             IpcError::new(ErrorCode::Internal, "run cache disappeared")
                         })?
                     };
-                    let (capture, playback) = camilla_options(
-                        camilla_devices.as_ref(),
-                        chain.mains.len() + usize::from(!chain.subs.is_empty()),
-                        chain.mains.len() + chain.subs.len(),
-                    );
-                    let labels = description.camilla();
-                    let mut options = CamillaOptions {
-                        capture,
-                        playback,
-                        output_rate,
-                        design: Some(DesignLabels {
-                            project_name: manifest.project_name.clone(),
-                            design_name: manifest.display_design_name.clone(),
-                            design_id: manifest.design_id.clone().expect("filter export design id"),
-                            bypass: false,
-                        }),
-                        headroom: true,
-                        labels: true,
-                        bypass: true,
-                        ..CamillaOptions::default()
-                    };
-                    options.note = labels.note;
-                    options.latency_ms = Some(labels.latency_ms);
-                    options.mode = labels.mode;
-                    let name = format!("secs_{}", options.mode);
-                    main_config = Some(folder.join("configs").join(format!("{name}.yml")));
-                    job.report_progress("export.camilla.prepare", 0, 1);
-                    let prepared = secs_camilla::prepare_config(
+                    let mut writer = CamillaWriter {
                         chain,
                         folder,
-                        &name,
-                        &options,
-                        export_mimo.as_ref(),
-                    )
-                    .map_err(export_error)?;
+                        devices: camilla_devices.as_ref(),
+                        output_rate,
+                        project_name: manifest.project_name.clone(),
+                        design_name: manifest.display_design_name.clone(),
+                        design_id: manifest.design_id.clone().expect("filter export design id"),
+                        labels: description.camilla(),
+                        mimo: export_mimo.as_ref(),
+                        prepared: None,
+                        main_config: std::path::PathBuf::new(),
+                    };
+                    writer.prepare(&job)?;
                     job.begin_commit()?;
-                    let installed = secs_camilla::install_prepared(
-                        folder,
-                        prepared,
-                        &|_, _| Ok(()),
-                        &|_, _| Ok(()),
-                    )
-                    .map_err(export_error)?;
-                    log_leftover_backup(&log, installed.leftover_backup);
-                    installed.files
+                    let (files, config) = writer.write(&log)?;
+                    main_config = Some(config);
+                    files
                 }
                 ExportKind::FilterText | ExportKind::EqualizerApo | ExportKind::Convolution => {
                     let values = filter_values.as_ref().ok_or_else(|| {

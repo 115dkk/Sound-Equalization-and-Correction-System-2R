@@ -768,8 +768,7 @@ fn apply_camilla_with(
     )
 }
 
-#[test]
-fn camilla_apply_reads_the_main_config_from_the_export_result() {
+fn assert_camilla_writer_result() {
     let root = root("main-config-result");
     let paths = Arc::new(Mutex::new(Vec::new()));
     let service = calibrated_service_with_apply(
@@ -791,14 +790,24 @@ fn camilla_apply_reads_the_main_config_from_the_export_result() {
 
     let events = Arc::new(Events::default());
     let job = apply_camilla(&service, events.clone());
-    assert!(matches!(
-        succeeded(events.wait(job.job)),
-        JobResult::Apply(_)
-    ));
+    let JobResult::Apply(result) = succeeded(events.wait(job.job)) else {
+        panic!("apply result is absent")
+    };
+    assert!(!result.design_id.is_empty());
     let paths = paths.lock().unwrap();
     assert_eq!(paths.len(), 1);
     assert!(paths[0].ends_with("configs/secs_mixed.yml"));
     fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn camilla_apply_reads_the_main_config_from_the_export_result() {
+    assert_camilla_writer_result();
+}
+
+#[test]
+fn camilla_writer_stores_the_same_files_main_config_and_design_id() {
+    assert_camilla_writer_result();
 }
 
 #[test]
