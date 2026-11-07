@@ -1,4 +1,4 @@
-# P201 (Daybreak): audit #186, the publishing gate after ADR 0050, then B-31 and X-32
+# P201 (Daybreak): audit #186, the publishing gate after ADR 0050, then B-31, X-32, B-36 and the X-5 residue
 
 Worktree `E:\wt\audit-engine`, branch `audit/186-testkit-fix` (Claude creates it
 from the then-current `fix/audit-186` and checks it out before handing you
@@ -95,6 +95,34 @@ tests from `crates/secs-policy/tests/*.rs`, keep the gates that used it on
 `features.toml` entries that named the deleted tests. Gate:
 `cargo test -p secs-policy --locked` green, `python3 .github/scripts/check_feature_tests.py`
 listing only the two known Windows blind spots. Commit as P195 says.
+
+## 4 · B-36 · TD-259 · pair correlation and pair-phase recompute windows and stages
+
+P194 section 2 could not do this item because its file list lacked
+`crates/secs-engine/src/rc.rs`. Follow P194's "### B-36" section verbatim
+(`docs/packets/P194-daybreak-audit-filters-engine-b.md`) with `rc.rs`,
+`polarity.rs`, `pair_phase.rs`, `design.rs` and `mimo/*.rs` allowed: compute
+the RC roll-off once in `rc.rs::prepare_correction` and carry it in
+`FirPreparation`, memoise the polarity window spectra and the pair-phase
+top response as the section says. Category B: no new tests; engine goldens
+bit-identical; counts unchanged. The `polarity::check` cancel token stays
+out (Category A, noted). Commit with P194's title.
+
+## 5 · X-5 residue · A5 · the three items left public
+
+P194 section 2 kept `Design.chain`, `secs_engine::mimo` and the two
+resampling constants public because `crates/secs-service/src/calibration.rs`
+and `crates/secs-gpu` read them. With those files allowed now, move each read
+behind a `Design` method or an existing export (`signal_chain()`, the
+`mimo_responses` accessor, a `secs_dsp::rate` constant), make the three
+items `pub(crate)`, and extend `public_surface_is_the_adr_0046_list` to the
+narrowed list. Gates: `cargo test -p secs-engine -p secs-gpu -p secs-service --locked`,
+`cargo clippy` for the three. Commit:
+`refactor(audit): X-5 서비스와 GPU가 Design 내부 대신 메서드를 읽고 남은 공개 항목을 닫습니다 (#186 A5)`.
+
+Allowed files for items 4 and 5, beyond item 1's: `crates/secs-engine/src/**`,
+`crates/secs-gpu/src/**`, `crates/secs-service/src/calibration.rs`, their
+tests, `features.toml`.
 
 ## Report
 
