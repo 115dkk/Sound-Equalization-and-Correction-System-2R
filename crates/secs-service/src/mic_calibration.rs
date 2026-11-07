@@ -3,7 +3,7 @@ use std::io::Read;
 use std::path::Path;
 
 use secs_audio::{CalibrationError, CalibrationIssue, MicCalibration};
-use secs_project::{MeasurementStore, Project, PyJson};
+use secs_project::{Project, PyJson};
 use secs_types::ipc::{
     ErrorCode, IpcError, MicCalibrationFile, MicCalibrationSetParams, MicCalibrationStatus,
 };
@@ -112,7 +112,7 @@ fn file_status(selected: &SelectedCalibration) -> MicCalibrationFile {
 }
 
 fn status(
-    store: &mut MeasurementStore,
+    store: &mut session::StoreEdit<'_>,
     selected: Option<&SelectedCalibration>,
 ) -> MicCalibrationStatus {
     let mut attached = 0_u32;
@@ -283,8 +283,8 @@ impl Service {
     pub(crate) fn mic_calibration_get(&self) -> Result<MicCalibrationStatus, IpcError> {
         let mut session = lock(&self.session);
         let open = session.require_mut()?;
-        let selected = selected_calibration(open.store.project())?;
-        Ok(status(&mut open.store, selected.as_ref()))
+        let selected = selected_calibration(open.project())?;
+        Ok(status(&mut open.store_mut(), selected.as_ref()))
     }
 
     pub(crate) fn mic_calibration_set(
@@ -298,21 +298,23 @@ impl Service {
         self.refuse_while_measuring()?;
         let selected = read_selected(&params.path)?;
         session::apply(&self.session, ticket, |open| {
-            store_devices(
-                open.store.project_mut(),
-                vec![
-                    ("mic_calibration".into(), PyJson::Str(selected.text.clone())),
-                    (
-                        "mic_calibration_name".into(),
-                        PyJson::Str(selected.name.clone()),
-                    ),
-                    (
-                        "mic_calibration_path".into(),
-                        PyJson::Str(selected.path.clone()),
-                    ),
-                ],
-            );
-            Ok((status(&mut open.store, Some(&selected)), true))
+            open.edit(|project| {
+                store_devices(
+                    project,
+                    vec![
+                        ("mic_calibration".into(), PyJson::Str(selected.text.clone())),
+                        (
+                            "mic_calibration_name".into(),
+                            PyJson::Str(selected.name.clone()),
+                        ),
+                        (
+                            "mic_calibration_path".into(),
+                            PyJson::Str(selected.path.clone()),
+                        ),
+                    ],
+                );
+            });
+            Ok((status(&mut open.store_mut(), Some(&selected)), true))
         })
     }
 
@@ -320,16 +322,15 @@ impl Service {
         self.refuse_while_measuring()?;
         let mut session = lock(&self.session);
         let open = session.require_mut()?;
-        remove_selected_file(open.store.project_mut());
-        open.dirty = true;
-        Ok(status(&mut open.store, None))
+        open.edit(remove_selected_file);
+        Ok(status(&mut open.store_mut(), None))
     }
 
     pub(crate) fn mic_calibration_attach(&self) -> Result<MicCalibrationStatus, IpcError> {
         self.refuse_while_measuring()?;
         let mut session = lock(&self.session);
         let open = session.require_mut()?;
-        let Some(selected) = selected_calibration(open.store.project())? else {
+        let Some(selected) = selected_calibration(open.project())? else {
             return Err(input_error(
                 "",
                 "no_file",
@@ -365,13 +366,14 @@ impl Service {
                 )
             })?;
 
+        let was_dirty = open.is_dirty();
+        let mut store = open.store_mut();
         let mut candidates = Vec::new();
-        for record in open.store.records() {
+        for record in store.records() {
             for (role, path) in &record.ir {
                 if !path.is_empty()
                     && record.source.get(role).is_none_or(String::is_empty)
-                    && !open
-                        .store
+                    && !store
                         .source_of(role, record.pos)
                         .as_ref()
                         .is_some_and(|info| {
@@ -383,7 +385,7 @@ impl Service {
             }
         }
         for (position, role) in candidates {
-            let mut info = open.store.source_of(&role, position).unwrap_or_default();
+            let mut info = store.source_of(&role, position).unwrap_or_default();
             info.cal.retain(|(name, _)| name != "meterCal");
             info.cal.insert(0, ("meterCal".into(), meter.clone()));
             info.boxed.retain(|(name, _)| name != "usesEmbeddedCalData");
@@ -391,12 +393,17 @@ impl Service {
                 "usesEmbeddedCalData".into(),
                 secs_mdat::Boxed::Boolean(true),
             ));
-            open.store
+            store
                 .replace_source(&role, position, Some(&info))
                 .map_err(crate::ServiceError::from)
                 .map_err(IpcError::from)?;
         }
-        Ok(status(&mut open.store, Some(&selected)))
+        let status = status(&mut store, Some(&selected));
+        drop(store);
+        if !was_dirty {
+            open.mark_saved();
+        }
+        Ok(status)
     }
 }
 
@@ -640,8 +647,8 @@ mod tests {
         let session = lock(&service.session);
         let open = session.require().unwrap();
         assert_eq!(open.path, replacement);
-        assert!(!open.dirty);
-        assert!(device_value(open.store.project(), "mic_calibration").is_none());
+        assert!(!open.is_dirty());
+        assert!(device_value(open.project(), "mic_calibration").is_none());
         drop(session);
         std::fs::remove_dir_all(root).unwrap();
     }
@@ -656,16 +663,19 @@ mod tests {
         {
             let mut session = lock(&service.session);
             let open = session.require_mut().unwrap();
-            open.store.record(result("L", 1, None, None), None).unwrap();
-            open.store
+            let mut store = open.store_mut();
+            store.record(result("L", 1, None, None), None).unwrap();
+            store
                 .record(result("R", 1, None, Some(meter("rew-own.cal", 3.0))), None)
                 .unwrap();
-            open.store
+            store
                 .record(
                     result("L", 2, Some("import.mdat"), Some(imported.clone())),
                     None,
                 )
                 .unwrap();
+            drop(store);
+            open.mark_saved();
         }
         let file = root.join("project-mic.cal");
         std::fs::write(&file, UMIK_90.as_bytes()).unwrap();
@@ -678,20 +688,20 @@ mod tests {
         let old_signature = {
             let mut session = lock(&service.session);
             let open = session.require_mut().unwrap();
-            open.dirty = false;
-            crate::calibration::signature_key(open.store.project())
+            open.mark_saved();
+            crate::calibration::signature_key(open.project())
         };
 
         let attached = service.mic_calibration_attach().unwrap();
         assert_eq!((attached.attached, attached.attachable), (2, 0));
         let mut session = lock(&service.session);
         let open = session.require_mut().unwrap();
-        assert!(!open.dirty);
+        assert!(!open.is_dirty());
         assert_ne!(
-            crate::calibration::signature_key(open.store.project()),
+            crate::calibration::signature_key(open.project()),
             old_signature
         );
-        let bare = open.store.source_of("L", 1).unwrap();
+        let bare = open.store_mut().source_of("L", 1).unwrap();
         let bare_meter = secs_project::attached_calibration(&bare).meter.unwrap();
         assert_eq!(bare_meter.source_name, "project-mic.cal");
         assert_eq!(bare_meter.freq, Some(vec![10.0, 1000.0, 20_000.0]));
@@ -706,7 +716,7 @@ mod tests {
                 secs_mdat::Boxed::Boolean(true)
             )]
         );
-        let own = open.store.source_of("R", 1).unwrap();
+        let own = open.store_mut().source_of("R", 1).unwrap();
         assert_eq!(
             secs_project::attached_calibration(&own)
                 .meter
@@ -714,7 +724,7 @@ mod tests {
                 .source_name,
             "rew-own.cal"
         );
-        assert_eq!(open.store.source_of("L", 2), Some(imported));
+        assert_eq!(open.store_mut().source_of("L", 2), Some(imported));
         drop(session);
 
         let (without_file, empty_root) = service_with_project("no-file");
