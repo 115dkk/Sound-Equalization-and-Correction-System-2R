@@ -1,14 +1,9 @@
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 
-use secs_types::ipc::{IpcError, JobEvent, JobId, JobKind, JobResult, JobSnapshot, JobStarted};
+use secs_types::ipc::{IpcError, JobEvent, JobKind, JobResult, JobSnapshot, JobStarted};
 
-use crate::{EventSink, Service, lock};
-
-#[derive(Debug, Default)]
-pub(crate) struct WatchState {
-    job: Arc<Mutex<Option<JobId>>>,
-}
+use crate::{EventSink, Service};
 
 impl Service {
     pub(crate) fn start_status_watch(
@@ -17,10 +12,8 @@ impl Service {
     ) -> Result<JobStarted, IpcError> {
         let deps = self.deps.clone();
         let jobs = self.jobs.clone();
-        let state = self.status_watch.job.clone();
         let rew = self.rew.clone();
-        let started = self.start_job(JobKind::StatusWatch, events, move |job| {
-            *lock(&state) = Some(job.id());
+        self.start_job(JobKind::StatusWatch, events, move |job| {
             let mut previous = None;
             while !job.cancel().is_cancelled() {
                 if !jobs.running_in_device_group() {
@@ -35,19 +28,15 @@ impl Service {
                 }
                 sleep_cancellable(&job, Duration::from_secs(3));
             }
-            let mut state = lock(&state);
-            if *state == Some(job.id()) {
-                *state = None;
-            }
             Ok(JobResult::Stopped)
-        })?;
-        *lock(&self.status_watch.job) = Some(started.job);
-        Ok(started)
+        })
     }
 
     pub(crate) fn stop_status_watch(&self) -> Result<Option<JobSnapshot>, IpcError> {
-        let job = *lock(&self.status_watch.job);
-        job.map(|job| self.jobs.cancel(job)).transpose()
+        self.jobs
+            .running(JobKind::StatusWatch)
+            .map(|job| self.jobs.cancel(job))
+            .transpose()
     }
 }
 

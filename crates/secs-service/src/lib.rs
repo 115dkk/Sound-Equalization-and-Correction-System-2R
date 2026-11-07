@@ -734,7 +734,6 @@ pub struct Service {
     side_mdat_queue: Arc<Mutex<session::SideMdatQueue>>,
     jobs: JobRegistry,
     level: monitor::LevelState,
-    status_watch: watch::WatchState,
     rew: measure::RewLink,
 }
 
@@ -754,7 +753,6 @@ impl Service {
             side_mdat_queue: Arc::new(Mutex::new(session::SideMdatQueue::default())),
             jobs: JobRegistry::default(),
             level: monitor::LevelState::default(),
-            status_watch: watch::WatchState::default(),
             rew,
         };
         if let Some(line) = settings_warning {
