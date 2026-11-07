@@ -12,6 +12,19 @@ use secs_types::ipc::{
 
 use crate::{EventSink, Service, lock, results::MimoView, session};
 
+fn log_leftover_backup(log: &crate::LogSink, leftover: Option<(std::path::PathBuf, String)>) {
+    if let Some((path, error)) = leftover {
+        log(
+            crate::LogLevel::Warn,
+            "export",
+            &format!(
+                "backup folder {} could not be removed after install: {error}",
+                path.display()
+            ),
+        );
+    }
+}
+
 fn fallback_notice(rate: Option<f64>) -> Notice {
     let mut params = BTreeMap::new();
     if let Some(rate) = rate {
@@ -537,8 +550,15 @@ impl Service {
                     )
                     .map_err(export_error)?;
                     job.begin_commit()?;
-                    secs_camilla::install_prepared(folder, prepared, &|_, _| Ok(()), &|_, _| Ok(()))
-                        .map_err(export_error)?
+                    let installed = secs_camilla::install_prepared(
+                        folder,
+                        prepared,
+                        &|_, _| Ok(()),
+                        &|_, _| Ok(()),
+                    )
+                    .map_err(export_error)?;
+                    log_leftover_backup(&log, installed.leftover_backup);
+                    installed.files
                 }
                 ExportKind::FilterText | ExportKind::EqualizerApo | ExportKind::Convolution => {
                     let values = filter_values.as_ref().ok_or_else(|| {
@@ -549,14 +569,16 @@ impl Service {
                         output_rate,
                         extra_rates: params.extra_rates.clone(),
                     };
-                    match params.kind {
+                    let installed = match params.kind {
                         ExportKind::FilterText => {
                             job.begin_commit()?;
-                            secs_filters::export_filter_text_with_options(&run, folder, &options)
+                            secs_filters::export_filter_text_observed_with_options(
+                                &run, folder, &options,
+                            )
                         }
                         ExportKind::EqualizerApo => {
                             job.begin_commit()?;
-                            secs_filters::export_eqapo_with_options(&run, folder, &options)
+                            secs_filters::export_eqapo_observed_with_options(&run, folder, &options)
                         }
                         ExportKind::Convolution => {
                             let prepared = secs_filters::prepare_convolution_named_with_options(
@@ -570,11 +592,13 @@ impl Service {
                             )
                             .map_err(filter_error)?;
                             job.begin_commit()?;
-                            prepared.install(folder)
+                            prepared.install_observed(folder)
                         }
                         _ => unreachable!(),
                     }
-                    .map_err(filter_error)?
+                    .map_err(filter_error)?;
+                    log_leftover_backup(&log, installed.leftover_backup);
+                    installed.files
                 }
                 kind => {
                     let (design, settings) = if let Some(values) = live_values.take() {
@@ -952,6 +976,34 @@ mod tests {
                 fail,
             })
         })
+    }
+
+    #[test]
+    fn bundle_backup_removal_failure_is_an_export_warning_td198() {
+        let lines = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let sink = lines.clone();
+        let log: crate::LogSink = Arc::new(move |level, scope, line| {
+            sink.lock()
+                .unwrap()
+                .push((level, scope.to_owned(), line.to_owned()));
+        });
+        let backup = std::path::PathBuf::from("leftover-backup");
+
+        log_leftover_backup(&log, Some((backup.clone(), "backup is busy".into())));
+
+        let lines = lines.lock().unwrap();
+        assert_eq!(lines.len(), 1);
+        assert_eq!(
+            (lines[0].0, lines[0].1.as_str()),
+            (crate::LogLevel::Warn, "export")
+        );
+        assert_eq!(
+            lines[0].2,
+            format!(
+                "backup folder {} could not be removed after install: backup is busy",
+                backup.display()
+            )
+        );
     }
 
     #[test]

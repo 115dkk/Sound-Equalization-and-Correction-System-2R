@@ -95,6 +95,13 @@ impl Default for Options {
     }
 }
 
+/// Files installed by an observed writer and any backup it could not remove.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Installed {
+    pub files: Vec<PathBuf>,
+    pub leftover_backup: Option<(PathBuf, String)>,
+}
+
 /// Values read by upstream's calibration-level filter export wrappers.
 #[derive(Debug, Clone, Copy)]
 pub struct FilterRun<'a> {
@@ -1306,6 +1313,8 @@ fn ensure_safe_component(name: &str) -> Result<String, FiltersError> {
 }
 
 /// Write a filter-value text file and its FIR WAV files.
+///
+/// This plain variant returns the files and discards a leftover-backup warning.
 pub fn write_text(
     plan: &FilterPlan,
     out: &Path,
@@ -1314,7 +1323,7 @@ pub fn write_text(
     title: &str,
     info: &[String],
 ) -> Result<Vec<PathBuf>, FiltersError> {
-    write_text_observed_at(
+    Ok(write_text_observed_at(
         plan,
         out,
         file_name,
@@ -1323,7 +1332,8 @@ pub fn write_text(
         info,
         SAMPLE_RATE,
         &|_, _| Ok(()),
-    )
+    )?
+    .files)
 }
 
 /// Audit-only staging seam invoked after each complete staged file.
@@ -1336,7 +1346,7 @@ pub fn write_text_observed(
     title: &str,
     info: &[String],
     after_stage_write: &dyn Fn(usize, &Path) -> std::io::Result<()>,
-) -> Result<Vec<PathBuf>, FiltersError> {
+) -> Result<Installed, FiltersError> {
     write_text_observed_at(
         plan,
         out,
@@ -1359,7 +1369,7 @@ fn write_text_observed_at(
     info: &[String],
     output_rate: u32,
     after_stage_write: &dyn Fn(usize, &Path) -> std::io::Result<()>,
-) -> Result<Vec<PathBuf>, FiltersError> {
+) -> Result<Installed, FiltersError> {
     if file_name.contains(['/', '\\', '\0']) || matches!(file_name, "." | "..") {
         return Err(FiltersError::Invalid(format!(
             "unsafe text filename {file_name:?}"
@@ -1375,14 +1385,19 @@ fn write_text_observed_at(
         .map(|(name, bytes)| (PathBuf::from(name), bytes.clone()))
         .collect::<Vec<_>>();
     bundle.push((entry.clone(), text));
-    write_bundle_observed(out, &bundle, &entry, after_stage_write, &|_, _| Ok(()))?;
+    let installed = write_bundle_observed(out, &bundle, &entry, after_stage_write, &|_, _| Ok(()))?;
     let path = out.join(file_name);
     let mut written = vec![path];
     written.extend(wavs.into_iter().map(|(name, _)| out.join(name)));
-    Ok(written)
+    Ok(Installed {
+        files: written,
+        leftover_backup: installed.leftover_backup,
+    })
 }
 
 /// Write a complete Equalizer APO folder.
+///
+/// This plain variant returns the files and discards a leftover-backup warning.
 pub fn write_eqapo(
     plan: &FilterPlan,
     out: &Path,
@@ -1391,7 +1406,7 @@ pub fn write_eqapo(
     note: &str,
     latency_ms: Option<f64>,
 ) -> Result<Vec<PathBuf>, FiltersError> {
-    write_eqapo_observed_at(
+    Ok(write_eqapo_observed_at(
         plan,
         out,
         name,
@@ -1400,7 +1415,8 @@ pub fn write_eqapo(
         latency_ms,
         SAMPLE_RATE,
         &|_, _| Ok(()),
-    )
+    )?
+    .files)
 }
 
 /// Audit-only staging seam invoked after each complete staged file.
@@ -1413,7 +1429,7 @@ pub fn write_eqapo_observed(
     note: &str,
     latency_ms: Option<f64>,
     after_stage_write: &dyn Fn(usize, &Path) -> std::io::Result<()>,
-) -> Result<Vec<PathBuf>, FiltersError> {
+) -> Result<Installed, FiltersError> {
     write_eqapo_observed_at(
         plan,
         out,
@@ -1436,7 +1452,7 @@ fn write_eqapo_observed_at(
     latency_ms: Option<f64>,
     output_rate: u32,
     after_stage_write: &dyn Fn(usize, &Path) -> std::io::Result<()>,
-) -> Result<Vec<PathBuf>, FiltersError> {
+) -> Result<Installed, FiltersError> {
     let safe = ensure_safe_component(name)?;
     validate_plan_delays(plan)?;
     let sub = out.join(&safe);
@@ -1476,7 +1492,7 @@ fn write_eqapo_observed_at(
         (guide_relative.clone(), guide),
         (config_relative.clone(), config),
     ]);
-    write_bundle_observed(
+    let installed = write_bundle_observed(
         out,
         &bundle,
         &config_relative,
@@ -1488,7 +1504,10 @@ fn write_eqapo_observed_at(
     let guide_path = out.join(&guide_relative);
     let mut written = vec![config_path, body_path, guide_path];
     written.extend(wavs.into_iter().map(|(name, _)| sub.join(name)));
-    Ok(written)
+    Ok(Installed {
+        files: written,
+        leftover_backup: installed.leftover_backup,
+    })
 }
 
 /// Calibration-level filter-value export wrapper.
@@ -1500,11 +1519,22 @@ pub fn export_filter_text(
 }
 
 /// Export filter values at an explicit output rate.
+///
+/// This plain variant returns the files and discards a leftover-backup warning.
 pub fn export_filter_text_with_options(
     run: &FilterRun<'_>,
     folder: &Path,
     options: &Options,
 ) -> Result<Vec<PathBuf>, FiltersError> {
+    Ok(export_filter_text_observed_with_options(run, folder, options)?.files)
+}
+
+/// Export filter values and report an undeletable backup.
+pub fn export_filter_text_observed_with_options(
+    run: &FilterRun<'_>,
+    folder: &Path,
+    options: &Options,
+) -> Result<Installed, FiltersError> {
     validate_options(options, false)?;
     if let Some(block) = filter_export_block(
         ExportKind::FilterText,
@@ -1546,11 +1576,22 @@ pub fn export_eqapo(run: &FilterRun<'_>, folder: &Path) -> Result<Vec<PathBuf>, 
 }
 
 /// Export Equalizer APO files at an explicit output rate.
+///
+/// This plain variant returns the files and discards a leftover-backup warning.
 pub fn export_eqapo_with_options(
     run: &FilterRun<'_>,
     folder: &Path,
     options: &Options,
 ) -> Result<Vec<PathBuf>, FiltersError> {
+    Ok(export_eqapo_observed_with_options(run, folder, options)?.files)
+}
+
+/// Export Equalizer APO files and report an undeletable backup.
+pub fn export_eqapo_observed_with_options(
+    run: &FilterRun<'_>,
+    folder: &Path,
+    options: &Options,
+) -> Result<Installed, FiltersError> {
     validate_options(options, false)?;
     if let Some(block) = filter_export_block(
         ExportKind::EqualizerApo,
@@ -1816,14 +1857,25 @@ pub struct PreparedConvolution {
 
 impl PreparedConvolution {
     /// Install every prepared file, switching `routing.json` last.
+    ///
+    /// This plain variant returns the files and discards a leftover-backup warning.
     pub fn install(self, folder: &Path) -> Result<Vec<PathBuf>, FiltersError> {
+        Ok(self.install_observed(folder)?.files)
+    }
+
+    /// Install every prepared file and report an undeletable backup.
+    pub fn install_observed(self, folder: &Path) -> Result<Installed, FiltersError> {
         let entry = PathBuf::from("routing.json");
-        write_bundle_observed(folder, &self.files, &entry, &|_, _| Ok(()), &|_, _| Ok(()))?;
-        Ok(self
-            .files
-            .into_iter()
-            .map(|(relative, _)| folder.join(relative))
-            .collect())
+        let installed =
+            write_bundle_observed(folder, &self.files, &entry, &|_, _| Ok(()), &|_, _| Ok(()))?;
+        Ok(Installed {
+            files: self
+                .files
+                .into_iter()
+                .map(|(relative, _)| folder.join(relative))
+                .collect(),
+            leftover_backup: installed.leftover_backup,
+        })
     }
 }
 

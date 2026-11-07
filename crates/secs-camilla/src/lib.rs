@@ -1618,13 +1618,20 @@ pub fn prepare_config(
     })
 }
 
+/// Files installed by an observed writer and any backup it could not remove.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Installed {
+    pub files: Vec<PathBuf>,
+    pub leftover_backup: Option<(PathBuf, String)>,
+}
+
 /// Installs a configuration returned by [`prepare_config`].
 pub fn install_prepared(
     out: &Path,
     prepared: PreparedConfig,
     after_stage_write: &dyn Fn(usize, &Path) -> std::io::Result<()>,
     before_install: &dyn Fn(usize, &Path) -> std::io::Result<()>,
-) -> Result<Vec<PathBuf>, CamillaError> {
+) -> Result<Installed, CamillaError> {
     let PreparedConfig {
         bundle,
         entry,
@@ -1635,7 +1642,7 @@ pub fn install_prepared(
         .map(|(path, _)| path)
         .find(|path| **path != entry && path.extension().is_some_and(|value| value == "yml"))
         .cloned();
-    write_bundle_observed(out, &bundle, &entry, after_stage_write, before_install)?;
+    let installed = write_bundle_observed(out, &bundle, &entry, after_stage_write, before_install)?;
 
     let mut written = vec![out.join(&entry)];
     if let Some(bypass) = &bypass {
@@ -1653,10 +1660,15 @@ pub fn install_prepared(
         .collect::<Vec<_>>();
     coefficient_paths.sort();
     written.extend(coefficient_paths);
-    Ok(written)
+    Ok(Installed {
+        files: written,
+        leftover_backup: installed.leftover_backup,
+    })
 }
 
 /// Write `configs/<name>.yml`, coefficient WAVs, and a placeholder `in.raw` when needed.
+///
+/// This plain variant returns the files and discards a leftover-backup warning.
 pub fn write_config(
     chain: &SignalChain,
     out: &Path,
@@ -1664,9 +1676,12 @@ pub fn write_config(
     options: &Options,
     mimo: Option<&MimoPaths>,
 ) -> Result<Vec<PathBuf>, CamillaError> {
-    write_config_observed(chain, out, name, options, mimo, &|_, _| Ok(()), &|_, _| {
-        Ok(())
-    })
+    Ok(
+        write_config_observed(chain, out, name, options, mimo, &|_, _| Ok(()), &|_, _| {
+            Ok(())
+        })?
+        .files,
+    )
 }
 
 /// Audit-only staging seam invoked after each complete staged file.
@@ -1679,7 +1694,7 @@ pub fn write_config_observed(
     mimo: Option<&MimoPaths>,
     after_stage_write: &dyn Fn(usize, &Path) -> std::io::Result<()>,
     before_install: &dyn Fn(usize, &Path) -> std::io::Result<()>,
-) -> Result<Vec<PathBuf>, CamillaError> {
+) -> Result<Installed, CamillaError> {
     install_prepared(
         out,
         prepare_config(chain, out, name, options, mimo)?,

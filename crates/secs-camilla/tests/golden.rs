@@ -1187,7 +1187,8 @@ fn prepared_config_installs_the_bytes_write_config_writes() {
         install_prepared(&prepared_folder.0, prepared, &|_, _| Ok(()), &|_, _| Ok(())).unwrap();
     let direct_paths = write_config(&chain, &direct_folder.0, "prepared", &options, None).unwrap();
 
-    assert_eq!(prepared_paths.len(), direct_paths.len());
+    assert_eq!(prepared_paths.files.len(), direct_paths.len());
+    assert!(prepared_paths.leftover_backup.is_none());
     assert_eq!(
         snapshot_files(&prepared_folder.0),
         snapshot_files(&direct_folder.0)
