@@ -111,7 +111,7 @@ pub fn replay_case(name: &str) -> ReplayCase {
 
 pub fn mimo_acoustic_metrics(
     case: &ReplayCase,
-    run: &secs_engine::mimo::MimoRun,
+    run: &secs_engine::MimoRun,
     ctx: &secs_compute::Context,
 ) -> Result<Vec<MimoAcousticMetrics>, secs_engine::EngineError> {
     secs_engine::testkit::mimo_acoustic_metrics(&Oracle, case, run, ctx)

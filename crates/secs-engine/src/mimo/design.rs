@@ -27,6 +27,7 @@ pub(crate) fn early_samples(mimo_early_ms: f64) -> usize {
 }
 
 use super::solve::solve;
+#[cfg(any(test, feature = "test-support"))]
 use crate::{EngineConfig, MeasurementSet};
 #[cfg(test)]
 use secs_compute::MapError;
@@ -577,6 +578,7 @@ impl BandGuard {
 
 /// Absolute modal-tail change, in the upstream 0.15 seconds-per-dB scale.
 /// Despite its name this guard does not compare fitted T60 slopes.
+#[cfg(any(test, feature = "test-support"))]
 pub fn worst_t60_change(
     xs: &[Vec<f64>],
     ys: &[Vec<f64>],
@@ -1239,6 +1241,7 @@ fn design_selected(
     })
 }
 
+#[cfg(any(test, feature = "test-support"))]
 pub fn design_mimo(
     design: &Design,
     measurements: &MeasurementSet,
@@ -1249,6 +1252,7 @@ pub fn design_mimo(
     design_mimo_traced(design, measurements, config, req, ctx).map(|(out, _)| out)
 }
 
+#[cfg(any(test, feature = "test-support"))]
 pub(crate) fn design_mimo_traced(
     design: &Design,
     measurements: &MeasurementSet,
@@ -1259,6 +1263,7 @@ pub(crate) fn design_mimo_traced(
     design_mimo_inputs(design, measurements, config, req, ctx, None)
 }
 
+#[cfg(any(test, feature = "test-support"))]
 pub(crate) fn design_mimo_inputs(
     design: &Design,
     measurements: &MeasurementSet,
@@ -1271,6 +1276,7 @@ pub(crate) fn design_mimo_inputs(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[cfg(any(test, feature = "test-support"))]
 pub(crate) fn design_mimo_inputs_observed(
     design: &Design,
     measurements: &MeasurementSet,
@@ -1298,6 +1304,7 @@ pub(crate) fn design_mimo_inputs_observed(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[cfg(any(test, feature = "test-support"))]
 pub(crate) fn design_mimo_prepared(
     design: &Design,
     prepared: &super::prepared::Prepared<'_>,

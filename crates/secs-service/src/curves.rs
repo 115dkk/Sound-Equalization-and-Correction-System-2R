@@ -627,7 +627,7 @@ impl Service {
                             seat_spread_db: view.seat.map(|(a, b)| [a, b]),
                             positions: view.positions,
                             rows: ba_design
-                                .chain
+                                .signal_chain()
                                 .subs
                                 .iter()
                                 .map(|s| SubResultRow {

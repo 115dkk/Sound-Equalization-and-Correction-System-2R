@@ -25,8 +25,8 @@ impl EventSink for Completion {
 
 #[test]
 fn mimo_cap_text_matches_upstream_for_zero_and_limited_supports() {
-    assert_eq!(secs_engine::mimo::cap_text(0), "");
-    assert_eq!(secs_engine::mimo::cap_text(3), " · 입력당 서포트 ≤ 3");
+    assert_eq!(secs_engine::mimo_cap_text(0), "");
+    assert_eq!(secs_engine::mimo_cap_text(3), " · 입력당 서포트 ≤ 3");
 }
 
 #[test]

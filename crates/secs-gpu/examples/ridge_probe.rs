@@ -1,7 +1,7 @@
 //! Release hardware audit of a recorded production ideal-FIR problem.
 #![forbid(unsafe_code)]
 use secs_compute::CancelToken;
-use secs_engine::mimo::{CpuRidgeBackend, RidgeBackend, RidgeReplayInput, replay_ridge};
+use secs_engine::{CpuRidgeBackend, RidgeBackend, RidgeReplayInput, replay_ridge};
 use secs_types::compute::ComputePreference;
 use std::{path::PathBuf, time::Instant};
 

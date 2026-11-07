@@ -360,7 +360,7 @@ pub fn sub_filter_warnings(settings: &CalibrationSettings, roles: &[String]) -> 
 
 pub fn sub_gain_warnings(design: &Design) -> Vec<SubWarning> {
     design
-        .chain
+        .signal_chain()
         .subs
         .iter()
         .filter(|sub| sub.gain_db > SUB_GAIN_WARN_DB)

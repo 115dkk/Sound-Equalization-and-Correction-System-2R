@@ -69,7 +69,7 @@ pub struct DesignRequest<'a> {
 #[derive(Debug)]
 pub struct Design {
     pub(crate) replay: Arc<crate::replay::DesignReplay>,
-    pub chain: SignalChain,
+    pub(crate) chain: SignalChain,
     pub(crate) mains: Vec<MainDesign>,
     pub(crate) subs: Option<SubDesign>,
     pub ref_level: f64,

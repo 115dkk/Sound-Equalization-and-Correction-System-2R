@@ -4303,7 +4303,7 @@ fn room_dba_mimo_runs_and_becomes_stale_after_recalibration() {
         Arc::new(secs_compute::NoProgress),
         secs_compute::CancelToken::new(),
     );
-    let direct_mimo = secs_engine::mimo::compute(
+    let direct_mimo = secs_engine::compute(
         &direct.design,
         &direct.measurements,
         &direct.config,
@@ -4673,18 +4673,17 @@ fn measurement_handlers_are_connected_and_fail_with_typed_errors() {
 #[derive(Debug)]
 struct FakeRidge {
     fail: bool,
-    cpu: secs_engine::mimo::CpuRidgeBackend,
+    cpu: secs_engine::CpuRidgeBackend,
 }
-impl secs_engine::mimo::RidgeBackend for FakeRidge {
+impl secs_engine::RidgeBackend for FakeRidge {
     fn factor<'a>(
         &'a self,
         ata: &'a [f64],
         atb: &'a [f64],
         cancel: &secs_compute::CancelToken,
-    ) -> Result<Box<dyn secs_engine::mimo::ShiftedSystem + 'a>, secs_engine::mimo::AccelerationError>
-    {
+    ) -> Result<Box<dyn secs_engine::ShiftedSystem + 'a>, secs_engine::AccelerationError> {
         if self.fail {
-            Err(secs_engine::mimo::AccelerationError::failed(
+            Err(secs_engine::AccelerationError::failed(
                 secs_types::compute::ComputeReason::DeviceFailure,
                 "simulated GPU failure",
             ))
@@ -4709,7 +4708,7 @@ fn gpu_reports_survive_cache_and_fallback_exports() {
     let deps = Deps {
         acceleration: Arc::new(move |preference| {
             if preference == ComputePreference::Cpu {
-                return secs_engine::mimo::AccelerationSelection {
+                return secs_engine::AccelerationSelection {
                     status: ComputeStatus {
                         preference,
                         reason: ComputeReason::UserCpu,
@@ -4730,7 +4729,7 @@ fn gpu_reports_survive_cache_and_fallback_exports() {
                 recommended: true,
                 reason: ComputeReason::Recommended,
             };
-            secs_engine::mimo::AccelerationSelection {
+            secs_engine::AccelerationSelection {
                 status: ComputeStatus {
                     preference,
                     selected: ComputeBackend::Cuda,
@@ -4741,7 +4740,7 @@ fn gpu_reports_survive_cache_and_fallback_exports() {
                 },
                 backend: Some(Arc::new(FakeRidge {
                     fail: provider_fail.load(Ordering::SeqCst),
-                    cpu: secs_engine::mimo::CpuRidgeBackend,
+                    cpu: secs_engine::CpuRidgeBackend,
                 })),
             }
         }),

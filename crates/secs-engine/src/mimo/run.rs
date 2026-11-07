@@ -3,6 +3,7 @@
 
 use secs_compute::Context;
 use secs_dsp::response::lr4;
+#[cfg(any(test, feature = "test-support"))]
 use secs_graph::emit::grouped;
 use secs_types::{
     calibration::CalibrationSettings,
@@ -152,6 +153,7 @@ pub(crate) fn fir_response(taps: &[f64], fs_low: f64, frequencies: &[f64]) -> Ve
 
 /// Band-limited interpolation to 48 kHz, cropped to the low-rate FIR's duration.
 /// Invalid or oversized low-rate recipes produce an empty filter.
+#[cfg(any(test, feature = "test-support"))]
 pub fn fir_to_48k(taps_low: &[f64], fs_low: f64) -> Vec<f64> {
     secs_dsp::fir::lowrate_to_48k(taps_low, fs_low)
 }
@@ -168,10 +170,12 @@ pub fn availability(positions: usize) -> (bool, String) {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 pub fn kind_text(fir: bool) -> &'static str {
     if fir { "FIR" } else { "IIR" }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 pub fn fir_budget_text(run: &MimoRun, budget: usize) -> String {
     if !run.fir || budget == 0 {
         return String::new();
@@ -194,6 +198,7 @@ pub fn cap_text(max_supports: usize) -> String {
 }
 
 /// Upstream's estimate with project input count and worker count made explicit.
+#[cfg(any(test, feature = "test-support"))]
 pub fn estimate_seconds(inputs: usize, positions: usize, workers: usize, fir: bool) -> f64 {
     let rounds = if fir {
         0
@@ -207,6 +212,7 @@ fn check(ctx: &Context) -> Result<(), EngineError> {
     ctx.cancel().check().map_err(|_| EngineError::Cancelled)
 }
 
+#[cfg(any(test, feature = "test-support"))]
 pub fn compute(
     design: &Design,
     measurements: &MeasurementSet,
@@ -227,6 +233,7 @@ pub fn compute(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[cfg(any(test, feature = "test-support"))]
 pub(crate) fn compute_observed(
     design: &Design,
     measurements: &MeasurementSet,

@@ -400,7 +400,7 @@ pub struct Deps {
     pub app_version: Cow<'static, str>,
     /// Resolves a requested compute policy without platform dependencies in the service.
     pub acceleration: Arc<
-        dyn Fn(secs_types::compute::ComputePreference) -> secs_engine::mimo::AccelerationSelection
+        dyn Fn(secs_types::compute::ComputePreference) -> secs_engine::AccelerationSelection
             + Send
             + Sync,
     >,

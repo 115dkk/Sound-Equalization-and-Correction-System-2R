@@ -153,7 +153,7 @@ pub(crate) fn describe(
             kind,
             fsiso: paths.fsiso,
             supports: paths.paths.len(),
-            cap_text: secs_engine::mimo::cap_text(max_supports),
+            cap_text: secs_engine::mimo_cap_text(max_supports),
             note: MimoNote::for_paths(paths, description.max_supports)
                 .expect("an exported MIMO has support paths"),
         }

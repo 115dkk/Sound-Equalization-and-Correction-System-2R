@@ -11,8 +11,8 @@ fn compare(label: &str, actual: &[f64], expected: &[f64]) {
 fn sub_gain_warning_codes_match_settings_edit_oracle() {
     let fx = Fixture::load("service_settings_edit", "gain_warnings");
     let mut case = secs_engine_testkit::replay_case("dolby");
-    let template = case.design.chain.subs[0].clone();
-    case.design.chain.subs = fx.inputs()["gains"]
+    let template = case.design.signal_chain().subs[0].clone();
+    case.design.signal_chain_mut().subs = fx.inputs()["gains"]
         .as_array()
         .unwrap()
         .iter()
@@ -115,7 +115,7 @@ fn result_display_matches_replayed_oracle() {
             );
             let main = case
                 .design
-                .chain
+                .signal_chain()
                 .mains
                 .iter()
                 .find(|m| m.role == score.role)

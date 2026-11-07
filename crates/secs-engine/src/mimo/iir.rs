@@ -14,10 +14,12 @@ use secs_dsp::{
 
 use super::{MimoDesign, MimoRequest, design::third_octave_bands, support_path};
 use crate::{
-    C, Design, EngineConfig, EngineError, MeasurementSet, Note, Tuning, decay,
+    C, Design, EngineError, Note, Tuning, decay,
     fit::{FitRequest, PeqDerivatives, fit_peq_with},
     grid::design_freqs,
 };
+#[cfg(any(test, feature = "test-support"))]
+use crate::{EngineConfig, MeasurementSet};
 
 const FS: f64 = 600.0;
 /// Residuals of one support's seed fit: 160 frequencies, real and imaginary.
@@ -81,6 +83,7 @@ pub struct MimoIir {
 pub enum IirSolver {
     #[default]
     Dense,
+    #[cfg_attr(not(any(test, feature = "test-support")), allow(dead_code))]
     MatrixFree {
         max_cg_iterations: usize,
         cg_rtol: f64,
@@ -1170,6 +1173,7 @@ fn validate_request(req: &MimoRequest, t: &Tuning) -> Result<(), EngineError> {
 }
 
 #[allow(clippy::too_many_arguments)]
+#[cfg(any(test, feature = "test-support"))]
 pub fn design_mimo_iir(
     design: &Design,
     measurements: &MeasurementSet,
@@ -1196,6 +1200,7 @@ pub fn design_mimo_iir(
 /// `IirSolver::MatrixFree { max_cg_iterations: 64, cg_rtol: 1e-3 }` enables the
 /// f64 operator solver without changing project files or IPC tuning values.
 #[allow(clippy::too_many_arguments)]
+#[cfg(any(test, feature = "test-support"))]
 pub fn design_mimo_iir_with_options(
     design: &Design,
     measurements: &MeasurementSet,

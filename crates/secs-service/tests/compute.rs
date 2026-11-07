@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
 
-use secs_engine::mimo::{AccelerationSelection, CpuRidgeBackend};
+use secs_engine::{AccelerationSelection, CpuRidgeBackend, RidgeBackend};
 use secs_service::{Deps, NoEvents, Service};
 use secs_types::{compute::*, ipc::*};
 use std::{fs, sync::Arc};
@@ -50,7 +50,7 @@ fn fake_gpu(preference: ComputePreference) -> AccelerationSelection {
             device: Some(device.clone()),
             devices: vec![device],
         },
-        backend: gpu.then(|| Arc::new(CpuRidgeBackend) as Arc<dyn secs_engine::mimo::RidgeBackend>),
+        backend: gpu.then(|| Arc::new(CpuRidgeBackend) as Arc<dyn RidgeBackend>),
     }
 }
 

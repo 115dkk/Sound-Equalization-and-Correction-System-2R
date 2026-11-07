@@ -3,11 +3,8 @@
 
 use secs_dsp::Complex64 as C;
 use secs_engine::{
-    DesignRequest, ProjectView, design,
-    mimo::{self, MimoDesign, MimoRequest, design_mimo, design_mimo_iir},
-    preview,
-    testkit::perf,
-    xo,
+    DesignRequest, MimoDesign, MimoRequest, ProjectView, design, design_mimo, design_mimo_iir,
+    lowpass_fir, preview, support_path, support_ranges, testkit::perf, xo,
 };
 use secs_engine_testkit as cases;
 
@@ -280,7 +277,7 @@ fn main() {
             let positions: Vec<_> = d.positions().collect();
             let input_role = d.main_roles().next().unwrap().to_owned();
             let ideal = MimoDesign {
-                ranges: mimo::support_ranges(&d, &spectra, req.fsiso, &positions).unwrap(),
+                ranges: support_ranges(&d, &spectra, req.fsiso, &positions).unwrap(),
                 ..MimoDesign::default()
             };
             let roles: Vec<_> = ideal
@@ -305,7 +302,7 @@ fn main() {
                         .iter()
                         .map(|r| {
                             secs_dsp::lowrate::to_low(
-                                &mimo::support_path(
+                                &support_path(
                                     &ideal,
                                     r,
                                     &spectra,
@@ -321,7 +318,7 @@ fn main() {
                         .collect::<Vec<_>>(),
                 );
             }
-            let lp = mimo::lowpass_fir(req.fsiso, 31).unwrap();
+            let lp = lowpass_fir(req.fsiso, 31).unwrap();
             let filtered: Vec<Vec<Vec<f64>>> = paths
                 .iter()
                 .map(|gs| {

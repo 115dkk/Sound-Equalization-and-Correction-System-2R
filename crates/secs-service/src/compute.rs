@@ -1,5 +1,5 @@
 //! Compute policy injection and cache identity, independent of host hardware.
-use secs_engine::mimo::AccelerationSelection;
+use secs_engine::AccelerationSelection;
 use secs_types::compute::{ComputeBackend, ComputePreference, ComputeReason, ComputeStatus};
 use secs_types::ipc::{ErrorCode, IpcError};
 use serde::{Deserialize, Serialize};

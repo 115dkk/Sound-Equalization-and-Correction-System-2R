@@ -84,7 +84,11 @@ fn public_items(source: &str) -> BTreeSet<String> {
                     }
                 }
             } else if let Some(name) = rest.rsplit("::").next() {
-                items.insert(format!("use {}", name.trim()));
+                let name = name
+                    .trim()
+                    .split_once(" as ")
+                    .map_or(name.trim(), |(_, alias)| alias);
+                items.insert(format!("use {name}"));
             }
         }
     }
@@ -97,10 +101,11 @@ fn public_surface_is_the_adr_0046_list() {
         .expect("engine lib.rs");
     let expected = BTreeSet::from([
         "mod input".to_owned(),
-        "mod mimo".to_owned(),
         "mod preview".to_owned(),
         "mod xo".to_owned(),
+        "use AccelerationError".to_owned(),
         "use AccelerationSelection".to_owned(),
+        "use CpuRidgeBackend".to_owned(),
         "use Calibration".to_owned(),
         "use CalibrationRequest".to_owned(),
         "use Design".to_owned(),
@@ -108,8 +113,6 @@ fn public_surface_is_the_adr_0046_list() {
         "use EngineError".to_owned(),
         "use ExportAxis".to_owned(),
         "use GuardCause".to_owned(),
-        "use MAX_RESAMPLE_RATE".to_owned(),
-        "use MIN_RESAMPLE_RATE".to_owned(),
         "use Measurement".to_owned(),
         "use MeasurementSet".to_owned(),
         "use Metrics".to_owned(),
@@ -120,15 +123,26 @@ fn public_surface_is_the_adr_0046_list() {
         "use NoteRecord".to_owned(),
         "use NoteRecords".to_owned(),
         "use ProjectView".to_owned(),
+        "use RidgeBackend".to_owned(),
         "use RoleLateEnergy".to_owned(),
         "use Samples".to_owned(),
         "use StageResponses".to_owned(),
+        "use ShiftedSystem".to_owned(),
         "use SubFilter".to_owned(),
         "use Tuning".to_owned(),
         "use availability".to_owned(),
         "use calibrate".to_owned(),
         "use compute_with_acceleration".to_owned(),
         "use late_energy".to_owned(),
+        "use mimo_cap_text".to_owned(),
     ]);
     assert_eq!(public_items(&source), expected);
+
+    let design = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/design.rs"))
+        .expect("engine design.rs");
+    assert!(
+        !design
+            .lines()
+            .any(|line| line.trim() == "pub chain: SignalChain,")
+    );
 }

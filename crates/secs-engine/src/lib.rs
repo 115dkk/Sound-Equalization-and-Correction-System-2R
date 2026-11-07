@@ -50,7 +50,7 @@ mod levels;
 mod low_protect;
 mod measurement;
 mod memory;
-pub mod mimo;
+pub(crate) mod mimo;
 mod normalize;
 mod notes;
 pub(crate) mod pair_phase;
@@ -74,11 +74,21 @@ pub use chain::StageResponses;
 pub use design::{Design, RoleLateEnergy, late_energy};
 pub use error::EngineError;
 pub use input::{EngineConfig, Measurement, MeasurementSet, Samples, Tuning};
-pub use mimo::{AccelerationSelection, MimoKey, MimoRun, availability, compute_with_acceleration};
+pub use mimo::cap_text as mimo_cap_text;
+pub use mimo::{
+    AccelerationError, AccelerationSelection, CpuRidgeBackend, MimoKey, MimoRun, RidgeBackend,
+    ShiftedSystem, availability, compute_with_acceleration,
+};
+#[cfg(feature = "test-support")]
+pub use mimo::{
+    IirSolver, IirSupport, MimoDesign, MimoIir, MimoRequest, RidgeReplayInput, RidgeReplayOutput,
+    compute, design_mimo, design_mimo_iir, design_mimo_iir_with_options, estimate_seconds,
+    fir_budget_text, fir_to_48k, kind_text, lowpass_fir, replay_ridge, support_path,
+    support_ranges,
+};
 pub use notes::{NoteRecord, NoteRecords};
 pub use replay::ExportAxis;
 pub use scorecard::Metrics;
-pub use secs_dsp::resample::{MAX_RESAMPLE_RATE, MIN_RESAMPLE_RATE};
 pub use secs_types::notes::{GuardCause, MimoNote, Note};
 pub use setup::SubFilter;
 
@@ -102,8 +112,6 @@ pub use normalize::normalize_measurements;
 pub(crate) use calibration::engine_inputs;
 #[cfg(test)]
 pub(crate) use export_view::export_view;
-#[cfg(test)]
-pub(crate) use mimo::{IirSupport, MimoDesign, MimoIir, MimoRequest, design_mimo, design_mimo_iir};
 
 impl Design {
     pub fn measurement_grid() -> Vec<f64> {

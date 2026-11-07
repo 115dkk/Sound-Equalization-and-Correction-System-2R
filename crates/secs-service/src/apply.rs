@@ -440,7 +440,7 @@ impl Service {
             let chain = open
                 .results
                 .live_calibration()
-                .map(|run| &run.design().chain)
+                .map(|run| run.design().signal_chain())
                 .or_else(|| open.results.cached().map(|cache| &cache.calibration_chain))?;
             let mimo = match open.results.mimo(project, compute).exported() {
                 Some(MimoView::Live(result)) => Some(&result.run.paths),

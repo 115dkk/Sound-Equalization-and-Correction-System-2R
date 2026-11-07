@@ -4,7 +4,7 @@
 
 use secs_compute::{CancelToken, MemoryBudget, MemoryPermit};
 use secs_cuda_sys::{Device, ErrorKind, Runtime, SpectralSystem};
-use secs_engine::mimo::{AccelerationError, AccelerationSelection, RidgeBackend, ShiftedSystem};
+use secs_engine::{AccelerationError, AccelerationSelection, RidgeBackend, ShiftedSystem};
 use secs_types::compute::{
     ComputeBackend, ComputePreference, ComputeReason, ComputeStatus, GpuDeviceInfo,
 };

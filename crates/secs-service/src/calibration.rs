@@ -299,7 +299,7 @@ fn check_mimo_preconditions(
         )));
     }
     let positions = secs_project::measured_positions(project).len();
-    let (available, reason) = secs_engine::mimo::availability(positions);
+    let (available, reason) = secs_engine::availability(positions);
     if !available {
         return Err(engine_error(secs_engine::EngineError::Input(reason)));
     }
@@ -309,7 +309,7 @@ fn check_mimo_preconditions(
 struct MimoRun {
     design: Arc<Design>,
     settings: CalibrationSettings,
-    selection: secs_engine::mimo::AccelerationSelection,
+    selection: secs_engine::AccelerationSelection,
     calibration_key: String,
     background: bool,
 }
@@ -329,7 +329,7 @@ fn compute_and_commit_mimo(
     } = run;
     let compute_key = crate::compute::ComputeIdentity::from(&selection.status);
     let ctx = compute_context(job, background);
-    let run = secs_engine::mimo::compute_with_acceleration(
+    let run = secs_engine::compute_with_acceleration(
         &design,
         design.measurements(),
         design.config(),
@@ -368,7 +368,7 @@ fn compute_and_commit_mimo(
     Ok(())
 }
 
-fn summarize_mimo(run: &secs_engine::mimo::MimoRun) -> MimoSummary {
+fn summarize_mimo(run: &secs_engine::MimoRun) -> MimoSummary {
     MimoSummary {
         stale: false,
         kind: if run.fir { "fir" } else { "iir" }.into(),
@@ -834,8 +834,8 @@ pub(crate) fn engine_error(error: secs_engine::EngineError) -> IpcError {
             .with_param("position", position.to_string())
             .with_param("role", role)
             .with_param("actual_hz", actual_hz.to_string())
-            .with_param("min_hz", secs_engine::MIN_RESAMPLE_RATE.to_string())
-            .with_param("max_hz", secs_engine::MAX_RESAMPLE_RATE.to_string()),
+            .with_param("min_hz", secs_dsp::resample::MIN_RESAMPLE_RATE.to_string())
+            .with_param("max_hz", secs_dsp::resample::MAX_RESAMPLE_RATE.to_string()),
         EngineError::InvalidMeasurement { position, role } => failure
             .with_param("reason", "invalid_measurement")
             .with_param("position", position.to_string())
