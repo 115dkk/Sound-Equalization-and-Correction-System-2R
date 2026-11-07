@@ -265,10 +265,7 @@ impl Service {
     }
 
     pub(crate) fn results(&self) -> Result<ResultsSummary, IpcError> {
-        let compute = crate::compute::ComputeIdentity::from(&self.acceleration().status);
-        let session = lock(&self.session);
-        let open = session.require().map_err(IpcError::from)?;
-        Ok(open.results.summary(open.project(), &compute))
+        self.read_open(|open, compute| open.results.summary(open.project(), compute))
     }
 
     /// Holds the session lock only to copy the project; the WAVs are read by

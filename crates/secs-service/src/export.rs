@@ -116,10 +116,8 @@ impl Service {
     where
         F: FnOnce(ExportResult, Option<String>) -> Result<JobResult, IpcError> + Send + 'static,
     {
-        let compute_key = crate::compute::ComputeIdentity::from(&self.acceleration().status);
-        let mut session = lock(&self.session);
-        let ticket = session.ticket()?;
-        let open = session.require_mut().map_err(IpcError::from)?;
+        let ticket = lock(&self.session).ticket()?;
+        self.with_open_ticket(ticket, |open, compute_key| {
         if open.tutorial {
             return Err(IpcError::new(
                 ErrorCode::TutorialBlocked,
@@ -242,9 +240,11 @@ impl Service {
             let export_session = self.session.clone();
             let completion_clock = self.deps.clock.clone();
             let completion_offset = self.deps.clock_offset_seconds.clone();
-            drop(session);
             let destination = if params.folder.is_empty() {
-                crate::export_folder::measurement_mdat_folder(&self.resolved_export_base()?, now)
+                crate::export_folder::measurement_mdat_folder(
+                    &self.resolved_export_base_for(open)?,
+                    now,
+                )
             } else {
                 Path::new(&params.folder).to_path_buf()
             };
@@ -335,8 +335,8 @@ impl Service {
                 &super::calibration::config_key(project),
             )
         });
-        let description = crate::export_run::describe(&open.results, project, &compute_key, now)?;
-        let (live_mimo, cached_mimo) = match open.results.mimo(project, &compute_key).exported() {
+        let description = crate::export_run::describe(&open.results, project, compute_key, now)?;
+        let (live_mimo, cached_mimo) = match open.results.mimo(project, compute_key).exported() {
             Some(MimoView::Live(result)) => (Some(result), None),
             Some(MimoView::Cached(cache)) => (None, cache.mimo_paths.as_ref()),
             None => (None, None),
@@ -445,11 +445,10 @@ impl Service {
         let camilla_devices = params.camilla_devices.clone();
         let explicit = (!params.folder.is_empty()).then(|| Path::new(&params.folder).to_path_buf());
         let explicit_unnamed = explicit.is_some() && requested_design_name.is_none();
-        drop(session);
         // An explicit folder is the base of a named bundle too, so the default
         // base (and the host's home directory behind it) is only read without one.
         let default_base = if explicit.is_none() {
-            Some(self.resolved_export_base()?)
+            Some(self.resolved_export_base_for(open)?)
         } else {
             None
         };
@@ -781,6 +780,7 @@ impl Service {
                 });
             }
             complete(result, design_id)
+        })
         })
     }
 }

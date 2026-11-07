@@ -784,12 +784,11 @@ impl Service {
 
     /// Returns the aggregate state used by the local status endpoint.
     pub fn status(&self) -> secs_types::local_api::Status {
+        let results = self
+            .read_open(|open, compute| open.results.summary(open.project(), compute))
+            .ok();
         let session = lock(&self.session);
         let project = session.info().ok();
-        let results = session.require().ok().map(|open| {
-            let compute = crate::compute::ComputeIdentity::from(&self.acceleration().status);
-            open.results.summary(open.project(), &compute)
-        });
         secs_types::local_api::Status {
             api: secs_types::local_api::API_VERSION,
             app_name: APP_NAME.to_owned(),

@@ -451,31 +451,32 @@ impl Service {
     }
 
     fn current_design_identity(&self) -> Option<(String, String)> {
-        let compute = crate::compute::ComputeIdentity::from(&self.acceleration().status);
-        let session = lock(&self.session);
-        let open = session.require().ok()?;
-        let project = open.project();
-        let chain = open
-            .results
-            .live_calibration()
-            .map(|run| &run.design().chain)
-            .or_else(|| open.results.cached().map(|cache| &cache.calibration_chain))?;
-        let mimo = match open.results.mimo(project, &compute).exported() {
-            Some(MimoView::Live(result)) => Some(&result.run.paths),
-            Some(MimoView::Cached(cache)) => cache.mimo_paths.as_ref(),
-            None => None,
-        };
-        let design_id =
-            secs_graph::design::design_id(chain, mimo, secs_graph::LfeChoice::DOLBY).ok()?;
-        let description =
-            crate::export_run::describe(&open.results, project, &compute, (self.deps.clock)())
-                .ok()?;
-        let project_name = (!project.name.trim().is_empty()).then(|| project.name.trim());
-        let title = project_name.map_or_else(
-            || format!("SECS 2R · {}", description.label()),
-            |name| format!("SECS 2R · {name} · {}", description.label()),
-        );
-        Some((design_id, title))
+        self.read_open(|open, compute| {
+            let project = open.project();
+            let chain = open
+                .results
+                .live_calibration()
+                .map(|run| &run.design().chain)
+                .or_else(|| open.results.cached().map(|cache| &cache.calibration_chain))?;
+            let mimo = match open.results.mimo(project, compute).exported() {
+                Some(MimoView::Live(result)) => Some(&result.run.paths),
+                Some(MimoView::Cached(cache)) => cache.mimo_paths.as_ref(),
+                None => None,
+            };
+            let design_id =
+                secs_graph::design::design_id(chain, mimo, secs_graph::LfeChoice::DOLBY).ok()?;
+            let description =
+                crate::export_run::describe(&open.results, project, compute, (self.deps.clock)())
+                    .ok()?;
+            let project_name = (!project.name.trim().is_empty()).then(|| project.name.trim());
+            let title = project_name.map_or_else(
+                || format!("SECS 2R · {}", description.label()),
+                |name| format!("SECS 2R · {name} · {}", description.label()),
+            );
+            Some((design_id, title))
+        })
+        .ok()
+        .flatten()
     }
 }
 

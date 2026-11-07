@@ -46,8 +46,18 @@ impl Service {
         })
     }
 
-    pub(crate) fn resolved_export_base(&self) -> Result<PathBuf, IpcError> {
-        Ok(PathBuf::from(self.export_folder_get()?.folder))
+    pub(crate) fn resolved_export_base_for(
+        &self,
+        open: &crate::session::OpenProject,
+    ) -> Result<PathBuf, IpcError> {
+        if let Some(folder) = stored_folder(open.project()) {
+            return Ok(PathBuf::from(folder));
+        }
+        Ok(default_export_folder(
+            Some(&open.path),
+            &self.deps.host.home_dir()?,
+            (self.deps.clock)(),
+        ))
     }
 }
 

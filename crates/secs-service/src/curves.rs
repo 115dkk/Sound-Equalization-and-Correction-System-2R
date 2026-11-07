@@ -258,399 +258,403 @@ impl Service {
                 "XO frequency must be finite and positive",
             ));
         }
-        let compute_key = crate::compute::ComputeIdentity::from(&self.acceleration().status);
-        let mut session = lock(&self.session);
-        let open = session.require_mut().map_err(IpcError::from)?;
-        // The BA tab shows the last subs-only run while there is one, as
-        // upstream's `_draw_subs` does (`source = sub_run or run`).
-        let subs_only = params.tab == ResultTab::Ba && open.results.subs().is_some();
-        let run = if subs_only {
-            open.results.subs()
-        } else {
-            open.results.live_calibration()
-        };
-        let project = open.project();
-        let settings = calibration_from_project(project);
-        let mut result = ResultCurvesResult {
-            tab: params.tab,
-            grid: Vec::new(),
-            curves: Vec::new(),
-            stale: run.is_some_and(|r| crate::results::calibration_stale(r, project)),
-            subs_only,
-            axes: match params.tab {
-                ResultTab::Spl => axes([5.0, 20000.0], [-30.0, 15.0], "db"),
-                ResultTab::Gd => axes([5.0, 5000.0], [-10.0, 100.0], "ms"),
-                ResultTab::Xo => axes([5.0, 500.0], [-30.0, 12.0], "db"),
-                ResultTab::Ba => axes([5.0, 300.0], [-40.0, 6.0], "db"),
-            },
-            rc_band_hz: matches!(params.tab, ResultTab::Spl | ResultTab::Gd).then(|| {
-                run.map_or((settings.rc_lo, settings.rc_hi), |r| {
-                    (r.settings.rc_lo, Some(r.design().rc_hi))
-                })
-            }),
-            rc_bands_hz: if matches!(params.tab, ResultTab::Spl | ResultTab::Gd) {
-                run.map_or_else(|| extra_bands(&settings), |run| extra_bands(&run.settings))
+        self.with_open(|open, compute_key| {
+            // The BA tab shows the last subs-only run while there is one, as
+            // upstream's `_draw_subs` does (`source = sub_run or run`).
+            let subs_only = params.tab == ResultTab::Ba && open.results.subs().is_some();
+            let run = if subs_only {
+                open.results.subs()
             } else {
-                Vec::new()
-            },
-            xo_hz: None,
-        };
-        let Some(run) = run else {
-            if params.tab == ResultTab::Spl {
-                let roles = open
-                    .store()
-                    .records()
-                    .into_iter()
-                    .find(|r| r.pos == 1)
-                    .map(|r| r.ir)
-                    .unwrap_or_default();
-                let role = params.channel.or_else(|| {
-                    project
-                        .config
-                        .speakers
-                        .iter()
-                        .find(|s| roles.contains_key(&s.role))
-                        .map(|s| s.role.clone())
-                });
-                if let Some(role) = role.filter(|r| roles.contains_key(r)) {
-                    let target = project.target.clone();
-                    let (samples, rate) = open.store_mut().measured_ir(&role, 1)?;
-                    let curve = Design::measurement_spl(
-                        &samples.iter().map(|&v| f64::from(v)).collect::<Vec<_>>(),
-                        rate as f64,
-                    );
-                    result.grid = Design::spl_grid();
-                    let target = target.sample(&result.grid);
-                    let level =
-                        Design::percentile(&band_values(&result.grid, &curve, 200.0, 2000.0), 50.0)
-                            - Design::percentile(
-                                &band_values(&result.grid, &target, 200.0, 2000.0),
-                                50.0,
-                            );
-                    let mid =
-                        Design::percentile(&band_values(&result.grid, &curve, 20.0, 20000.0), 50.0)
-                            - level;
-                    result.axes.value = [mid - 30.0, mid + 15.0];
-                    result.curves = vec![
-                        series("before", None, &curve, level),
-                        series("target", None, &target, 0.0),
-                    ];
-                }
-            }
-            return Ok(result);
-        };
-        let design = run.design();
-        let offset = offset(design);
-        let role = params
-            .channel
-            .as_deref()
-            .or_else(|| design.scores.first().map(|s| s.role.as_str()));
-        match params.tab {
-            ResultTab::Spl | ResultTab::Gd => {
-                let Some(score) = design.scores.iter().find(|s| Some(s.role.as_str()) == role)
-                else {
-                    return Ok(result);
-                };
-                if params.tab == ResultTab::Spl {
-                    result.grid = Design::spl_grid();
-                    result.curves = vec![
-                        series("before", None, &score.spl_before, offset),
-                        series("after", None, &score.spl_after, offset),
-                        series("target", None, &project.target.sample(&result.grid), 0.0),
-                    ];
-                    if let Some(crate::results::MimoView::Live(mimo)) =
-                        open.results.mimo(project, &compute_key).shown()
-                        && let Some((_, values)) =
-                            mimo.run.spl_mimo.iter().find(|(r, _)| r == &score.role)
-                    {
-                        result.curves.push(series("mimo", None, values, offset));
-                    }
-                    let mid = Design::percentile(
-                        &band_values(&result.grid, &design.target_display, 20.0, 20000.0),
-                        50.0,
-                    ) - offset;
-                    result.axes.value = [mid - 30.0, mid + 15.0];
+                open.results.live_calibration()
+            };
+            let project = open.project();
+            let settings = calibration_from_project(project);
+            let mut result = ResultCurvesResult {
+                tab: params.tab,
+                grid: Vec::new(),
+                curves: Vec::new(),
+                stale: run.is_some_and(|r| crate::results::calibration_stale(r, project)),
+                subs_only,
+                axes: match params.tab {
+                    ResultTab::Spl => axes([5.0, 20000.0], [-30.0, 15.0], "db"),
+                    ResultTab::Gd => axes([5.0, 5000.0], [-10.0, 100.0], "ms"),
+                    ResultTab::Xo => axes([5.0, 500.0], [-30.0, 12.0], "db"),
+                    ResultTab::Ba => axes([5.0, 300.0], [-40.0, 6.0], "db"),
+                },
+                rc_band_hz: matches!(params.tab, ResultTab::Spl | ResultTab::Gd).then(|| {
+                    run.map_or((settings.rc_lo, settings.rc_hi), |r| {
+                        (r.settings.rc_lo, Some(r.design().rc_hi))
+                    })
+                }),
+                rc_bands_hz: if matches!(params.tab, ResultTab::Spl | ResultTab::Gd) {
+                    run.map_or_else(|| extra_bands(&settings), |run| extra_bands(&run.settings))
                 } else {
-                    result.grid = Design::gd_grid();
-                    result.curves = vec![
-                        series("before", None, &score.gd_before, 0.0),
-                        series("after", None, &score.gd_after, 0.0),
-                    ];
-                    let both: Vec<_> = score
-                        .gd_before
-                        .iter()
-                        .chain(&score.gd_after)
-                        .copied()
-                        .filter(|v| v.is_finite())
-                        .collect();
-                    if !both.is_empty() {
-                        result.axes.value = [
-                            (Design::percentile(&both, 1.0) - 5.0).clamp(-50.0, -5.0),
-                            (Design::percentile(&both, 99.0) + 10.0).clamp(30.0, 400.0),
+                    Vec::new()
+                },
+                xo_hz: None,
+            };
+            let Some(run) = run else {
+                if params.tab == ResultTab::Spl {
+                    let roles = open
+                        .store()
+                        .records()
+                        .into_iter()
+                        .find(|r| r.pos == 1)
+                        .map(|r| r.ir)
+                        .unwrap_or_default();
+                    let role = params.channel.or_else(|| {
+                        project
+                            .config
+                            .speakers
+                            .iter()
+                            .find(|s| roles.contains_key(&s.role))
+                            .map(|s| s.role.clone())
+                    });
+                    if let Some(role) = role.filter(|r| roles.contains_key(r)) {
+                        let target = project.target.clone();
+                        let (samples, rate) = open.store_mut().measured_ir(&role, 1)?;
+                        let curve = Design::measurement_spl(
+                            &samples.iter().map(|&v| f64::from(v)).collect::<Vec<_>>(),
+                            rate as f64,
+                        );
+                        result.grid = Design::spl_grid();
+                        let target = target.sample(&result.grid);
+                        let level = Design::percentile(
+                            &band_values(&result.grid, &curve, 200.0, 2000.0),
+                            50.0,
+                        ) - Design::percentile(
+                            &band_values(&result.grid, &target, 200.0, 2000.0),
+                            50.0,
+                        );
+                        let mid = Design::percentile(
+                            &band_values(&result.grid, &curve, 20.0, 20000.0),
+                            50.0,
+                        ) - level;
+                        result.axes.value = [mid - 30.0, mid + 15.0];
+                        result.curves = vec![
+                            series("before", None, &curve, level),
+                            series("target", None, &target, 0.0),
                         ];
                     }
                 }
-            }
-            ResultTab::Xo => {
-                let group = params.group.as_deref().or_else(|| {
-                    design
-                        .groups
-                        .iter()
-                        .find(|(g, rs)| {
-                            g != "sub" && role.is_some_and(|r| rs.iter().any(|s| s == r))
-                        })
-                        .map(|(g, _)| g.as_str())
-                });
-                if let Some(group) =
-                    group.filter(|g| design.groups.iter().any(|(name, _)| name == g))
-                    && design.has_sub_design()
-                {
-                    let hz = params.xo_hz.unwrap_or_else(|| {
-                        settings
-                            .xo
+                return Ok(result);
+            };
+            let design = run.design();
+            let offset = offset(design);
+            let role = params
+                .channel
+                .as_deref()
+                .or_else(|| design.scores.first().map(|s| s.role.as_str()));
+            match params.tab {
+                ResultTab::Spl | ResultTab::Gd => {
+                    let Some(score) = design.scores.iter().find(|s| Some(s.role.as_str()) == role)
+                    else {
+                        return Ok(result);
+                    };
+                    if params.tab == ResultTab::Spl {
+                        result.grid = Design::spl_grid();
+                        result.curves = vec![
+                            series("before", None, &score.spl_before, offset),
+                            series("after", None, &score.spl_after, offset),
+                            series("target", None, &project.target.sample(&result.grid), 0.0),
+                        ];
+                        if let Some(crate::results::MimoView::Live(mimo)) =
+                            open.results.mimo(project, compute_key).shown()
+                            && let Some((_, values)) =
+                                mimo.run.spl_mimo.iter().find(|(r, _)| r == &score.role)
+                        {
+                            result.curves.push(series("mimo", None, values, offset));
+                        }
+                        let mid = Design::percentile(
+                            &band_values(&result.grid, &design.target_display, 20.0, 20000.0),
+                            50.0,
+                        ) - offset;
+                        result.axes.value = [mid - 30.0, mid + 15.0];
+                    } else {
+                        result.grid = Design::gd_grid();
+                        result.curves = vec![
+                            series("before", None, &score.gd_before, 0.0),
+                            series("after", None, &score.gd_after, 0.0),
+                        ];
+                        let both: Vec<_> = score
+                            .gd_before
                             .iter()
-                            .chain(&project.xo)
-                            .find(|(g, _)| g == group)
-                            .map_or(80.0, |(_, hz)| *hz)
-                    });
-                    let view = XoPreview::new(design).curves(
-                        design,
-                        group,
-                        hz,
-                        params.corrected.unwrap_or(true),
-                        role,
-                    );
-                    let mid = Design::percentile(&view.target, 50.0) - offset;
-                    result.axes.value = [mid - 30.0, mid + 12.0];
-                    result.grid = view.grid;
-                    result.xo_hz = Some(hz);
-                    result.curves = vec![
-                        series("target", None, &view.target, offset),
-                        series("main", None, &view.main, offset),
-                        series("sub", None, &view.sub, offset),
-                        series("sum", None, &view.sum, offset),
-                    ];
-                }
-            }
-            ResultTab::Ba => {
-                if let Some(view) = sub_combine(design) {
-                    result.grid = view.grid;
-                    result.curves.push(series(
-                        "target",
-                        None,
-                        &project.target.sample(&result.grid),
-                        0.0,
-                    ));
-                    for (role, before) in &view.before {
-                        result
-                            .curves
-                            .push(series("before", Some(role), before, offset));
-                        if let Some((_, after)) = view.after.iter().find(|(r, _)| r == role) {
-                            result
-                                .curves
-                                .push(series("after", Some(role), after, offset));
+                            .chain(&score.gd_after)
+                            .copied()
+                            .filter(|v| v.is_finite())
+                            .collect();
+                        if !both.is_empty() {
+                            result.axes.value = [
+                                (Design::percentile(&both, 1.0) - 5.0).clamp(-50.0, -5.0),
+                                (Design::percentile(&both, 99.0) + 10.0).clamp(30.0, 400.0),
+                            ];
                         }
                     }
-                    result
-                        .curves
-                        .push(series("sum_before", None, &view.sum_before, offset));
-                    result
-                        .curves
-                        .push(series("sum_after", None, &view.sum_after, offset));
-                    let top = band_values(&result.grid, &view.sum_before, view.band.0, view.band.1)
-                        .into_iter()
-                        .chain(band_values(
-                            &result.grid,
-                            &view.sum_after,
-                            view.band.0,
-                            view.band.1,
-                        ))
-                        .reduce(f64::max)
-                        .unwrap_or(0.0)
-                        - offset;
-                    result.axes.value = [top - 40.0, top + 6.0];
+                }
+                ResultTab::Xo => {
+                    let group = params.group.as_deref().or_else(|| {
+                        design
+                            .groups
+                            .iter()
+                            .find(|(g, rs)| {
+                                g != "sub" && role.is_some_and(|r| rs.iter().any(|s| s == r))
+                            })
+                            .map(|(g, _)| g.as_str())
+                    });
+                    if let Some(group) =
+                        group.filter(|g| design.groups.iter().any(|(name, _)| name == g))
+                        && design.has_sub_design()
+                    {
+                        let hz = params.xo_hz.unwrap_or_else(|| {
+                            settings
+                                .xo
+                                .iter()
+                                .chain(&project.xo)
+                                .find(|(g, _)| g == group)
+                                .map_or(80.0, |(_, hz)| *hz)
+                        });
+                        let view = XoPreview::new(design).curves(
+                            design,
+                            group,
+                            hz,
+                            params.corrected.unwrap_or(true),
+                            role,
+                        );
+                        let mid = Design::percentile(&view.target, 50.0) - offset;
+                        result.axes.value = [mid - 30.0, mid + 12.0];
+                        result.grid = view.grid;
+                        result.xo_hz = Some(hz);
+                        result.curves = vec![
+                            series("target", None, &view.target, offset),
+                            series("main", None, &view.main, offset),
+                            series("sub", None, &view.sub, offset),
+                            series("sum", None, &view.sum, offset),
+                        ];
+                    }
+                }
+                ResultTab::Ba => {
+                    if let Some(view) = sub_combine(design) {
+                        result.grid = view.grid;
+                        result.curves.push(series(
+                            "target",
+                            None,
+                            &project.target.sample(&result.grid),
+                            0.0,
+                        ));
+                        for (role, before) in &view.before {
+                            result
+                                .curves
+                                .push(series("before", Some(role), before, offset));
+                            if let Some((_, after)) = view.after.iter().find(|(r, _)| r == role) {
+                                result
+                                    .curves
+                                    .push(series("after", Some(role), after, offset));
+                            }
+                        }
+                        result
+                            .curves
+                            .push(series("sum_before", None, &view.sum_before, offset));
+                        result
+                            .curves
+                            .push(series("sum_after", None, &view.sum_after, offset));
+                        let top =
+                            band_values(&result.grid, &view.sum_before, view.band.0, view.band.1)
+                                .into_iter()
+                                .chain(band_values(
+                                    &result.grid,
+                                    &view.sum_after,
+                                    view.band.0,
+                                    view.band.1,
+                                ))
+                                .reduce(f64::max)
+                                .unwrap_or(0.0)
+                                - offset;
+                        result.axes.value = [top - 40.0, top + 6.0];
+                    }
                 }
             }
-        }
-        if let Some(hz) = design.signal_chain().input_hp_hz {
-            match params.tab {
-                ResultTab::Spl | ResultTab::Ba => {
-                    let adjustment = input_hp_spl(&result.grid, hz);
-                    add_adjustment(
-                        &mut result.curves,
-                        &["after", "target", "sum_after"],
-                        &adjustment,
-                    );
+            if let Some(hz) = design.signal_chain().input_hp_hz {
+                match params.tab {
+                    ResultTab::Spl | ResultTab::Ba => {
+                        let adjustment = input_hp_spl(&result.grid, hz);
+                        add_adjustment(
+                            &mut result.curves,
+                            &["after", "target", "sum_after"],
+                            &adjustment,
+                        );
+                    }
+                    ResultTab::Gd => {
+                        let adjustment = input_hp_group_delay(&result.grid, hz);
+                        add_adjustment(&mut result.curves, &["after"], &adjustment);
+                    }
+                    ResultTab::Xo => {}
                 }
-                ResultTab::Gd => {
-                    let adjustment = input_hp_group_delay(&result.grid, hz);
-                    add_adjustment(&mut result.curves, &["after"], &adjustment);
-                }
-                ResultTab::Xo => {}
             }
-        }
-        Ok(result)
+            Ok(result)
+        })
     }
 
     fn result_lines(&self) -> Result<ResultLinesResult, IpcError> {
-        let summary = self.results()?;
-        let compute_key = crate::compute::ComputeIdentity::from(&self.acceleration().status);
-        let session = lock(&self.session);
-        let open = session.require().map_err(IpcError::from)?;
-        let project = open.project();
-        let live_mimo = match open.results.mimo(project, &compute_key).shown() {
-            Some(crate::results::MimoView::Live(result)) => Some(result),
-            _ => None,
-        };
-        let (stale, channels, total_delay_ms, rc) = open.results.live_calibration().map_or_else(
-            || (false, Vec::new(), None, Vec::new()),
-            |run| {
-                let design = run.design();
-                let mimo = live_mimo;
-                let channels = design
-                    .scores
-                    .iter()
-                    .filter_map(|score| {
-                        let main = design.main_channels().find(|m| m.role == score.role)?;
-                        Some(ChannelResultLine {
-                            role: score.role.clone(),
-                            within_1db_pct: [score.before.in1_20, score.after.in1_20],
-                            gd_spread_ms: [score.before.gd_20, score.after.gd_20],
-                            peq_count: main.input_peq.len(),
-                            fir_taps: (main.fir.len() > 1).then_some(main.fir.len()),
-                            xo_hz: main.xo_hz,
-                            mimo_support_count: mimo.map(|m| {
-                                m.run
-                                    .paths
-                                    .paths
-                                    .iter()
-                                    .filter(|p| p.input == score.role)
-                                    .count()
-                            }),
-                        })
-                    })
-                    .collect();
-                // The design's own rc_limit note carries the basis and its
-                // evidence (ADR 0021); a design without one gets today's line.
-                let rc_note = design
-                    .notes
-                    .iter()
-                    .find(|note| matches!(note, secs_engine::Note::RcLimit { .. }));
-                let mut rc = vec![match rc_note {
-                    Some(note) => crate::calibration::scalar_notice(note),
-                    None => {
-                        let mut line = notice(
-                            "rc_limit",
-                            [
-                                ("hz", design.rc_hi.to_string()),
-                                ("auto", design.rc_auto.to_string()),
-                            ],
-                        );
-                        if let Some(hz) = design.schroeder_hz {
-                            line.params.insert("schroeder_hz".into(), hz.to_string());
-                        }
-                        line
-                    }
-                }];
-                let band_hz = match rc_note {
-                    Some(secs_engine::Note::RcLimit { band_hz, .. }) => *band_hz,
-                    _ => None,
-                };
-                // The room volume decides only the two Schroeder bases.
-                if design.rc_auto
-                    && run.settings.rc_hi_basis != secs_types::calibration::RcHiBasis::Agreement
-                {
-                    rc.push(match run.settings.room_volume_m3.filter(|v| *v != 0.0) {
-                        Some(volume) => {
-                            notice("rc_room_volume", [("volume_m3", volume.to_string())])
-                        }
-                        None => notice("rc_no_room_volume", []),
-                    });
-                    let factor = f64::from(run.settings.rc_hi_transition);
-                    let value = match (design.schroeder_hz, band_hz) {
-                        (Some(strict), Some(band)) => Some(strict.max(band)),
-                        (strict, band) => strict.or(band),
-                    };
-                    if run.settings.room_volume_m3.is_some_and(|v| v != 0.0)
-                        && value.is_some_and(|v| v * factor > design.rc_hi + 0.5)
-                    {
-                        rc.push(notice("rc_auto_cap", [("hz", design.rc_hi.to_string())]));
-                    }
-                }
-                (
-                    crate::results::calibration_stale(run, project),
-                    channels,
-                    Some(design.latency_ms()),
-                    rc,
-                )
-            },
-        );
-        // BA lines come from the last subs-only run while there is one, like
-        // the BA curves (`source = sub_run or run`).
-        let ba = open
-            .results
-            .subs()
-            .or(open.results.live_calibration())
-            .and_then(|ba_run| {
-                let ba_design = ba_run.design();
-                let ba_stale = crate::results::calibration_stale(ba_run, project);
-                sub_combine(ba_design).map(|view| {
-                    let warnings = secs_export::sub_filter_warnings(&ba_run.settings, &view.subs)
-                        .into_iter()
-                        .chain(secs_export::sub_gain_warnings(ba_design))
-                        .map(warning)
-                        .collect();
-                    let mut layouts: Vec<_> = view
-                        .layout_info
-                        .iter()
-                        .map(|(bundle, info)| SubLayoutLine {
-                            bundle: bundle.clone(),
-                            kind: format!("{:?}", info.kind).to_lowercase(),
-                            members: info.members.clone(),
-                            front: info.front.clone(),
-                            rear: info.rear.clone(),
-                            rear_ms: info.rear_ms,
-                            auto_ms: info.auto_ms,
-                            trim_ms: info.trim_ms,
-                            peq: info.peq.clone(),
-                        })
-                        .collect();
-                    layouts.sort_by(|a, b| a.bundle.cmp(&b.bundle));
-                    SubResultLines {
-                        stale: ba_stale,
-                        subs_only: open.results.subs().is_some(),
-                        band_hz: [view.band.0, view.band.1],
-                        flatness_db: [view.flat.0, view.flat.1],
-                        seat_spread_db: view.seat.map(|(a, b)| [a, b]),
-                        positions: view.positions,
-                        rows: ba_design
-                            .chain
-                            .subs
+        self.read_open(|open, compute_key| {
+            let project = open.project();
+            let summary = open.results.summary(project, compute_key);
+            let live_mimo = match open.results.mimo(project, compute_key).shown() {
+                Some(crate::results::MimoView::Live(result)) => Some(result),
+                _ => None,
+            };
+            let (stale, channels, total_delay_ms, rc) =
+                open.results.live_calibration().map_or_else(
+                    || (false, Vec::new(), None, Vec::new()),
+                    |run| {
+                        let design = run.design();
+                        let mimo = live_mimo;
+                        let channels = design
+                            .scores
                             .iter()
-                            .map(|s| SubResultRow {
-                                role: s.role.clone(),
-                                mode: s.mode.clone(),
-                                gain_db: s.gain_db,
-                                delay_ms: s.delay_ms,
-                                polarity: s.polarity,
-                                allpass: s.allpass.clone(),
-                                high_pass: (s.hp_hz, s.hp_type.name().into()),
-                                low_pass: (s.lp_hz, s.lp_type.name().into()),
-                                peq: s.peq.clone(),
+                            .filter_map(|score| {
+                                let main = design.main_channels().find(|m| m.role == score.role)?;
+                                Some(ChannelResultLine {
+                                    role: score.role.clone(),
+                                    within_1db_pct: [score.before.in1_20, score.after.in1_20],
+                                    gd_spread_ms: [score.before.gd_20, score.after.gd_20],
+                                    peq_count: main.input_peq.len(),
+                                    fir_taps: (main.fir.len() > 1).then_some(main.fir.len()),
+                                    xo_hz: main.xo_hz,
+                                    mimo_support_count: mimo.map(|m| {
+                                        m.run
+                                            .paths
+                                            .paths
+                                            .iter()
+                                            .filter(|p| p.input == score.role)
+                                            .count()
+                                    }),
+                                })
                             })
-                            .collect(),
-                        layouts,
-                        warnings,
-                    }
-                })
-            });
-        Ok(ResultLinesResult {
-            stale,
-            channels,
-            total_delay_ms,
-            notes: summary.calibration.map_or_else(Vec::new, |s| s.notes),
-            rc,
-            ba,
+                            .collect();
+                        // The design's own rc_limit note carries the basis and its
+                        // evidence (ADR 0021); a design without one gets today's line.
+                        let rc_note = design
+                            .notes
+                            .iter()
+                            .find(|note| matches!(note, secs_engine::Note::RcLimit { .. }));
+                        let mut rc = vec![match rc_note {
+                            Some(note) => crate::calibration::scalar_notice(note),
+                            None => {
+                                let mut line = notice(
+                                    "rc_limit",
+                                    [
+                                        ("hz", design.rc_hi.to_string()),
+                                        ("auto", design.rc_auto.to_string()),
+                                    ],
+                                );
+                                if let Some(hz) = design.schroeder_hz {
+                                    line.params.insert("schroeder_hz".into(), hz.to_string());
+                                }
+                                line
+                            }
+                        }];
+                        let band_hz = match rc_note {
+                            Some(secs_engine::Note::RcLimit { band_hz, .. }) => *band_hz,
+                            _ => None,
+                        };
+                        // The room volume decides only the two Schroeder bases.
+                        if design.rc_auto
+                            && run.settings.rc_hi_basis
+                                != secs_types::calibration::RcHiBasis::Agreement
+                        {
+                            rc.push(match run.settings.room_volume_m3.filter(|v| *v != 0.0) {
+                                Some(volume) => {
+                                    notice("rc_room_volume", [("volume_m3", volume.to_string())])
+                                }
+                                None => notice("rc_no_room_volume", []),
+                            });
+                            let factor = f64::from(run.settings.rc_hi_transition);
+                            let value = match (design.schroeder_hz, band_hz) {
+                                (Some(strict), Some(band)) => Some(strict.max(band)),
+                                (strict, band) => strict.or(band),
+                            };
+                            if run.settings.room_volume_m3.is_some_and(|v| v != 0.0)
+                                && value.is_some_and(|v| v * factor > design.rc_hi + 0.5)
+                            {
+                                rc.push(notice("rc_auto_cap", [("hz", design.rc_hi.to_string())]));
+                            }
+                        }
+                        (
+                            crate::results::calibration_stale(run, project),
+                            channels,
+                            Some(design.latency_ms()),
+                            rc,
+                        )
+                    },
+                );
+            // BA lines come from the last subs-only run while there is one, like
+            // the BA curves (`source = sub_run or run`).
+            let ba = open
+                .results
+                .subs()
+                .or(open.results.live_calibration())
+                .and_then(|ba_run| {
+                    let ba_design = ba_run.design();
+                    let ba_stale = crate::results::calibration_stale(ba_run, project);
+                    sub_combine(ba_design).map(|view| {
+                        let warnings =
+                            secs_export::sub_filter_warnings(&ba_run.settings, &view.subs)
+                                .into_iter()
+                                .chain(secs_export::sub_gain_warnings(ba_design))
+                                .map(warning)
+                                .collect();
+                        let mut layouts: Vec<_> = view
+                            .layout_info
+                            .iter()
+                            .map(|(bundle, info)| SubLayoutLine {
+                                bundle: bundle.clone(),
+                                kind: format!("{:?}", info.kind).to_lowercase(),
+                                members: info.members.clone(),
+                                front: info.front.clone(),
+                                rear: info.rear.clone(),
+                                rear_ms: info.rear_ms,
+                                auto_ms: info.auto_ms,
+                                trim_ms: info.trim_ms,
+                                peq: info.peq.clone(),
+                            })
+                            .collect();
+                        layouts.sort_by(|a, b| a.bundle.cmp(&b.bundle));
+                        SubResultLines {
+                            stale: ba_stale,
+                            subs_only: open.results.subs().is_some(),
+                            band_hz: [view.band.0, view.band.1],
+                            flatness_db: [view.flat.0, view.flat.1],
+                            seat_spread_db: view.seat.map(|(a, b)| [a, b]),
+                            positions: view.positions,
+                            rows: ba_design
+                                .chain
+                                .subs
+                                .iter()
+                                .map(|s| SubResultRow {
+                                    role: s.role.clone(),
+                                    mode: s.mode.clone(),
+                                    gain_db: s.gain_db,
+                                    delay_ms: s.delay_ms,
+                                    polarity: s.polarity,
+                                    allpass: s.allpass.clone(),
+                                    high_pass: (s.hp_hz, s.hp_type.name().into()),
+                                    low_pass: (s.lp_hz, s.lp_type.name().into()),
+                                    peq: s.peq.clone(),
+                                })
+                                .collect(),
+                            layouts,
+                            warnings,
+                        }
+                    })
+                });
+            ResultLinesResult {
+                stale,
+                channels,
+                total_delay_ms,
+                notes: summary.calibration.map_or_else(Vec::new, |s| s.notes),
+                rc,
+                ba,
+            }
         })
     }
 

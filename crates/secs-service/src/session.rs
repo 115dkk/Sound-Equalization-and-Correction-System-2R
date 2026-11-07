@@ -400,6 +400,37 @@ impl Session {
 }
 
 impl Service {
+    pub(crate) fn with_open<T>(
+        &self,
+        change: impl FnOnce(&mut OpenProject, &crate::compute::ComputeIdentity) -> Result<T, IpcError>,
+    ) -> Result<T, IpcError> {
+        let compute = crate::compute::ComputeIdentity::from(&self.acceleration().status);
+        let mut session = lock(&self.session);
+        let open = session.require_mut().map_err(IpcError::from)?;
+        change(open, &compute)
+    }
+
+    pub(crate) fn with_open_ticket<T>(
+        &self,
+        ticket: ProjectTicket,
+        change: impl FnOnce(&mut OpenProject, &crate::compute::ComputeIdentity) -> Result<T, IpcError>,
+    ) -> Result<T, IpcError> {
+        let compute = crate::compute::ComputeIdentity::from(&self.acceleration().status);
+        let mut session = lock(&self.session);
+        let open = session.holding(ticket)?;
+        change(open, &compute)
+    }
+
+    pub(crate) fn read_open<T>(
+        &self,
+        read: impl FnOnce(&OpenProject, &crate::compute::ComputeIdentity) -> T,
+    ) -> Result<T, IpcError> {
+        let compute = crate::compute::ComputeIdentity::from(&self.acceleration().status);
+        let session = lock(&self.session);
+        let open = session.require().map_err(IpcError::from)?;
+        Ok(read(open, &compute))
+    }
+
     pub(crate) fn project_save(
         &self,
         params: secs_types::ipc::ProjectSaveParams,
@@ -1289,6 +1320,19 @@ mod commit_tests {
             open: Some(project()),
             last_export: None,
         }))
+    }
+
+    #[test]
+    fn with_open_may_call_acceleration_again_without_deadlock() {
+        let service = Service::new(crate::Deps::default());
+        lock(&service.session).open = Some(project());
+        service
+            .with_open(|_, identity| {
+                let again = crate::compute::ComputeIdentity::from(&service.acceleration().status);
+                assert_eq!(*identity, again);
+                Ok(())
+            })
+            .unwrap();
     }
 
     #[test]

@@ -8,7 +8,10 @@ use secs_service::{Deps, EventSink, NoEvents, Service};
 use secs_types::ipc::*;
 use std::{
     path::PathBuf,
-    sync::{Arc, Condvar, Mutex},
+    sync::{
+        Arc, Condvar, Mutex, Weak,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+    },
     time::{Duration, Instant},
 };
 
@@ -611,6 +614,50 @@ fn input_hp_result_curves_show_the_cut_without_changing_the_verdict() {
         }
     }
     std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn result_lines_summary_and_lines_come_from_one_lock_td213() {
+    let root = root("result-lines-one-lock");
+    let (path, _) = case_project::write(&root, "room_dba");
+    let armed = Arc::new(AtomicBool::new(false));
+    let calls = Arc::new(AtomicUsize::new(0));
+    let service_slot = Arc::new(Mutex::new(Weak::<Service>::new()));
+    let fallback = Deps::default().acceleration;
+    let deps = Deps {
+        acceleration: Arc::new({
+            let armed = armed.clone();
+            let calls = calls.clone();
+            let service_slot = service_slot.clone();
+            move |preference| {
+                if armed.load(Ordering::SeqCst) && calls.fetch_add(1, Ordering::SeqCst) == 1 {
+                    let service = service_slot.lock().unwrap().upgrade().unwrap();
+                    let response = service.call(
+                        Request::PositionClear(PositionClearParams { position: 1 }),
+                        Arc::new(NoEvents),
+                    );
+                    assert!(matches!(response, Envelope::Ok(_)), "{response:?}");
+                }
+                fallback(preference)
+            }
+        }),
+        ..Deps::default()
+    };
+    let service = Arc::new(Service::new(deps));
+    *service_slot.lock().unwrap() = Arc::downgrade(&service);
+    open(&service, &path);
+    calibrate(&service, false);
+
+    calls.store(0, Ordering::SeqCst);
+    armed.store(true, Ordering::SeqCst);
+    let Response::ResultLines(lines) = call(&service, Request::ResultLines) else {
+        panic!()
+    };
+    armed.store(false, Ordering::SeqCst);
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert!(!lines.stale);
+
+    std::fs::remove_dir_all(root).ok();
 }
 
 #[test]

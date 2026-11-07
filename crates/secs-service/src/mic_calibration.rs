@@ -297,7 +297,7 @@ impl Service {
         };
         self.refuse_while_measuring()?;
         let selected = read_selected(&params.path)?;
-        session::apply(&self.session, ticket, |open| {
+        self.with_open_ticket(ticket, |open, _| {
             open.edit(|project| {
                 store_devices(
                     project,
@@ -314,7 +314,7 @@ impl Service {
                     ],
                 );
             });
-            Ok((status(&mut open.store_mut(), Some(&selected)), true))
+            Ok(status(&mut open.store_mut(), Some(&selected)))
         })
     }
 
