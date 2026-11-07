@@ -259,9 +259,15 @@ impl MeasurementStore {
         let loaded = load_project_sources_within(&project, &path, source_budget);
         let LoadedSources {
             by_entry: sources,
-            exhausted: _,
+            exhausted,
             skipped,
         } = loaded;
+        debug_assert_eq!(
+            exhausted,
+            skipped
+                .iter()
+                .any(|skip| skip.reason == SourceSkipReason::Budget)
+        );
         for (key, info) in &sources {
             if let Some(fingerprint) = calibration_fingerprint(info) {
                 project
@@ -707,12 +713,6 @@ impl MeasurementStore {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum LoadedIr {
-    Samples(Vec<f32>, u32),
-    Timed(Vec<f32>, u32, f64),
-}
-
 pub fn source_path(wav: &Path) -> PathBuf {
     wav.with_extension("src.json")
 }
@@ -728,10 +728,6 @@ pub fn save_source(wav: &Path, info: Option<&SourceInfo>) -> Result<(), ProjectE
         return Ok(());
     };
     atomic_write(&path, dumps_compact(&source_to_json(info)).as_bytes())
-}
-
-pub fn load_source(wav: &Path) -> Option<SourceInfo> {
-    load_source_checked(wav).ok().flatten()
 }
 
 fn load_source_checked(wav: &Path) -> Result<Option<SourceInfo>, ProjectError> {
@@ -796,18 +792,6 @@ fn source_info_bytes(info: &SourceInfo) -> usize {
     bytes
         .saturating_add(info.notes.as_ref().map_or(0, String::len))
         .saturating_add(info.format.as_ref().map_or(0, String::len))
-}
-
-/// Source sidecars loaded for a project and warnings for entries that were skipped.
-pub fn load_project_sources(project: &Project, project_path: &Path) -> LoadedProjectSources {
-    load_project_sources_legacy_within(project, project_path, MAX_PROJECT_SOURCE_BYTES)
-}
-
-/// Source sidecars and non-fatal load warnings.
-#[derive(Debug, Default)]
-pub struct LoadedProjectSources {
-    pub values: BTreeMap<u32, BTreeMap<String, SourceInfo>>,
-    pub warnings: Vec<MigrationWarning>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1033,75 +1017,6 @@ pub(crate) fn load_project_sources_within(
         exhausted: budget.exhausted,
         skipped,
     }
-}
-
-fn load_project_sources_legacy_within(
-    project: &Project,
-    project_path: &Path,
-    budget: usize,
-) -> LoadedProjectSources {
-    let LoadedSources {
-        by_entry,
-        exhausted,
-        skipped,
-    } = load_project_sources_within(project, project_path, budget);
-    debug_assert_eq!(
-        exhausted,
-        skipped
-            .iter()
-            .any(|skip| skip.reason == SourceSkipReason::Budget)
-    );
-    let mut values = BTreeMap::<u32, BTreeMap<String, SourceInfo>>::new();
-    for ((position, role), info) in by_entry {
-        let Ok(position) = u32::try_from(position) else {
-            continue;
-        };
-        values
-            .entry(position)
-            .or_default()
-            .insert(role, info.as_ref().clone());
-    }
-    let warnings = skipped.iter().map(source_warning).collect();
-    LoadedProjectSources { values, warnings }
-}
-
-pub fn load_project_irs(
-    project: &Project,
-    project_path: &Path,
-    cache: &mut IrCache,
-) -> Result<BTreeMap<i64, BTreeMap<String, LoadedIr>>, ProjectError> {
-    let mut store = MeasurementStore::new(project_path, project.clone());
-    std::mem::swap(&mut store.cache, cache);
-    let mut out = BTreeMap::new();
-    let positions = store
-        .records()
-        .iter()
-        .map(|record| record.pos)
-        .collect::<Vec<_>>();
-    for pos in positions {
-        let roles = store.entry_for(pos).map_or_else(Vec::new, |entry| {
-            entry
-                .ir
-                .iter()
-                .filter(|(_, path)| !path.is_empty())
-                .map(|(role, _)| role.clone())
-                .collect()
-        });
-        for role in roles {
-            let (samples, rate) = store.ir_of(&role, pos)?;
-            let t0 = store.t0_of(&role, pos);
-            let value = if t0 == 0.0 {
-                LoadedIr::Samples(samples, rate)
-            } else {
-                LoadedIr::Timed(samples, rate, t0)
-            };
-            out.entry(pos)
-                .or_insert_with(BTreeMap::new)
-                .insert(role, value);
-        }
-    }
-    std::mem::swap(&mut store.cache, cache);
-    Ok(out)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -1868,28 +1783,6 @@ mod source_budget_tests {
 
     #[test]
     #[cfg_attr(miri, ignore = "uses temporary files")]
-    fn sources_by_position_matches_the_old_loader() {
-        let (root, project_path) = three_source_project("old-loader");
-        let store = MeasurementStore::open(&project_path).unwrap();
-        let expected = load_project_sources(store.project(), &project_path)
-            .values
-            .into_iter()
-            .map(|(position, roles)| {
-                (
-                    position,
-                    roles
-                        .into_iter()
-                        .map(|(role, source)| (role, Arc::new(source)))
-                        .collect(),
-                )
-            })
-            .collect::<BTreeMap<_, _>>();
-        assert_eq!(store.sources_by_position(), expected);
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    #[cfg_attr(miri, ignore = "uses temporary files")]
     fn unreadable_sidecar_is_reported_as_a_migration_warning_td183() {
         let (root, project_path, sidecar) = sidecar_project("malformed", b"{not json");
 
@@ -1974,15 +1867,17 @@ mod source_budget_tests {
         project.measurements = PyJson::Array(entries);
 
         reset_local_source_parse_count();
-        let sources = load_project_sources(&project, &project_path).values;
+        let loaded = load_project_sources_within(&project, &project_path, MAX_PROJECT_SOURCE_BYTES);
+        assert!(loaded.exhausted);
+        let sources = loaded.by_entry;
         let parsed = local_source_parse_count();
         assert!(parsed > 0);
         assert!(
             parsed < 10,
             "parsed {parsed} sidecars after exhausting the budget"
         );
-        assert!(sources.contains_key(&1));
-        assert!(!sources.contains_key(&10));
+        assert!(sources.keys().any(|(position, _)| *position == 1));
+        assert!(!sources.keys().any(|(position, _)| *position == 10));
 
         fs::remove_dir_all(root).unwrap();
     }
@@ -2012,9 +1907,10 @@ mod source_budget_tests {
         project.measurements = PyJson::Array(entries);
 
         reset_local_source_parse_count();
-        let sources = load_project_sources_legacy_within(&project, &project_path, 4096).values;
+        let loaded = load_project_sources_within(&project, &project_path, 4096);
         let parsed = local_source_parse_count();
-        assert!(sources.is_empty());
+        assert!(loaded.by_entry.is_empty());
+        assert!(loaded.exhausted);
         assert!(parsed > 0);
         assert!(
             parsed < 50,

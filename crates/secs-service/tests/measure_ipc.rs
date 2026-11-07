@@ -700,6 +700,7 @@ fn mdat_scan_and_import_match_direct_oracle_bytes() {
     };
     succeeded(&events, job.job);
     assert_eq!(fs::read(&path).unwrap(), expected);
+    let recorded = secs_project::MeasurementStore::open(&path).unwrap();
     for (role, notes) in [("L", "global SPL"), ("R", "item SPL")] {
         let direct_source = root
             .join("direct/import.irs")
@@ -712,9 +713,7 @@ fn mdat_scan_and_import_match_direct_oracle_bytes() {
             fs::read(service_source).unwrap(),
             fs::read(direct_source).unwrap()
         );
-        let info =
-            secs_project::load_source(&path.with_extension("irs").join(format!("{role}_P1.wav")))
-                .unwrap();
+        let info = recorded.source_of(role, 1).unwrap();
         assert_eq!(info.notes.as_deref(), Some(notes));
         assert_eq!(info.format.as_deref(), Some("SECS2 measurement"));
     }
