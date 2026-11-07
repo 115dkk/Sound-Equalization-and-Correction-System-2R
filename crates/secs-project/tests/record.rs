@@ -276,6 +276,50 @@ fn measurement_source_writes_exact_bytes_reads_and_deletes_stale_file() {
     assert!(!source.exists());
 }
 
+#[test]
+fn start_position_and_clear_position_forget_the_sources_of_that_position() {
+    let (_directory, _path, mut store, roles) = setup();
+    let info = SourceInfo {
+        strings: vec![("outputName".into(), "source".into())],
+        ..SourceInfo::default()
+    };
+    let mut measured = result("L", 1, "first");
+    measured.source_info = Some(info.clone());
+    store.record(measured, Some(&roles)).unwrap();
+    assert_eq!(store.source_of("L", 1).as_deref(), Some(&info));
+
+    store.start_position(1);
+    assert!(store.source_of("L", 1).is_none());
+    assert!(store.sources_by_position().is_empty());
+
+    let mut measured = result("L", 1, "second");
+    measured.source_info = Some(info);
+    store.record(measured, Some(&roles)).unwrap();
+    assert!(store.clear_position(1));
+    assert!(store.source_of("L", 1).is_none());
+    assert!(store.sources_by_position().is_empty());
+}
+
+#[test]
+fn sources_follow_the_current_measurement_entries() {
+    let (_directory, _path, mut store, roles) = setup();
+    let mut measured = result("L", 1, "source");
+    measured.source_info = Some(SourceInfo {
+        strings: vec![("outputName".into(), "source".into())],
+        ..SourceInfo::default()
+    });
+    store.record(measured, Some(&roles)).unwrap();
+
+    let removed = store.remove_position(1).unwrap();
+    assert!(store.sources_by_position().is_empty());
+    store.restore_position(removed).unwrap();
+    assert!(store.sources_by_position()[&1].contains_key("L"));
+
+    store.project_mut().measurements = PyJson::Array(Vec::new());
+    assert!(store.source_of("L", 1).is_none());
+    assert!(store.sources_by_position().is_empty());
+}
+
 fn meter_source(gain_db: f32) -> SourceInfo {
     SourceInfo {
         cal: vec![(

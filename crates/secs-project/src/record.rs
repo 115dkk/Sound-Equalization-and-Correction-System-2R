@@ -383,6 +383,7 @@ impl MeasurementStore {
             records.push(entry);
         }
         self.snr_db.retain(|(entry_pos, _), _| *entry_pos != pos);
+        self.sources.retain(|(entry_pos, _), _| *entry_pos != pos);
         self.entry_for(pos).expect("new entry has a valid position")
     }
 
@@ -608,6 +609,9 @@ impl MeasurementStore {
             let Ok(position) = u32::try_from(*position) else {
                 continue;
             };
+            if !self.has_recorded_ir(role, i64::from(position)) {
+                continue;
+            }
             by_position
                 .entry(position)
                 .or_default()
@@ -618,7 +622,15 @@ impl MeasurementStore {
 
     /// Returns a recorded IR's source sidecar from the map built when the store opened.
     pub fn source_of(&self, role: &str, pos: i64) -> Option<Arc<SourceInfo>> {
-        self.sources.get(&(pos, role.to_owned())).cloned()
+        self.has_recorded_ir(role, pos)
+            .then(|| self.sources.get(&(pos, role.to_owned())).cloned())
+            .flatten()
+    }
+
+    fn has_recorded_ir(&self, role: &str, pos: i64) -> bool {
+        self.entry_for(pos)
+            .and_then(|entry| entry.ir.get(role).cloned())
+            .is_some_and(|path| !path.is_empty())
     }
 
     /// Rewrites a recorded IR's source sidecar and updates its in-memory
