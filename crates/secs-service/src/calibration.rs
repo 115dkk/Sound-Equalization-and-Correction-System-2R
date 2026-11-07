@@ -141,11 +141,13 @@ impl Service {
                     &session,
                     ticket,
                     &job,
-                    design,
-                    prepared.settings,
-                    selection,
-                    calibration_key,
-                    background,
+                    MimoRun {
+                        design,
+                        settings: prepared.settings,
+                        selection,
+                        calibration_key,
+                        background,
+                    },
                 )?;
             }
             Ok(JobResult::Calibration)
@@ -250,11 +252,13 @@ impl Service {
                 &session,
                 ticket,
                 &job,
-                design,
-                settings,
-                selection,
-                calibration_key,
-                false,
+                MimoRun {
+                    design,
+                    settings,
+                    selection,
+                    calibration_key,
+                    background: false,
+                },
             )?;
             Ok(JobResult::Mimo)
         })
@@ -303,17 +307,27 @@ fn check_mimo_preconditions(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
-fn compute_and_commit_mimo(
-    session: &Arc<std::sync::Mutex<session::Session>>,
-    ticket: ProjectTicket,
-    job: &JobContext,
+struct MimoRun {
     design: Arc<Design>,
     settings: CalibrationSettings,
     selection: secs_engine::mimo::AccelerationSelection,
     calibration_key: String,
     background: bool,
+}
+
+fn compute_and_commit_mimo(
+    session: &Arc<std::sync::Mutex<session::Session>>,
+    ticket: ProjectTicket,
+    job: &JobContext,
+    run: MimoRun,
 ) -> Result<(), IpcError> {
+    let MimoRun {
+        design,
+        settings,
+        selection,
+        calibration_key,
+        background,
+    } = run;
     let compute_key = crate::compute::ComputeIdentity::from(&selection.status);
     let ctx = compute_context(job, background);
     let run = secs_engine::mimo::compute_with_acceleration(
