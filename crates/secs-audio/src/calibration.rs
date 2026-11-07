@@ -208,13 +208,27 @@ impl MicCalibration {
     /// An embedded REW curve, with the same point rules as `parse` and no headers.
     /// Errors identify the offending point by its one-based index.
     pub fn from_points(points: Vec<CalibrationPoint>) -> Result<Self, CalibrationError> {
-        for (i, point) in points.iter().enumerate() {
-            validate_point(point, i.checked_sub(1).map(|j| &points[j]), i + 1)?;
-        }
-        if points.len() < 2 {
+        let frequencies = points
+            .iter()
+            .map(|point| point.frequency)
+            .collect::<Vec<_>>();
+        let gains = points.iter().map(|point| point.gain_db).collect::<Vec<_>>();
+        if !secs_types::calibration::calibration_curve_is_valid(&frequencies, &gains) {
+            for (i, point) in points.iter().enumerate() {
+                validate_point(point, i.checked_sub(1).map(|j| &points[j]), i + 1)?;
+            }
             return Err(CalibrationError {
                 issue: CalibrationIssue::TooFewPoints,
                 line: None,
+            });
+        }
+        if let Some(index) = points
+            .iter()
+            .position(|point| point.phase_degrees.is_some_and(|phase| !phase.is_finite()))
+        {
+            return Err(CalibrationError {
+                issue: CalibrationIssue::Row,
+                line: Some(index + 1),
             });
         }
         Ok(Self {

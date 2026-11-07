@@ -36,7 +36,6 @@ pub(crate) struct Snapshot {
 struct LoadedMeasurements {
     measurements: MeasurementSet,
     notices: Vec<Notice>,
-    invalid_calibration_keys: Vec<(i64, String)>,
 }
 
 pub(crate) struct Prepared {
@@ -46,7 +45,6 @@ pub(crate) struct Prepared {
     pub settings: CalibrationSettings,
     pub measurements: MeasurementSet,
     pub measurement_notices: Vec<Notice>,
-    pub invalid_calibration_keys: Vec<(i64, String)>,
     pub signature: String,
     pub target_key: String,
     pub config_key: String,
@@ -103,9 +101,6 @@ impl Service {
             let commit_calibration = |open: &mut session::OpenProject| {
                 let mut summary = summarize(&design, &prepared.settings, &late_energy);
                 summary.notes.extend(prepared.measurement_notices.clone());
-                for key in &prepared.invalid_calibration_keys {
-                    open.store.project_mut().measurement_calibration.remove(key);
-                }
                 if calibration.resampled > 0 {
                     summary.notes.push(Notice {
                         code: "measurement_resampled".into(),
@@ -417,10 +412,7 @@ impl Snapshot {
         let mut store = secs_project::MeasurementStore::new(&self.path, self.project.clone());
         let loaded = load_measurements_with_notices(&mut store, job.cancel())?;
         check_rc_agreement(&self.project, &self.settings, &loaded.measurements)?;
-        let mut project = self.project;
-        for key in &loaded.invalid_calibration_keys {
-            project.measurement_calibration.remove(key);
-        }
+        let project = self.project;
         Ok(Prepared {
             ticket: self.ticket,
             signature: signature_key(&project),
@@ -431,7 +423,6 @@ impl Snapshot {
             settings: self.settings,
             measurements: loaded.measurements,
             measurement_notices: loaded.notices,
-            invalid_calibration_keys: loaded.invalid_calibration_keys,
         })
     }
 }
@@ -571,11 +562,27 @@ pub(crate) fn has_valid_meter_calibration(info: &secs_mdat::SourceInfo) -> bool 
         .is_some()
 }
 
+fn curve_arrays_present(cal: &secs_mdat::CalInfo) -> bool {
+    matches!(
+        (&cal.freq, &cal.gain),
+        (Some(frequencies), Some(gains))
+            if frequencies.len() >= 2 && frequencies.len() == gains.len()
+    )
+}
+
 fn response_correction(info: &secs_mdat::SourceInfo) -> (secs_audio::ResponseCorrection, bool) {
     let attached = secs_project::attached_calibration(info);
     let meter = attached.meter.and_then(mic_curve);
-    let invalid_meter = attached.meter.is_some() && meter.is_none();
-    let mut invalid_other = false;
+    let invalid_meter = info
+        .cal
+        .iter()
+        .find(|(name, cal)| name == "meterCal" && curve_arrays_present(cal))
+        .is_some_and(|(_, cal)| mic_curve(cal).is_none());
+    let mut invalid_other = info
+        .cal
+        .iter()
+        .filter(|(name, cal)| name == "scCal" && curve_arrays_present(cal))
+        .any(|(_, cal)| mic_curve(cal).is_none());
     let others = attached
         .others
         .into_iter()
@@ -633,7 +640,6 @@ fn load_measurements_with_notices(
 ) -> Result<LoadedMeasurements, IpcError> {
     let mut positions = Vec::new();
     let mut notices = Vec::new();
-    let mut invalid_calibration_keys = Vec::new();
     for record in store.records() {
         if record.pos < 0 {
             continue;
@@ -656,7 +662,6 @@ fn load_measurements_with_notices(
                     ]
                     .into(),
                 });
-                invalid_calibration_keys.push((record.pos, role.clone()));
             }
             roles.push((
                 role.clone(),
@@ -678,7 +683,6 @@ fn load_measurements_with_notices(
     Ok(LoadedMeasurements {
         measurements: MeasurementSet { positions },
         notices,
-        invalid_calibration_keys,
     })
 }
 

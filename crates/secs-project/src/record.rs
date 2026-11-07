@@ -19,8 +19,7 @@ pub const MAX_PROJECT_BYTES: u64 = 64 * 1024 * 1024;
 pub const MAX_SOURCE_BYTES: u64 = 16 * 1024 * 1024;
 
 /// Calibration curves a measurement source sidecar attaches (ADR 0015).
-/// `meterCal` precedes every `scCal`; only entries with equal `freq` and
-/// `gain` lengths of at least two points are attached.
+/// `meterCal` precedes every `scCal`; only valid embedded curves are attached.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AttachedCalibration<'a> {
     /// The valid `meterCal` entry, when present.
@@ -38,29 +37,41 @@ impl AttachedCalibration<'_> {
     }
 }
 
-fn has_curve_arrays(cal: &CalInfo) -> bool {
-    matches!(
-        (&cal.freq, &cal.gain),
-        (Some(freq), Some(gain)) if freq.len() >= 2 && freq.len() == gain.len()
-    )
+fn has_valid_curve(cal: &CalInfo) -> bool {
+    let (Some(frequencies), Some(gains)) = (&cal.freq, &cal.gain) else {
+        return false;
+    };
+    let frequencies = frequencies
+        .iter()
+        .map(|&value| f64::from(value))
+        .collect::<Vec<_>>();
+    let gains = gains
+        .iter()
+        .map(|&value| f64::from(value))
+        .collect::<Vec<_>>();
+    secs_types::calibration::calibration_curve_is_valid(&frequencies, &gains)
 }
 
 /// Selects the sidecar calibration that ADR 0015 applies.
 pub fn attached_calibration(info: &SourceInfo) -> AttachedCalibration<'_> {
-    let meter_entry = info.cal.iter().find(|(name, _)| name == "meterCal");
+    let meter_entry = info
+        .cal
+        .iter()
+        .find(|(name, _)| name == "meterCal")
+        .map(|(_, cal)| cal);
+    let meter = meter_entry.filter(|cal| has_valid_curve(cal));
+    let c_weighted = meter_entry.is_some_and(|cal| {
+        cal.inverse_c_selected && (meter.is_some() || (cal.freq.is_none() && cal.gain.is_none()))
+    });
     AttachedCalibration {
-        meter: info
-            .cal
-            .iter()
-            .find(|(name, cal)| name == "meterCal" && has_curve_arrays(cal))
-            .map(|(_, cal)| cal),
+        meter,
         others: info
             .cal
             .iter()
-            .filter(|(name, cal)| name == "scCal" && has_curve_arrays(cal))
+            .filter(|(name, cal)| name == "scCal" && has_valid_curve(cal))
             .map(|(_, cal)| cal)
             .collect(),
-        c_weighted: meter_entry.is_some_and(|(_, cal)| cal.inverse_c_selected),
+        c_weighted,
     }
 }
 

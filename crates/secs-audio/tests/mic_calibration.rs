@@ -219,6 +219,37 @@ fn quoted_metadata_is_bounded_and_unknown_fields_are_ignored() {
 }
 
 #[test]
+fn calibration_curve_validity_matches_embedded_point_parser_td262() {
+    let cases = vec![
+        (vec![20.0, 1_000.0], vec![-200.0, 200.0], true),
+        (vec![], vec![], false),
+        (vec![20.0], vec![0.0], false),
+        (vec![f64::NAN, 1_000.0], vec![0.0, 0.0], false),
+        (vec![20.0, 1_000.0], vec![0.0, f64::INFINITY], false),
+        (vec![0.0, 1_000.0], vec![0.0, 0.0], false),
+        (vec![20.0, 20.0], vec![0.0, 0.0], false),
+        (vec![1_000.0, 20.0], vec![0.0, 0.0], false),
+        (vec![20.0, 1_000.0], vec![0.0, 200.01], false),
+    ];
+    for (frequencies, gains, valid) in cases {
+        assert_eq!(
+            secs_types::calibration::calibration_curve_is_valid(&frequencies, &gains),
+            valid
+        );
+        let points = frequencies
+            .into_iter()
+            .zip(gains)
+            .map(|(frequency, gain_db)| point(frequency, gain_db, None))
+            .collect();
+        assert_eq!(MicCalibration::from_points(points).is_ok(), valid);
+    }
+    assert!(!secs_types::calibration::calibration_curve_is_valid(
+        &[20.0, 1_000.0],
+        &[0.0]
+    ));
+}
+
+#[test]
 fn from_points_validates_like_the_parser() {
     let parsed = MicCalibration::parse("20 -200 10\n200 0\n2000 200 -30").unwrap();
     let curve = MicCalibration::from_points(parsed.points().to_vec()).unwrap();

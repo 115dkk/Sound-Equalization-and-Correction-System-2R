@@ -70,6 +70,16 @@ pub struct RcBand {
     pub hi_hz: f64,
 }
 
+/// Whether sidecar calibration arrays satisfy the embedded curve rules.
+pub fn calibration_curve_is_valid(frequencies: &[f64], gains: &[f64]) -> bool {
+    frequencies.len() >= 2
+        && frequencies.len() == gains.len()
+        && frequencies.iter().zip(gains).all(|(&frequency, &gain)| {
+            frequency.is_finite() && frequency > 0.0 && gain.is_finite() && gain.abs() <= 200.0
+        })
+        && frequencies.windows(2).all(|pair| pair[0] < pair[1])
+}
+
 /// The extra bands a calculation may use: finite, inside
 /// `CALIBRATION_LIMITS.rc_band` with `lo < hi`, sorted by `lo_hz`, at most
 /// `rc_bands_max` (ADR 0024). Settings that did not pass the service's edit

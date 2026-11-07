@@ -340,6 +340,96 @@ fn invalid_sidecar_curve_is_excluded_and_noticed_td262() {
 }
 
 #[test]
+fn reopening_after_calibrating_with_an_invalid_curve_keeps_results_fresh_td262() {
+    let root = temp_root("invalid-sidecar-reopen");
+    fs::create_dir_all(&root).unwrap();
+    let (path, settings) = write_case(&root, "room");
+    let store = MeasurementStore::open(&path).unwrap();
+    let first = store.records().into_iter().next().unwrap();
+    let position = first.pos;
+    let role = first.ir.keys().next().unwrap().clone();
+    let wav = path.parent().unwrap().join(&first.ir[&role]);
+    secs_project::save_source(
+        &wav,
+        Some(&secs_mdat::SourceInfo {
+            cal: vec![(
+                "meterCal".into(),
+                secs_mdat::CalInfo {
+                    inverse_c_selected: true,
+                    source_name: "unsorted.cal".into(),
+                    source_path: "unsorted.cal".into(),
+                    freq: Some(vec![1_000.0, 100.0]),
+                    gain: Some(vec![0.0, 1.0]),
+                    phase: None,
+                    boxed: Vec::new(),
+                },
+            )],
+            ..Default::default()
+        }),
+    )
+    .unwrap();
+    let service = deterministic_service();
+    open(&service, &path);
+
+    let events = Arc::new(Events::default());
+    let job = start_calibration(&service, events.clone(), settings);
+    finished_result(events.wait(job, Duration::from_secs(120)));
+    let live = read_results(&service).calibration.unwrap();
+    assert!(!live.stale);
+    assert_eq!(
+        live.notes
+            .iter()
+            .filter(|notice| {
+                notice.code == "calibration_curve_invalid"
+                    && notice.params.get("role") == Some(&role)
+                    && notice.params.get("position") == Some(&position.to_string())
+            })
+            .count(),
+        1
+    );
+
+    let save_events = Arc::new(Events::default());
+    call_ok(
+        &service,
+        Request::ProjectSave(secs_types::ipc::ProjectSaveParams { path: None }),
+        save_events.clone(),
+    );
+    let save_job = save_events.wait_started(JobKind::Export, Duration::from_secs(2));
+    assert!(matches!(
+        save_events.wait(save_job, Duration::from_secs(30)),
+        JobEvent::Finished {
+            status: JobStatus::Succeeded,
+            ..
+        }
+    ));
+    drop(service);
+
+    let reopened = deterministic_service();
+    open(&reopened, &path);
+    let cached = read_results(&reopened).calibration.unwrap();
+    assert!(
+        !cached.stale,
+        "invalid calibration changed the reopened signature"
+    );
+    assert_eq!(
+        cached
+            .notes
+            .iter()
+            .filter(|notice| notice.code == "calibration_curve_invalid")
+            .count(),
+        1
+    );
+    let Response::MicCalibrationGet(status) =
+        call_ok(&reopened, Request::MicCalibrationGet, Arc::new(NoEvents))
+    else {
+        panic!();
+    };
+    assert_eq!(status.attached, 0);
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn damaged_settings_file_is_reported_and_not_overwritten_until_set_td169() {
     let root = temp_root("damaged-settings");
     fs::create_dir_all(&root).unwrap();
