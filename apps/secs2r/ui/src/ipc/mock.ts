@@ -182,11 +182,19 @@ function rcLines(limit: Notice | undefined, volume: number | null): Notice[] {
 /** The RC lines the mock's calibration leaves for these settings at this many measured positions (gallery views). */
 export const mockRcLines = (settings: CalibrationSettings, positions: number): Notice[] => rcLines(rcLimitNote(settings, positions), settings.room_volume_m3);
 
+/** A pair's phase note as the engine records it (secs-engine `NoteRecords`): one record per band, whole Hz and one-decimal degrees and dB. */
+function pairPhaseNotes(a: string, b: string, bands: readonly (readonly [number, number, number, number])[]): Notice[] {
+  return bands.map(([lo, hi, phase, loss], index) => ({
+    code: "pair_phase",
+    params: { a, b, index: String(index), lo_hz: lo.toFixed(0), hi_hz: hi.toFixed(0), phase_deg: phase.toFixed(1), loss_db: loss.toFixed(1) },
+  }));
+}
+
 /**
  * The correction band set a calibration with extra bands notes (secs-engine
  * `Note::RcBands`, ADR 0024): the primary band up to its resolved upper
  * limit and the extra bands, sorted, with overlapping or touching bands
- * merged, as `"lo-hi,lo-hi"`. Without extra bands there is no note.
+ * merged, one record per band. Without extra bands there is no note.
  */
 export function mockRcBandsNotes(settings: CalibrationSettings, positions: number): Notice[] {
   if (settings.rc_bands.length === 0) return [];
@@ -198,7 +206,7 @@ export function mockRcBandsNotes(settings: CalibrationSettings, positions: numbe
     if (last && lo! <= last[1]!) last[1] = Math.max(last[1]!, top!);
     else merged.push([lo!, top!]);
   }
-  return [{ code: "rc_bands", params: { bands: merged.map(([lo, top]) => `${lo}-${top}`).join(",") } }];
+  return merged.map(([lo, top], index) => ({ code: "rc_bands", params: { index: String(index), lo_hz: String(lo), hi_hz: String(top) } }));
 }
 
 /**
@@ -998,7 +1006,7 @@ export function createMockService(options: MockOptions = {}): MockService {
           summary.verdict.added_delay_ms = spec.max_latency_ms;
           summary.notes = [rcLimitNote(captured, positions), ...mockRcBandsNotes(captured, positions), ...mockLowProtectNotes(captured, config.speakers.map((s) => s.role)), ...mockInputHpNotes(captured)];
           summary.notes.push({ code: "polarity_reversed", params: { role: "Rs", confidence: "0.94", compared: "3", opposite: "3" } });
-          summary.notes.push({ code: "pair_phase", params: { a: "L", b: "Ls", bands: "89:112:170.0:-20.3,112:141:174.0:-24.1" } });
+          summary.notes.push(...pairPhaseNotes("L", "Ls", [[89, 112, 170, -20.3], [112, 141, 174, -24.1]]));
           summary.scorecard = roles.map((role) => ({ ...clone(fx.scorecard.find((score) => score.role === role) ?? fx.scorecard[0]!), role }));
           summary.late_energy = fx.lateEnergy(roles, needProject().positions);
           summary.main_roles = roles;

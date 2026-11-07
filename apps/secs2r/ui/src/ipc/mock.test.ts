@@ -1178,10 +1178,12 @@ describe("mock extra correction bands (ADR 0024)", () => {
       expect((await curves("gd")).rc_bands_hz).toEqual([[300, 800], [15000, 20000]]);
       expect((await curves("xo")).rc_bands_hz).toEqual([]);
       // The sample room's strict Schroeder limit is 154 Hz: 20–154 Hz, then the two bands.
-      expect(await notes()).toEqual([{ code: "rc_bands", params: { bands: "20-154,300-800,15000-20000" } }]);
+      expect((await notes()).map((note) => note.params)).toEqual([
+        { index: "0", lo_hz: "20", hi_hz: "154" }, { index: "1", lo_hz: "300", hi_hz: "800" }, { index: "2", lo_hz: "15000", hi_hz: "20000" },
+      ]);
       // A band reaching into the RC band merges with it.
       await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "rc_bands", bands: [{ lo_hz: 100, hi_hz: 400 }] } } });
-      expect(await notes()).toEqual([{ code: "rc_bands", params: { bands: "20-400" } }]);
+      expect(await notes()).toEqual([{ code: "rc_bands", params: { index: "0", lo_hz: "20", hi_hz: "400" } }]);
     } finally { mock.dispose(); }
   });
 });

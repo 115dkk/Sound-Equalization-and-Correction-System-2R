@@ -101,11 +101,13 @@ export function groupOf(config: ConfigResult, role: string): string | null {
 const num = (value: string | undefined) => (value === undefined ? Number.NaN : Number(value));
 
 /**
- * The service sends collection notes as one record per role, filter or mode
- * (secs-service `notices`, scalar params only). Records of one note that
- * follow each other read as one line, as upstream prints them: the phase
- * correction of every main, the long room modes, a channel's GD cuts, the
- * two-way subs, and a sub's fixed filters with their PEQs.
+ * The service sends collection notes as one record per role, filter, mode,
+ * dip or band (secs-engine `NoteRecords::record`, scalar params only, ADR
+ * 0042). Records of one note that follow each other read as one line, as
+ * upstream prints them: the phase correction of every main, the long room
+ * modes, a channel's GD cuts, the two-way subs, a sub's fixed filters with
+ * their PEQs, a channel's limited dips, the bands of a pair's phase and the
+ * correction bands.
  *
  * phase_band carries the same value as phase_strength (upstream
  * correction_engine.py sets both from one `frac`, and the engine's rc.rs
@@ -126,22 +128,42 @@ function runKey(notice: Notice): string | null {
     case "sub_filters":
     case "sub_filter_peq":
       return `sub_filters:${notice.params.role ?? ""}`;
+    case "dip_limit":
+      return `dip_limit:${notice.params.role ?? ""}`;
+    case "pair_phase":
+      return `pair_phase:${notice.params.a ?? ""}:${notice.params.b ?? ""}`;
+    case "rc_bands":
+      return notice.code;
     default:
       return null;
   }
 }
 
-/** Calculation notes as lines: runs of one collection note joined (`runKey`), every line a catalog sentence. */
-export function noteLines(t: Translate, number: FormatNumber, notices: readonly Notice[], lfAlign: boolean, lfAlignAvailable = true): string[] {
-  const lines: string[] = [];
+/** Codes whose records count from `index` 0: a record at 0 starts the next note's run. */
+const INDEXED: ReadonlySet<string> = new Set(["dip_limit", "pair_phase", "rc_bands"]);
+
+/** The notices as runs of one note's records (`runKey`). */
+export function noteRuns(notices: readonly Notice[]): Notice[][] {
+  const runs: Notice[][] = [];
   for (let i = 0; i < notices.length; ) {
-    const first = notices[i]!;
-    const key = runKey(first);
+    const key = runKey(notices[i]!);
     let end = i + 1;
-    while (key !== null && end < notices.length && runKey(notices[end]!) === key && notices[end]!.code !== "sub_filters") end += 1;
-    lines.push(noticeText(t, number, first, notices.slice(i, end)) ?? t("jobs.log.unknown"));
+    while (key !== null && end < notices.length && runKey(notices[end]!) === key && notices[end]!.code !== "sub_filters"
+      && !(INDEXED.has(notices[end]!.code) && notices[end]!.params.index === "0")) end += 1;
+    runs.push(notices.slice(i, end));
     i = end;
   }
+  return runs;
+}
+
+/** Each run of `noteRuns` as its sentence, or null when the screen has none for its code. */
+export function runTexts(t: Translate, number: FormatNumber, notices: readonly Notice[]): (string | null)[] {
+  return noteRuns(notices).map((run) => noticeText(t, number, run[0]!, run));
+}
+
+/** Calculation notes as lines: runs of one collection note joined (`runKey`), every line a catalog sentence. */
+export function noteLines(t: Translate, number: FormatNumber, notices: readonly Notice[], lfAlign: boolean, lfAlignAvailable = true): string[] {
+  const lines = runTexts(t, number, notices).map((line) => line ?? t("jobs.log.unknown"));
   // The hint names a setting the mode must allow: zero mode has no bass arrival alignment.
   if (!lfAlign && lfAlignAvailable && notices.some((notice) => notice.code === "pair_phase")) lines.push(t("notice.pair_phase.hint"));
   return lines;
@@ -199,13 +221,10 @@ export function noticeText(t: Translate, number: FormatNumber, notice: Notice, r
     case "rc_auto_cap":
       params.hz = f("hz");
       break;
-    case "rc_bands": {
-      // The merged correction band set after the calculation (ADR 0024), "lo-hi,lo-hi": every band of it, the primary's included.
-      const bands = (p.bands ?? "").split(",").map((band) => band.split("-").map(num));
-      const valid = bands.length > 0 && bands.every((band) => band.length === 2 && band.every(Number.isFinite));
-      params.bands = valid ? bands.map(([lo, hi]) => t("notice.rc_bands.band", { lo: number(lo!), hi: number(hi!) })).join(", ") : (p.bands ?? "");
+    case "rc_bands":
+      // The merged correction band set after the calculation (ADR 0024), one record per band: every band of it, the primary's included.
+      params.bands = run.map((band) => t("notice.rc_bands.band", { lo: number(num(band.params.lo_hz)), hi: number(num(band.params.hi_hz)) })).join(", ");
       break;
-    }
     case "lf_align": {
       // One per main (ADR 0025): the phase correction strength (0–1) as a percentage, the bass arrival left
       // against the treble when the engine could measure it (positive is later), and the pull limit when it cut the correction.
@@ -239,34 +258,26 @@ export function noticeText(t: Translate, number: FormatNumber, notice: Notice, r
     case "hf_phase_none":
       params.role = code();
       break;
-    case "dip_limit": {
+    case "dip_limit":
+      // One record per limited dip; a channel with none sends no record.
       params.code = code();
-      if (num(p.count) === 0) key = "notice.dip_limit_none";
-      else {
-        const dips = (p.dips ?? "").split(",").map((dip) => dip.split(":").map(num));
-        const valid = dips.every((dip) => dip.length === 3 && dip.every(Number.isFinite));
-        params.dips = valid ? dips.map(([hz, depth, fill]) => t("notice.dip_limit.dip", {
-          hz: number(hz!), depth: number(depth!, 1), fill: number(fill!, 1),
-        })).join(", ") : "";
-      }
+      params.dips = run.map((dip) => t("notice.dip_limit.dip", {
+        hz: number(num(dip.params.hz)), depth: number(num(dip.params.depth_db), 1), fill: number(num(dip.params.fill_db), 1),
+      })).join(", ");
       break;
-    }
     case "pair_phase": {
-      // Adjacent bands share a span; its phase and loss both come from the band with the worst cancellation (ADR 0035).
-      const bands = (p.bands ?? "").split(",").map((band) => band.split(":").map((value) => value.trim() === "" ? Number.NaN : num(value)));
-      const valid = bands.every((band) => band.length === 4 && band.every(Number.isFinite) && band[0]! < band[1]!);
+      // One record per band. Adjacent bands share a span; its phase and loss both come from the band with the worst cancellation (ADR 0035).
       const spans: { lo: number; hi: number; phase: number; loss: number }[] = [];
-      if (valid) {
-        for (const [lo, hi, phase, loss] of bands) {
-          const previous = spans.at(-1);
-          if (previous && Math.abs(previous.hi - lo!) <= 1) {
-            previous.hi = hi!;
-            if (loss! < previous.loss) {
-              previous.phase = phase!;
-              previous.loss = loss!;
-            }
-          } else spans.push({ lo: lo!, hi: hi!, phase: phase!, loss: loss! });
-        }
+      for (const band of run) {
+        const [lo, hi, phase, loss] = [band.params.lo_hz, band.params.hi_hz, band.params.phase_deg, band.params.loss_db].map(num) as [number, number, number, number];
+        const previous = spans.at(-1);
+        if (previous && Math.abs(previous.hi - lo) <= 1) {
+          previous.hi = hi;
+          if (loss < previous.loss) {
+            previous.phase = phase;
+            previous.loss = loss;
+          }
+        } else spans.push({ lo, hi, phase, loss });
       }
       Object.assign(params, {
         a: code("a"), b: code("b"),

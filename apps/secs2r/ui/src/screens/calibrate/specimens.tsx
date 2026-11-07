@@ -183,8 +183,8 @@ function RcBandsLines() {
   return (
     <Card title={t("calibrate.verdict.title")} className="calibrate-settings__card">
       <ul className="calibrate-notes-list" data-ui="calibrate.verdict.rc_bands.lines">
-        {fx.rcBandsNotes.map((note, i) => (
-          <li key={i}>{noticeText(t, number, note)}</li>
+        {fx.rcBandsNotes.map((run, i) => (
+          <li key={i}>{noticeText(t, number, run[0]!, run)}</li>
         ))}
       </ul>
     </Card>

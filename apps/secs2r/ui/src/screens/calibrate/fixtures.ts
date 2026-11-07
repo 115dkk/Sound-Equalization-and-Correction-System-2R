@@ -672,10 +672,10 @@ const FOUR_BANDS: RcBand[] = [
   { lo_hz: 15000, hi_hz: 20000 },
 ];
 
-/** The merged band set a calculation with these extra bands notes (`rc_bands`, "lo-hi,lo-hi"), the RC band of these views included. */
-export function rcBandsNote(bands: readonly RcBand[], hi = 310.42): Notice {
+/** The merged band set a calculation with these extra bands notes (`rc_bands`, one record per band), the RC band of these views included. */
+export function rcBandsNote(bands: readonly RcBand[], hi = 310.42): Notice[] {
   const merged = bandLayout({ lo: RC[0], hi, extra: bands.map((band) => [band.lo_hz, band.hi_hz] as const) }).bands;
-  return { code: "rc_bands", params: { bands: merged.map(([lo, top]) => `${lo}-${top}`).join(",") } };
+  return merged.map(([lo, top], index) => ({ code: "rc_bands", params: { index: String(index), lo_hz: String(lo), hi_hz: String(top) } }));
 }
 
 /**
@@ -684,7 +684,7 @@ export function rcBandsNote(bands: readonly RcBand[], hi = 310.42): Notice {
  * carry the merged band set after the RC limit.
  */
 function extraBandsView(bands: RcBand[], patch: Partial<CalibrateView> = {}): CalibrateView {
-  const notes = [NOTES[0]!, NOTES[1]!, rcBandsNote(bands), ...NOTES.slice(2)];
+  const notes = [NOTES[0]!, NOTES[1]!, ...rcBandsNote(bands), ...NOTES.slice(2)];
   return {
     ...base,
     settings: { ...baseSettings, rc_bands: bands },
@@ -718,8 +718,8 @@ export const extraBandViews = {
   four: extraBandsView(FOUR_BANDS),
 } satisfies Record<string, CalibrateView>;
 
-/** The `rc_bands` line for one extra band, two bands, and a band that merges with the RC band. */
-export const rcBandsNotes: Notice[] = [
+/** The `rc_bands` records for one extra band, two bands, and a band that merges with the RC band. */
+export const rcBandsNotes: Notice[][] = [
   rcBandsNote([{ lo_hz: 15000, hi_hz: 20000 }]),
   rcBandsNote(TWO_BANDS),
   rcBandsNote([{ lo_hz: 250, hi_hz: 800 }]),
