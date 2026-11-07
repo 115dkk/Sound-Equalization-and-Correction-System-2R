@@ -277,31 +277,9 @@ fn variance(levels: &[Vec<f64>]) -> f64 {
 }
 fn gd_variance(h: &[C], f: &[f64]) -> f64 {
     let mut phase: Vec<_> = h.iter().map(|h| h.im.atan2(h.re)).collect();
-    let original = phase.clone();
-    let mut correction = 0.0;
-    for i in 1..phase.len() {
-        let d = original[i] - original[i - 1];
-        let mut dm = (d + PI).rem_euclid(2.0 * PI) - PI;
-        if dm == -PI && d > 0.0 {
-            dm = PI;
-        }
-        if d.abs() >= PI {
-            correction += dm - d;
-        }
-        phase[i] += correction;
-    }
+    secs_dsp::unwrap_phase(&mut phase);
     let x: Vec<_> = f.iter().map(|f| 2.0 * PI * f).collect();
-    let n = x.len();
-    let mut gd = vec![0.0; n];
-    gd[0] = (phase[1] - phase[0]) / (x[1] - x[0]);
-    gd[n - 1] = (phase[n - 1] - phase[n - 2]) / (x[n - 1] - x[n - 2]);
-    for i in 1..n - 1 {
-        let a = x[i] - x[i - 1];
-        let b = x[i + 1] - x[i];
-        gd[i] = (-b / (a * (a + b))) * phase[i - 1]
-            + ((b - a) / (a * b)) * phase[i]
-            + (a / (b * (a + b))) * phase[i + 1];
-    }
+    let mut gd = secs_dsp::gradient(&phase, &x);
     for v in &mut gd {
         *v = -*v * 1000.0;
     }

@@ -452,7 +452,7 @@ fn fit_request(
     })
 }
 fn unwrap(h: &[C]) -> Vec<f64> {
-    let angle: Vec<_> = h
+    let mut phase: Vec<_> = h
         .iter()
         .map(|h| {
             let clean = |x: f64| {
@@ -465,36 +465,17 @@ fn unwrap(h: &[C]) -> Vec<f64> {
             clean(h.im).atan2(clean(h.re))
         })
         .collect();
-    let mut out = angle.clone();
-    let mut correction = 0.0;
-    for i in 1..out.len() {
-        let d = angle[i] - angle[i - 1];
-        let mut dm = (d + PI).rem_euclid(2.0 * PI) - PI;
-        if dm == -PI && d > 0.0 {
-            dm = PI;
-        }
-        correction += if d.abs() < PI { 0.0 } else { dm - d };
-        out[i] += correction;
-    }
-    out
+    secs_dsp::unwrap_phase(&mut phase);
+    phase
 }
 fn gradient(phase: &[f64]) -> Vec<f64> {
     let f = design_freqs();
     let x: Vec<_> = f.iter().map(|v| 2.0 * PI * v.max(f[1])).collect();
-    let dx: Vec<_> = x.windows(2).map(|x| x[1] - x[0]).collect();
-    let n = phase.len();
-    let mut tau = vec![0.0; n];
-    tau[0] = -(phase[1] - phase[0]) / dx[0];
-    tau[n - 1] = -(phase[n - 1] - phase[n - 2]) / dx[n - 2];
-    for i in 1..n - 1 {
-        let (a, b) = (dx[i - 1], dx[i]);
-        tau[i] = -((-b / (a * (a + b))) * phase[i - 1]
-            + ((b - a) / (a * b)) * phase[i]
-            + (a / (b * (a + b))) * phase[i + 1]);
-    }
-    for v in &mut tau {
-        if !v.is_finite() {
-            *v = 0.0;
+    let mut tau = secs_dsp::gradient(phase, &x);
+    for value in &mut tau {
+        *value = -*value;
+        if !value.is_finite() {
+            *value = 0.0;
         }
     }
     tau

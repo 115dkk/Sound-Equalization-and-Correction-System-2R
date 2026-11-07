@@ -7,7 +7,7 @@ use faer::Mat;
 use secs_dsp::{
     Complex64 as C,
     grid::geomspace,
-    optimize, response,
+    interp, optimize, response,
     smooth::{self, Fraction},
     stats::median,
 };
@@ -408,16 +408,6 @@ pub fn fit_peq_with(
 fn argmax(v: &[f64]) -> usize {
     assert!(!v.is_empty());
     (1..v.len()).fold(0, |k, i| if v[i] > v[k] { i } else { k })
-}
-fn interp(x: f64, f: &[f64], y: &[f64]) -> f64 {
-    let i = f.partition_point(|v| *v <= x).saturating_sub(1);
-    if x <= f[0] {
-        y[0]
-    } else if i + 1 == f.len() || x == f[i] {
-        y[i]
-    } else {
-        (y[i + 1] - y[i]) / (f[i + 1] - f[i]) * (x - f[i]) + y[i]
-    }
 }
 // NumPy's pairwise contiguous sum, used by the GD improvement decision.
 fn sum(v: &[f64]) -> f64 {
