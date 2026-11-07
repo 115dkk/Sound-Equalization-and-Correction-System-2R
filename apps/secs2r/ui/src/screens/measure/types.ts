@@ -91,13 +91,13 @@ export type MeasureView = {
   config: MeasureConfigResult;
   /** See MeasurePath. */
   path: MeasurePath;
-  /** Recorded positions (service gap, see PositionRecord). */
+  /** `measurement_records().records`: each position with its recorded roles. */
   records: PositionRecord[];
   /** `measurement_curves { positions: null, roles: null }`; null or no curves before anything is measured. */
   curves: MeasurementCurvesResult | null;
-  /** Sweep length choices (service gap, see SweepOption). */
+  /** Sweep length choices from `measure_configure`'s `sweep_lengths` at its sample rate. */
   sweepOptions: SweepOption[];
-  /** Sweep repetitions 1/2/4/8 (`extra.devices.repetitions`). Service gap: no IPC reads or writes it yet. */
+  /** Sweep repetitions 1/2/4/8 (`extra.devices.repetitions`), read from `measure_configure`'s result. */
   repetitions: number;
   /** The running device-group job, or null. */
   job: DeviceJob | null;
@@ -139,7 +139,7 @@ export type MeasureActions = {
   setStartDelay: (delay: StartDelay) => void | Promise<void>;
   /** `measure_configure { method: view.config.method, sweep_length, output_channels: [], every other field null }`. */
   setSweepLength: (samples: number) => void | Promise<void>;
-  /** Stores `extra.devices.repetitions`. Service gap: no IPC method yet. */
+  /** Stores `extra.devices.repetitions` with `measure_configure { repetitions }`. */
   setRepetitions: (count: number) => void | Promise<void>;
   /**
    * `dialog_pick_mdat`, then `mdat_scan { path }`; the result goes to

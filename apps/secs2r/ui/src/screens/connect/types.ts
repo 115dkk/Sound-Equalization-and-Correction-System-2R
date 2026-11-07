@@ -110,7 +110,7 @@ export type ConnectActions = {
   refreshMethods: () => void;
   /** rew_launch: checks REW, and starts it in API mode when it does not answer. */
   launchRew: () => void;
-  /** Reads REW's sample rate, sweep length and level for the hint line (service gap: no method yet). */
+  /** Reads REW's sample rate, sweep length and level for the hint line again (`rew_info`). */
   readRewSettings: () => void;
   /** rew_driver_set { driver }: switches REW's audio driver, then reads REW's devices again. */
   setRewDriver: (driver: string) => void;
@@ -130,13 +130,13 @@ export type ConnectActions = {
   attachMicCalibration: () => void;
   /** level_play { role, master_dbfs } (level_monitor_start first when the monitor is off or failed); subs play 50 Hz, 2.5 s. */
   playLevel: (role: string) => void;
-  /** Stops the playing channel and the queue (service gap: no early stop for one burst; level_monitor_stop and start again). */
+  /** Stops the playing channel and the queue (`level_stop`). */
   stopLevel: () => void;
   /** level_play for every channel in turn, in row order (host queue). */
   playAllLevels: () => void;
   /** Host state: the master output for level_play. */
   setMasterLevel: (dbfs: number) => void;
-  /** Fills the channels without a level with upstream's defaults (service gap: no method yet). */
+  /** Fills the channels without a level with upstream's defaults (`levels_fill_defaults`). */
   skipLevels: () => void;
   /** Host: opens 측정·가져오기 (the header's primary action on the mdat path). */
   next: () => void;

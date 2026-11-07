@@ -66,8 +66,8 @@ export type CalibrateView = {
   positions: number[];
   /**
    * Roles measured at position 1, in configuration order: the channel list
-   * before the first run (upstream previewed position 1). P33 reads them from
-   * `measurement_curves { positions: [1] }` (service gap: no cheap list).
+   * before the first run (upstream previewed position 1), from
+   * `measurement_records()`'s position 1 entry.
    */
   measuredRoles: string[];
   /** `dsp_get().fields.fir_budget`: the FIR budget of the DSP being exported to (U2), in taps at its output rate; 0 when unknown. */
