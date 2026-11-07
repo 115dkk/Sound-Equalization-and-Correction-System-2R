@@ -93,6 +93,7 @@ export function configNoticeText(t: Translate, notice: Notice): { cause: string;
 export const DSP_NAME: Record<string, MessageKey> = {
   camilla: "system.dsp.preset.camilla",
   tesira: "system.dsp.preset.tesira",
+  tesira_forte: "system.dsp.preset.tesira_forte",
   qsys: "system.dsp.preset.qsys",
   minidsp: "system.dsp.preset.minidsp",
   custom: "system.dsp.preset.custom",

@@ -712,6 +712,15 @@ tests = ["secs-project::quad_presets_are_5_1_without_the_centre", "secs-project:
 upstream = "model.py PRESETS, SpeakerConfig.from_preset; wizard/step2_config.py"
 note = "4.0, 4.1, 4.2 and 7.1 are SECS 2R's own presets (docs/DEVIATIONS.md U13): 5.1 without C with 0-2 subs, and 7.1.4 without the heights, in upstream's order. SECS 2 opens and resaves these projects byte for byte. apps/secs2r/ui src/screens/system/SystemScreen.test.tsx pins the buttons."
 
+[[feature]]
+id = "project.tesira_forte_preset"
+kind = "project"
+milestone = "M5"
+status = "implemented"
+tests = ["secs-project::tesira_forte_preset_keeps_six_2048_tap_blocks", "secs-project::output_rate_defaults_follow_presets_and_unknown_profiles_use_48k"]
+upstream = "new; model.py DSP_PROFILES has the Tesira SERVER (DSP-2 ×3) only"
+note = "tesira_forte (Biamp TesiraFORTÉ VI / VT) is SECS 2R's own DSP preset (docs/DEVIATIONS.md U18): 2048-tap FIR blocks with a 12,288-tap budget (six blocks, measured on a FORTÉ VI with Tesira 5.7.0 on 2026-11-06; VT assumed equal), the SERVER's PEQ, all-pass and path-delay counts, 48 kHz fixed. SECS 2 opens and resaves projects that chose it (from_dict keeps unknown profile keys). apps/secs2r/ui src/screens/system/SystemScreen.test.tsx pins the device list order and label."
+
 # ---- Engine (M2, M3) ----
 
 [[feature]]

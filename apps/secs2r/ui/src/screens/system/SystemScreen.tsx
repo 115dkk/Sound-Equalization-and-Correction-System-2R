@@ -54,7 +54,7 @@ const PRESETS = PRESET_GROUPS.flat();
 /** Upstream FIR_TAP_CHOICES (step2_config.py). */
 const FIR_TAP_CHOICES = [512, 1024, 2048, 4096, 8192, 16384, 32768, 65536] as const;
 
-const DSP_ORDER = ["camilla", "tesira", "qsys", "minidsp", "custom"] as const;
+const DSP_ORDER = ["camilla", "tesira", "tesira_forte", "qsys", "minidsp", "custom"] as const;
 
 const ARRANGEMENT_NAME = {
   1: "system.arrangement.1",
