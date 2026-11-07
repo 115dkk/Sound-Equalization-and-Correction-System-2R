@@ -5,9 +5,15 @@ import json
 import os
 from pathlib import Path
 import socket
+import sys
 import time
 import urllib.error
 import urllib.request
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _http import header as _header  # noqa: E402
+from _http import retry_delay as _delay  # noqa: E402
+from _http import strict_json  # noqa: E402
 
 # The Responses API takes an input string of at most 10,485,760 characters.
 MAX_INPUT_BYTES = 10_000_000
@@ -52,21 +58,6 @@ class KeepAliveHTTPSHandler(urllib.request.HTTPSHandler):
 
 
 OPENER = urllib.request.build_opener(KeepAliveHTTPSHandler())
-
-
-def strict_json(raw):
-    def pairs(items):
-        result = {}
-        for key, value in items:
-            if key in result:
-                raise ValueError("Duplicate JSON key")
-            result[key] = value
-        return result
-
-    def invalid_constant(value):
-        raise ValueError("Non-finite JSON constant")
-
-    return json.loads(raw, object_pairs_hook=pairs, parse_constant=invalid_constant)
 
 
 def bounded_int(value, minimum, maximum):
@@ -144,28 +135,6 @@ def extract_result(response):
     if not isinstance(value, dict):
         raise ValueError("Expected result object")
     return value
-
-
-def _header(headers, name):
-    return headers.get(name) if headers is not None else None
-
-
-def _delay(error, attempt):
-    reset = _header(error.headers, "x-ratelimit-reset")
-    if reset is not None:
-        try:
-            remaining = float(reset) - time.time()
-        except (TypeError, ValueError):
-            remaining = 0
-        if remaining > 120:
-            raise error
-    retry_after = _header(error.headers, "Retry-After")
-    if retry_after is not None:
-        try:
-            return min(60.0, max(0.0, float(retry_after)))
-        except (TypeError, ValueError):
-            pass
-    return float(2 ** attempt)
 
 
 def post(path, body, timeout, retry=False, sleeper=time.sleep):

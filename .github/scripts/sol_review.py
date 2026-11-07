@@ -13,6 +13,11 @@ import urllib.error
 import urllib.request
 from urllib.parse import quote
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _http import header as _header  # noqa: E402
+from _http import retry_delay as _retry_delay  # noqa: E402
+from _http import strict_json  # noqa: E402
+
 # Whether a prompt fits the model is decided by its input token count
 # (sol_review_api.py, maintainer request 2026-11-02). Bytes only bound what the
 # Responses API can take at all: an input string of at most 10,485,760 characters.
@@ -61,21 +66,6 @@ class NoPullRequest(ValueError):
     """The workflow head does not identify exactly one reviewable pull request."""
 
 
-def strict_json(raw):
-    def pairs(items):
-        result = {}
-        for key, value in items:
-            if key in result:
-                raise ValueError("Duplicate JSON key")
-            result[key] = value
-        return result
-
-    def invalid_constant(value):
-        raise ValueError("Non-finite JSON constant")
-
-    return json.loads(raw, object_pairs_hook=pairs, parse_constant=invalid_constant)
-
-
 def require(ok, message):
     if not ok:
         raise ValueError(message)
@@ -89,37 +79,12 @@ def code(text):
     return f"{fence}{pad}{text}{pad}{fence}"
 
 
-def _header(headers, name):
-    return headers.get(name) if headers is not None else None
-
-
 def _retryable(error):
     if error.code in RETRY_CODES:
         return True
     return (error.code == 403
             and (_header(error.headers, "x-ratelimit-remaining") == "0"
                  or _header(error.headers, "Retry-After") is not None))
-
-
-def _retry_delay(error, attempt):
-    reset = _header(error.headers, "x-ratelimit-reset")
-    if reset is not None:
-        try:
-            remaining = float(reset) - time.time()
-        except (TypeError, ValueError):
-            remaining = 0
-        if remaining > 120:
-            raise error
-        # A spent rate limit comes back only at its reset time.
-        if remaining > 0 and _header(error.headers, "x-ratelimit-remaining") == "0":
-            return remaining + 1
-    retry_after = _header(error.headers, "Retry-After")
-    if retry_after is not None:
-        try:
-            return min(60.0, max(0.0, float(retry_after)))
-        except (TypeError, ValueError):
-            pass
-    return float(2 ** attempt)
 
 
 def api(path, data=None, method=None, accept=None, sleeper=time.sleep):

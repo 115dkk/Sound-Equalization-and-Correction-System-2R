@@ -19,10 +19,13 @@ from __future__ import annotations
 import argparse
 import os
 import re
-import subprocess
 import sys
 import tomllib
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _git import git as _git  # noqa: E402
+from _git import run as _run  # noqa: E402
 
 UPSTREAM_TOML = Path("UPSTREAM.toml")
 
@@ -153,18 +156,6 @@ def issue_body(repo: str, branch: str, old: str, old_version: str, new: str, new
         "이 이슈는 `upstream-watch.yml`이 열었습니다.",
     ]
     return "\n".join(lines) + "\n"
-
-
-# ---------------------------------------------------------------------------
-# I/O wrapper (runs in CI)
-# ---------------------------------------------------------------------------
-def _run(*args: str, check: bool = True) -> subprocess.CompletedProcess:
-    return subprocess.run(list(args), check=check, capture_output=True, text=True,
-                          encoding="utf-8", errors="replace")
-
-
-def _git(*args: str) -> str:
-    return _run("git", "-c", "core.quotepath=off", *args).stdout.strip()
 
 
 def load_upstream() -> dict:

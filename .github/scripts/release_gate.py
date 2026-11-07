@@ -55,9 +55,17 @@ import argparse
 import fnmatch
 import os
 import re
-import subprocess
 import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _git import git as _shared_git  # noqa: E402
+from _git import run as _run  # noqa: E402
+
+
+def _git(*args):
+    return _shared_git(*args, quotepath=False, runner=_run)
+
 
 SHIP = (
     "crates/*",
@@ -376,20 +384,6 @@ def set_member_versions(lock: str, names: set[str], new: str) -> str:
         lambda m: m.group(1) + new + m.group(3) if m.group(2) in names else m.group(0),
         lock,
     )
-
-
-# ---------------------------------------------------------------------------
-# I/O wrapper (runs in CI)
-# ---------------------------------------------------------------------------
-def _run(*args, check=True):
-    return subprocess.run(
-        list(args), check=check, capture_output=True, text=True,
-        encoding="utf-8", errors="replace",
-    )
-
-
-def _git(*args) -> str:
-    return _run("git", *args).stdout.strip()
 
 
 def _read(path: Path) -> str:
