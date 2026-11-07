@@ -33,11 +33,11 @@ pub struct RcInput<'a> {
     pub bus_rolloff_hz: Option<f64>,
 }
 
-fn protection_rolloff(input: &RcInput<'_>) -> Option<f64> {
+fn protection_rolloff(input: &RcInput<'_>, channel_rolloff: Option<f64>) -> Option<f64> {
     if !input.config.low_protect {
         return None;
     }
-    crate::low_protect::rolloff(input.comb, input.main_position, None)
+    channel_rolloff
         .into_iter()
         .chain(input.bus_rolloff_hz)
         .reduce(f64::max)
@@ -74,6 +74,7 @@ pub struct RcOutput {
     pub hf_phase: Option<HfPhaseOutcome>,
     dip_limit: Option<Vec<(f64, f64, f64)>>,
     protection: crate::low_protect::LimitOutcome,
+    rolloff: Option<f64>,
 }
 pub struct ChannelRc {
     pub out: RcOutput,
@@ -919,7 +920,10 @@ fn prepare_correction(
     });
     let mut notes = Vec::new();
     let mut nb = no_boost_mask(input);
-    let rolloff = protection_rolloff(input);
+    let channel_rolloff = (c.low_protect || s.lf_align)
+        .then(|| crate::low_protect::rolloff(input.comb, input.main_position, None))
+        .flatten();
+    let rolloff = protection_rolloff(input, channel_rolloff);
     if let Some(hz) = rolloff {
         for (masked, &f) in nb.iter_mut().zip(f) {
             *masked |= f < hz;
@@ -959,8 +963,7 @@ fn prepare_correction(
     let design_db = corr.clone();
     let dip_limit = dip_bins.map(|(bins, unlimited)| dip_notes(&bins, &corr, &unlimited));
     let mut lf = (s.lf_align && c.taps > 0).then(|| {
-        let f_lin = crate::low_protect::rolloff(input.comb, input.main_position, None)
-            .map_or(s.rc_lo, |hz| (1.5 * hz).max(s.rc_lo));
+        let f_lin = channel_rolloff.map_or(s.rc_lo, |hz| (1.5 * hz).max(s.rc_lo));
         let beta: Vec<_> = f
             .iter()
             .enumerate()
@@ -1068,6 +1071,7 @@ fn prepare_correction(
             hf_phase: None,
             dip_limit,
             protection,
+            rolloff,
         }));
     }
     let g = geomspace(15.0, 20000.0, 700);
@@ -1435,6 +1439,7 @@ fn finish_correction(
         hf_phase,
         dip_limit: prepared.dip_limit.clone(),
         protection,
+        rolloff: prepared.rolloff,
     })
 }
 
@@ -1551,7 +1556,7 @@ pub(crate) fn channel_with_cuts(
     } else {
         Vec::new()
     };
-    if let Some(hz) = protection_rolloff(input) {
+    if let Some(hz) = out.rolloff {
         let mut padded = out.fir.clone();
         padded.resize(N_FFT, 0.0);
         let fir = fft::rfft(&padded);

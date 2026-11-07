@@ -1396,17 +1396,19 @@ fn pair_phase_stage(
     let mut responses = Vec::with_capacity(design.mains.len());
     for main in &design.mains {
         pass.ctx.cancel().check()?;
-        let Some(stages) = crate::stage_responses(
+        let Some(top) = crate::chain::stage_top(
             design,
             &main.role,
             &pass.prepared.h,
             pass.req.config.main_position,
+            &kept,
         ) else {
             continue;
         };
-        let response: Vec<C> = kept
-            .iter()
-            .map(|&index| stages.top_xo[index] * main.response[index])
+        let response: Vec<C> = top
+            .into_iter()
+            .zip(&kept)
+            .map(|(top, &index)| top * main.response[index])
             .collect();
         responses.push((main.role.clone(), response));
     }
