@@ -587,12 +587,17 @@ fn slow_engine_subscriber_counts_dropped_events_and_slow_client_receives_lagged(
 
     let (client, server, hub, root) = local_client("lagged-client");
     let subscription = client.subscribe().unwrap();
-    for id in 0..1024 {
+    for id in 0..1500 {
         hub.send(JobEvent::Started {
             job: JobId(id),
             kind: JobKind::Export,
         });
+        if subscription.dropped.get() > 0 {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(1));
     }
+    assert!(subscription.dropped.get() >= 1, "client queue did not fill");
     hub.send(JobEvent::Finished {
         job: JobId(1023),
         status: JobStatus::Succeeded,
