@@ -16,6 +16,7 @@ name = "secs2r-cli"
 path = "src/main.rs"
 
 [dependencies]
+secs-api = { package = "sound-equalization-and-correction-system-rust-api", path = "../../crates/secs-api", default-features = false, features = ["engine"] }
 secs-service.workspace = true
 secs-gpu = { path = "../../crates/secs-gpu" }
 secs-types.workspace = true

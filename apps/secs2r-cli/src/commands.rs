@@ -1,7 +1,8 @@
 //! Command execution over the application service.
 
 use crate::args::*;
-use crate::runner::{Events, Runner};
+use crate::runner::Runner;
+use secs_api::Secs;
 use secs_types::ipc::*;
 use serde::Serialize;
 use std::path::Path;
@@ -311,16 +312,13 @@ fn untagged_rows_use_position(scan: MdatScanResult) -> Vec<MdatAssignment> {
 }
 
 fn check(runner: &mut Runner) {
-    let response = runner
-        .service
-        .call(Request::Bootstrap, Arc::new(Events::new(true)));
-    let Envelope::Ok(response) = response else {
-        runner.ok = false;
-        print_json(&serde_json::json!({"reply": response}));
-        return;
-    };
-    let Response::Bootstrap(info) = *response else {
-        unreachable!("bootstrap has one response variant")
+    let info = match runner.engine.call(Request::Bootstrap) {
+        Ok(Response::Bootstrap(info)) => info,
+        Ok(_) => unreachable!("bootstrap has one response variant"),
+        Err(error) => {
+            runner.fail(error);
+            return;
+        }
     };
     let available = std::thread::available_parallelism().map_or(1, usize::from);
     let serial =
@@ -453,7 +451,7 @@ mod tests {
 
     use super::*;
     use crate::runner::deps;
-    use secs_service::Service;
+    use secs_api::EngineBuilder;
 
     static TEMP: AtomicU64 = AtomicU64::new(0);
 
@@ -477,8 +475,7 @@ mod tests {
         injected.app_data_path = root.join("app-data");
         injected.eqapo_install = Arc::new(move || Some(install.clone()));
         let mut runner = Runner {
-            service: Service::new(injected),
-            quiet: true,
+            engine: EngineBuilder::from_deps(injected).build(),
             ok: true,
         };
         let project = root.join("room.secs");

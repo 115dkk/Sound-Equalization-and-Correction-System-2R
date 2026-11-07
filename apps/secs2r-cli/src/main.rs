@@ -12,17 +12,17 @@ mod runner;
 use args::Cli;
 use clap::Parser;
 use commands::run;
-use runner::{Runner, deps};
-use secs_service::Service;
+use runner::{PrintEvents, Runner, deps};
+use secs_api::EngineBuilder;
 use std::process::ExitCode;
+use std::sync::Arc;
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
-    let mut runner = Runner {
-        service: Service::new(deps(cli.deterministic_uuids, cli.compute)),
-        quiet: cli.quiet,
-        ok: true,
-    };
+    let engine = EngineBuilder::from_deps(deps(cli.deterministic_uuids, cli.compute))
+        .observer(Arc::new(PrintEvents::new(cli.quiet)))
+        .build();
+    let mut runner = Runner { engine, ok: true };
     run(cli.action, &mut runner);
     if runner.ok {
         ExitCode::SUCCESS

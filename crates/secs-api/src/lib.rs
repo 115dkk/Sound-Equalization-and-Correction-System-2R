@@ -410,99 +410,184 @@ mod engine {
 
     /// Builder for an embedded [`Engine`].
     pub struct EngineBuilder {
-        app_settings_path: Option<PathBuf>,
-        compute_preference: Option<ComputePreference>,
-        audio_backend: Option<AudioFactory>,
-        rew_transport: RewFactory,
-        observer: Option<Arc<dyn EventSink>>,
+        deps: Deps,
     }
 
     impl fmt::Debug for EngineBuilder {
         fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
             formatter
                 .debug_struct("EngineBuilder")
-                .field("app_settings_path", &self.app_settings_path)
-                .field("compute_preference", &self.compute_preference)
-                .field(
-                    "audio_backend",
-                    &self.audio_backend.as_ref().map(|_| "factory"),
-                )
-                .field("rew_transport", &"factory")
-                .field("observer", &self.observer.as_ref().map(|_| "observer"))
+                .field("deps", &self.deps)
                 .finish()
         }
     }
 
     impl Default for EngineBuilder {
         fn default() -> Self {
-            Self {
-                app_settings_path: None,
-                compute_preference: None,
-                audio_backend: None,
+            Self::from_deps(Deps {
+                app_version: env!("CARGO_PKG_VERSION").into(),
                 rew_transport: Arc::new(|| Box::new(secs_rew::HttpTransport::default())),
-                observer: None,
-            }
+                ..Deps::default()
+            })
         }
     }
 
     impl EngineBuilder {
+        /// Creates a builder from a complete service dependency set.
+        ///
+        /// # Stability
+        ///
+        /// [`Deps`] and the internal-crate traits stored in it are an unstable
+        /// escape hatch and are not part of this crate's compatibility promise.
+        #[must_use]
+        pub fn from_deps(deps: Deps) -> Self {
+            Self { deps }
+        }
+
         /// Stores application settings at `path` instead of keeping them in memory.
         #[must_use]
         pub fn app_settings_path(mut self, path: impl Into<PathBuf>) -> Self {
-            self.app_settings_path = Some(path.into());
+            self.deps.app_settings_path = Some(path.into());
             self
         }
 
         /// Overrides the persisted compute preference for this engine process.
         #[must_use]
         pub fn compute_preference(mut self, preference: ComputePreference) -> Self {
-            self.compute_preference = Some(preference);
+            self.deps.compute_override = Some(preference);
             self
         }
 
         /// Supplies an audio backend factory for measurement requests.
+        ///
+        /// # Stability
+        ///
+        /// The internal [`secs_audio::AudioBackend`] trait is an unstable escape hatch.
         #[must_use]
         pub fn audio_backend_factory(mut self, factory: AudioFactory) -> Self {
-            self.audio_backend = Some(factory);
+            self.deps.audio_backend = factory;
             self
         }
 
         /// Supplies the REW transport factory used by REW measurement requests.
+        ///
+        /// # Stability
+        ///
+        /// The internal [`secs_rew::Transport`] trait is an unstable escape hatch.
         #[must_use]
         pub fn rew_transport_factory(mut self, factory: RewFactory) -> Self {
-            self.rew_transport = factory;
+            self.deps.rew_transport = factory;
+            self
+        }
+
+        /// Supplies the process probe used to find REW.
+        #[must_use]
+        pub fn process(
+            mut self,
+            process: Arc<dyn secs_rew::launch::ProcessProbe + Send + Sync>,
+        ) -> Self {
+            self.deps.process = process;
+            self
+        }
+
+        /// Supplies the memory probe used for compute budgets.
+        #[must_use]
+        pub fn memory(mut self, memory: Arc<dyn secs_compute::MemoryProbe>) -> Self {
+            self.deps.memory = memory;
+            self
+        }
+
+        /// Supplies the DSP apply adapter.
+        #[must_use]
+        pub fn apply(mut self, apply: Arc<dyn secs_service::ApplyAdapter>) -> Self {
+            self.deps.apply = apply;
+            self
+        }
+
+        /// Supplies the managed-host adapter.
+        #[must_use]
+        pub fn managed_host(
+            mut self,
+            managed_host: Arc<dyn secs_service::ManagedHostAdapter>,
+        ) -> Self {
+            self.deps.managed_host = managed_host;
+            self
+        }
+
+        /// Supplies the Equalizer APO installation detector.
+        #[must_use]
+        pub fn eqapo_install(
+            mut self,
+            eqapo_install: Arc<dyn Fn() -> Option<secs_types::ipc::EqApoInstall> + Send + Sync>,
+        ) -> Self {
+            self.deps.eqapo_install = eqapo_install;
+            self
+        }
+
+        /// Supplies a local wall clock and its offset east of UTC.
+        #[must_use]
+        pub fn clock(
+            mut self,
+            clock: Arc<dyn Fn() -> secs_service::LocalTime + Send + Sync>,
+            offset_seconds: Arc<dyn Fn() -> i32 + Send + Sync>,
+        ) -> Self {
+            self.deps.clock = clock;
+            self.deps.clock_offset_seconds = offset_seconds;
+            self
+        }
+
+        /// Supplies milliseconds since the Unix epoch.
+        #[must_use]
+        pub fn unix_ms(mut self, unix_ms: Arc<dyn Fn() -> i64 + Send + Sync>) -> Self {
+            self.deps.unix_ms = unix_ms;
+            self
+        }
+
+        /// Supplies UUID values for exported measurements.
+        #[must_use]
+        pub fn uuid(mut self, uuid: secs_service::UuidSource) -> Self {
+            self.deps.uuid = uuid;
+            self
+        }
+
+        /// Supplies the compute acceleration selector.
+        #[must_use]
+        pub fn acceleration(
+            mut self,
+            acceleration: Arc<
+                dyn Fn(ComputePreference) -> secs_engine::AccelerationSelection + Send + Sync,
+            >,
+        ) -> Self {
+            self.deps.acceleration = acceleration;
+            self
+        }
+
+        /// Exposes the application log directory through bootstrap.
+        #[must_use]
+        pub fn log_dir(mut self, log_dir: impl Into<PathBuf>) -> Self {
+            self.deps.log_dir = Some(log_dir.into());
             self
         }
 
         /// Adds an observer that receives every job event in service order.
         #[must_use]
         pub fn observer(mut self, observer: Arc<dyn EventSink>) -> Self {
-            self.observer = Some(observer);
+            self.deps.observer = observer;
             self
         }
 
         /// Builds the embedded engine.
         #[must_use]
-        pub fn build(self) -> Engine {
+        pub fn build(mut self) -> Engine {
             let observer = Arc::new(Observer {
                 state: Mutex::new(EventState::default()),
                 changed: Condvar::new(),
                 next_subscriber: AtomicU64::new(1),
-                external: self.observer,
+                external: Some(self.deps.observer.clone()),
             });
-            let mut deps = Deps {
-                app_version: env!("CARGO_PKG_VERSION").into(),
-                compute_override: self.compute_preference,
-                rew_transport: self.rew_transport,
-                observer: observer.clone(),
-                app_settings_path: self.app_settings_path,
-                ..Deps::default()
-            };
-            if let Some(audio_backend) = self.audio_backend {
-                deps.audio_backend = audio_backend;
-            }
+            self.deps.observer = observer.clone();
             Engine {
-                service: Service::new(deps),
+                service: Service::new(self.deps),
                 observer,
             }
         }
@@ -586,15 +671,16 @@ mod engine {
         /// Waits for the terminal event of `job_id` until `timeout` expires.
         pub fn wait_job(&self, job_id: JobId, timeout: Duration) -> Result<JobEvent> {
             let deadline = Instant::now() + timeout;
+            // Query the service before locking the observer. A finishing job may
+            // hold the service state while it publishes its terminal event.
+            let running = self
+                .service
+                .status()
+                .jobs
+                .iter()
+                .any(|job| job.job == job_id);
             let mut state = lock(&self.observer.state);
-            if !state.terminal.contains_key(&job_id)
-                && !self
-                    .service
-                    .status()
-                    .jobs
-                    .iter()
-                    .any(|job| job.job == job_id)
-            {
+            if !state.terminal.contains_key(&job_id) && !running {
                 return Err(Error::JobNotFound { job: job_id });
             }
             loop {

@@ -1,61 +1,36 @@
-//! Service runner, event sink, and production dependencies.
+//! Public API runner, event sink, and production dependencies.
 
 use crate::apply;
 use crate::args::ComputeChoice;
 use crate::commands::print_json;
-use secs_service::{Deps, EventSink, LocalTime, Service};
+use secs_api::{Engine, Error, Event, Secs};
+use secs_service::{Deps, EventSink, LocalTime};
 use secs_types::ipc::*;
 use std::path::Path;
-use std::sync::{Arc, Condvar, Mutex, MutexGuard};
-use std::time::SystemTime;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, SystemTime};
+
+const JOB_TIMEOUT: Duration = Duration::from_secs(24 * 60 * 60);
 
 #[derive(Debug)]
-pub(crate) struct Events {
-    pub(crate) quiet: bool,
-    finished: Mutex<Option<JobEvent>>,
-    changed: Condvar,
+pub(crate) struct PrintEvents {
+    quiet: bool,
 }
-impl Events {
+impl PrintEvents {
     pub(crate) fn new(quiet: bool) -> Self {
-        Self {
-            quiet,
-            finished: Mutex::new(None),
-            changed: Condvar::new(),
-        }
-    }
-
-    fn wait(&self) -> JobEvent {
-        let mut finished = lock(&self.finished);
-        loop {
-            if let Some(event) = finished.take() {
-                return event;
-            }
-            finished = self
-                .changed
-                .wait(finished)
-                .unwrap_or_else(|error| error.into_inner());
-        }
+        Self { quiet }
     }
 }
-impl EventSink for Events {
+impl EventSink for PrintEvents {
     fn send(&self, event: JobEvent) {
         if !self.quiet {
             print_json(&serde_json::json!({"event": event}));
         }
-        if matches!(event, JobEvent::Finished { .. }) {
-            *lock(&self.finished) = Some(event);
-            self.changed.notify_all();
-        }
     }
 }
 
-fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(|error| error.into_inner())
-}
-
 pub(crate) struct Runner {
-    pub(crate) service: Service,
-    pub(crate) quiet: bool,
+    pub(crate) engine: Engine,
     pub(crate) ok: bool,
 }
 impl Runner {
@@ -63,42 +38,74 @@ impl Runner {
         if !self.ok {
             return None;
         }
-        let events = Arc::new(Events::new(self.quiet));
-        let envelope = self.service.call(request, events.clone());
-        match envelope {
-            Envelope::Err(error) => {
-                self.ok = false;
-                print_json(&serde_json::json!({"reply": Envelope::Err(error)}));
-                None
+        let side_events = matches!(request, Request::ProjectSave(_))
+            .then(|| self.engine.subscribe().expect("embedded subscription"));
+        let response = match self.engine.call(request) {
+            Ok(response) => response,
+            Err(error) => {
+                self.fail(error);
+                return None;
             }
-            Envelope::Ok(response) => {
-                if response_job(&response).is_some() {
-                    if self.finish_job(events.wait()) {
-                        Some(*response)
-                    } else {
-                        None
-                    }
-                } else if matches!(*response, Response::ProjectSave(_)) {
-                    // The save reply returns before the side mdat job has
-                    // written the file (TD-149); this process ends with the
-                    // command, so wait for that job and report its failure.
-                    if self.finish_side_mdat(events.wait()) {
-                        print_json(&serde_json::json!({"reply": Envelope::Ok(response.clone())}));
-                        Some(*response)
-                    } else {
-                        None
-                    }
-                } else {
-                    print_json(&serde_json::json!({"reply": Envelope::Ok(response.clone())}));
-                    Some(*response)
+        };
+        if let Some(started) = response_job(&response) {
+            match self.engine.wait_job(started.job, JOB_TIMEOUT) {
+                Ok(event) => self.finish_job(event).then_some(response),
+                Err(error) => {
+                    self.fail(error);
+                    None
                 }
+            }
+        } else if matches!(response, Response::ProjectSave(_)) {
+            // The save reply returns before the side mdat job has written the
+            // file (TD-149); this process ends with the command, so wait for
+            // that job and report its failure.
+            let events = side_events.expect("project save subscription");
+            loop {
+                match events.receiver.recv_timeout(JOB_TIMEOUT) {
+                    Ok(Event::Job(event @ JobEvent::Finished { .. })) => {
+                        if self.finish_side_mdat(event) {
+                            print_json(
+                                &serde_json::json!({"reply": Envelope::Ok(Box::new(response.clone()))}),
+                            );
+                            break Some(response);
+                        }
+                        break None;
+                    }
+                    Ok(_) => {}
+                    Err(error) => {
+                        self.ok = false;
+                        print_json(&serde_json::json!({"reply": {
+                            "ok": false,
+                            "error": IpcError::new(ErrorCode::Internal, error.to_string()),
+                        }}));
+                        break None;
+                    }
+                }
+            }
+        } else {
+            print_json(&serde_json::json!({"reply": Envelope::Ok(Box::new(response.clone()))}));
+            Some(response)
+        }
+    }
+
+    pub(crate) fn fail(&mut self, error: Error) {
+        self.ok = false;
+        match error {
+            Error::Api(error) => {
+                print_json(&serde_json::json!({"reply": Envelope::Err(error)}));
+            }
+            error => {
+                print_json(&serde_json::json!({"reply": {
+                    "ok": false,
+                    "error": secs_api::WireError::from(&error),
+                }}));
             }
         }
     }
 
     fn finish_side_mdat(&mut self, event: JobEvent) -> bool {
         let JobEvent::Finished { status, error, .. } = event else {
-            unreachable!("event sink waits for a finished event")
+            unreachable!("event subscription waits for a finished event")
         };
         if status == JobStatus::Succeeded {
             return true;
@@ -122,7 +129,7 @@ impl Runner {
             ..
         } = event
         else {
-            unreachable!("event sink waits for a finished event")
+            unreachable!("public API waits for a finished event")
         };
         if status == JobStatus::Succeeded {
             print_json(&serde_json::json!({"reply": {

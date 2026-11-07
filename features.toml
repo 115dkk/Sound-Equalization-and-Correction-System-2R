@@ -1858,6 +1858,7 @@ tests = [
   "sound-equalization-and-correction-system-rust-api::wait_job_answers_finished_unknown_and_timeout_the_same_way",
   "sound-equalization-and-correction-system-rust-api::closer_ends_a_blocked_recv_within_one_second",
   "sound-equalization-and-correction-system-rust-api::error_display_prints_snake_case_codes",
+  "sound-equalization-and-correction-system-rust-api::engine_builder_from_deps_keeps_every_field",
 ]
 note = "ADR 0016: one supported crates.io facade for embedding the file-based engine or driving a running app through the authenticated local API."
 

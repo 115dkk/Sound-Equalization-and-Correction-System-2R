@@ -483,7 +483,7 @@ fn local_client(
     (Client::new(server.port(), TOKEN), server, hub, root)
 }
 
-#[cfg(feature = "engine")]
+#[cfg(all(feature = "engine", feature = "client"))]
 fn start_sample_job(
     api: &dyn sound_equalization_and_correction_system_rust_api::Secs,
     root: &std::path::Path,
@@ -714,4 +714,34 @@ fn closer_ends_a_blocked_recv_within_one_second() {
     assert_closer(&client);
     server.stop();
     let _ = std::fs::remove_dir_all(root);
+}
+
+#[cfg(feature = "engine")]
+#[test]
+fn engine_builder_from_deps_keeps_every_field() {
+    use secs_service::{Deps, LocalTime};
+    use sound_equalization_and_correction_system_rust_api::{
+        EngineBuilder, Request, Response, Secs,
+    };
+    use std::sync::Arc;
+
+    let engine = EngineBuilder::from_deps(Deps {
+        app_version: "from-deps".into(),
+        clock: Arc::new(|| LocalTime {
+            year: 2024,
+            month: 1,
+            day: 2,
+            hour: 12,
+            minute: 4,
+            second: 5,
+        }),
+        clock_offset_seconds: Arc::new(|| 32_400),
+        unix_ms: Arc::new(|| 1_704_164_645_000),
+        ..Deps::default()
+    })
+    .build();
+    let Response::Bootstrap(info) = engine.call(Request::Bootstrap).unwrap() else {
+        panic!("bootstrap has one response variant")
+    };
+    assert_eq!(info.version, "from-deps");
 }

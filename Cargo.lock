@@ -4666,6 +4666,7 @@ dependencies = [
  "secs-types",
  "serde",
  "serde_json",
+ "sound-equalization-and-correction-system-rust-api",
 ]
 
 [[package]]
@@ -5078,6 +5079,7 @@ name = "sound-equalization-and-correction-system-rust-api"
 version = "0.22.0"
 dependencies = [
  "secs-audio",
+ "secs-compute",
  "secs-engine",
  "secs-engine-testkit",
  "secs-local-api",
