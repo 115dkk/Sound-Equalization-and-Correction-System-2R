@@ -212,6 +212,7 @@ pub struct RemovedPosition {
     pos: i64,
     entries: Vec<(usize, PyJson)>,
     snr_db: Vec<(String, f64)>,
+    sources: Vec<(String, Arc<SourceInfo>)>,
 }
 
 impl RemovedPosition {
@@ -365,10 +366,8 @@ impl MeasurementStore {
         result: MeasurementResult,
         plan_roles: Option<&[String]>,
     ) -> Result<MeasurementRecord, ProjectError> {
-        let source_fingerprint = result
-            .source_info
-            .as_ref()
-            .and_then(calibration_fingerprint);
+        let source_info = result.source_info.clone();
+        let source_fingerprint = source_info.as_ref().and_then(calibration_fingerprint);
         let path = save_ir(
             &self.path,
             &result.role,
@@ -442,6 +441,12 @@ impl MeasurementStore {
                 .measurement_calibration
                 .remove(&calibration_key);
         }
+        let source_key = (result.pos, role.clone());
+        if let Some(source) = source_info {
+            self.sources.insert(source_key, Arc::new(source));
+        } else {
+            self.sources.remove(&source_key);
+        }
         if let Some(value) = result.snr_db {
             self.snr_db.insert((result.pos, role), value);
         }
@@ -478,10 +483,18 @@ impl MeasurementStore {
             .map(|((_, role), value)| (role.clone(), *value))
             .collect();
         self.snr_db.retain(|(entry_pos, _), _| *entry_pos != pos);
+        let sources = self
+            .sources
+            .iter()
+            .filter(|((entry_pos, _), _)| *entry_pos == pos)
+            .map(|((_, role), source)| (role.clone(), source.clone()))
+            .collect();
+        self.sources.retain(|(entry_pos, _), _| *entry_pos != pos);
         Some(RemovedPosition {
             pos,
             entries,
             snr_db,
+            sources,
         })
     }
 
@@ -493,6 +506,7 @@ impl MeasurementStore {
             pos,
             entries,
             snr_db,
+            sources,
         } = removed;
         if measurement_values(&self.project)
             .iter()
@@ -508,6 +522,11 @@ impl MeasurementStore {
         }
         self.snr_db
             .extend(snr_db.into_iter().map(|(role, value)| ((pos, role), value)));
+        self.sources.extend(
+            sources
+                .into_iter()
+                .map(|(role, source)| ((pos, role), source)),
+        );
         Ok(())
     }
 
@@ -605,9 +624,14 @@ impl MeasurementStore {
         if let Some(fingerprint) = info.and_then(calibration_fingerprint) {
             self.project
                 .measurement_calibration
-                .insert(key, fingerprint);
+                .insert(key.clone(), fingerprint);
         } else {
             self.project.measurement_calibration.remove(&key);
+        }
+        if let Some(info) = info {
+            self.sources.insert(key, Arc::new(info.clone()));
+        } else {
+            self.sources.remove(&key);
         }
         Ok(())
     }

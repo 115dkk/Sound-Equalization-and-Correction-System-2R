@@ -1252,3 +1252,33 @@ fn entry_at(pos: i64, path: &str) -> PyJson {
 fn save(path: &Path, role: &str, pos: i64) {
     save_ir(path, role, pos, &[0.0], 48_000).unwrap();
 }
+
+#[test]
+fn record_replace_remove_and_restore_keep_the_source_map_in_step_with_the_files() {
+    let (_directory, _path, mut store, roles) = setup();
+    let first = SourceInfo {
+        notes: Some("first source".into()),
+        ..SourceInfo::default()
+    };
+    let mut measured = result("L", 1, "with-source");
+    measured.source_info = Some(first.clone());
+    store.record(measured, Some(&roles)).unwrap();
+    assert_eq!(store.source_of("L", 1).as_deref(), Some(&first));
+    let wav = store.ir_path_of("L", 1).unwrap();
+    assert_eq!(load_source(&wav).as_ref(), Some(&first));
+
+    store.replace_source("L", 1, None).unwrap();
+    assert!(store.source_of("L", 1).is_none());
+    assert!(!source_path(&wav).exists());
+
+    let second = SourceInfo {
+        notes: Some("second source".into()),
+        ..SourceInfo::default()
+    };
+    store.replace_source("L", 1, Some(&second)).unwrap();
+    assert_eq!(store.source_of("L", 1).as_deref(), Some(&second));
+    let removed = store.remove_position(1).unwrap();
+    assert!(store.source_of("L", 1).is_none());
+    store.restore_position(removed).unwrap();
+    assert_eq!(store.source_of("L", 1).as_deref(), Some(&second));
+}
