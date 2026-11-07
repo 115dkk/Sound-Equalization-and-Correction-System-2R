@@ -1,0 +1,6508 @@
+[
+  {
+    "params": {
+      "engine_key": "Mixed|4034000000000000|-|-||-||-|4038000000000000|true|0|0|4024000000000000"
+    },
+    "data": {
+      "stale": false,
+      "channels": [
+        {
+          "role": "L",
+          "within_1db_pct": [
+            14.02439024390244,
+            85.56910569105692
+          ],
+          "gd_spread_ms": [
+            39.692511573758985,
+            50.200463220747395
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "R",
+          "within_1db_pct": [
+            7.113821138211382,
+            88.41463414634147
+          ],
+          "gd_spread_ms": [
+            33.33376643843614,
+            49.22959417310702
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "C",
+          "within_1db_pct": [
+            21.951219512195124,
+            85.56910569105692
+          ],
+          "gd_spread_ms": [
+            34.47080466904025,
+            52.9990131853965
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Ls",
+          "within_1db_pct": [
+            14.83739837398374,
+            79.8780487804878
+          ],
+          "gd_spread_ms": [
+            45.6544144112041,
+            49.311891529666035
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Rs",
+          "within_1db_pct": [
+            6.300813008130081,
+            91.66666666666666
+          ],
+          "gd_spread_ms": [
+            41.676230826869705,
+            47.97040944575082
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Lb",
+          "within_1db_pct": [
+            7.317073170731707,
+            62.601626016260155
+          ],
+          "gd_spread_ms": [
+            35.57861396189152,
+            46.330044707175915
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Rb",
+          "within_1db_pct": [
+            21.138211382113823,
+            90.04065040650406
+          ],
+          "gd_spread_ms": [
+            30.937783139066696,
+            47.28624680489682
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Tfl",
+          "within_1db_pct": [
+            7.520325203252034,
+            83.33333333333334
+          ],
+          "gd_spread_ms": [
+            35.23096717218483,
+            43.223365207221704
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Tfr",
+          "within_1db_pct": [
+            21.951219512195124,
+            81.70731707317073
+          ],
+          "gd_spread_ms": [
+            34.84650400470713,
+            47.855542364221066
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Tbl",
+          "within_1db_pct": [
+            20.73170731707317,
+            90.2439024390244
+          ],
+          "gd_spread_ms": [
+            42.13599101556126,
+            51.109202126667384
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Tbr",
+          "within_1db_pct": [
+            7.926829268292683,
+            85.16260162601627
+          ],
+          "gd_spread_ms": [
+            42.09752292459096,
+            50.61388360097246
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        }
+      ],
+      "total_delay_ms": 8.0,
+      "notes": [
+        {
+          "code": "rc_limit",
+          "hz": 500.0,
+          "auto": true,
+          "schroeder_hz": null,
+          "basis": "strict",
+          "factor": 1,
+          "band_hz": null,
+          "band_t60_s": null,
+          "positions": null
+        },
+        {
+          "code": "ba_cost",
+          "value": 153.0022530865336
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 40.869140625,
+              "t60_s": 1.6696641852179257
+            },
+            {
+              "hz": 112.939453125,
+              "t60_s": 1.9585840302281328
+            },
+            {
+              "hz": 123.193359375,
+              "t60_s": 1.9027843698393394
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 33.984375,
+              "t60_s": 1.7598211851712733
+            },
+            {
+              "hz": 40.283203125,
+              "t60_s": 1.8484603424339872
+            },
+            {
+              "hz": 112.79296875,
+              "t60_s": 2.0849432863726745
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 40.72265625,
+              "t60_s": 1.7076714032110711
+            },
+            {
+              "hz": 112.939453125,
+              "t60_s": 2.012283406209101
+            },
+            {
+              "hz": 123.33984375,
+              "t60_s": 2.023844473102262
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 112.646484375,
+              "t60_s": 2.2617383274081346
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 40.72265625,
+              "t60_s": 1.7153571803050525
+            },
+            {
+              "hz": 112.5,
+              "t60_s": 2.1362265297924363
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 112.939453125,
+              "t60_s": 2.030154629339131
+            },
+            {
+              "hz": 123.486328125,
+              "t60_s": 1.9352312036557664
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 46.875,
+              "t60_s": 1.97938141299921
+            },
+            {
+              "hz": 112.646484375,
+              "t60_s": 2.0635272839309193
+            },
+            {
+              "hz": 123.486328125,
+              "t60_s": 2.102398928419936
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 46.875,
+              "t60_s": 1.951646406682368
+            },
+            {
+              "hz": 112.646484375,
+              "t60_s": 1.9652978078224013
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 40.72265625,
+              "t60_s": 1.725714721913313
+            },
+            {
+              "hz": 112.646484375,
+              "t60_s": 2.0018736176171505
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 22.412109375,
+              "t60_s": 1.7614148871045512
+            },
+            {
+              "hz": 40.72265625,
+              "t60_s": 1.7100574754851432
+            },
+            {
+              "hz": 112.79296875,
+              "t60_s": 2.024773905766512
+            }
+          ]
+        },
+        {
+          "code": "latency",
+          "latency_ms": 8.0,
+          "lift_ms": 8.0,
+          "main_extra_ms": 0.0
+        },
+        {
+          "code": "phase_strength",
+          "values": [
+            {
+              "role": "L",
+              "value": 0.7
+            },
+            {
+              "role": "R",
+              "value": 0.5
+            },
+            {
+              "role": "C",
+              "value": 0.7
+            },
+            {
+              "role": "Ls",
+              "value": 0.5
+            },
+            {
+              "role": "Rs",
+              "value": 0.5
+            },
+            {
+              "role": "Lb",
+              "value": 0.5
+            },
+            {
+              "role": "Rb",
+              "value": 0.5
+            },
+            {
+              "role": "Tfl",
+              "value": 0.5
+            },
+            {
+              "role": "Tfr",
+              "value": 0.5
+            },
+            {
+              "role": "Tbl",
+              "value": 0.5
+            },
+            {
+              "role": "Tbr",
+              "value": 0.7
+            }
+          ]
+        },
+        {
+          "code": "phase_band",
+          "values": [
+            {
+              "role": "L",
+              "hz": 0.7
+            },
+            {
+              "role": "R",
+              "hz": 0.5
+            },
+            {
+              "role": "C",
+              "hz": 0.7
+            },
+            {
+              "role": "Ls",
+              "hz": 0.5
+            },
+            {
+              "role": "Rs",
+              "hz": 0.5
+            },
+            {
+              "role": "Lb",
+              "hz": 0.5
+            },
+            {
+              "role": "Rb",
+              "hz": 0.5
+            },
+            {
+              "role": "Tfl",
+              "hz": 0.5
+            },
+            {
+              "role": "Tfr",
+              "hz": 0.5
+            },
+            {
+              "role": "Tbl",
+              "hz": 0.5
+            },
+            {
+              "role": "Tbr",
+              "hz": 0.7
+            }
+          ]
+        }
+      ],
+      "notices": [],
+      "rc": [
+        {
+          "code": "rc_limit",
+          "params": {
+            "auto": "true",
+            "basis": "strict",
+            "factor": "1",
+            "hz": "500"
+          }
+        },
+        {
+          "code": "rc_no_room_volume",
+          "params": {}
+        }
+      ],
+      "ba": {
+        "stale": false,
+        "subs_only": false,
+        "band_hz": [
+          20.0,
+          120.0
+        ],
+        "flatness_db": [
+          11.9920968052603,
+          2.3620447904056876
+        ],
+        "seat_spread_db": [
+          1.0327472806529352,
+          1.0327901230331507
+        ],
+        "positions": 9,
+        "rows": [
+          {
+            "role": "SW1",
+            "mode": "auto",
+            "gain_db": -10.431577324318514,
+            "delay_ms": 10.584447770682706,
+            "polarity": -1,
+            "allpass": [],
+            "high_pass": [
+              0.0,
+              "LR24"
+            ],
+            "low_pass": [
+              0.0,
+              "LR24"
+            ],
+            "peq": []
+          },
+          {
+            "role": "SW2",
+            "mode": "auto",
+            "gain_db": -13.171526448306485,
+            "delay_ms": 3.0943691154084068,
+            "polarity": -1,
+            "allpass": [],
+            "high_pass": [
+              0.0,
+              "LR24"
+            ],
+            "low_pass": [
+              0.0,
+              "LR24"
+            ],
+            "peq": []
+          },
+          {
+            "role": "SW3",
+            "mode": "auto",
+            "gain_db": -14.607298254766906,
+            "delay_ms": 20.68010562719521,
+            "polarity": -1,
+            "allpass": [],
+            "high_pass": [
+              0.0,
+              "LR24"
+            ],
+            "low_pass": [
+              0.0,
+              "LR24"
+            ],
+            "peq": []
+          }
+        ],
+        "layouts": [],
+        "warnings": []
+      }
+    }
+  },
+  {
+    "params": {
+      "engine_key": "Mixed|4034000000000000|-|-||-||-|4038000000000000|true|0|0|4024000000000000"
+    },
+    "data": {
+      "stale": false,
+      "channels": [
+        {
+          "role": "L",
+          "within_1db_pct": [
+            14.02439024390244,
+            85.56910569105692
+          ],
+          "gd_spread_ms": [
+            39.692511573758985,
+            50.200463220747395
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "R",
+          "within_1db_pct": [
+            7.113821138211382,
+            88.41463414634147
+          ],
+          "gd_spread_ms": [
+            33.33376643843614,
+            49.22959417310702
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "C",
+          "within_1db_pct": [
+            21.951219512195124,
+            85.56910569105692
+          ],
+          "gd_spread_ms": [
+            34.47080466904025,
+            52.9990131853965
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Ls",
+          "within_1db_pct": [
+            14.83739837398374,
+            79.8780487804878
+          ],
+          "gd_spread_ms": [
+            45.6544144112041,
+            49.311891529666035
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Rs",
+          "within_1db_pct": [
+            6.300813008130081,
+            91.66666666666666
+          ],
+          "gd_spread_ms": [
+            41.676230826869705,
+            47.97040944575082
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Lb",
+          "within_1db_pct": [
+            7.317073170731707,
+            62.601626016260155
+          ],
+          "gd_spread_ms": [
+            35.57861396189152,
+            46.330044707175915
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Rb",
+          "within_1db_pct": [
+            21.138211382113823,
+            90.04065040650406
+          ],
+          "gd_spread_ms": [
+            30.937783139066696,
+            47.28624680489682
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Tfl",
+          "within_1db_pct": [
+            7.520325203252034,
+            83.33333333333334
+          ],
+          "gd_spread_ms": [
+            35.23096717218483,
+            43.223365207221704
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Tfr",
+          "within_1db_pct": [
+            21.951219512195124,
+            81.70731707317073
+          ],
+          "gd_spread_ms": [
+            34.84650400470713,
+            47.855542364221066
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Tbl",
+          "within_1db_pct": [
+            20.73170731707317,
+            90.2439024390244
+          ],
+          "gd_spread_ms": [
+            42.13599101556126,
+            51.109202126667384
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Tbr",
+          "within_1db_pct": [
+            7.926829268292683,
+            85.16260162601627
+          ],
+          "gd_spread_ms": [
+            42.09752292459096,
+            50.61388360097246
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        }
+      ],
+      "total_delay_ms": 8.0,
+      "notes": [
+        {
+          "code": "rc_limit",
+          "hz": 500.0,
+          "auto": true,
+          "schroeder_hz": null,
+          "basis": "strict",
+          "factor": 1,
+          "band_hz": null,
+          "band_t60_s": null,
+          "positions": null
+        },
+        {
+          "code": "ba_cost",
+          "value": 153.0022530865336
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 40.869140625,
+              "t60_s": 1.6696641852179257
+            },
+            {
+              "hz": 112.939453125,
+              "t60_s": 1.9585840302281328
+            },
+            {
+              "hz": 123.193359375,
+              "t60_s": 1.9027843698393394
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 33.984375,
+              "t60_s": 1.7598211851712733
+            },
+            {
+              "hz": 40.283203125,
+              "t60_s": 1.8484603424339872
+            },
+            {
+              "hz": 112.79296875,
+              "t60_s": 2.0849432863726745
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 40.72265625,
+              "t60_s": 1.7076714032110711
+            },
+            {
+              "hz": 112.939453125,
+              "t60_s": 2.012283406209101
+            },
+            {
+              "hz": 123.33984375,
+              "t60_s": 2.023844473102262
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 112.646484375,
+              "t60_s": 2.2617383274081346
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 40.72265625,
+              "t60_s": 1.7153571803050525
+            },
+            {
+              "hz": 112.5,
+              "t60_s": 2.1362265297924363
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 112.939453125,
+              "t60_s": 2.030154629339131
+            },
+            {
+              "hz": 123.486328125,
+              "t60_s": 1.9352312036557664
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 46.875,
+              "t60_s": 1.97938141299921
+            },
+            {
+              "hz": 112.646484375,
+              "t60_s": 2.0635272839309193
+            },
+            {
+              "hz": 123.486328125,
+              "t60_s": 2.102398928419936
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 46.875,
+              "t60_s": 1.951646406682368
+            },
+            {
+              "hz": 112.646484375,
+              "t60_s": 1.9652978078224013
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 40.72265625,
+              "t60_s": 1.725714721913313
+            },
+            {
+              "hz": 112.646484375,
+              "t60_s": 2.0018736176171505
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 22.412109375,
+              "t60_s": 1.7614148871045512
+            },
+            {
+              "hz": 40.72265625,
+              "t60_s": 1.7100574754851432
+            },
+            {
+              "hz": 112.79296875,
+              "t60_s": 2.024773905766512
+            }
+          ]
+        },
+        {
+          "code": "latency",
+          "latency_ms": 8.0,
+          "lift_ms": 8.0,
+          "main_extra_ms": 0.0
+        },
+        {
+          "code": "phase_strength",
+          "values": [
+            {
+              "role": "L",
+              "value": 0.7
+            },
+            {
+              "role": "R",
+              "value": 0.5
+            },
+            {
+              "role": "C",
+              "value": 0.7
+            },
+            {
+              "role": "Ls",
+              "value": 0.5
+            },
+            {
+              "role": "Rs",
+              "value": 0.5
+            },
+            {
+              "role": "Lb",
+              "value": 0.5
+            },
+            {
+              "role": "Rb",
+              "value": 0.5
+            },
+            {
+              "role": "Tfl",
+              "value": 0.5
+            },
+            {
+              "role": "Tfr",
+              "value": 0.5
+            },
+            {
+              "role": "Tbl",
+              "value": 0.5
+            },
+            {
+              "role": "Tbr",
+              "value": 0.7
+            }
+          ]
+        },
+        {
+          "code": "phase_band",
+          "values": [
+            {
+              "role": "L",
+              "hz": 0.7
+            },
+            {
+              "role": "R",
+              "hz": 0.5
+            },
+            {
+              "role": "C",
+              "hz": 0.7
+            },
+            {
+              "role": "Ls",
+              "hz": 0.5
+            },
+            {
+              "role": "Rs",
+              "hz": 0.5
+            },
+            {
+              "role": "Lb",
+              "hz": 0.5
+            },
+            {
+              "role": "Rb",
+              "hz": 0.5
+            },
+            {
+              "role": "Tfl",
+              "hz": 0.5
+            },
+            {
+              "role": "Tfr",
+              "hz": 0.5
+            },
+            {
+              "role": "Tbl",
+              "hz": 0.5
+            },
+            {
+              "role": "Tbr",
+              "hz": 0.7
+            }
+          ]
+        }
+      ],
+      "notices": [],
+      "rc": [
+        {
+          "code": "rc_limit",
+          "params": {
+            "auto": "true",
+            "basis": "strict",
+            "factor": "1",
+            "hz": "500"
+          }
+        },
+        {
+          "code": "rc_no_room_volume",
+          "params": {}
+        }
+      ],
+      "ba": {
+        "stale": false,
+        "subs_only": false,
+        "band_hz": [
+          20.0,
+          120.0
+        ],
+        "flatness_db": [
+          11.9920968052603,
+          2.3620447904056876
+        ],
+        "seat_spread_db": [
+          1.0327472806529352,
+          1.0327901230331507
+        ],
+        "positions": 9,
+        "rows": [
+          {
+            "role": "SW1",
+            "mode": "auto",
+            "gain_db": -10.431577324318514,
+            "delay_ms": 10.584447770682706,
+            "polarity": -1,
+            "allpass": [],
+            "high_pass": [
+              0.0,
+              "LR24"
+            ],
+            "low_pass": [
+              0.0,
+              "LR24"
+            ],
+            "peq": []
+          },
+          {
+            "role": "SW2",
+            "mode": "auto",
+            "gain_db": -13.171526448306485,
+            "delay_ms": 3.0943691154084068,
+            "polarity": -1,
+            "allpass": [],
+            "high_pass": [
+              0.0,
+              "LR24"
+            ],
+            "low_pass": [
+              0.0,
+              "LR24"
+            ],
+            "peq": []
+          },
+          {
+            "role": "SW3",
+            "mode": "auto",
+            "gain_db": -14.607298254766906,
+            "delay_ms": 20.68010562719521,
+            "polarity": -1,
+            "allpass": [],
+            "high_pass": [
+              0.0,
+              "LR24"
+            ],
+            "low_pass": [
+              0.0,
+              "LR24"
+            ],
+            "peq": []
+          }
+        ],
+        "layouts": [],
+        "warnings": []
+      }
+    }
+  },
+  {
+    "params": {
+      "engine_key": "Mixed|4034000000000000|-|-||-||-|4038000000000000|true|0|0|4024000000000000|rc_hi_basis=lenient"
+    },
+    "data": {
+      "stale": false,
+      "channels": [
+        {
+          "role": "L",
+          "within_1db_pct": [
+            14.02439024390244,
+            85.56910569105692
+          ],
+          "gd_spread_ms": [
+            39.692511573758985,
+            50.200463220747395
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "R",
+          "within_1db_pct": [
+            7.113821138211382,
+            88.41463414634147
+          ],
+          "gd_spread_ms": [
+            33.33376643843614,
+            49.22959417310702
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "C",
+          "within_1db_pct": [
+            21.951219512195124,
+            85.56910569105692
+          ],
+          "gd_spread_ms": [
+            34.47080466904025,
+            52.9990131853965
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Ls",
+          "within_1db_pct": [
+            14.83739837398374,
+            79.8780487804878
+          ],
+          "gd_spread_ms": [
+            45.6544144112041,
+            49.311891529666035
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Rs",
+          "within_1db_pct": [
+            6.300813008130081,
+            91.66666666666666
+          ],
+          "gd_spread_ms": [
+            41.676230826869705,
+            47.97040944575082
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Lb",
+          "within_1db_pct": [
+            7.317073170731707,
+            62.601626016260155
+          ],
+          "gd_spread_ms": [
+            35.57861396189152,
+            46.330044707175915
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Rb",
+          "within_1db_pct": [
+            21.138211382113823,
+            90.04065040650406
+          ],
+          "gd_spread_ms": [
+            30.937783139066696,
+            47.28624680489682
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Tfl",
+          "within_1db_pct": [
+            7.520325203252034,
+            83.33333333333334
+          ],
+          "gd_spread_ms": [
+            35.23096717218483,
+            43.223365207221704
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Tfr",
+          "within_1db_pct": [
+            21.951219512195124,
+            81.70731707317073
+          ],
+          "gd_spread_ms": [
+            34.84650400470713,
+            47.855542364221066
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Tbl",
+          "within_1db_pct": [
+            20.73170731707317,
+            90.2439024390244
+          ],
+          "gd_spread_ms": [
+            42.13599101556126,
+            51.109202126667384
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Tbr",
+          "within_1db_pct": [
+            7.926829268292683,
+            85.16260162601627
+          ],
+          "gd_spread_ms": [
+            42.09752292459096,
+            50.61388360097246
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        }
+      ],
+      "total_delay_ms": 8.0,
+      "notes": [
+        {
+          "code": "rc_limit",
+          "hz": 500.0,
+          "auto": true,
+          "schroeder_hz": null,
+          "basis": "lenient",
+          "factor": 1,
+          "band_hz": null,
+          "band_t60_s": null,
+          "positions": null
+        },
+        {
+          "code": "ba_cost",
+          "value": 153.0022530865336
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 40.869140625,
+              "t60_s": 1.6696641852179257
+            },
+            {
+              "hz": 112.939453125,
+              "t60_s": 1.9585840302281328
+            },
+            {
+              "hz": 123.193359375,
+              "t60_s": 1.9027843698393394
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 33.984375,
+              "t60_s": 1.7598211851712733
+            },
+            {
+              "hz": 40.283203125,
+              "t60_s": 1.8484603424339872
+            },
+            {
+              "hz": 112.79296875,
+              "t60_s": 2.0849432863726745
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 40.72265625,
+              "t60_s": 1.7076714032110711
+            },
+            {
+              "hz": 112.939453125,
+              "t60_s": 2.012283406209101
+            },
+            {
+              "hz": 123.33984375,
+              "t60_s": 2.023844473102262
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 112.646484375,
+              "t60_s": 2.2617383274081346
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 40.72265625,
+              "t60_s": 1.7153571803050525
+            },
+            {
+              "hz": 112.5,
+              "t60_s": 2.1362265297924363
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 112.939453125,
+              "t60_s": 2.030154629339131
+            },
+            {
+              "hz": 123.486328125,
+              "t60_s": 1.9352312036557664
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 46.875,
+              "t60_s": 1.97938141299921
+            },
+            {
+              "hz": 112.646484375,
+              "t60_s": 2.0635272839309193
+            },
+            {
+              "hz": 123.486328125,
+              "t60_s": 2.102398928419936
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 46.875,
+              "t60_s": 1.951646406682368
+            },
+            {
+              "hz": 112.646484375,
+              "t60_s": 1.9652978078224013
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 40.72265625,
+              "t60_s": 1.725714721913313
+            },
+            {
+              "hz": 112.646484375,
+              "t60_s": 2.0018736176171505
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 22.412109375,
+              "t60_s": 1.7614148871045512
+            },
+            {
+              "hz": 40.72265625,
+              "t60_s": 1.7100574754851432
+            },
+            {
+              "hz": 112.79296875,
+              "t60_s": 2.024773905766512
+            }
+          ]
+        },
+        {
+          "code": "latency",
+          "latency_ms": 8.0,
+          "lift_ms": 8.0,
+          "main_extra_ms": 0.0
+        },
+        {
+          "code": "phase_strength",
+          "values": [
+            {
+              "role": "L",
+              "value": 0.7
+            },
+            {
+              "role": "R",
+              "value": 0.5
+            },
+            {
+              "role": "C",
+              "value": 0.7
+            },
+            {
+              "role": "Ls",
+              "value": 0.5
+            },
+            {
+              "role": "Rs",
+              "value": 0.5
+            },
+            {
+              "role": "Lb",
+              "value": 0.5
+            },
+            {
+              "role": "Rb",
+              "value": 0.5
+            },
+            {
+              "role": "Tfl",
+              "value": 0.5
+            },
+            {
+              "role": "Tfr",
+              "value": 0.5
+            },
+            {
+              "role": "Tbl",
+              "value": 0.5
+            },
+            {
+              "role": "Tbr",
+              "value": 0.7
+            }
+          ]
+        },
+        {
+          "code": "phase_band",
+          "values": [
+            {
+              "role": "L",
+              "hz": 0.7
+            },
+            {
+              "role": "R",
+              "hz": 0.5
+            },
+            {
+              "role": "C",
+              "hz": 0.7
+            },
+            {
+              "role": "Ls",
+              "hz": 0.5
+            },
+            {
+              "role": "Rs",
+              "hz": 0.5
+            },
+            {
+              "role": "Lb",
+              "hz": 0.5
+            },
+            {
+              "role": "Rb",
+              "hz": 0.5
+            },
+            {
+              "role": "Tfl",
+              "hz": 0.5
+            },
+            {
+              "role": "Tfr",
+              "hz": 0.5
+            },
+            {
+              "role": "Tbl",
+              "hz": 0.5
+            },
+            {
+              "role": "Tbr",
+              "hz": 0.7
+            }
+          ]
+        }
+      ],
+      "notices": [],
+      "rc": [
+        {
+          "code": "rc_limit",
+          "params": {
+            "auto": "true",
+            "basis": "lenient",
+            "factor": "1",
+            "hz": "500"
+          }
+        },
+        {
+          "code": "rc_no_room_volume",
+          "params": {}
+        }
+      ],
+      "ba": {
+        "stale": false,
+        "subs_only": false,
+        "band_hz": [
+          20.0,
+          120.0
+        ],
+        "flatness_db": [
+          11.9920968052603,
+          2.3620447904056876
+        ],
+        "seat_spread_db": [
+          1.0327472806529352,
+          1.0327901230331507
+        ],
+        "positions": 9,
+        "rows": [
+          {
+            "role": "SW1",
+            "mode": "auto",
+            "gain_db": -10.431577324318514,
+            "delay_ms": 10.584447770682706,
+            "polarity": -1,
+            "allpass": [],
+            "high_pass": [
+              0.0,
+              "LR24"
+            ],
+            "low_pass": [
+              0.0,
+              "LR24"
+            ],
+            "peq": []
+          },
+          {
+            "role": "SW2",
+            "mode": "auto",
+            "gain_db": -13.171526448306485,
+            "delay_ms": 3.0943691154084068,
+            "polarity": -1,
+            "allpass": [],
+            "high_pass": [
+              0.0,
+              "LR24"
+            ],
+            "low_pass": [
+              0.0,
+              "LR24"
+            ],
+            "peq": []
+          },
+          {
+            "role": "SW3",
+            "mode": "auto",
+            "gain_db": -14.607298254766906,
+            "delay_ms": 20.68010562719521,
+            "polarity": -1,
+            "allpass": [],
+            "high_pass": [
+              0.0,
+              "LR24"
+            ],
+            "low_pass": [
+              0.0,
+              "LR24"
+            ],
+            "peq": []
+          }
+        ],
+        "layouts": [],
+        "warnings": []
+      }
+    }
+  },
+  {
+    "params": {
+      "engine_key": "Mixed|4034000000000000|-|-||-||-|4038000000000000|true|0|0|4024000000000000|rc_hi_basis=agreement"
+    },
+    "data": {
+      "stale": false,
+      "channels": [
+        {
+          "role": "L",
+          "within_1db_pct": [
+            14.02439024390244,
+            83.94308943089432
+          ],
+          "gd_spread_ms": [
+            39.692511573758985,
+            50.398078482827906
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "R",
+          "within_1db_pct": [
+            7.113821138211382,
+            88.6178861788618
+          ],
+          "gd_spread_ms": [
+            33.33376643843614,
+            49.236720487084135
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "C",
+          "within_1db_pct": [
+            21.951219512195124,
+            80.6910569105691
+          ],
+          "gd_spread_ms": [
+            34.47080466904025,
+            55.06066856040282
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Ls",
+          "within_1db_pct": [
+            14.83739837398374,
+            80.48780487804879
+          ],
+          "gd_spread_ms": [
+            45.6544144112041,
+            49.862179683651306
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Rs",
+          "within_1db_pct": [
+            6.300813008130081,
+            92.27642276422763
+          ],
+          "gd_spread_ms": [
+            41.676230826869705,
+            46.62888385967051
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Lb",
+          "within_1db_pct": [
+            7.317073170731707,
+            63.00813008130082
+          ],
+          "gd_spread_ms": [
+            35.57861396189152,
+            46.37775419405202
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Rb",
+          "within_1db_pct": [
+            21.138211382113823,
+            87.60162601626016
+          ],
+          "gd_spread_ms": [
+            30.937783139066696,
+            50.035188275795115
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Tfl",
+          "within_1db_pct": [
+            7.520325203252034,
+            83.33333333333334
+          ],
+          "gd_spread_ms": [
+            35.23096717218483,
+            43.472789112042356
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Tfr",
+          "within_1db_pct": [
+            21.951219512195124,
+            81.5040650406504
+          ],
+          "gd_spread_ms": [
+            34.84650400470713,
+            48.38093649960302
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Tbl",
+          "within_1db_pct": [
+            20.73170731707317,
+            90.04065040650406
+          ],
+          "gd_spread_ms": [
+            42.13599101556126,
+            51.32521892182148
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Tbr",
+          "within_1db_pct": [
+            7.926829268292683,
+            84.95934959349594
+          ],
+          "gd_spread_ms": [
+            42.09752292459096,
+            52.84059856243416
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        }
+      ],
+      "total_delay_ms": 8.0,
+      "notes": [
+        {
+          "code": "rc_limit",
+          "hz": 2000.0,
+          "auto": true,
+          "schroeder_hz": null,
+          "basis": "agreement",
+          "factor": 1,
+          "band_hz": null,
+          "band_t60_s": null,
+          "positions": 9
+        },
+        {
+          "code": "ba_cost",
+          "value": 153.0022530865336
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 40.869140625,
+              "t60_s": 1.6696641852179257
+            },
+            {
+              "hz": 112.939453125,
+              "t60_s": 1.9585840302281328
+            },
+            {
+              "hz": 123.193359375,
+              "t60_s": 1.9027843698393394
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 33.984375,
+              "t60_s": 1.7598211851712733
+            },
+            {
+              "hz": 40.283203125,
+              "t60_s": 1.8484603424339872
+            },
+            {
+              "hz": 112.79296875,
+              "t60_s": 2.0849432863726745
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 40.72265625,
+              "t60_s": 1.7076714032110711
+            },
+            {
+              "hz": 112.939453125,
+              "t60_s": 2.012283406209101
+            },
+            {
+              "hz": 123.33984375,
+              "t60_s": 2.023844473102262
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 112.646484375,
+              "t60_s": 2.2617383274081346
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 40.72265625,
+              "t60_s": 1.7153571803050525
+            },
+            {
+              "hz": 112.5,
+              "t60_s": 2.1362265297924363
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 112.939453125,
+              "t60_s": 2.030154629339131
+            },
+            {
+              "hz": 123.486328125,
+              "t60_s": 1.9352312036557664
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 46.875,
+              "t60_s": 1.97938141299921
+            },
+            {
+              "hz": 112.646484375,
+              "t60_s": 2.0635272839309193
+            },
+            {
+              "hz": 123.486328125,
+              "t60_s": 2.102398928419936
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 46.875,
+              "t60_s": 1.951646406682368
+            },
+            {
+              "hz": 112.646484375,
+              "t60_s": 1.9652978078224013
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 40.72265625,
+              "t60_s": 1.725714721913313
+            },
+            {
+              "hz": 112.646484375,
+              "t60_s": 2.0018736176171505
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 22.412109375,
+              "t60_s": 1.7614148871045512
+            },
+            {
+              "hz": 40.72265625,
+              "t60_s": 1.7100574754851432
+            },
+            {
+              "hz": 112.79296875,
+              "t60_s": 2.024773905766512
+            }
+          ]
+        },
+        {
+          "code": "latency",
+          "latency_ms": 8.0,
+          "lift_ms": 8.0,
+          "main_extra_ms": 0.0
+        },
+        {
+          "code": "phase_strength",
+          "values": [
+            {
+              "role": "L",
+              "value": 0.7
+            },
+            {
+              "role": "R",
+              "value": 0.5
+            },
+            {
+              "role": "C",
+              "value": 0.7
+            },
+            {
+              "role": "Ls",
+              "value": 0.7
+            },
+            {
+              "role": "Rs",
+              "value": 0.5
+            },
+            {
+              "role": "Lb",
+              "value": 0.5
+            },
+            {
+              "role": "Rb",
+              "value": 0.5
+            },
+            {
+              "role": "Tfl",
+              "value": 0.5
+            },
+            {
+              "role": "Tfr",
+              "value": 0.7
+            },
+            {
+              "role": "Tbl",
+              "value": 0.5
+            },
+            {
+              "role": "Tbr",
+              "value": 0.7
+            }
+          ]
+        },
+        {
+          "code": "phase_band",
+          "values": [
+            {
+              "role": "L",
+              "hz": 0.7
+            },
+            {
+              "role": "R",
+              "hz": 0.5
+            },
+            {
+              "role": "C",
+              "hz": 0.7
+            },
+            {
+              "role": "Ls",
+              "hz": 0.7
+            },
+            {
+              "role": "Rs",
+              "hz": 0.5
+            },
+            {
+              "role": "Lb",
+              "hz": 0.5
+            },
+            {
+              "role": "Rb",
+              "hz": 0.5
+            },
+            {
+              "role": "Tfl",
+              "hz": 0.5
+            },
+            {
+              "role": "Tfr",
+              "hz": 0.7
+            },
+            {
+              "role": "Tbl",
+              "hz": 0.5
+            },
+            {
+              "role": "Tbr",
+              "hz": 0.7
+            }
+          ]
+        }
+      ],
+      "notices": [],
+      "rc": [
+        {
+          "code": "rc_limit",
+          "params": {
+            "auto": "true",
+            "basis": "agreement",
+            "factor": "1",
+            "hz": "2000",
+            "positions": "9"
+          }
+        }
+      ],
+      "ba": {
+        "stale": false,
+        "subs_only": false,
+        "band_hz": [
+          20.0,
+          120.0
+        ],
+        "flatness_db": [
+          11.9920968052603,
+          2.3620447904056876
+        ],
+        "seat_spread_db": [
+          1.0327472806529352,
+          1.0327901230331507
+        ],
+        "positions": 9,
+        "rows": [
+          {
+            "role": "SW1",
+            "mode": "auto",
+            "gain_db": -10.431577324318514,
+            "delay_ms": 10.584447770682706,
+            "polarity": -1,
+            "allpass": [],
+            "high_pass": [
+              0.0,
+              "LR24"
+            ],
+            "low_pass": [
+              0.0,
+              "LR24"
+            ],
+            "peq": []
+          },
+          {
+            "role": "SW2",
+            "mode": "auto",
+            "gain_db": -13.171526448306485,
+            "delay_ms": 3.0943691154084068,
+            "polarity": -1,
+            "allpass": [],
+            "high_pass": [
+              0.0,
+              "LR24"
+            ],
+            "low_pass": [
+              0.0,
+              "LR24"
+            ],
+            "peq": []
+          },
+          {
+            "role": "SW3",
+            "mode": "auto",
+            "gain_db": -14.607298254766906,
+            "delay_ms": 20.68010562719521,
+            "polarity": -1,
+            "allpass": [],
+            "high_pass": [
+              0.0,
+              "LR24"
+            ],
+            "low_pass": [
+              0.0,
+              "LR24"
+            ],
+            "peq": []
+          }
+        ],
+        "layouts": [],
+        "warnings": []
+      }
+    }
+  },
+  {
+    "params": {
+      "engine_key": "Mixed|4034000000000000|-|-||-||-|4038000000000000|true|0|0|4024000000000000"
+    },
+    "data": {
+      "stale": false,
+      "channels": [
+        {
+          "role": "L",
+          "within_1db_pct": [
+            14.02439024390244,
+            85.56910569105692
+          ],
+          "gd_spread_ms": [
+            39.692511573758985,
+            50.200463220747395
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "R",
+          "within_1db_pct": [
+            7.113821138211382,
+            88.41463414634147
+          ],
+          "gd_spread_ms": [
+            33.33376643843614,
+            49.22959417310702
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "C",
+          "within_1db_pct": [
+            21.951219512195124,
+            85.56910569105692
+          ],
+          "gd_spread_ms": [
+            34.47080466904025,
+            52.9990131853965
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Ls",
+          "within_1db_pct": [
+            14.83739837398374,
+            79.8780487804878
+          ],
+          "gd_spread_ms": [
+            45.6544144112041,
+            49.311891529666035
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Rs",
+          "within_1db_pct": [
+            6.300813008130081,
+            91.66666666666666
+          ],
+          "gd_spread_ms": [
+            41.676230826869705,
+            47.97040944575082
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Lb",
+          "within_1db_pct": [
+            7.317073170731707,
+            62.601626016260155
+          ],
+          "gd_spread_ms": [
+            35.57861396189152,
+            46.330044707175915
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Rb",
+          "within_1db_pct": [
+            21.138211382113823,
+            90.04065040650406
+          ],
+          "gd_spread_ms": [
+            30.937783139066696,
+            47.28624680489682
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Tfl",
+          "within_1db_pct": [
+            7.520325203252034,
+            83.33333333333334
+          ],
+          "gd_spread_ms": [
+            35.23096717218483,
+            43.223365207221704
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Tfr",
+          "within_1db_pct": [
+            21.951219512195124,
+            81.70731707317073
+          ],
+          "gd_spread_ms": [
+            34.84650400470713,
+            47.855542364221066
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Tbl",
+          "within_1db_pct": [
+            20.73170731707317,
+            90.2439024390244
+          ],
+          "gd_spread_ms": [
+            42.13599101556126,
+            51.109202126667384
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Tbr",
+          "within_1db_pct": [
+            7.926829268292683,
+            85.16260162601627
+          ],
+          "gd_spread_ms": [
+            42.09752292459096,
+            50.61388360097246
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        }
+      ],
+      "total_delay_ms": 8.0,
+      "notes": [
+        {
+          "code": "rc_limit",
+          "hz": 500.0,
+          "auto": true,
+          "schroeder_hz": null,
+          "basis": "strict",
+          "factor": 1,
+          "band_hz": null,
+          "band_t60_s": null,
+          "positions": null
+        },
+        {
+          "code": "ba_cost",
+          "value": 153.0022530865336
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 40.869140625,
+              "t60_s": 1.6696641852179257
+            },
+            {
+              "hz": 112.939453125,
+              "t60_s": 1.9585840302281328
+            },
+            {
+              "hz": 123.193359375,
+              "t60_s": 1.9027843698393394
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 33.984375,
+              "t60_s": 1.7598211851712733
+            },
+            {
+              "hz": 40.283203125,
+              "t60_s": 1.8484603424339872
+            },
+            {
+              "hz": 112.79296875,
+              "t60_s": 2.0849432863726745
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 40.72265625,
+              "t60_s": 1.7076714032110711
+            },
+            {
+              "hz": 112.939453125,
+              "t60_s": 2.012283406209101
+            },
+            {
+              "hz": 123.33984375,
+              "t60_s": 2.023844473102262
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 112.646484375,
+              "t60_s": 2.2617383274081346
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 40.72265625,
+              "t60_s": 1.7153571803050525
+            },
+            {
+              "hz": 112.5,
+              "t60_s": 2.1362265297924363
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 112.939453125,
+              "t60_s": 2.030154629339131
+            },
+            {
+              "hz": 123.486328125,
+              "t60_s": 1.9352312036557664
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 46.875,
+              "t60_s": 1.97938141299921
+            },
+            {
+              "hz": 112.646484375,
+              "t60_s": 2.0635272839309193
+            },
+            {
+              "hz": 123.486328125,
+              "t60_s": 2.102398928419936
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 46.875,
+              "t60_s": 1.951646406682368
+            },
+            {
+              "hz": 112.646484375,
+              "t60_s": 1.9652978078224013
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 40.72265625,
+              "t60_s": 1.725714721913313
+            },
+            {
+              "hz": 112.646484375,
+              "t60_s": 2.0018736176171505
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 22.412109375,
+              "t60_s": 1.7614148871045512
+            },
+            {
+              "hz": 40.72265625,
+              "t60_s": 1.7100574754851432
+            },
+            {
+              "hz": 112.79296875,
+              "t60_s": 2.024773905766512
+            }
+          ]
+        },
+        {
+          "code": "latency",
+          "latency_ms": 8.0,
+          "lift_ms": 8.0,
+          "main_extra_ms": 0.0
+        },
+        {
+          "code": "phase_strength",
+          "values": [
+            {
+              "role": "L",
+              "value": 0.7
+            },
+            {
+              "role": "R",
+              "value": 0.5
+            },
+            {
+              "role": "C",
+              "value": 0.7
+            },
+            {
+              "role": "Ls",
+              "value": 0.5
+            },
+            {
+              "role": "Rs",
+              "value": 0.5
+            },
+            {
+              "role": "Lb",
+              "value": 0.5
+            },
+            {
+              "role": "Rb",
+              "value": 0.5
+            },
+            {
+              "role": "Tfl",
+              "value": 0.5
+            },
+            {
+              "role": "Tfr",
+              "value": 0.5
+            },
+            {
+              "role": "Tbl",
+              "value": 0.5
+            },
+            {
+              "role": "Tbr",
+              "value": 0.7
+            }
+          ]
+        },
+        {
+          "code": "phase_band",
+          "values": [
+            {
+              "role": "L",
+              "hz": 0.7
+            },
+            {
+              "role": "R",
+              "hz": 0.5
+            },
+            {
+              "role": "C",
+              "hz": 0.7
+            },
+            {
+              "role": "Ls",
+              "hz": 0.5
+            },
+            {
+              "role": "Rs",
+              "hz": 0.5
+            },
+            {
+              "role": "Lb",
+              "hz": 0.5
+            },
+            {
+              "role": "Rb",
+              "hz": 0.5
+            },
+            {
+              "role": "Tfl",
+              "hz": 0.5
+            },
+            {
+              "role": "Tfr",
+              "hz": 0.5
+            },
+            {
+              "role": "Tbl",
+              "hz": 0.5
+            },
+            {
+              "role": "Tbr",
+              "hz": 0.7
+            }
+          ]
+        }
+      ],
+      "notices": [],
+      "rc": [
+        {
+          "code": "rc_limit",
+          "params": {
+            "auto": "true",
+            "basis": "strict",
+            "factor": "1",
+            "hz": "500"
+          }
+        },
+        {
+          "code": "rc_no_room_volume",
+          "params": {}
+        }
+      ],
+      "ba": {
+        "stale": false,
+        "subs_only": false,
+        "band_hz": [
+          20.0,
+          120.0
+        ],
+        "flatness_db": [
+          11.9920968052603,
+          2.3620447904056876
+        ],
+        "seat_spread_db": [
+          1.0327472806529352,
+          1.0327901230331507
+        ],
+        "positions": 9,
+        "rows": [
+          {
+            "role": "SW1",
+            "mode": "auto",
+            "gain_db": -10.431577324318514,
+            "delay_ms": 10.584447770682706,
+            "polarity": -1,
+            "allpass": [],
+            "high_pass": [
+              0.0,
+              "LR24"
+            ],
+            "low_pass": [
+              0.0,
+              "LR24"
+            ],
+            "peq": []
+          },
+          {
+            "role": "SW2",
+            "mode": "auto",
+            "gain_db": -13.171526448306485,
+            "delay_ms": 3.0943691154084068,
+            "polarity": -1,
+            "allpass": [],
+            "high_pass": [
+              0.0,
+              "LR24"
+            ],
+            "low_pass": [
+              0.0,
+              "LR24"
+            ],
+            "peq": []
+          },
+          {
+            "role": "SW3",
+            "mode": "auto",
+            "gain_db": -14.607298254766906,
+            "delay_ms": 20.68010562719521,
+            "polarity": -1,
+            "allpass": [],
+            "high_pass": [
+              0.0,
+              "LR24"
+            ],
+            "low_pass": [
+              0.0,
+              "LR24"
+            ],
+            "peq": []
+          }
+        ],
+        "layouts": [],
+        "warnings": []
+      }
+    }
+  },
+  {
+    "params": {
+      "engine_key": "Mixed|4034000000000000|-|-||-||-|4038000000000000|true|0|0|4024000000000000|rc_hi_transition=2"
+    },
+    "data": {
+      "stale": false,
+      "channels": [
+        {
+          "role": "L",
+          "within_1db_pct": [
+            14.02439024390244,
+            85.56910569105692
+          ],
+          "gd_spread_ms": [
+            39.692511573758985,
+            50.200463220747395
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "R",
+          "within_1db_pct": [
+            7.113821138211382,
+            88.41463414634147
+          ],
+          "gd_spread_ms": [
+            33.33376643843614,
+            49.22959417310702
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "C",
+          "within_1db_pct": [
+            21.951219512195124,
+            85.56910569105692
+          ],
+          "gd_spread_ms": [
+            34.47080466904025,
+            52.9990131853965
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Ls",
+          "within_1db_pct": [
+            14.83739837398374,
+            79.8780487804878
+          ],
+          "gd_spread_ms": [
+            45.6544144112041,
+            49.311891529666035
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Rs",
+          "within_1db_pct": [
+            6.300813008130081,
+            91.66666666666666
+          ],
+          "gd_spread_ms": [
+            41.676230826869705,
+            47.97040944575082
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Lb",
+          "within_1db_pct": [
+            7.317073170731707,
+            62.601626016260155
+          ],
+          "gd_spread_ms": [
+            35.57861396189152,
+            46.330044707175915
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Rb",
+          "within_1db_pct": [
+            21.138211382113823,
+            90.04065040650406
+          ],
+          "gd_spread_ms": [
+            30.937783139066696,
+            47.28624680489682
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Tfl",
+          "within_1db_pct": [
+            7.520325203252034,
+            83.33333333333334
+          ],
+          "gd_spread_ms": [
+            35.23096717218483,
+            43.223365207221704
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Tfr",
+          "within_1db_pct": [
+            21.951219512195124,
+            81.70731707317073
+          ],
+          "gd_spread_ms": [
+            34.84650400470713,
+            47.855542364221066
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Tbl",
+          "within_1db_pct": [
+            20.73170731707317,
+            90.2439024390244
+          ],
+          "gd_spread_ms": [
+            42.13599101556126,
+            51.109202126667384
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Tbr",
+          "within_1db_pct": [
+            7.926829268292683,
+            85.16260162601627
+          ],
+          "gd_spread_ms": [
+            42.09752292459096,
+            50.61388360097246
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        }
+      ],
+      "total_delay_ms": 8.0,
+      "notes": [
+        {
+          "code": "rc_limit",
+          "hz": 500.0,
+          "auto": true,
+          "schroeder_hz": null,
+          "basis": "strict",
+          "factor": 2,
+          "band_hz": null,
+          "band_t60_s": null,
+          "positions": null
+        },
+        {
+          "code": "ba_cost",
+          "value": 153.0022530865336
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 40.869140625,
+              "t60_s": 1.6696641852179257
+            },
+            {
+              "hz": 112.939453125,
+              "t60_s": 1.9585840302281328
+            },
+            {
+              "hz": 123.193359375,
+              "t60_s": 1.9027843698393394
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 33.984375,
+              "t60_s": 1.7598211851712733
+            },
+            {
+              "hz": 40.283203125,
+              "t60_s": 1.8484603424339872
+            },
+            {
+              "hz": 112.79296875,
+              "t60_s": 2.0849432863726745
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 40.72265625,
+              "t60_s": 1.7076714032110711
+            },
+            {
+              "hz": 112.939453125,
+              "t60_s": 2.012283406209101
+            },
+            {
+              "hz": 123.33984375,
+              "t60_s": 2.023844473102262
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 112.646484375,
+              "t60_s": 2.2617383274081346
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 40.72265625,
+              "t60_s": 1.7153571803050525
+            },
+            {
+              "hz": 112.5,
+              "t60_s": 2.1362265297924363
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 112.939453125,
+              "t60_s": 2.030154629339131
+            },
+            {
+              "hz": 123.486328125,
+              "t60_s": 1.9352312036557664
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 46.875,
+              "t60_s": 1.97938141299921
+            },
+            {
+              "hz": 112.646484375,
+              "t60_s": 2.0635272839309193
+            },
+            {
+              "hz": 123.486328125,
+              "t60_s": 2.102398928419936
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 46.875,
+              "t60_s": 1.951646406682368
+            },
+            {
+              "hz": 112.646484375,
+              "t60_s": 1.9652978078224013
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 40.72265625,
+              "t60_s": 1.725714721913313
+            },
+            {
+              "hz": 112.646484375,
+              "t60_s": 2.0018736176171505
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 22.412109375,
+              "t60_s": 1.7614148871045512
+            },
+            {
+              "hz": 40.72265625,
+              "t60_s": 1.7100574754851432
+            },
+            {
+              "hz": 112.79296875,
+              "t60_s": 2.024773905766512
+            }
+          ]
+        },
+        {
+          "code": "latency",
+          "latency_ms": 8.0,
+          "lift_ms": 8.0,
+          "main_extra_ms": 0.0
+        },
+        {
+          "code": "phase_strength",
+          "values": [
+            {
+              "role": "L",
+              "value": 0.7
+            },
+            {
+              "role": "R",
+              "value": 0.5
+            },
+            {
+              "role": "C",
+              "value": 0.7
+            },
+            {
+              "role": "Ls",
+              "value": 0.5
+            },
+            {
+              "role": "Rs",
+              "value": 0.5
+            },
+            {
+              "role": "Lb",
+              "value": 0.5
+            },
+            {
+              "role": "Rb",
+              "value": 0.5
+            },
+            {
+              "role": "Tfl",
+              "value": 0.5
+            },
+            {
+              "role": "Tfr",
+              "value": 0.5
+            },
+            {
+              "role": "Tbl",
+              "value": 0.5
+            },
+            {
+              "role": "Tbr",
+              "value": 0.7
+            }
+          ]
+        },
+        {
+          "code": "phase_band",
+          "values": [
+            {
+              "role": "L",
+              "hz": 0.7
+            },
+            {
+              "role": "R",
+              "hz": 0.5
+            },
+            {
+              "role": "C",
+              "hz": 0.7
+            },
+            {
+              "role": "Ls",
+              "hz": 0.5
+            },
+            {
+              "role": "Rs",
+              "hz": 0.5
+            },
+            {
+              "role": "Lb",
+              "hz": 0.5
+            },
+            {
+              "role": "Rb",
+              "hz": 0.5
+            },
+            {
+              "role": "Tfl",
+              "hz": 0.5
+            },
+            {
+              "role": "Tfr",
+              "hz": 0.5
+            },
+            {
+              "role": "Tbl",
+              "hz": 0.5
+            },
+            {
+              "role": "Tbr",
+              "hz": 0.7
+            }
+          ]
+        }
+      ],
+      "notices": [],
+      "rc": [
+        {
+          "code": "rc_limit",
+          "params": {
+            "auto": "true",
+            "basis": "strict",
+            "factor": "2",
+            "hz": "500"
+          }
+        },
+        {
+          "code": "rc_no_room_volume",
+          "params": {}
+        }
+      ],
+      "ba": {
+        "stale": false,
+        "subs_only": false,
+        "band_hz": [
+          20.0,
+          120.0
+        ],
+        "flatness_db": [
+          11.9920968052603,
+          2.3620447904056876
+        ],
+        "seat_spread_db": [
+          1.0327472806529352,
+          1.0327901230331507
+        ],
+        "positions": 9,
+        "rows": [
+          {
+            "role": "SW1",
+            "mode": "auto",
+            "gain_db": -10.431577324318514,
+            "delay_ms": 10.584447770682706,
+            "polarity": -1,
+            "allpass": [],
+            "high_pass": [
+              0.0,
+              "LR24"
+            ],
+            "low_pass": [
+              0.0,
+              "LR24"
+            ],
+            "peq": []
+          },
+          {
+            "role": "SW2",
+            "mode": "auto",
+            "gain_db": -13.171526448306485,
+            "delay_ms": 3.0943691154084068,
+            "polarity": -1,
+            "allpass": [],
+            "high_pass": [
+              0.0,
+              "LR24"
+            ],
+            "low_pass": [
+              0.0,
+              "LR24"
+            ],
+            "peq": []
+          },
+          {
+            "role": "SW3",
+            "mode": "auto",
+            "gain_db": -14.607298254766906,
+            "delay_ms": 20.68010562719521,
+            "polarity": -1,
+            "allpass": [],
+            "high_pass": [
+              0.0,
+              "LR24"
+            ],
+            "low_pass": [
+              0.0,
+              "LR24"
+            ],
+            "peq": []
+          }
+        ],
+        "layouts": [],
+        "warnings": []
+      }
+    }
+  },
+  {
+    "params": {
+      "engine_key": "Mixed|4034000000000000|-|-||-||-|4038000000000000|true|0|0|4024000000000000|rc_hi_transition=4"
+    },
+    "data": {
+      "stale": false,
+      "channels": [
+        {
+          "role": "L",
+          "within_1db_pct": [
+            14.02439024390244,
+            85.56910569105692
+          ],
+          "gd_spread_ms": [
+            39.692511573758985,
+            50.200463220747395
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "R",
+          "within_1db_pct": [
+            7.113821138211382,
+            88.41463414634147
+          ],
+          "gd_spread_ms": [
+            33.33376643843614,
+            49.22959417310702
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "C",
+          "within_1db_pct": [
+            21.951219512195124,
+            85.56910569105692
+          ],
+          "gd_spread_ms": [
+            34.47080466904025,
+            52.9990131853965
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Ls",
+          "within_1db_pct": [
+            14.83739837398374,
+            79.8780487804878
+          ],
+          "gd_spread_ms": [
+            45.6544144112041,
+            49.311891529666035
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Rs",
+          "within_1db_pct": [
+            6.300813008130081,
+            91.66666666666666
+          ],
+          "gd_spread_ms": [
+            41.676230826869705,
+            47.97040944575082
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Lb",
+          "within_1db_pct": [
+            7.317073170731707,
+            62.601626016260155
+          ],
+          "gd_spread_ms": [
+            35.57861396189152,
+            46.330044707175915
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Rb",
+          "within_1db_pct": [
+            21.138211382113823,
+            90.04065040650406
+          ],
+          "gd_spread_ms": [
+            30.937783139066696,
+            47.28624680489682
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Tfl",
+          "within_1db_pct": [
+            7.520325203252034,
+            83.33333333333334
+          ],
+          "gd_spread_ms": [
+            35.23096717218483,
+            43.223365207221704
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Tfr",
+          "within_1db_pct": [
+            21.951219512195124,
+            81.70731707317073
+          ],
+          "gd_spread_ms": [
+            34.84650400470713,
+            47.855542364221066
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Tbl",
+          "within_1db_pct": [
+            20.73170731707317,
+            90.2439024390244
+          ],
+          "gd_spread_ms": [
+            42.13599101556126,
+            51.109202126667384
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Tbr",
+          "within_1db_pct": [
+            7.926829268292683,
+            85.16260162601627
+          ],
+          "gd_spread_ms": [
+            42.09752292459096,
+            50.61388360097246
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        }
+      ],
+      "total_delay_ms": 8.0,
+      "notes": [
+        {
+          "code": "rc_limit",
+          "hz": 500.0,
+          "auto": true,
+          "schroeder_hz": null,
+          "basis": "strict",
+          "factor": 4,
+          "band_hz": null,
+          "band_t60_s": null,
+          "positions": null
+        },
+        {
+          "code": "ba_cost",
+          "value": 153.0022530865336
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 40.869140625,
+              "t60_s": 1.6696641852179257
+            },
+            {
+              "hz": 112.939453125,
+              "t60_s": 1.9585840302281328
+            },
+            {
+              "hz": 123.193359375,
+              "t60_s": 1.9027843698393394
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 33.984375,
+              "t60_s": 1.7598211851712733
+            },
+            {
+              "hz": 40.283203125,
+              "t60_s": 1.8484603424339872
+            },
+            {
+              "hz": 112.79296875,
+              "t60_s": 2.0849432863726745
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 40.72265625,
+              "t60_s": 1.7076714032110711
+            },
+            {
+              "hz": 112.939453125,
+              "t60_s": 2.012283406209101
+            },
+            {
+              "hz": 123.33984375,
+              "t60_s": 2.023844473102262
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 112.646484375,
+              "t60_s": 2.2617383274081346
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 40.72265625,
+              "t60_s": 1.7153571803050525
+            },
+            {
+              "hz": 112.5,
+              "t60_s": 2.1362265297924363
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 112.939453125,
+              "t60_s": 2.030154629339131
+            },
+            {
+              "hz": 123.486328125,
+              "t60_s": 1.9352312036557664
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 46.875,
+              "t60_s": 1.97938141299921
+            },
+            {
+              "hz": 112.646484375,
+              "t60_s": 2.0635272839309193
+            },
+            {
+              "hz": 123.486328125,
+              "t60_s": 2.102398928419936
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 46.875,
+              "t60_s": 1.951646406682368
+            },
+            {
+              "hz": 112.646484375,
+              "t60_s": 1.9652978078224013
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 40.72265625,
+              "t60_s": 1.725714721913313
+            },
+            {
+              "hz": 112.646484375,
+              "t60_s": 2.0018736176171505
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 22.412109375,
+              "t60_s": 1.7614148871045512
+            },
+            {
+              "hz": 40.72265625,
+              "t60_s": 1.7100574754851432
+            },
+            {
+              "hz": 112.79296875,
+              "t60_s": 2.024773905766512
+            }
+          ]
+        },
+        {
+          "code": "latency",
+          "latency_ms": 8.0,
+          "lift_ms": 8.0,
+          "main_extra_ms": 0.0
+        },
+        {
+          "code": "phase_strength",
+          "values": [
+            {
+              "role": "L",
+              "value": 0.7
+            },
+            {
+              "role": "R",
+              "value": 0.5
+            },
+            {
+              "role": "C",
+              "value": 0.7
+            },
+            {
+              "role": "Ls",
+              "value": 0.5
+            },
+            {
+              "role": "Rs",
+              "value": 0.5
+            },
+            {
+              "role": "Lb",
+              "value": 0.5
+            },
+            {
+              "role": "Rb",
+              "value": 0.5
+            },
+            {
+              "role": "Tfl",
+              "value": 0.5
+            },
+            {
+              "role": "Tfr",
+              "value": 0.5
+            },
+            {
+              "role": "Tbl",
+              "value": 0.5
+            },
+            {
+              "role": "Tbr",
+              "value": 0.7
+            }
+          ]
+        },
+        {
+          "code": "phase_band",
+          "values": [
+            {
+              "role": "L",
+              "hz": 0.7
+            },
+            {
+              "role": "R",
+              "hz": 0.5
+            },
+            {
+              "role": "C",
+              "hz": 0.7
+            },
+            {
+              "role": "Ls",
+              "hz": 0.5
+            },
+            {
+              "role": "Rs",
+              "hz": 0.5
+            },
+            {
+              "role": "Lb",
+              "hz": 0.5
+            },
+            {
+              "role": "Rb",
+              "hz": 0.5
+            },
+            {
+              "role": "Tfl",
+              "hz": 0.5
+            },
+            {
+              "role": "Tfr",
+              "hz": 0.5
+            },
+            {
+              "role": "Tbl",
+              "hz": 0.5
+            },
+            {
+              "role": "Tbr",
+              "hz": 0.7
+            }
+          ]
+        }
+      ],
+      "notices": [],
+      "rc": [
+        {
+          "code": "rc_limit",
+          "params": {
+            "auto": "true",
+            "basis": "strict",
+            "factor": "4",
+            "hz": "500"
+          }
+        },
+        {
+          "code": "rc_no_room_volume",
+          "params": {}
+        }
+      ],
+      "ba": {
+        "stale": false,
+        "subs_only": false,
+        "band_hz": [
+          20.0,
+          120.0
+        ],
+        "flatness_db": [
+          11.9920968052603,
+          2.3620447904056876
+        ],
+        "seat_spread_db": [
+          1.0327472806529352,
+          1.0327901230331507
+        ],
+        "positions": 9,
+        "rows": [
+          {
+            "role": "SW1",
+            "mode": "auto",
+            "gain_db": -10.431577324318514,
+            "delay_ms": 10.584447770682706,
+            "polarity": -1,
+            "allpass": [],
+            "high_pass": [
+              0.0,
+              "LR24"
+            ],
+            "low_pass": [
+              0.0,
+              "LR24"
+            ],
+            "peq": []
+          },
+          {
+            "role": "SW2",
+            "mode": "auto",
+            "gain_db": -13.171526448306485,
+            "delay_ms": 3.0943691154084068,
+            "polarity": -1,
+            "allpass": [],
+            "high_pass": [
+              0.0,
+              "LR24"
+            ],
+            "low_pass": [
+              0.0,
+              "LR24"
+            ],
+            "peq": []
+          },
+          {
+            "role": "SW3",
+            "mode": "auto",
+            "gain_db": -14.607298254766906,
+            "delay_ms": 20.68010562719521,
+            "polarity": -1,
+            "allpass": [],
+            "high_pass": [
+              0.0,
+              "LR24"
+            ],
+            "low_pass": [
+              0.0,
+              "LR24"
+            ],
+            "peq": []
+          }
+        ],
+        "layouts": [],
+        "warnings": []
+      }
+    }
+  },
+  {
+    "params": {
+      "engine_key": "Mixed|4034000000000000|407f400000000000|-||-||-|4038000000000000|true|0|0|4024000000000000"
+    },
+    "data": {
+      "stale": false,
+      "channels": [
+        {
+          "role": "L",
+          "within_1db_pct": [
+            14.02439024390244,
+            85.56910569105692
+          ],
+          "gd_spread_ms": [
+            39.692511573758985,
+            50.200463220747395
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "R",
+          "within_1db_pct": [
+            7.113821138211382,
+            88.41463414634147
+          ],
+          "gd_spread_ms": [
+            33.33376643843614,
+            49.22959417310702
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "C",
+          "within_1db_pct": [
+            21.951219512195124,
+            85.56910569105692
+          ],
+          "gd_spread_ms": [
+            34.47080466904025,
+            52.9990131853965
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Ls",
+          "within_1db_pct": [
+            14.83739837398374,
+            79.8780487804878
+          ],
+          "gd_spread_ms": [
+            45.6544144112041,
+            49.311891529666035
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Rs",
+          "within_1db_pct": [
+            6.300813008130081,
+            91.66666666666666
+          ],
+          "gd_spread_ms": [
+            41.676230826869705,
+            47.97040944575082
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Lb",
+          "within_1db_pct": [
+            7.317073170731707,
+            62.601626016260155
+          ],
+          "gd_spread_ms": [
+            35.57861396189152,
+            46.330044707175915
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Rb",
+          "within_1db_pct": [
+            21.138211382113823,
+            90.04065040650406
+          ],
+          "gd_spread_ms": [
+            30.937783139066696,
+            47.28624680489682
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Tfl",
+          "within_1db_pct": [
+            7.520325203252034,
+            83.33333333333334
+          ],
+          "gd_spread_ms": [
+            35.23096717218483,
+            43.223365207221704
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Tfr",
+          "within_1db_pct": [
+            21.951219512195124,
+            81.70731707317073
+          ],
+          "gd_spread_ms": [
+            34.84650400470713,
+            47.855542364221066
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Tbl",
+          "within_1db_pct": [
+            20.73170731707317,
+            90.2439024390244
+          ],
+          "gd_spread_ms": [
+            42.13599101556126,
+            51.109202126667384
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Tbr",
+          "within_1db_pct": [
+            7.926829268292683,
+            85.16260162601627
+          ],
+          "gd_spread_ms": [
+            42.09752292459096,
+            50.61388360097246
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        }
+      ],
+      "total_delay_ms": 8.0,
+      "notes": [
+        {
+          "code": "rc_limit",
+          "hz": 500.0,
+          "auto": false,
+          "schroeder_hz": null,
+          "basis": "strict",
+          "factor": 1,
+          "band_hz": null,
+          "band_t60_s": null,
+          "positions": null
+        },
+        {
+          "code": "ba_cost",
+          "value": 153.0022530865336
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 40.869140625,
+              "t60_s": 1.6696641852179257
+            },
+            {
+              "hz": 112.939453125,
+              "t60_s": 1.9585840302281328
+            },
+            {
+              "hz": 123.193359375,
+              "t60_s": 1.9027843698393394
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 33.984375,
+              "t60_s": 1.7598211851712733
+            },
+            {
+              "hz": 40.283203125,
+              "t60_s": 1.8484603424339872
+            },
+            {
+              "hz": 112.79296875,
+              "t60_s": 2.0849432863726745
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 40.72265625,
+              "t60_s": 1.7076714032110711
+            },
+            {
+              "hz": 112.939453125,
+              "t60_s": 2.012283406209101
+            },
+            {
+              "hz": 123.33984375,
+              "t60_s": 2.023844473102262
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 112.646484375,
+              "t60_s": 2.2617383274081346
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 40.72265625,
+              "t60_s": 1.7153571803050525
+            },
+            {
+              "hz": 112.5,
+              "t60_s": 2.1362265297924363
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 112.939453125,
+              "t60_s": 2.030154629339131
+            },
+            {
+              "hz": 123.486328125,
+              "t60_s": 1.9352312036557664
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 46.875,
+              "t60_s": 1.97938141299921
+            },
+            {
+              "hz": 112.646484375,
+              "t60_s": 2.0635272839309193
+            },
+            {
+              "hz": 123.486328125,
+              "t60_s": 2.102398928419936
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 46.875,
+              "t60_s": 1.951646406682368
+            },
+            {
+              "hz": 112.646484375,
+              "t60_s": 1.9652978078224013
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 40.72265625,
+              "t60_s": 1.725714721913313
+            },
+            {
+              "hz": 112.646484375,
+              "t60_s": 2.0018736176171505
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 22.412109375,
+              "t60_s": 1.7614148871045512
+            },
+            {
+              "hz": 40.72265625,
+              "t60_s": 1.7100574754851432
+            },
+            {
+              "hz": 112.79296875,
+              "t60_s": 2.024773905766512
+            }
+          ]
+        },
+        {
+          "code": "latency",
+          "latency_ms": 8.0,
+          "lift_ms": 8.0,
+          "main_extra_ms": 0.0
+        },
+        {
+          "code": "phase_strength",
+          "values": [
+            {
+              "role": "L",
+              "value": 0.7
+            },
+            {
+              "role": "R",
+              "value": 0.5
+            },
+            {
+              "role": "C",
+              "value": 0.7
+            },
+            {
+              "role": "Ls",
+              "value": 0.5
+            },
+            {
+              "role": "Rs",
+              "value": 0.5
+            },
+            {
+              "role": "Lb",
+              "value": 0.5
+            },
+            {
+              "role": "Rb",
+              "value": 0.5
+            },
+            {
+              "role": "Tfl",
+              "value": 0.5
+            },
+            {
+              "role": "Tfr",
+              "value": 0.5
+            },
+            {
+              "role": "Tbl",
+              "value": 0.5
+            },
+            {
+              "role": "Tbr",
+              "value": 0.7
+            }
+          ]
+        },
+        {
+          "code": "phase_band",
+          "values": [
+            {
+              "role": "L",
+              "hz": 0.7
+            },
+            {
+              "role": "R",
+              "hz": 0.5
+            },
+            {
+              "role": "C",
+              "hz": 0.7
+            },
+            {
+              "role": "Ls",
+              "hz": 0.5
+            },
+            {
+              "role": "Rs",
+              "hz": 0.5
+            },
+            {
+              "role": "Lb",
+              "hz": 0.5
+            },
+            {
+              "role": "Rb",
+              "hz": 0.5
+            },
+            {
+              "role": "Tfl",
+              "hz": 0.5
+            },
+            {
+              "role": "Tfr",
+              "hz": 0.5
+            },
+            {
+              "role": "Tbl",
+              "hz": 0.5
+            },
+            {
+              "role": "Tbr",
+              "hz": 0.7
+            }
+          ]
+        }
+      ],
+      "notices": [],
+      "rc": [
+        {
+          "code": "rc_limit",
+          "params": {
+            "auto": "false",
+            "basis": "strict",
+            "factor": "1",
+            "hz": "500"
+          }
+        }
+      ],
+      "ba": {
+        "stale": false,
+        "subs_only": false,
+        "band_hz": [
+          20.0,
+          120.0
+        ],
+        "flatness_db": [
+          11.9920968052603,
+          2.3620447904056876
+        ],
+        "seat_spread_db": [
+          1.0327472806529352,
+          1.0327901230331507
+        ],
+        "positions": 9,
+        "rows": [
+          {
+            "role": "SW1",
+            "mode": "auto",
+            "gain_db": -10.431577324318514,
+            "delay_ms": 10.584447770682706,
+            "polarity": -1,
+            "allpass": [],
+            "high_pass": [
+              0.0,
+              "LR24"
+            ],
+            "low_pass": [
+              0.0,
+              "LR24"
+            ],
+            "peq": []
+          },
+          {
+            "role": "SW2",
+            "mode": "auto",
+            "gain_db": -13.171526448306485,
+            "delay_ms": 3.0943691154084068,
+            "polarity": -1,
+            "allpass": [],
+            "high_pass": [
+              0.0,
+              "LR24"
+            ],
+            "low_pass": [
+              0.0,
+              "LR24"
+            ],
+            "peq": []
+          },
+          {
+            "role": "SW3",
+            "mode": "auto",
+            "gain_db": -14.607298254766906,
+            "delay_ms": 20.68010562719521,
+            "polarity": -1,
+            "allpass": [],
+            "high_pass": [
+              0.0,
+              "LR24"
+            ],
+            "low_pass": [
+              0.0,
+              "LR24"
+            ],
+            "peq": []
+          }
+        ],
+        "layouts": [],
+        "warnings": []
+      }
+    }
+  },
+  {
+    "params": {
+      "engine_key": "Mixed|4034000000000000|-|-||-||-|4038000000000000|true|0|0|4024000000000000"
+    },
+    "data": {
+      "stale": false,
+      "channels": [
+        {
+          "role": "L",
+          "within_1db_pct": [
+            14.02439024390244,
+            85.56910569105692
+          ],
+          "gd_spread_ms": [
+            39.692511573758985,
+            50.200463220747395
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "R",
+          "within_1db_pct": [
+            7.113821138211382,
+            88.41463414634147
+          ],
+          "gd_spread_ms": [
+            33.33376643843614,
+            49.22959417310702
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "C",
+          "within_1db_pct": [
+            21.951219512195124,
+            85.56910569105692
+          ],
+          "gd_spread_ms": [
+            34.47080466904025,
+            52.9990131853965
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Ls",
+          "within_1db_pct": [
+            14.83739837398374,
+            79.8780487804878
+          ],
+          "gd_spread_ms": [
+            45.6544144112041,
+            49.311891529666035
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Rs",
+          "within_1db_pct": [
+            6.300813008130081,
+            91.66666666666666
+          ],
+          "gd_spread_ms": [
+            41.676230826869705,
+            47.97040944575082
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Lb",
+          "within_1db_pct": [
+            7.317073170731707,
+            62.601626016260155
+          ],
+          "gd_spread_ms": [
+            35.57861396189152,
+            46.330044707175915
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Rb",
+          "within_1db_pct": [
+            21.138211382113823,
+            90.04065040650406
+          ],
+          "gd_spread_ms": [
+            30.937783139066696,
+            47.28624680489682
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Tfl",
+          "within_1db_pct": [
+            7.520325203252034,
+            83.33333333333334
+          ],
+          "gd_spread_ms": [
+            35.23096717218483,
+            43.223365207221704
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Tfr",
+          "within_1db_pct": [
+            21.951219512195124,
+            81.70731707317073
+          ],
+          "gd_spread_ms": [
+            34.84650400470713,
+            47.855542364221066
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Tbl",
+          "within_1db_pct": [
+            20.73170731707317,
+            90.2439024390244
+          ],
+          "gd_spread_ms": [
+            42.13599101556126,
+            51.109202126667384
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Tbr",
+          "within_1db_pct": [
+            7.926829268292683,
+            85.16260162601627
+          ],
+          "gd_spread_ms": [
+            42.09752292459096,
+            50.61388360097246
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        }
+      ],
+      "total_delay_ms": 8.0,
+      "notes": [
+        {
+          "code": "rc_limit",
+          "hz": 500.0,
+          "auto": true,
+          "schroeder_hz": null,
+          "basis": "strict",
+          "factor": 1,
+          "band_hz": null,
+          "band_t60_s": null,
+          "positions": null
+        },
+        {
+          "code": "ba_cost",
+          "value": 153.0022530865336
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 40.869140625,
+              "t60_s": 1.6696641852179257
+            },
+            {
+              "hz": 112.939453125,
+              "t60_s": 1.9585840302281328
+            },
+            {
+              "hz": 123.193359375,
+              "t60_s": 1.9027843698393394
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 33.984375,
+              "t60_s": 1.7598211851712733
+            },
+            {
+              "hz": 40.283203125,
+              "t60_s": 1.8484603424339872
+            },
+            {
+              "hz": 112.79296875,
+              "t60_s": 2.0849432863726745
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 40.72265625,
+              "t60_s": 1.7076714032110711
+            },
+            {
+              "hz": 112.939453125,
+              "t60_s": 2.012283406209101
+            },
+            {
+              "hz": 123.33984375,
+              "t60_s": 2.023844473102262
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 112.646484375,
+              "t60_s": 2.2617383274081346
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 40.72265625,
+              "t60_s": 1.7153571803050525
+            },
+            {
+              "hz": 112.5,
+              "t60_s": 2.1362265297924363
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 112.939453125,
+              "t60_s": 2.030154629339131
+            },
+            {
+              "hz": 123.486328125,
+              "t60_s": 1.9352312036557664
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 46.875,
+              "t60_s": 1.97938141299921
+            },
+            {
+              "hz": 112.646484375,
+              "t60_s": 2.0635272839309193
+            },
+            {
+              "hz": 123.486328125,
+              "t60_s": 2.102398928419936
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 46.875,
+              "t60_s": 1.951646406682368
+            },
+            {
+              "hz": 112.646484375,
+              "t60_s": 1.9652978078224013
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 40.72265625,
+              "t60_s": 1.725714721913313
+            },
+            {
+              "hz": 112.646484375,
+              "t60_s": 2.0018736176171505
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 22.412109375,
+              "t60_s": 1.7614148871045512
+            },
+            {
+              "hz": 40.72265625,
+              "t60_s": 1.7100574754851432
+            },
+            {
+              "hz": 112.79296875,
+              "t60_s": 2.024773905766512
+            }
+          ]
+        },
+        {
+          "code": "latency",
+          "latency_ms": 8.0,
+          "lift_ms": 8.0,
+          "main_extra_ms": 0.0
+        },
+        {
+          "code": "phase_strength",
+          "values": [
+            {
+              "role": "L",
+              "value": 0.7
+            },
+            {
+              "role": "R",
+              "value": 0.5
+            },
+            {
+              "role": "C",
+              "value": 0.7
+            },
+            {
+              "role": "Ls",
+              "value": 0.5
+            },
+            {
+              "role": "Rs",
+              "value": 0.5
+            },
+            {
+              "role": "Lb",
+              "value": 0.5
+            },
+            {
+              "role": "Rb",
+              "value": 0.5
+            },
+            {
+              "role": "Tfl",
+              "value": 0.5
+            },
+            {
+              "role": "Tfr",
+              "value": 0.5
+            },
+            {
+              "role": "Tbl",
+              "value": 0.5
+            },
+            {
+              "role": "Tbr",
+              "value": 0.7
+            }
+          ]
+        },
+        {
+          "code": "phase_band",
+          "values": [
+            {
+              "role": "L",
+              "hz": 0.7
+            },
+            {
+              "role": "R",
+              "hz": 0.5
+            },
+            {
+              "role": "C",
+              "hz": 0.7
+            },
+            {
+              "role": "Ls",
+              "hz": 0.5
+            },
+            {
+              "role": "Rs",
+              "hz": 0.5
+            },
+            {
+              "role": "Lb",
+              "hz": 0.5
+            },
+            {
+              "role": "Rb",
+              "hz": 0.5
+            },
+            {
+              "role": "Tfl",
+              "hz": 0.5
+            },
+            {
+              "role": "Tfr",
+              "hz": 0.5
+            },
+            {
+              "role": "Tbl",
+              "hz": 0.5
+            },
+            {
+              "role": "Tbr",
+              "hz": 0.7
+            }
+          ]
+        }
+      ],
+      "notices": [],
+      "rc": [
+        {
+          "code": "rc_limit",
+          "params": {
+            "auto": "true",
+            "basis": "strict",
+            "factor": "1",
+            "hz": "500"
+          }
+        },
+        {
+          "code": "rc_no_room_volume",
+          "params": {}
+        }
+      ],
+      "ba": {
+        "stale": false,
+        "subs_only": false,
+        "band_hz": [
+          20.0,
+          120.0
+        ],
+        "flatness_db": [
+          11.9920968052603,
+          2.3620447904056876
+        ],
+        "seat_spread_db": [
+          1.0327472806529352,
+          1.0327901230331507
+        ],
+        "positions": 9,
+        "rows": [
+          {
+            "role": "SW1",
+            "mode": "auto",
+            "gain_db": -10.431577324318514,
+            "delay_ms": 10.584447770682706,
+            "polarity": -1,
+            "allpass": [],
+            "high_pass": [
+              0.0,
+              "LR24"
+            ],
+            "low_pass": [
+              0.0,
+              "LR24"
+            ],
+            "peq": []
+          },
+          {
+            "role": "SW2",
+            "mode": "auto",
+            "gain_db": -13.171526448306485,
+            "delay_ms": 3.0943691154084068,
+            "polarity": -1,
+            "allpass": [],
+            "high_pass": [
+              0.0,
+              "LR24"
+            ],
+            "low_pass": [
+              0.0,
+              "LR24"
+            ],
+            "peq": []
+          },
+          {
+            "role": "SW3",
+            "mode": "auto",
+            "gain_db": -14.607298254766906,
+            "delay_ms": 20.68010562719521,
+            "polarity": -1,
+            "allpass": [],
+            "high_pass": [
+              0.0,
+              "LR24"
+            ],
+            "low_pass": [
+              0.0,
+              "LR24"
+            ],
+            "peq": []
+          }
+        ],
+        "layouts": [],
+        "warnings": []
+      }
+    }
+  },
+  {
+    "params": {
+      "engine_key": "Mixed|4034000000000000|-|-||-||-|4038000000000000|true|0|0|4024000000000000|low_protect"
+    },
+    "data": {
+      "stale": false,
+      "channels": [
+        {
+          "role": "L",
+          "within_1db_pct": [
+            14.02439024390244,
+            85.77235772357723
+          ],
+          "gd_spread_ms": [
+            39.692511573758985,
+            49.642528037925274
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "R",
+          "within_1db_pct": [
+            7.113821138211382,
+            88.6178861788618
+          ],
+          "gd_spread_ms": [
+            33.33376643843614,
+            48.566518758820784
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "C",
+          "within_1db_pct": [
+            21.951219512195124,
+            82.72357723577237
+          ],
+          "gd_spread_ms": [
+            34.47080466904025,
+            53.07780715306804
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Ls",
+          "within_1db_pct": [
+            14.83739837398374,
+            79.67479674796748
+          ],
+          "gd_spread_ms": [
+            45.6544144112041,
+            48.75751943093559
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Rs",
+          "within_1db_pct": [
+            6.300813008130081,
+            89.43089430894308
+          ],
+          "gd_spread_ms": [
+            41.676230826869705,
+            47.6402170460764
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Lb",
+          "within_1db_pct": [
+            7.317073170731707,
+            62.80487804878049
+          ],
+          "gd_spread_ms": [
+            35.57861396189152,
+            45.90331638839953
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Rb",
+          "within_1db_pct": [
+            21.138211382113823,
+            89.83739837398373
+          ],
+          "gd_spread_ms": [
+            30.937783139066696,
+            46.82616461060299
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Tfl",
+          "within_1db_pct": [
+            7.520325203252034,
+            83.33333333333334
+          ],
+          "gd_spread_ms": [
+            35.23096717218483,
+            42.66942175650088
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Tfr",
+          "within_1db_pct": [
+            21.951219512195124,
+            81.30081300813008
+          ],
+          "gd_spread_ms": [
+            34.84650400470713,
+            47.186845907045324
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Tbl",
+          "within_1db_pct": [
+            20.73170731707317,
+            90.2439024390244
+          ],
+          "gd_spread_ms": [
+            42.13599101556126,
+            51.109202126667384
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Tbr",
+          "within_1db_pct": [
+            7.926829268292683,
+            84.5528455284553
+          ],
+          "gd_spread_ms": [
+            42.09752292459096,
+            48.792553656803086
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        }
+      ],
+      "total_delay_ms": 8.0,
+      "notes": [
+        {
+          "code": "rc_limit",
+          "hz": 500.0,
+          "auto": true,
+          "schroeder_hz": null,
+          "basis": "strict",
+          "factor": 1,
+          "band_hz": null,
+          "band_t60_s": null,
+          "positions": null
+        },
+        {
+          "code": "ba_cost",
+          "value": 153.0022530865336
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 40.869140625,
+              "t60_s": 1.6696641852179257
+            },
+            {
+              "hz": 112.939453125,
+              "t60_s": 1.9585840302281328
+            },
+            {
+              "hz": 123.193359375,
+              "t60_s": 1.9027843698393394
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 33.984375,
+              "t60_s": 1.7598211851712733
+            },
+            {
+              "hz": 40.283203125,
+              "t60_s": 1.8484603424339872
+            },
+            {
+              "hz": 112.79296875,
+              "t60_s": 2.0849432863726745
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 40.72265625,
+              "t60_s": 1.7076714032110711
+            },
+            {
+              "hz": 112.939453125,
+              "t60_s": 2.012283406209101
+            },
+            {
+              "hz": 123.33984375,
+              "t60_s": 2.023844473102262
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 112.646484375,
+              "t60_s": 2.2617383274081346
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 40.72265625,
+              "t60_s": 1.7153571803050525
+            },
+            {
+              "hz": 112.5,
+              "t60_s": 2.1362265297924363
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 112.939453125,
+              "t60_s": 2.030154629339131
+            },
+            {
+              "hz": 123.486328125,
+              "t60_s": 1.9352312036557664
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 46.875,
+              "t60_s": 1.97938141299921
+            },
+            {
+              "hz": 112.646484375,
+              "t60_s": 2.0635272839309193
+            },
+            {
+              "hz": 123.486328125,
+              "t60_s": 2.102398928419936
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 46.875,
+              "t60_s": 1.951646406682368
+            },
+            {
+              "hz": 112.646484375,
+              "t60_s": 1.9652978078224013
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 40.72265625,
+              "t60_s": 1.725714721913313
+            },
+            {
+              "hz": 112.646484375,
+              "t60_s": 2.0018736176171505
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 22.412109375,
+              "t60_s": 1.7614148871045512
+            },
+            {
+              "hz": 40.72265625,
+              "t60_s": 1.7100574754851432
+            },
+            {
+              "hz": 112.79296875,
+              "t60_s": 2.024773905766512
+            }
+          ]
+        },
+        {
+          "code": "latency",
+          "latency_ms": 8.0,
+          "lift_ms": 8.0,
+          "main_extra_ms": 0.0
+        },
+        {
+          "code": "phase_strength",
+          "values": [
+            {
+              "role": "L",
+              "value": 0.7
+            },
+            {
+              "role": "R",
+              "value": 0.5
+            },
+            {
+              "role": "C",
+              "value": 0.7
+            },
+            {
+              "role": "Ls",
+              "value": 0.5
+            },
+            {
+              "role": "Rs",
+              "value": 0.5
+            },
+            {
+              "role": "Lb",
+              "value": 0.5
+            },
+            {
+              "role": "Rb",
+              "value": 0.5
+            },
+            {
+              "role": "Tfl",
+              "value": 0.5
+            },
+            {
+              "role": "Tfr",
+              "value": 0.5
+            },
+            {
+              "role": "Tbl",
+              "value": 0.5
+            },
+            {
+              "role": "Tbr",
+              "value": 0.7
+            }
+          ]
+        },
+        {
+          "code": "phase_band",
+          "values": [
+            {
+              "role": "L",
+              "hz": 0.7
+            },
+            {
+              "role": "R",
+              "hz": 0.5
+            },
+            {
+              "role": "C",
+              "hz": 0.7
+            },
+            {
+              "role": "Ls",
+              "hz": 0.5
+            },
+            {
+              "role": "Rs",
+              "hz": 0.5
+            },
+            {
+              "role": "Lb",
+              "hz": 0.5
+            },
+            {
+              "role": "Rb",
+              "hz": 0.5
+            },
+            {
+              "role": "Tfl",
+              "hz": 0.5
+            },
+            {
+              "role": "Tfr",
+              "hz": 0.5
+            },
+            {
+              "role": "Tbl",
+              "hz": 0.5
+            },
+            {
+              "role": "Tbr",
+              "hz": 0.7
+            }
+          ]
+        }
+      ],
+      "notices": [],
+      "rc": [
+        {
+          "code": "rc_limit",
+          "params": {
+            "auto": "true",
+            "basis": "strict",
+            "factor": "1",
+            "hz": "500"
+          }
+        },
+        {
+          "code": "rc_no_room_volume",
+          "params": {}
+        }
+      ],
+      "ba": {
+        "stale": false,
+        "subs_only": false,
+        "band_hz": [
+          20.0,
+          120.0
+        ],
+        "flatness_db": [
+          11.9920968052603,
+          2.3620447904056876
+        ],
+        "seat_spread_db": [
+          1.0327472806529352,
+          1.0327901230331507
+        ],
+        "positions": 9,
+        "rows": [
+          {
+            "role": "SW1",
+            "mode": "auto",
+            "gain_db": -10.431577324318514,
+            "delay_ms": 10.584447770682706,
+            "polarity": -1,
+            "allpass": [],
+            "high_pass": [
+              0.0,
+              "LR24"
+            ],
+            "low_pass": [
+              0.0,
+              "LR24"
+            ],
+            "peq": []
+          },
+          {
+            "role": "SW2",
+            "mode": "auto",
+            "gain_db": -13.171526448306485,
+            "delay_ms": 3.0943691154084068,
+            "polarity": -1,
+            "allpass": [],
+            "high_pass": [
+              0.0,
+              "LR24"
+            ],
+            "low_pass": [
+              0.0,
+              "LR24"
+            ],
+            "peq": []
+          },
+          {
+            "role": "SW3",
+            "mode": "auto",
+            "gain_db": -14.607298254766906,
+            "delay_ms": 20.68010562719521,
+            "polarity": -1,
+            "allpass": [],
+            "high_pass": [
+              0.0,
+              "LR24"
+            ],
+            "low_pass": [
+              0.0,
+              "LR24"
+            ],
+            "peq": []
+          }
+        ],
+        "layouts": [],
+        "warnings": []
+      }
+    }
+  },
+  {
+    "params": {
+      "engine_key": "Mixed|4034000000000000|-|-||-||-|4038000000000000|true|0|0|4024000000000000|input_hp=4039000000000000"
+    },
+    "data": {
+      "stale": false,
+      "channels": [
+        {
+          "role": "L",
+          "within_1db_pct": [
+            14.02439024390244,
+            85.56910569105692
+          ],
+          "gd_spread_ms": [
+            39.692511573758985,
+            50.200463220747395
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "R",
+          "within_1db_pct": [
+            7.113821138211382,
+            88.41463414634147
+          ],
+          "gd_spread_ms": [
+            33.33376643843614,
+            49.22959417310702
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "C",
+          "within_1db_pct": [
+            21.951219512195124,
+            85.56910569105692
+          ],
+          "gd_spread_ms": [
+            34.47080466904025,
+            52.9990131853965
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Ls",
+          "within_1db_pct": [
+            14.83739837398374,
+            79.8780487804878
+          ],
+          "gd_spread_ms": [
+            45.6544144112041,
+            49.311891529666035
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Rs",
+          "within_1db_pct": [
+            6.300813008130081,
+            91.66666666666666
+          ],
+          "gd_spread_ms": [
+            41.676230826869705,
+            47.97040944575082
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Lb",
+          "within_1db_pct": [
+            7.317073170731707,
+            62.601626016260155
+          ],
+          "gd_spread_ms": [
+            35.57861396189152,
+            46.330044707175915
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Rb",
+          "within_1db_pct": [
+            21.138211382113823,
+            90.04065040650406
+          ],
+          "gd_spread_ms": [
+            30.937783139066696,
+            47.28624680489682
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Tfl",
+          "within_1db_pct": [
+            7.520325203252034,
+            83.33333333333334
+          ],
+          "gd_spread_ms": [
+            35.23096717218483,
+            43.223365207221704
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Tfr",
+          "within_1db_pct": [
+            21.951219512195124,
+            81.70731707317073
+          ],
+          "gd_spread_ms": [
+            34.84650400470713,
+            47.855542364221066
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Tbl",
+          "within_1db_pct": [
+            20.73170731707317,
+            90.2439024390244
+          ],
+          "gd_spread_ms": [
+            42.13599101556126,
+            51.109202126667384
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Tbr",
+          "within_1db_pct": [
+            7.926829268292683,
+            85.16260162601627
+          ],
+          "gd_spread_ms": [
+            42.09752292459096,
+            50.61388360097246
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        }
+      ],
+      "total_delay_ms": 8.0,
+      "notes": [
+        {
+          "code": "rc_limit",
+          "hz": 500.0,
+          "auto": true,
+          "schroeder_hz": null,
+          "basis": "strict",
+          "factor": 1,
+          "band_hz": null,
+          "band_t60_s": null,
+          "positions": null
+        },
+        {
+          "code": "ba_cost",
+          "value": 153.0022530865336
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 40.869140625,
+              "t60_s": 1.6696641852179257
+            },
+            {
+              "hz": 112.939453125,
+              "t60_s": 1.9585840302281328
+            },
+            {
+              "hz": 123.193359375,
+              "t60_s": 1.9027843698393394
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 33.984375,
+              "t60_s": 1.7598211851712733
+            },
+            {
+              "hz": 40.283203125,
+              "t60_s": 1.8484603424339872
+            },
+            {
+              "hz": 112.79296875,
+              "t60_s": 2.0849432863726745
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 40.72265625,
+              "t60_s": 1.7076714032110711
+            },
+            {
+              "hz": 112.939453125,
+              "t60_s": 2.012283406209101
+            },
+            {
+              "hz": 123.33984375,
+              "t60_s": 2.023844473102262
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 112.646484375,
+              "t60_s": 2.2617383274081346
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 40.72265625,
+              "t60_s": 1.7153571803050525
+            },
+            {
+              "hz": 112.5,
+              "t60_s": 2.1362265297924363
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 112.939453125,
+              "t60_s": 2.030154629339131
+            },
+            {
+              "hz": 123.486328125,
+              "t60_s": 1.9352312036557664
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 46.875,
+              "t60_s": 1.97938141299921
+            },
+            {
+              "hz": 112.646484375,
+              "t60_s": 2.0635272839309193
+            },
+            {
+              "hz": 123.486328125,
+              "t60_s": 2.102398928419936
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 46.875,
+              "t60_s": 1.951646406682368
+            },
+            {
+              "hz": 112.646484375,
+              "t60_s": 1.9652978078224013
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 40.72265625,
+              "t60_s": 1.725714721913313
+            },
+            {
+              "hz": 112.646484375,
+              "t60_s": 2.0018736176171505
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 22.412109375,
+              "t60_s": 1.7614148871045512
+            },
+            {
+              "hz": 40.72265625,
+              "t60_s": 1.7100574754851432
+            },
+            {
+              "hz": 112.79296875,
+              "t60_s": 2.024773905766512
+            }
+          ]
+        },
+        {
+          "code": "latency",
+          "latency_ms": 8.0,
+          "lift_ms": 8.0,
+          "main_extra_ms": 0.0
+        },
+        {
+          "code": "phase_strength",
+          "values": [
+            {
+              "role": "L",
+              "value": 0.7
+            },
+            {
+              "role": "R",
+              "value": 0.5
+            },
+            {
+              "role": "C",
+              "value": 0.7
+            },
+            {
+              "role": "Ls",
+              "value": 0.5
+            },
+            {
+              "role": "Rs",
+              "value": 0.5
+            },
+            {
+              "role": "Lb",
+              "value": 0.5
+            },
+            {
+              "role": "Rb",
+              "value": 0.5
+            },
+            {
+              "role": "Tfl",
+              "value": 0.5
+            },
+            {
+              "role": "Tfr",
+              "value": 0.5
+            },
+            {
+              "role": "Tbl",
+              "value": 0.5
+            },
+            {
+              "role": "Tbr",
+              "value": 0.7
+            }
+          ]
+        },
+        {
+          "code": "phase_band",
+          "values": [
+            {
+              "role": "L",
+              "hz": 0.7
+            },
+            {
+              "role": "R",
+              "hz": 0.5
+            },
+            {
+              "role": "C",
+              "hz": 0.7
+            },
+            {
+              "role": "Ls",
+              "hz": 0.5
+            },
+            {
+              "role": "Rs",
+              "hz": 0.5
+            },
+            {
+              "role": "Lb",
+              "hz": 0.5
+            },
+            {
+              "role": "Rb",
+              "hz": 0.5
+            },
+            {
+              "role": "Tfl",
+              "hz": 0.5
+            },
+            {
+              "role": "Tfr",
+              "hz": 0.5
+            },
+            {
+              "role": "Tbl",
+              "hz": 0.5
+            },
+            {
+              "role": "Tbr",
+              "hz": 0.7
+            }
+          ]
+        },
+        {
+          "code": "input_hp",
+          "hz": 25.0
+        }
+      ],
+      "notices": [],
+      "rc": [
+        {
+          "code": "rc_limit",
+          "params": {
+            "auto": "true",
+            "basis": "strict",
+            "factor": "1",
+            "hz": "500"
+          }
+        },
+        {
+          "code": "rc_no_room_volume",
+          "params": {}
+        }
+      ],
+      "ba": {
+        "stale": false,
+        "subs_only": false,
+        "band_hz": [
+          20.0,
+          120.0
+        ],
+        "flatness_db": [
+          11.9920968052603,
+          2.3620447904056876
+        ],
+        "seat_spread_db": [
+          1.0327472806529352,
+          1.0327901230331507
+        ],
+        "positions": 9,
+        "rows": [
+          {
+            "role": "SW1",
+            "mode": "auto",
+            "gain_db": -10.431577324318514,
+            "delay_ms": 10.584447770682706,
+            "polarity": -1,
+            "allpass": [],
+            "high_pass": [
+              0.0,
+              "LR24"
+            ],
+            "low_pass": [
+              0.0,
+              "LR24"
+            ],
+            "peq": []
+          },
+          {
+            "role": "SW2",
+            "mode": "auto",
+            "gain_db": -13.171526448306485,
+            "delay_ms": 3.0943691154084068,
+            "polarity": -1,
+            "allpass": [],
+            "high_pass": [
+              0.0,
+              "LR24"
+            ],
+            "low_pass": [
+              0.0,
+              "LR24"
+            ],
+            "peq": []
+          },
+          {
+            "role": "SW3",
+            "mode": "auto",
+            "gain_db": -14.607298254766906,
+            "delay_ms": 20.68010562719521,
+            "polarity": -1,
+            "allpass": [],
+            "high_pass": [
+              0.0,
+              "LR24"
+            ],
+            "low_pass": [
+              0.0,
+              "LR24"
+            ],
+            "peq": []
+          }
+        ],
+        "layouts": [],
+        "warnings": []
+      }
+    }
+  },
+  {
+    "params": {
+      "engine_key": "Mixed|4034000000000000|-|-||-||-|4038000000000000|true|0|0|4024000000000000|rc_bands=408f400000000000-409f400000000000,40cd4c0000000000-40d3880000000000"
+    },
+    "data": {
+      "stale": false,
+      "channels": [
+        {
+          "role": "L",
+          "within_1db_pct": [
+            14.02439024390244,
+            85.56910569105692
+          ],
+          "gd_spread_ms": [
+            39.692511573758985,
+            50.22656503621928
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "R",
+          "within_1db_pct": [
+            7.113821138211382,
+            88.41463414634147
+          ],
+          "gd_spread_ms": [
+            33.33376643843614,
+            49.23424379472841
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "C",
+          "within_1db_pct": [
+            21.951219512195124,
+            86.3821138211382
+          ],
+          "gd_spread_ms": [
+            34.47080466904025,
+            52.756322013376035
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Ls",
+          "within_1db_pct": [
+            14.83739837398374,
+            79.8780487804878
+          ],
+          "gd_spread_ms": [
+            45.6544144112041,
+            49.314730867718055
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Rs",
+          "within_1db_pct": [
+            6.300813008130081,
+            91.46341463414635
+          ],
+          "gd_spread_ms": [
+            41.676230826869705,
+            47.370463772911876
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Lb",
+          "within_1db_pct": [
+            7.317073170731707,
+            62.398373983739845
+          ],
+          "gd_spread_ms": [
+            35.57861396189152,
+            47.146847422908365
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Rb",
+          "within_1db_pct": [
+            21.138211382113823,
+            88.6178861788618
+          ],
+          "gd_spread_ms": [
+            30.937783139066696,
+            48.322068466497115
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Tfl",
+          "within_1db_pct": [
+            7.520325203252034,
+            82.52032520325203
+          ],
+          "gd_spread_ms": [
+            35.23096717218483,
+            41.59531622851653
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Tfr",
+          "within_1db_pct": [
+            21.951219512195124,
+            83.130081300813
+          ],
+          "gd_spread_ms": [
+            34.84650400470713,
+            46.45179209990996
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Tbl",
+          "within_1db_pct": [
+            20.73170731707317,
+            90.04065040650406
+          ],
+          "gd_spread_ms": [
+            42.13599101556126,
+            51.209098340234405
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        },
+        {
+          "role": "Tbr",
+          "within_1db_pct": [
+            7.926829268292683,
+            85.16260162601627
+          ],
+          "gd_spread_ms": [
+            42.09752292459096,
+            50.57215203028546
+          ],
+          "peq_count": 16,
+          "fir_taps": 2048,
+          "xo_hz": 80.0,
+          "mimo_support_count": null
+        }
+      ],
+      "total_delay_ms": 8.0,
+      "notes": [
+        {
+          "code": "rc_limit",
+          "hz": 500.0,
+          "auto": true,
+          "schroeder_hz": null,
+          "basis": "strict",
+          "factor": 1,
+          "band_hz": null,
+          "band_t60_s": null,
+          "positions": null
+        },
+        {
+          "code": "rc_bands",
+          "bands": [
+            {
+              "lo_hz": 20.0,
+              "hi_hz": 500.0
+            },
+            {
+              "lo_hz": 1000.0,
+              "hi_hz": 2000.0
+            },
+            {
+              "lo_hz": 15000.0,
+              "hi_hz": 20000.0
+            }
+          ]
+        },
+        {
+          "code": "ba_cost",
+          "value": 153.0022530865336
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 40.869140625,
+              "t60_s": 1.6696641852179257
+            },
+            {
+              "hz": 112.939453125,
+              "t60_s": 1.9585840302281328
+            },
+            {
+              "hz": 123.193359375,
+              "t60_s": 1.9027843698393394
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 33.984375,
+              "t60_s": 1.7598211851712733
+            },
+            {
+              "hz": 40.283203125,
+              "t60_s": 1.8484603424339872
+            },
+            {
+              "hz": 112.79296875,
+              "t60_s": 2.0849432863726745
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 40.72265625,
+              "t60_s": 1.7076714032110711
+            },
+            {
+              "hz": 112.939453125,
+              "t60_s": 2.012283406209101
+            },
+            {
+              "hz": 123.33984375,
+              "t60_s": 2.023844473102262
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 112.646484375,
+              "t60_s": 2.2617383274081346
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 40.72265625,
+              "t60_s": 1.7153571803050525
+            },
+            {
+              "hz": 112.5,
+              "t60_s": 2.1362265297924363
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 112.939453125,
+              "t60_s": 2.030154629339131
+            },
+            {
+              "hz": 123.486328125,
+              "t60_s": 1.9352312036557664
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 46.875,
+              "t60_s": 1.97938141299921
+            },
+            {
+              "hz": 112.646484375,
+              "t60_s": 2.0635272839309193
+            },
+            {
+              "hz": 123.486328125,
+              "t60_s": 2.102398928419936
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 46.875,
+              "t60_s": 1.951646406682368
+            },
+            {
+              "hz": 112.646484375,
+              "t60_s": 1.9652978078224013
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 40.72265625,
+              "t60_s": 1.725714721913313
+            },
+            {
+              "hz": 112.646484375,
+              "t60_s": 2.0018736176171505
+            }
+          ]
+        },
+        {
+          "code": "long_mode_boost",
+          "cap_db": 3.0,
+          "modes": [
+            {
+              "hz": 22.412109375,
+              "t60_s": 1.7614148871045512
+            },
+            {
+              "hz": 40.72265625,
+              "t60_s": 1.7100574754851432
+            },
+            {
+              "hz": 112.79296875,
+              "t60_s": 2.024773905766512
+            }
+          ]
+        },
+        {
+          "code": "latency",
+          "latency_ms": 8.0,
+          "lift_ms": 8.0,
+          "main_extra_ms": 0.0
+        },
+        {
+          "code": "phase_strength",
+          "values": [
+            {
+              "role": "L",
+              "value": 0.7
+            },
+            {
+              "role": "R",
+              "value": 0.5
+            },
+            {
+              "role": "C",
+              "value": 0.7
+            },
+            {
+              "role": "Ls",
+              "value": 0.5
+            },
+            {
+              "role": "Rs",
+              "value": 0.5
+            },
+            {
+              "role": "Lb",
+              "value": 0.5
+            },
+            {
+              "role": "Rb",
+              "value": 0.5
+            },
+            {
+              "role": "Tfl",
+              "value": 0.5
+            },
+            {
+              "role": "Tfr",
+              "value": 0.7
+            },
+            {
+              "role": "Tbl",
+              "value": 0.5
+            },
+            {
+              "role": "Tbr",
+              "value": 0.7
+            }
+          ]
+        },
+        {
+          "code": "phase_band",
+          "values": [
+            {
+              "role": "L",
+              "hz": 0.7
+            },
+            {
+              "role": "R",
+              "hz": 0.5
+            },
+            {
+              "role": "C",
+              "hz": 0.7
+            },
+            {
+              "role": "Ls",
+              "hz": 0.5
+            },
+            {
+              "role": "Rs",
+              "hz": 0.5
+            },
+            {
+              "role": "Lb",
+              "hz": 0.5
+            },
+            {
+              "role": "Rb",
+              "hz": 0.5
+            },
+            {
+              "role": "Tfl",
+              "hz": 0.5
+            },
+            {
+              "role": "Tfr",
+              "hz": 0.7
+            },
+            {
+              "role": "Tbl",
+              "hz": 0.5
+            },
+            {
+              "role": "Tbr",
+              "hz": 0.7
+            }
+          ]
+        }
+      ],
+      "notices": [],
+      "rc": [
+        {
+          "code": "rc_limit",
+          "params": {
+            "auto": "true",
+            "basis": "strict",
+            "factor": "1",
+            "hz": "500"
+          }
+        },
+        {
+          "code": "rc_no_room_volume",
+          "params": {}
+        }
+      ],
+      "ba": {
+        "stale": false,
+        "subs_only": false,
+        "band_hz": [
+          20.0,
+          120.0
+        ],
+        "flatness_db": [
+          11.9920968052603,
+          2.3620447904056876
+        ],
+        "seat_spread_db": [
+          1.0327472806529352,
+          1.0327901230331507
+        ],
+        "positions": 9,
+        "rows": [
+          {
+            "role": "SW1",
+            "mode": "auto",
+            "gain_db": -10.431577324318514,
+            "delay_ms": 10.584447770682706,
+            "polarity": -1,
+            "allpass": [],
+            "high_pass": [
+              0.0,
+              "LR24"
+            ],
+            "low_pass": [
+              0.0,
+              "LR24"
+            ],
+            "peq": []
+          },
+          {
+            "role": "SW2",
+            "mode": "auto",
+            "gain_db": -13.171526448306485,
+            "delay_ms": 3.0943691154084068,
+            "polarity": -1,
+            "allpass": [],
+            "high_pass": [
+              0.0,
+              "LR24"
+            ],
+            "low_pass": [
+              0.0,
+              "LR24"
+            ],
+            "peq": []
+          },
+          {
+            "role": "SW3",
+            "mode": "auto",
+            "gain_db": -14.607298254766906,
+            "delay_ms": 20.68010562719521,
+            "polarity": -1,
+            "allpass": [],
+            "high_pass": [
+              0.0,
+              "LR24"
+            ],
+            "low_pass": [
+              0.0,
+              "LR24"
+            ],
+            "peq": []
+          }
+        ],
+        "layouts": [],
+        "warnings": []
+      }
+    }
+  }
+]

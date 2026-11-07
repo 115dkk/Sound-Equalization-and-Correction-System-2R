@@ -1,0 +1,2926 @@
+[
+  {
+    "params": {
+      "edit": {
+        "kind": "mode",
+        "mode": "linear"
+      }
+    },
+    "data": {
+      "ok": true,
+      "data": {
+        "method": "calibration_settings_edit",
+        "data": {
+          "mode": "linear",
+          "sample_rate_policy": "reject",
+          "low_protect": false,
+          "lf_align": false,
+          "mode_decay": false,
+          "hf_phase": false,
+          "dip_limit": false,
+          "input_hp_hz": null,
+          "rc_lo": 20.0,
+          "rc_hi": null,
+          "rc_hi_basis": "strict",
+          "rc_hi_transition": 1,
+          "rc_bands": [],
+          "room_volume_m3": null,
+          "room_dims_m": null,
+          "mimo_on": false,
+          "fsiso": 150.0,
+          "mimo_low": null,
+          "mimo_max_supports": 0,
+          "mimo_fir": true,
+          "mimo_early_ms": 60.0,
+          "mimo_seat_guard": false,
+          "peq_analytic_derivatives": false,
+          "mimo_iir_analytic_derivatives": false,
+          "xo": {},
+          "xo_rec": {},
+          "ultra_ms": 200.0,
+          "subs_manual": {},
+          "sub_main_delay_ms": 0.0,
+          "bundle_layouts": {},
+          "infra_boost_max_db": 24.0,
+          "xo_peq_on": true,
+          "boost_max_db": 10.0,
+          "xo_peq_lo": 0.0,
+          "xo_peq_hi": 0.0
+        }
+      }
+    }
+  },
+  {
+    "params": {
+      "edit": {
+        "kind": "sample_rate_policy",
+        "policy": "resample"
+      }
+    },
+    "data": {
+      "ok": true,
+      "data": {
+        "method": "calibration_settings_edit",
+        "data": {
+          "mode": "mixed",
+          "sample_rate_policy": "resample",
+          "low_protect": false,
+          "lf_align": false,
+          "mode_decay": false,
+          "hf_phase": false,
+          "dip_limit": false,
+          "input_hp_hz": null,
+          "rc_lo": 20.0,
+          "rc_hi": null,
+          "rc_hi_basis": "strict",
+          "rc_hi_transition": 1,
+          "rc_bands": [],
+          "room_volume_m3": null,
+          "room_dims_m": null,
+          "mimo_on": false,
+          "fsiso": 150.0,
+          "mimo_low": null,
+          "mimo_max_supports": 0,
+          "mimo_fir": true,
+          "mimo_early_ms": 60.0,
+          "mimo_seat_guard": false,
+          "peq_analytic_derivatives": false,
+          "mimo_iir_analytic_derivatives": false,
+          "xo": {},
+          "xo_rec": {},
+          "ultra_ms": 200.0,
+          "subs_manual": {},
+          "sub_main_delay_ms": 0.0,
+          "bundle_layouts": {},
+          "infra_boost_max_db": 24.0,
+          "xo_peq_on": true,
+          "boost_max_db": 10.0,
+          "xo_peq_lo": 0.0,
+          "xo_peq_hi": 0.0
+        }
+      }
+    }
+  },
+  {
+    "params": {
+      "edit": {
+        "kind": "ultra_ms",
+        "ms": 120.0
+      }
+    },
+    "data": {
+      "ok": true,
+      "data": {
+        "method": "calibration_settings_edit",
+        "data": {
+          "mode": "mixed",
+          "sample_rate_policy": "reject",
+          "low_protect": false,
+          "lf_align": false,
+          "mode_decay": false,
+          "hf_phase": false,
+          "dip_limit": false,
+          "input_hp_hz": null,
+          "rc_lo": 20.0,
+          "rc_hi": null,
+          "rc_hi_basis": "strict",
+          "rc_hi_transition": 1,
+          "rc_bands": [],
+          "room_volume_m3": null,
+          "room_dims_m": null,
+          "mimo_on": false,
+          "fsiso": 150.0,
+          "mimo_low": null,
+          "mimo_max_supports": 0,
+          "mimo_fir": true,
+          "mimo_early_ms": 60.0,
+          "mimo_seat_guard": false,
+          "peq_analytic_derivatives": false,
+          "mimo_iir_analytic_derivatives": false,
+          "xo": {},
+          "xo_rec": {},
+          "ultra_ms": 120.0,
+          "subs_manual": {},
+          "sub_main_delay_ms": 0.0,
+          "bundle_layouts": {},
+          "infra_boost_max_db": 24.0,
+          "xo_peq_on": true,
+          "boost_max_db": 10.0,
+          "xo_peq_lo": 0.0,
+          "xo_peq_hi": 0.0
+        }
+      }
+    }
+  },
+  {
+    "params": {
+      "edit": {
+        "kind": "low_protect",
+        "on": true
+      }
+    },
+    "data": {
+      "ok": true,
+      "data": {
+        "method": "calibration_settings_edit",
+        "data": {
+          "mode": "mixed",
+          "sample_rate_policy": "reject",
+          "low_protect": true,
+          "lf_align": false,
+          "mode_decay": false,
+          "hf_phase": false,
+          "dip_limit": false,
+          "input_hp_hz": null,
+          "rc_lo": 20.0,
+          "rc_hi": null,
+          "rc_hi_basis": "strict",
+          "rc_hi_transition": 1,
+          "rc_bands": [],
+          "room_volume_m3": null,
+          "room_dims_m": null,
+          "mimo_on": false,
+          "fsiso": 150.0,
+          "mimo_low": null,
+          "mimo_max_supports": 0,
+          "mimo_fir": true,
+          "mimo_early_ms": 60.0,
+          "mimo_seat_guard": false,
+          "peq_analytic_derivatives": false,
+          "mimo_iir_analytic_derivatives": false,
+          "xo": {},
+          "xo_rec": {},
+          "ultra_ms": 200.0,
+          "subs_manual": {},
+          "sub_main_delay_ms": 0.0,
+          "bundle_layouts": {},
+          "infra_boost_max_db": 24.0,
+          "xo_peq_on": true,
+          "boost_max_db": 10.0,
+          "xo_peq_lo": 0.0,
+          "xo_peq_hi": 0.0
+        }
+      }
+    }
+  },
+  {
+    "params": {
+      "edit": {
+        "kind": "lf_align",
+        "on": true
+      }
+    },
+    "data": {
+      "ok": true,
+      "data": {
+        "method": "calibration_settings_edit",
+        "data": {
+          "mode": "mixed",
+          "sample_rate_policy": "reject",
+          "low_protect": false,
+          "lf_align": true,
+          "mode_decay": false,
+          "hf_phase": false,
+          "dip_limit": false,
+          "input_hp_hz": null,
+          "rc_lo": 20.0,
+          "rc_hi": null,
+          "rc_hi_basis": "strict",
+          "rc_hi_transition": 1,
+          "rc_bands": [],
+          "room_volume_m3": null,
+          "room_dims_m": null,
+          "mimo_on": false,
+          "fsiso": 150.0,
+          "mimo_low": null,
+          "mimo_max_supports": 0,
+          "mimo_fir": true,
+          "mimo_early_ms": 60.0,
+          "mimo_seat_guard": false,
+          "peq_analytic_derivatives": false,
+          "mimo_iir_analytic_derivatives": false,
+          "xo": {},
+          "xo_rec": {},
+          "ultra_ms": 200.0,
+          "subs_manual": {},
+          "sub_main_delay_ms": 0.0,
+          "bundle_layouts": {},
+          "infra_boost_max_db": 24.0,
+          "xo_peq_on": true,
+          "boost_max_db": 10.0,
+          "xo_peq_lo": 0.0,
+          "xo_peq_hi": 0.0
+        }
+      }
+    }
+  },
+  {
+    "params": {
+      "edit": {
+        "kind": "mode_decay",
+        "on": true
+      }
+    },
+    "data": {
+      "ok": true,
+      "data": {
+        "method": "calibration_settings_edit",
+        "data": {
+          "mode": "mixed",
+          "sample_rate_policy": "reject",
+          "low_protect": false,
+          "lf_align": false,
+          "mode_decay": true,
+          "hf_phase": false,
+          "dip_limit": false,
+          "input_hp_hz": null,
+          "rc_lo": 20.0,
+          "rc_hi": null,
+          "rc_hi_basis": "strict",
+          "rc_hi_transition": 1,
+          "rc_bands": [],
+          "room_volume_m3": null,
+          "room_dims_m": null,
+          "mimo_on": false,
+          "fsiso": 150.0,
+          "mimo_low": null,
+          "mimo_max_supports": 0,
+          "mimo_fir": true,
+          "mimo_early_ms": 60.0,
+          "mimo_seat_guard": false,
+          "peq_analytic_derivatives": false,
+          "mimo_iir_analytic_derivatives": false,
+          "xo": {},
+          "xo_rec": {},
+          "ultra_ms": 200.0,
+          "subs_manual": {},
+          "sub_main_delay_ms": 0.0,
+          "bundle_layouts": {},
+          "infra_boost_max_db": 24.0,
+          "xo_peq_on": true,
+          "boost_max_db": 10.0,
+          "xo_peq_lo": 0.0,
+          "xo_peq_hi": 0.0
+        }
+      }
+    }
+  },
+  {
+    "params": {
+      "edit": {
+        "kind": "hf_phase",
+        "on": true
+      }
+    },
+    "data": {
+      "ok": true,
+      "data": {
+        "method": "calibration_settings_edit",
+        "data": {
+          "mode": "mixed",
+          "sample_rate_policy": "reject",
+          "low_protect": false,
+          "lf_align": false,
+          "mode_decay": false,
+          "hf_phase": true,
+          "dip_limit": false,
+          "input_hp_hz": null,
+          "rc_lo": 20.0,
+          "rc_hi": null,
+          "rc_hi_basis": "strict",
+          "rc_hi_transition": 1,
+          "rc_bands": [],
+          "room_volume_m3": null,
+          "room_dims_m": null,
+          "mimo_on": false,
+          "fsiso": 150.0,
+          "mimo_low": null,
+          "mimo_max_supports": 0,
+          "mimo_fir": true,
+          "mimo_early_ms": 60.0,
+          "mimo_seat_guard": false,
+          "peq_analytic_derivatives": false,
+          "mimo_iir_analytic_derivatives": false,
+          "xo": {},
+          "xo_rec": {},
+          "ultra_ms": 200.0,
+          "subs_manual": {},
+          "sub_main_delay_ms": 0.0,
+          "bundle_layouts": {},
+          "infra_boost_max_db": 24.0,
+          "xo_peq_on": true,
+          "boost_max_db": 10.0,
+          "xo_peq_lo": 0.0,
+          "xo_peq_hi": 0.0
+        }
+      }
+    }
+  },
+  {
+    "params": {
+      "edit": {
+        "kind": "dip_limit",
+        "on": true
+      }
+    },
+    "data": {
+      "ok": true,
+      "data": {
+        "method": "calibration_settings_edit",
+        "data": {
+          "mode": "mixed",
+          "sample_rate_policy": "reject",
+          "low_protect": false,
+          "lf_align": false,
+          "mode_decay": false,
+          "hf_phase": false,
+          "dip_limit": true,
+          "input_hp_hz": null,
+          "rc_lo": 20.0,
+          "rc_hi": null,
+          "rc_hi_basis": "strict",
+          "rc_hi_transition": 1,
+          "rc_bands": [],
+          "room_volume_m3": null,
+          "room_dims_m": null,
+          "mimo_on": false,
+          "fsiso": 150.0,
+          "mimo_low": null,
+          "mimo_max_supports": 0,
+          "mimo_fir": true,
+          "mimo_early_ms": 60.0,
+          "mimo_seat_guard": false,
+          "peq_analytic_derivatives": false,
+          "mimo_iir_analytic_derivatives": false,
+          "xo": {},
+          "xo_rec": {},
+          "ultra_ms": 200.0,
+          "subs_manual": {},
+          "sub_main_delay_ms": 0.0,
+          "bundle_layouts": {},
+          "infra_boost_max_db": 24.0,
+          "xo_peq_on": true,
+          "boost_max_db": 10.0,
+          "xo_peq_lo": 0.0,
+          "xo_peq_hi": 0.0
+        }
+      }
+    }
+  },
+  {
+    "params": {
+      "edit": {
+        "kind": "input_hp",
+        "hz": 25.0
+      }
+    },
+    "data": {
+      "ok": true,
+      "data": {
+        "method": "calibration_settings_edit",
+        "data": {
+          "mode": "mixed",
+          "sample_rate_policy": "reject",
+          "low_protect": false,
+          "lf_align": false,
+          "mode_decay": false,
+          "hf_phase": false,
+          "dip_limit": false,
+          "input_hp_hz": 25.0,
+          "rc_lo": 20.0,
+          "rc_hi": null,
+          "rc_hi_basis": "strict",
+          "rc_hi_transition": 1,
+          "rc_bands": [],
+          "room_volume_m3": null,
+          "room_dims_m": null,
+          "mimo_on": false,
+          "fsiso": 150.0,
+          "mimo_low": null,
+          "mimo_max_supports": 0,
+          "mimo_fir": true,
+          "mimo_early_ms": 60.0,
+          "mimo_seat_guard": false,
+          "peq_analytic_derivatives": false,
+          "mimo_iir_analytic_derivatives": false,
+          "xo": {},
+          "xo_rec": {},
+          "ultra_ms": 200.0,
+          "subs_manual": {},
+          "sub_main_delay_ms": 0.0,
+          "bundle_layouts": {},
+          "infra_boost_max_db": 24.0,
+          "xo_peq_on": true,
+          "boost_max_db": 10.0,
+          "xo_peq_lo": 0.0,
+          "xo_peq_hi": 0.0
+        }
+      }
+    }
+  },
+  {
+    "params": {
+      "edit": {
+        "kind": "rc_lo",
+        "hz": 30.0
+      }
+    },
+    "data": {
+      "ok": true,
+      "data": {
+        "method": "calibration_settings_edit",
+        "data": {
+          "mode": "mixed",
+          "sample_rate_policy": "reject",
+          "low_protect": false,
+          "lf_align": false,
+          "mode_decay": false,
+          "hf_phase": false,
+          "dip_limit": false,
+          "input_hp_hz": null,
+          "rc_lo": 30.0,
+          "rc_hi": null,
+          "rc_hi_basis": "strict",
+          "rc_hi_transition": 1,
+          "rc_bands": [],
+          "room_volume_m3": null,
+          "room_dims_m": null,
+          "mimo_on": false,
+          "fsiso": 150.0,
+          "mimo_low": null,
+          "mimo_max_supports": 0,
+          "mimo_fir": true,
+          "mimo_early_ms": 60.0,
+          "mimo_seat_guard": false,
+          "peq_analytic_derivatives": false,
+          "mimo_iir_analytic_derivatives": false,
+          "xo": {},
+          "xo_rec": {},
+          "ultra_ms": 200.0,
+          "subs_manual": {},
+          "sub_main_delay_ms": 0.0,
+          "bundle_layouts": {},
+          "infra_boost_max_db": 24.0,
+          "xo_peq_on": true,
+          "boost_max_db": 10.0,
+          "xo_peq_lo": 0.0,
+          "xo_peq_hi": 0.0
+        }
+      }
+    }
+  },
+  {
+    "params": {
+      "edit": {
+        "kind": "rc_hi",
+        "hz": 500.0
+      }
+    },
+    "data": {
+      "ok": true,
+      "data": {
+        "method": "calibration_settings_edit",
+        "data": {
+          "mode": "mixed",
+          "sample_rate_policy": "reject",
+          "low_protect": false,
+          "lf_align": false,
+          "mode_decay": false,
+          "hf_phase": false,
+          "dip_limit": false,
+          "input_hp_hz": null,
+          "rc_lo": 20.0,
+          "rc_hi": 500.0,
+          "rc_hi_basis": "strict",
+          "rc_hi_transition": 1,
+          "rc_bands": [],
+          "room_volume_m3": null,
+          "room_dims_m": null,
+          "mimo_on": false,
+          "fsiso": 150.0,
+          "mimo_low": null,
+          "mimo_max_supports": 0,
+          "mimo_fir": true,
+          "mimo_early_ms": 60.0,
+          "mimo_seat_guard": false,
+          "peq_analytic_derivatives": false,
+          "mimo_iir_analytic_derivatives": false,
+          "xo": {},
+          "xo_rec": {},
+          "ultra_ms": 200.0,
+          "subs_manual": {},
+          "sub_main_delay_ms": 0.0,
+          "bundle_layouts": {},
+          "infra_boost_max_db": 24.0,
+          "xo_peq_on": true,
+          "boost_max_db": 10.0,
+          "xo_peq_lo": 0.0,
+          "xo_peq_hi": 0.0
+        }
+      }
+    }
+  },
+  {
+    "params": {
+      "edit": {
+        "kind": "rc_hi_basis",
+        "basis": "lenient"
+      }
+    },
+    "data": {
+      "ok": true,
+      "data": {
+        "method": "calibration_settings_edit",
+        "data": {
+          "mode": "mixed",
+          "sample_rate_policy": "reject",
+          "low_protect": false,
+          "lf_align": false,
+          "mode_decay": false,
+          "hf_phase": false,
+          "dip_limit": false,
+          "input_hp_hz": null,
+          "rc_lo": 20.0,
+          "rc_hi": null,
+          "rc_hi_basis": "lenient",
+          "rc_hi_transition": 1,
+          "rc_bands": [],
+          "room_volume_m3": null,
+          "room_dims_m": null,
+          "mimo_on": false,
+          "fsiso": 150.0,
+          "mimo_low": null,
+          "mimo_max_supports": 0,
+          "mimo_fir": true,
+          "mimo_early_ms": 60.0,
+          "mimo_seat_guard": false,
+          "peq_analytic_derivatives": false,
+          "mimo_iir_analytic_derivatives": false,
+          "xo": {},
+          "xo_rec": {},
+          "ultra_ms": 200.0,
+          "subs_manual": {},
+          "sub_main_delay_ms": 0.0,
+          "bundle_layouts": {},
+          "infra_boost_max_db": 24.0,
+          "xo_peq_on": true,
+          "boost_max_db": 10.0,
+          "xo_peq_lo": 0.0,
+          "xo_peq_hi": 0.0
+        }
+      }
+    }
+  },
+  {
+    "params": {
+      "edit": {
+        "kind": "rc_hi_transition",
+        "factor": 2
+      }
+    },
+    "data": {
+      "ok": true,
+      "data": {
+        "method": "calibration_settings_edit",
+        "data": {
+          "mode": "mixed",
+          "sample_rate_policy": "reject",
+          "low_protect": false,
+          "lf_align": false,
+          "mode_decay": false,
+          "hf_phase": false,
+          "dip_limit": false,
+          "input_hp_hz": null,
+          "rc_lo": 20.0,
+          "rc_hi": null,
+          "rc_hi_basis": "strict",
+          "rc_hi_transition": 2,
+          "rc_bands": [],
+          "room_volume_m3": null,
+          "room_dims_m": null,
+          "mimo_on": false,
+          "fsiso": 150.0,
+          "mimo_low": null,
+          "mimo_max_supports": 0,
+          "mimo_fir": true,
+          "mimo_early_ms": 60.0,
+          "mimo_seat_guard": false,
+          "peq_analytic_derivatives": false,
+          "mimo_iir_analytic_derivatives": false,
+          "xo": {},
+          "xo_rec": {},
+          "ultra_ms": 200.0,
+          "subs_manual": {},
+          "sub_main_delay_ms": 0.0,
+          "bundle_layouts": {},
+          "infra_boost_max_db": 24.0,
+          "xo_peq_on": true,
+          "boost_max_db": 10.0,
+          "xo_peq_lo": 0.0,
+          "xo_peq_hi": 0.0
+        }
+      }
+    }
+  },
+  {
+    "params": {
+      "edit": {
+        "kind": "rc_bands",
+        "bands": [
+          {
+            "lo_hz": 1000.0,
+            "hi_hz": 2000.0
+          }
+        ]
+      }
+    },
+    "data": {
+      "ok": true,
+      "data": {
+        "method": "calibration_settings_edit",
+        "data": {
+          "mode": "mixed",
+          "sample_rate_policy": "reject",
+          "low_protect": false,
+          "lf_align": false,
+          "mode_decay": false,
+          "hf_phase": false,
+          "dip_limit": false,
+          "input_hp_hz": null,
+          "rc_lo": 20.0,
+          "rc_hi": null,
+          "rc_hi_basis": "strict",
+          "rc_hi_transition": 1,
+          "rc_bands": [
+            {
+              "lo_hz": 1000.0,
+              "hi_hz": 2000.0
+            }
+          ],
+          "room_volume_m3": null,
+          "room_dims_m": null,
+          "mimo_on": false,
+          "fsiso": 150.0,
+          "mimo_low": null,
+          "mimo_max_supports": 0,
+          "mimo_fir": true,
+          "mimo_early_ms": 60.0,
+          "mimo_seat_guard": false,
+          "peq_analytic_derivatives": false,
+          "mimo_iir_analytic_derivatives": false,
+          "xo": {},
+          "xo_rec": {},
+          "ultra_ms": 200.0,
+          "subs_manual": {},
+          "sub_main_delay_ms": 0.0,
+          "bundle_layouts": {},
+          "infra_boost_max_db": 24.0,
+          "xo_peq_on": true,
+          "boost_max_db": 10.0,
+          "xo_peq_lo": 0.0,
+          "xo_peq_hi": 0.0
+        }
+      }
+    }
+  },
+  {
+    "params": {
+      "edit": {
+        "kind": "room_volume",
+        "m3": 60.0
+      }
+    },
+    "data": {
+      "ok": true,
+      "data": {
+        "method": "calibration_settings_edit",
+        "data": {
+          "mode": "mixed",
+          "sample_rate_policy": "reject",
+          "low_protect": false,
+          "lf_align": false,
+          "mode_decay": false,
+          "hf_phase": false,
+          "dip_limit": false,
+          "input_hp_hz": null,
+          "rc_lo": 20.0,
+          "rc_hi": null,
+          "rc_hi_basis": "strict",
+          "rc_hi_transition": 1,
+          "rc_bands": [],
+          "room_volume_m3": 60.0,
+          "room_dims_m": null,
+          "mimo_on": false,
+          "fsiso": 150.0,
+          "mimo_low": null,
+          "mimo_max_supports": 0,
+          "mimo_fir": true,
+          "mimo_early_ms": 60.0,
+          "mimo_seat_guard": false,
+          "peq_analytic_derivatives": false,
+          "mimo_iir_analytic_derivatives": false,
+          "xo": {},
+          "xo_rec": {},
+          "ultra_ms": 200.0,
+          "subs_manual": {},
+          "sub_main_delay_ms": 0.0,
+          "bundle_layouts": {},
+          "infra_boost_max_db": 24.0,
+          "xo_peq_on": true,
+          "boost_max_db": 10.0,
+          "xo_peq_lo": 0.0,
+          "xo_peq_hi": 0.0
+        }
+      }
+    }
+  },
+  {
+    "params": {
+      "edit": {
+        "kind": "room_dims",
+        "dims": [
+          5.0,
+          4.0,
+          3.0
+        ]
+      }
+    },
+    "data": {
+      "ok": true,
+      "data": {
+        "method": "calibration_settings_edit",
+        "data": {
+          "mode": "mixed",
+          "sample_rate_policy": "reject",
+          "low_protect": false,
+          "lf_align": false,
+          "mode_decay": false,
+          "hf_phase": false,
+          "dip_limit": false,
+          "input_hp_hz": null,
+          "rc_lo": 20.0,
+          "rc_hi": null,
+          "rc_hi_basis": "strict",
+          "rc_hi_transition": 1,
+          "rc_bands": [],
+          "room_volume_m3": 60.0,
+          "room_dims_m": [
+            5.0,
+            4.0,
+            3.0
+          ],
+          "mimo_on": false,
+          "fsiso": 150.0,
+          "mimo_low": null,
+          "mimo_max_supports": 0,
+          "mimo_fir": true,
+          "mimo_early_ms": 60.0,
+          "mimo_seat_guard": false,
+          "peq_analytic_derivatives": false,
+          "mimo_iir_analytic_derivatives": false,
+          "xo": {},
+          "xo_rec": {},
+          "ultra_ms": 200.0,
+          "subs_manual": {},
+          "sub_main_delay_ms": 0.0,
+          "bundle_layouts": {},
+          "infra_boost_max_db": 24.0,
+          "xo_peq_on": true,
+          "boost_max_db": 10.0,
+          "xo_peq_lo": 0.0,
+          "xo_peq_hi": 0.0
+        }
+      }
+    }
+  },
+  {
+    "params": {
+      "edit": {
+        "kind": "boost_max",
+        "db": 6.0
+      }
+    },
+    "data": {
+      "ok": true,
+      "data": {
+        "method": "calibration_settings_edit",
+        "data": {
+          "mode": "mixed",
+          "sample_rate_policy": "reject",
+          "low_protect": false,
+          "lf_align": false,
+          "mode_decay": false,
+          "hf_phase": false,
+          "dip_limit": false,
+          "input_hp_hz": null,
+          "rc_lo": 20.0,
+          "rc_hi": null,
+          "rc_hi_basis": "strict",
+          "rc_hi_transition": 1,
+          "rc_bands": [],
+          "room_volume_m3": null,
+          "room_dims_m": null,
+          "mimo_on": false,
+          "fsiso": 150.0,
+          "mimo_low": null,
+          "mimo_max_supports": 0,
+          "mimo_fir": true,
+          "mimo_early_ms": 60.0,
+          "mimo_seat_guard": false,
+          "peq_analytic_derivatives": false,
+          "mimo_iir_analytic_derivatives": false,
+          "xo": {},
+          "xo_rec": {},
+          "ultra_ms": 200.0,
+          "subs_manual": {},
+          "sub_main_delay_ms": 0.0,
+          "bundle_layouts": {},
+          "infra_boost_max_db": 24.0,
+          "xo_peq_on": true,
+          "boost_max_db": 6.0,
+          "xo_peq_lo": 0.0,
+          "xo_peq_hi": 0.0
+        }
+      }
+    }
+  },
+  {
+    "params": {
+      "edit": {
+        "kind": "xo",
+        "group": "프론트",
+        "hz": 80.0
+      }
+    },
+    "data": {
+      "ok": true,
+      "data": {
+        "method": "calibration_settings_edit",
+        "data": {
+          "mode": "mixed",
+          "sample_rate_policy": "reject",
+          "low_protect": false,
+          "lf_align": false,
+          "mode_decay": false,
+          "hf_phase": false,
+          "dip_limit": false,
+          "input_hp_hz": null,
+          "rc_lo": 20.0,
+          "rc_hi": null,
+          "rc_hi_basis": "strict",
+          "rc_hi_transition": 1,
+          "rc_bands": [],
+          "room_volume_m3": null,
+          "room_dims_m": null,
+          "mimo_on": false,
+          "fsiso": 150.0,
+          "mimo_low": null,
+          "mimo_max_supports": 0,
+          "mimo_fir": true,
+          "mimo_early_ms": 60.0,
+          "mimo_seat_guard": false,
+          "peq_analytic_derivatives": false,
+          "mimo_iir_analytic_derivatives": false,
+          "xo": {
+            "프론트": 80.0
+          },
+          "xo_rec": {},
+          "xo_rec_include": false,
+          "ultra_ms": 200.0,
+          "subs_manual": {},
+          "sub_main_delay_ms": 0.0,
+          "bundle_layouts": {},
+          "infra_boost_max_db": 24.0,
+          "xo_peq_on": true,
+          "boost_max_db": 10.0,
+          "xo_peq_lo": 0.0,
+          "xo_peq_hi": 0.0
+        }
+      }
+    }
+  },
+  {
+    "params": {
+      "edit": {
+        "kind": "xo_rec_include",
+        "on": false
+      }
+    },
+    "data": {
+      "ok": true,
+      "data": {
+        "method": "calibration_settings_edit",
+        "data": {
+          "mode": "mixed",
+          "sample_rate_policy": "reject",
+          "low_protect": false,
+          "lf_align": false,
+          "mode_decay": false,
+          "hf_phase": false,
+          "dip_limit": false,
+          "input_hp_hz": null,
+          "rc_lo": 20.0,
+          "rc_hi": null,
+          "rc_hi_basis": "strict",
+          "rc_hi_transition": 1,
+          "rc_bands": [],
+          "room_volume_m3": null,
+          "room_dims_m": null,
+          "mimo_on": false,
+          "fsiso": 150.0,
+          "mimo_low": null,
+          "mimo_max_supports": 0,
+          "mimo_fir": true,
+          "mimo_early_ms": 60.0,
+          "mimo_seat_guard": false,
+          "peq_analytic_derivatives": false,
+          "mimo_iir_analytic_derivatives": false,
+          "xo": {},
+          "xo_rec": {},
+          "xo_rec_include": false,
+          "ultra_ms": 200.0,
+          "subs_manual": {},
+          "sub_main_delay_ms": 0.0,
+          "bundle_layouts": {},
+          "infra_boost_max_db": 24.0,
+          "xo_peq_on": true,
+          "boost_max_db": 10.0,
+          "xo_peq_lo": 0.0,
+          "xo_peq_hi": 0.0
+        }
+      }
+    }
+  },
+  {
+    "params": {
+      "edit": {
+        "kind": "xo_peq",
+        "on": true,
+        "lo": 40.0,
+        "hi": 160.0
+      }
+    },
+    "data": {
+      "ok": true,
+      "data": {
+        "method": "calibration_settings_edit",
+        "data": {
+          "mode": "mixed",
+          "sample_rate_policy": "reject",
+          "low_protect": false,
+          "lf_align": false,
+          "mode_decay": false,
+          "hf_phase": false,
+          "dip_limit": false,
+          "input_hp_hz": null,
+          "rc_lo": 20.0,
+          "rc_hi": null,
+          "rc_hi_basis": "strict",
+          "rc_hi_transition": 1,
+          "rc_bands": [],
+          "room_volume_m3": null,
+          "room_dims_m": null,
+          "mimo_on": false,
+          "fsiso": 150.0,
+          "mimo_low": null,
+          "mimo_max_supports": 0,
+          "mimo_fir": true,
+          "mimo_early_ms": 60.0,
+          "mimo_seat_guard": false,
+          "peq_analytic_derivatives": false,
+          "mimo_iir_analytic_derivatives": false,
+          "xo": {},
+          "xo_rec": {},
+          "ultra_ms": 200.0,
+          "subs_manual": {},
+          "sub_main_delay_ms": 0.0,
+          "bundle_layouts": {},
+          "infra_boost_max_db": 24.0,
+          "xo_peq_on": true,
+          "boost_max_db": 10.0,
+          "xo_peq_lo": 40.0,
+          "xo_peq_hi": 160.0
+        }
+      }
+    }
+  },
+  {
+    "params": {
+      "edit": {
+        "kind": "infra",
+        "role": "SW1",
+        "hz": 25.0,
+        "type": "LR24",
+        "subs": [
+          "SW1",
+          "SW2",
+          "SW3"
+        ]
+      }
+    },
+    "data": {
+      "ok": true,
+      "data": {
+        "method": "calibration_settings_edit",
+        "data": {
+          "mode": "mixed",
+          "sample_rate_policy": "reject",
+          "low_protect": false,
+          "lf_align": false,
+          "mode_decay": false,
+          "hf_phase": false,
+          "dip_limit": false,
+          "input_hp_hz": null,
+          "rc_lo": 20.0,
+          "rc_hi": null,
+          "rc_hi_basis": "strict",
+          "rc_hi_transition": 1,
+          "rc_bands": [],
+          "room_volume_m3": null,
+          "room_dims_m": null,
+          "mimo_on": false,
+          "fsiso": 150.0,
+          "mimo_low": null,
+          "mimo_max_supports": 0,
+          "mimo_fir": true,
+          "mimo_early_ms": 60.0,
+          "mimo_seat_guard": false,
+          "peq_analytic_derivatives": false,
+          "mimo_iir_analytic_derivatives": false,
+          "xo": {},
+          "xo_rec": {},
+          "ultra_ms": 200.0,
+          "subs_manual": {
+            "SW1": {
+              "mode": "auto",
+              "bundle": "A",
+              "gain_db": 0.0,
+              "delay_ms": 0.0,
+              "polarity": 1,
+              "allpass": [],
+              "mimo_support": true,
+              "hp_hz": 0.0,
+              "lp_hz": 25.0,
+              "peq": [],
+              "hp_type": "LR24",
+              "lp_type": "LR24",
+              "dba_row": "front"
+            },
+            "SW2": {
+              "mode": "auto",
+              "bundle": "A",
+              "gain_db": 0.0,
+              "delay_ms": 0.0,
+              "polarity": 1,
+              "allpass": [],
+              "mimo_support": true,
+              "hp_hz": 25.0,
+              "lp_hz": 0.0,
+              "peq": [],
+              "hp_type": "LR24",
+              "lp_type": "LR24",
+              "dba_row": "front"
+            },
+            "SW3": {
+              "mode": "auto",
+              "bundle": "A",
+              "gain_db": 0.0,
+              "delay_ms": 0.0,
+              "polarity": 1,
+              "allpass": [],
+              "mimo_support": true,
+              "hp_hz": 25.0,
+              "lp_hz": 0.0,
+              "peq": [],
+              "hp_type": "LR24",
+              "lp_type": "LR24",
+              "dba_row": "front"
+            }
+          },
+          "sub_main_delay_ms": 0.0,
+          "bundle_layouts": {},
+          "infra_boost_max_db": 24.0,
+          "xo_peq_on": true,
+          "boost_max_db": 10.0,
+          "xo_peq_lo": 0.0,
+          "xo_peq_hi": 0.0
+        }
+      }
+    }
+  },
+  {
+    "params": {
+      "edit": {
+        "kind": "infra_boost",
+        "db": 12.0
+      }
+    },
+    "data": {
+      "ok": true,
+      "data": {
+        "method": "calibration_settings_edit",
+        "data": {
+          "mode": "mixed",
+          "sample_rate_policy": "reject",
+          "low_protect": false,
+          "lf_align": false,
+          "mode_decay": false,
+          "hf_phase": false,
+          "dip_limit": false,
+          "input_hp_hz": null,
+          "rc_lo": 20.0,
+          "rc_hi": null,
+          "rc_hi_basis": "strict",
+          "rc_hi_transition": 1,
+          "rc_bands": [],
+          "room_volume_m3": null,
+          "room_dims_m": null,
+          "mimo_on": false,
+          "fsiso": 150.0,
+          "mimo_low": null,
+          "mimo_max_supports": 0,
+          "mimo_fir": true,
+          "mimo_early_ms": 60.0,
+          "mimo_seat_guard": false,
+          "peq_analytic_derivatives": false,
+          "mimo_iir_analytic_derivatives": false,
+          "xo": {},
+          "xo_rec": {},
+          "ultra_ms": 200.0,
+          "subs_manual": {},
+          "sub_main_delay_ms": 0.0,
+          "bundle_layouts": {},
+          "infra_boost_max_db": 12.0,
+          "xo_peq_on": true,
+          "boost_max_db": 10.0,
+          "xo_peq_lo": 0.0,
+          "xo_peq_hi": 0.0
+        }
+      }
+    }
+  },
+  {
+    "params": {
+      "edit": {
+        "kind": "sub_mode",
+        "role": "SW1",
+        "mode": "fixed"
+      }
+    },
+    "data": {
+      "ok": true,
+      "data": {
+        "method": "calibration_settings_edit",
+        "data": {
+          "mode": "mixed",
+          "sample_rate_policy": "reject",
+          "low_protect": false,
+          "lf_align": false,
+          "mode_decay": false,
+          "hf_phase": false,
+          "dip_limit": false,
+          "input_hp_hz": null,
+          "rc_lo": 20.0,
+          "rc_hi": null,
+          "rc_hi_basis": "strict",
+          "rc_hi_transition": 1,
+          "rc_bands": [],
+          "room_volume_m3": null,
+          "room_dims_m": null,
+          "mimo_on": false,
+          "fsiso": 150.0,
+          "mimo_low": null,
+          "mimo_max_supports": 0,
+          "mimo_fir": true,
+          "mimo_early_ms": 60.0,
+          "mimo_seat_guard": false,
+          "peq_analytic_derivatives": false,
+          "mimo_iir_analytic_derivatives": false,
+          "xo": {},
+          "xo_rec": {},
+          "ultra_ms": 200.0,
+          "subs_manual": {
+            "SW1": {
+              "mode": "fixed",
+              "bundle": "A",
+              "gain_db": 0.0,
+              "delay_ms": 0.0,
+              "polarity": 1,
+              "allpass": [],
+              "mimo_support": true,
+              "hp_hz": 0.0,
+              "lp_hz": 0.0,
+              "peq": [],
+              "hp_type": "LR24",
+              "lp_type": "LR24",
+              "dba_row": "front"
+            }
+          },
+          "sub_main_delay_ms": 0.0,
+          "bundle_layouts": {},
+          "infra_boost_max_db": 24.0,
+          "xo_peq_on": true,
+          "boost_max_db": 10.0,
+          "xo_peq_lo": 0.0,
+          "xo_peq_hi": 0.0
+        }
+      }
+    }
+  },
+  {
+    "params": {
+      "edit": {
+        "kind": "sub_layout",
+        "bundle": "A",
+        "layout": "values"
+      }
+    },
+    "data": {
+      "ok": true,
+      "data": {
+        "method": "calibration_settings_edit",
+        "data": {
+          "mode": "mixed",
+          "sample_rate_policy": "reject",
+          "low_protect": false,
+          "lf_align": false,
+          "mode_decay": false,
+          "hf_phase": false,
+          "dip_limit": false,
+          "input_hp_hz": null,
+          "rc_lo": 20.0,
+          "rc_hi": null,
+          "rc_hi_basis": "strict",
+          "rc_hi_transition": 1,
+          "rc_bands": [],
+          "room_volume_m3": null,
+          "room_dims_m": null,
+          "mimo_on": false,
+          "fsiso": 150.0,
+          "mimo_low": null,
+          "mimo_max_supports": 0,
+          "mimo_fir": true,
+          "mimo_early_ms": 60.0,
+          "mimo_seat_guard": false,
+          "peq_analytic_derivatives": false,
+          "mimo_iir_analytic_derivatives": false,
+          "xo": {},
+          "xo_rec": {},
+          "ultra_ms": 200.0,
+          "subs_manual": {},
+          "sub_main_delay_ms": 0.0,
+          "bundle_layouts": {
+            "A": {
+              "kind": "values",
+              "rear_trim_ms": 0.0
+            }
+          },
+          "infra_boost_max_db": 24.0,
+          "xo_peq_on": true,
+          "boost_max_db": 10.0,
+          "xo_peq_lo": 0.0,
+          "xo_peq_hi": 0.0
+        }
+      }
+    }
+  },
+  {
+    "params": {
+      "edit": {
+        "kind": "rear_trim",
+        "bundle": "A",
+        "ms": 2.0
+      }
+    },
+    "data": {
+      "ok": true,
+      "data": {
+        "method": "calibration_settings_edit",
+        "data": {
+          "mode": "mixed",
+          "sample_rate_policy": "reject",
+          "low_protect": false,
+          "lf_align": false,
+          "mode_decay": false,
+          "hf_phase": false,
+          "dip_limit": false,
+          "input_hp_hz": null,
+          "rc_lo": 20.0,
+          "rc_hi": null,
+          "rc_hi_basis": "strict",
+          "rc_hi_transition": 1,
+          "rc_bands": [],
+          "room_volume_m3": null,
+          "room_dims_m": null,
+          "mimo_on": false,
+          "fsiso": 150.0,
+          "mimo_low": null,
+          "mimo_max_supports": 0,
+          "mimo_fir": true,
+          "mimo_early_ms": 60.0,
+          "mimo_seat_guard": false,
+          "peq_analytic_derivatives": false,
+          "mimo_iir_analytic_derivatives": false,
+          "xo": {},
+          "xo_rec": {},
+          "ultra_ms": 200.0,
+          "subs_manual": {},
+          "sub_main_delay_ms": 0.0,
+          "bundle_layouts": {
+            "A": {
+              "kind": "values",
+              "rear_trim_ms": 2.0
+            }
+          },
+          "infra_boost_max_db": 24.0,
+          "xo_peq_on": true,
+          "boost_max_db": 10.0,
+          "xo_peq_lo": 0.0,
+          "xo_peq_hi": 0.0
+        }
+      }
+    }
+  },
+  {
+    "params": {
+      "edit": {
+        "kind": "sub",
+        "role": "SW1",
+        "patch": {
+          "gain_db": -3.0
+        }
+      }
+    },
+    "data": {
+      "ok": true,
+      "data": {
+        "method": "calibration_settings_edit",
+        "data": {
+          "mode": "mixed",
+          "sample_rate_policy": "reject",
+          "low_protect": false,
+          "lf_align": false,
+          "mode_decay": false,
+          "hf_phase": false,
+          "dip_limit": false,
+          "input_hp_hz": null,
+          "rc_lo": 20.0,
+          "rc_hi": null,
+          "rc_hi_basis": "strict",
+          "rc_hi_transition": 1,
+          "rc_bands": [],
+          "room_volume_m3": null,
+          "room_dims_m": null,
+          "mimo_on": false,
+          "fsiso": 150.0,
+          "mimo_low": null,
+          "mimo_max_supports": 0,
+          "mimo_fir": true,
+          "mimo_early_ms": 60.0,
+          "mimo_seat_guard": false,
+          "peq_analytic_derivatives": false,
+          "mimo_iir_analytic_derivatives": false,
+          "xo": {},
+          "xo_rec": {},
+          "ultra_ms": 200.0,
+          "subs_manual": {
+            "SW1": {
+              "mode": "auto",
+              "bundle": "A",
+              "gain_db": -3.0,
+              "delay_ms": 0.0,
+              "polarity": 1,
+              "allpass": [],
+              "mimo_support": true,
+              "hp_hz": 0.0,
+              "lp_hz": 0.0,
+              "peq": [],
+              "hp_type": "LR24",
+              "lp_type": "LR24",
+              "dba_row": "front"
+            }
+          },
+          "sub_main_delay_ms": 0.0,
+          "bundle_layouts": {},
+          "infra_boost_max_db": 24.0,
+          "xo_peq_on": true,
+          "boost_max_db": 10.0,
+          "xo_peq_lo": 0.0,
+          "xo_peq_hi": 0.0
+        }
+      }
+    }
+  },
+  {
+    "params": {
+      "edit": {
+        "kind": "sub_band_type",
+        "role": "SW1",
+        "band": "hp",
+        "type": "LR24"
+      }
+    },
+    "data": {
+      "ok": true,
+      "data": {
+        "method": "calibration_settings_edit",
+        "data": {
+          "mode": "mixed",
+          "sample_rate_policy": "reject",
+          "low_protect": false,
+          "lf_align": false,
+          "mode_decay": false,
+          "hf_phase": false,
+          "dip_limit": false,
+          "input_hp_hz": null,
+          "rc_lo": 20.0,
+          "rc_hi": null,
+          "rc_hi_basis": "strict",
+          "rc_hi_transition": 1,
+          "rc_bands": [],
+          "room_volume_m3": null,
+          "room_dims_m": null,
+          "mimo_on": false,
+          "fsiso": 150.0,
+          "mimo_low": null,
+          "mimo_max_supports": 0,
+          "mimo_fir": true,
+          "mimo_early_ms": 60.0,
+          "mimo_seat_guard": false,
+          "peq_analytic_derivatives": false,
+          "mimo_iir_analytic_derivatives": false,
+          "xo": {},
+          "xo_rec": {},
+          "ultra_ms": 200.0,
+          "subs_manual": {
+            "SW1": {
+              "mode": "auto",
+              "bundle": "A",
+              "gain_db": 0.0,
+              "delay_ms": 0.0,
+              "polarity": 1,
+              "allpass": [],
+              "mimo_support": true,
+              "hp_hz": 20.0,
+              "lp_hz": 0.0,
+              "peq": [],
+              "hp_type": "LR24",
+              "lp_type": "LR24",
+              "dba_row": "front"
+            }
+          },
+          "sub_main_delay_ms": 0.0,
+          "bundle_layouts": {},
+          "infra_boost_max_db": 24.0,
+          "xo_peq_on": true,
+          "boost_max_db": 10.0,
+          "xo_peq_lo": 0.0,
+          "xo_peq_hi": 0.0
+        }
+      }
+    }
+  },
+  {
+    "params": {
+      "edit": {
+        "kind": "main_delay",
+        "ms": 4.0
+      }
+    },
+    "data": {
+      "ok": true,
+      "data": {
+        "method": "calibration_settings_edit",
+        "data": {
+          "mode": "mixed",
+          "sample_rate_policy": "reject",
+          "low_protect": false,
+          "lf_align": false,
+          "mode_decay": false,
+          "hf_phase": false,
+          "dip_limit": false,
+          "input_hp_hz": null,
+          "rc_lo": 20.0,
+          "rc_hi": null,
+          "rc_hi_basis": "strict",
+          "rc_hi_transition": 1,
+          "rc_bands": [],
+          "room_volume_m3": null,
+          "room_dims_m": null,
+          "mimo_on": false,
+          "fsiso": 150.0,
+          "mimo_low": null,
+          "mimo_max_supports": 0,
+          "mimo_fir": true,
+          "mimo_early_ms": 60.0,
+          "mimo_seat_guard": false,
+          "peq_analytic_derivatives": false,
+          "mimo_iir_analytic_derivatives": false,
+          "xo": {},
+          "xo_rec": {},
+          "ultra_ms": 200.0,
+          "subs_manual": {},
+          "sub_main_delay_ms": 4.0,
+          "bundle_layouts": {},
+          "infra_boost_max_db": 24.0,
+          "xo_peq_on": true,
+          "boost_max_db": 10.0,
+          "xo_peq_lo": 0.0,
+          "xo_peq_hi": 0.0
+        }
+      }
+    }
+  },
+  {
+    "params": {
+      "edit": {
+        "kind": "mimo_on",
+        "on": true
+      }
+    },
+    "data": {
+      "ok": true,
+      "data": {
+        "method": "calibration_settings_edit",
+        "data": {
+          "mode": "mixed",
+          "sample_rate_policy": "reject",
+          "low_protect": false,
+          "lf_align": false,
+          "mode_decay": false,
+          "hf_phase": false,
+          "dip_limit": false,
+          "input_hp_hz": null,
+          "rc_lo": 20.0,
+          "rc_hi": null,
+          "rc_hi_basis": "strict",
+          "rc_hi_transition": 1,
+          "rc_bands": [],
+          "room_volume_m3": null,
+          "room_dims_m": null,
+          "mimo_on": true,
+          "fsiso": 150.0,
+          "mimo_low": null,
+          "mimo_max_supports": 0,
+          "mimo_fir": true,
+          "mimo_early_ms": 60.0,
+          "mimo_seat_guard": false,
+          "peq_analytic_derivatives": false,
+          "mimo_iir_analytic_derivatives": false,
+          "xo": {},
+          "xo_rec": {},
+          "ultra_ms": 200.0,
+          "subs_manual": {},
+          "sub_main_delay_ms": 0.0,
+          "bundle_layouts": {},
+          "infra_boost_max_db": 24.0,
+          "xo_peq_on": true,
+          "boost_max_db": 10.0,
+          "xo_peq_lo": 0.0,
+          "xo_peq_hi": 0.0
+        }
+      }
+    }
+  },
+  {
+    "params": {
+      "edit": {
+        "kind": "fsiso",
+        "hz": 120.0
+      }
+    },
+    "data": {
+      "ok": true,
+      "data": {
+        "method": "calibration_settings_edit",
+        "data": {
+          "mode": "mixed",
+          "sample_rate_policy": "reject",
+          "low_protect": false,
+          "lf_align": false,
+          "mode_decay": false,
+          "hf_phase": false,
+          "dip_limit": false,
+          "input_hp_hz": null,
+          "rc_lo": 20.0,
+          "rc_hi": null,
+          "rc_hi_basis": "strict",
+          "rc_hi_transition": 1,
+          "rc_bands": [],
+          "room_volume_m3": null,
+          "room_dims_m": null,
+          "mimo_on": false,
+          "fsiso": 120.0,
+          "mimo_low": null,
+          "mimo_max_supports": 0,
+          "mimo_fir": true,
+          "mimo_early_ms": 60.0,
+          "mimo_seat_guard": false,
+          "peq_analytic_derivatives": false,
+          "mimo_iir_analytic_derivatives": false,
+          "xo": {},
+          "xo_rec": {},
+          "ultra_ms": 200.0,
+          "subs_manual": {},
+          "sub_main_delay_ms": 0.0,
+          "bundle_layouts": {},
+          "infra_boost_max_db": 24.0,
+          "xo_peq_on": true,
+          "boost_max_db": 10.0,
+          "xo_peq_lo": 0.0,
+          "xo_peq_hi": 0.0
+        }
+      }
+    }
+  },
+  {
+    "params": {
+      "edit": {
+        "kind": "mimo_low",
+        "hz": 30.0
+      }
+    },
+    "data": {
+      "ok": true,
+      "data": {
+        "method": "calibration_settings_edit",
+        "data": {
+          "mode": "mixed",
+          "sample_rate_policy": "reject",
+          "low_protect": false,
+          "lf_align": false,
+          "mode_decay": false,
+          "hf_phase": false,
+          "dip_limit": false,
+          "input_hp_hz": null,
+          "rc_lo": 20.0,
+          "rc_hi": null,
+          "rc_hi_basis": "strict",
+          "rc_hi_transition": 1,
+          "rc_bands": [],
+          "room_volume_m3": null,
+          "room_dims_m": null,
+          "mimo_on": false,
+          "fsiso": 150.0,
+          "mimo_low": 30.0,
+          "mimo_max_supports": 0,
+          "mimo_fir": true,
+          "mimo_early_ms": 60.0,
+          "mimo_seat_guard": false,
+          "peq_analytic_derivatives": false,
+          "mimo_iir_analytic_derivatives": false,
+          "xo": {},
+          "xo_rec": {},
+          "ultra_ms": 200.0,
+          "subs_manual": {},
+          "sub_main_delay_ms": 0.0,
+          "bundle_layouts": {},
+          "infra_boost_max_db": 24.0,
+          "xo_peq_on": true,
+          "boost_max_db": 10.0,
+          "xo_peq_lo": 0.0,
+          "xo_peq_hi": 0.0
+        }
+      }
+    }
+  },
+  {
+    "params": {
+      "edit": {
+        "kind": "mimo_max",
+        "count": 2.0
+      }
+    },
+    "data": {
+      "ok": true,
+      "data": {
+        "method": "calibration_settings_edit",
+        "data": {
+          "mode": "mixed",
+          "sample_rate_policy": "reject",
+          "low_protect": false,
+          "lf_align": false,
+          "mode_decay": false,
+          "hf_phase": false,
+          "dip_limit": false,
+          "input_hp_hz": null,
+          "rc_lo": 20.0,
+          "rc_hi": null,
+          "rc_hi_basis": "strict",
+          "rc_hi_transition": 1,
+          "rc_bands": [],
+          "room_volume_m3": null,
+          "room_dims_m": null,
+          "mimo_on": false,
+          "fsiso": 150.0,
+          "mimo_low": null,
+          "mimo_max_supports": 2,
+          "mimo_fir": true,
+          "mimo_early_ms": 60.0,
+          "mimo_seat_guard": false,
+          "peq_analytic_derivatives": false,
+          "mimo_iir_analytic_derivatives": false,
+          "xo": {},
+          "xo_rec": {},
+          "ultra_ms": 200.0,
+          "subs_manual": {},
+          "sub_main_delay_ms": 0.0,
+          "bundle_layouts": {},
+          "infra_boost_max_db": 24.0,
+          "xo_peq_on": true,
+          "boost_max_db": 10.0,
+          "xo_peq_lo": 0.0,
+          "xo_peq_hi": 0.0
+        }
+      }
+    }
+  },
+  {
+    "params": {
+      "edit": {
+        "kind": "mimo_fir",
+        "on": false
+      }
+    },
+    "data": {
+      "ok": true,
+      "data": {
+        "method": "calibration_settings_edit",
+        "data": {
+          "mode": "mixed",
+          "sample_rate_policy": "reject",
+          "low_protect": false,
+          "lf_align": false,
+          "mode_decay": false,
+          "hf_phase": false,
+          "dip_limit": false,
+          "input_hp_hz": null,
+          "rc_lo": 20.0,
+          "rc_hi": null,
+          "rc_hi_basis": "strict",
+          "rc_hi_transition": 1,
+          "rc_bands": [],
+          "room_volume_m3": null,
+          "room_dims_m": null,
+          "mimo_on": false,
+          "fsiso": 150.0,
+          "mimo_low": null,
+          "mimo_max_supports": 0,
+          "mimo_fir": false,
+          "mimo_early_ms": 60.0,
+          "mimo_seat_guard": false,
+          "peq_analytic_derivatives": false,
+          "mimo_iir_analytic_derivatives": false,
+          "xo": {},
+          "xo_rec": {},
+          "ultra_ms": 200.0,
+          "subs_manual": {},
+          "sub_main_delay_ms": 0.0,
+          "bundle_layouts": {},
+          "infra_boost_max_db": 24.0,
+          "xo_peq_on": true,
+          "boost_max_db": 10.0,
+          "xo_peq_lo": 0.0,
+          "xo_peq_hi": 0.0
+        }
+      }
+    }
+  },
+  {
+    "params": {
+      "edit": {
+        "kind": "mimo_early",
+        "ms": 30.0
+      }
+    },
+    "data": {
+      "ok": true,
+      "data": {
+        "method": "calibration_settings_edit",
+        "data": {
+          "mode": "mixed",
+          "sample_rate_policy": "reject",
+          "low_protect": false,
+          "lf_align": false,
+          "mode_decay": false,
+          "hf_phase": false,
+          "dip_limit": false,
+          "input_hp_hz": null,
+          "rc_lo": 20.0,
+          "rc_hi": null,
+          "rc_hi_basis": "strict",
+          "rc_hi_transition": 1,
+          "rc_bands": [],
+          "room_volume_m3": null,
+          "room_dims_m": null,
+          "mimo_on": false,
+          "fsiso": 150.0,
+          "mimo_low": null,
+          "mimo_max_supports": 0,
+          "mimo_fir": true,
+          "mimo_early_ms": 30.0,
+          "mimo_seat_guard": false,
+          "peq_analytic_derivatives": false,
+          "mimo_iir_analytic_derivatives": false,
+          "xo": {},
+          "xo_rec": {},
+          "ultra_ms": 200.0,
+          "subs_manual": {},
+          "sub_main_delay_ms": 0.0,
+          "bundle_layouts": {},
+          "infra_boost_max_db": 24.0,
+          "xo_peq_on": true,
+          "boost_max_db": 10.0,
+          "xo_peq_lo": 0.0,
+          "xo_peq_hi": 0.0
+        }
+      }
+    }
+  },
+  {
+    "params": {
+      "edit": {
+        "kind": "mimo_seat_guard",
+        "on": true
+      }
+    },
+    "data": {
+      "ok": true,
+      "data": {
+        "method": "calibration_settings_edit",
+        "data": {
+          "mode": "mixed",
+          "sample_rate_policy": "reject",
+          "low_protect": false,
+          "lf_align": false,
+          "mode_decay": false,
+          "hf_phase": false,
+          "dip_limit": false,
+          "input_hp_hz": null,
+          "rc_lo": 20.0,
+          "rc_hi": null,
+          "rc_hi_basis": "strict",
+          "rc_hi_transition": 1,
+          "rc_bands": [],
+          "room_volume_m3": null,
+          "room_dims_m": null,
+          "mimo_on": false,
+          "fsiso": 150.0,
+          "mimo_low": null,
+          "mimo_max_supports": 0,
+          "mimo_fir": true,
+          "mimo_early_ms": 60.0,
+          "mimo_seat_guard": true,
+          "peq_analytic_derivatives": false,
+          "mimo_iir_analytic_derivatives": false,
+          "xo": {},
+          "xo_rec": {},
+          "ultra_ms": 200.0,
+          "subs_manual": {},
+          "sub_main_delay_ms": 0.0,
+          "bundle_layouts": {},
+          "infra_boost_max_db": 24.0,
+          "xo_peq_on": true,
+          "boost_max_db": 10.0,
+          "xo_peq_lo": 0.0,
+          "xo_peq_hi": 0.0
+        }
+      }
+    }
+  },
+  {
+    "params": {
+      "edit": {
+        "kind": "analytic_derivatives",
+        "peq": true,
+        "mimo_iir": true
+      }
+    },
+    "data": {
+      "ok": true,
+      "data": {
+        "method": "calibration_settings_edit",
+        "data": {
+          "mode": "mixed",
+          "sample_rate_policy": "reject",
+          "low_protect": false,
+          "lf_align": false,
+          "mode_decay": false,
+          "hf_phase": false,
+          "dip_limit": false,
+          "input_hp_hz": null,
+          "rc_lo": 20.0,
+          "rc_hi": null,
+          "rc_hi_basis": "strict",
+          "rc_hi_transition": 1,
+          "rc_bands": [],
+          "room_volume_m3": null,
+          "room_dims_m": null,
+          "mimo_on": false,
+          "fsiso": 150.0,
+          "mimo_low": null,
+          "mimo_max_supports": 0,
+          "mimo_fir": true,
+          "mimo_early_ms": 60.0,
+          "mimo_seat_guard": false,
+          "peq_analytic_derivatives": true,
+          "mimo_iir_analytic_derivatives": true,
+          "xo": {},
+          "xo_rec": {},
+          "ultra_ms": 200.0,
+          "subs_manual": {},
+          "sub_main_delay_ms": 0.0,
+          "bundle_layouts": {},
+          "infra_boost_max_db": 24.0,
+          "xo_peq_on": true,
+          "boost_max_db": 10.0,
+          "xo_peq_lo": 0.0,
+          "xo_peq_hi": 0.0
+        }
+      }
+    }
+  },
+  {
+    "params": {
+      "edit": {
+        "kind": "ultra_ms",
+        "ms": 1000.0
+      }
+    },
+    "data": {
+      "ok": true,
+      "data": {
+        "method": "calibration_settings_edit",
+        "data": {
+          "mode": "mixed",
+          "sample_rate_policy": "reject",
+          "low_protect": false,
+          "lf_align": false,
+          "mode_decay": false,
+          "hf_phase": false,
+          "dip_limit": false,
+          "input_hp_hz": null,
+          "rc_lo": 20.0,
+          "rc_hi": null,
+          "rc_hi_basis": "strict",
+          "rc_hi_transition": 1,
+          "rc_bands": [],
+          "room_volume_m3": null,
+          "room_dims_m": null,
+          "mimo_on": false,
+          "fsiso": 150.0,
+          "mimo_low": null,
+          "mimo_max_supports": 0,
+          "mimo_fir": true,
+          "mimo_early_ms": 60.0,
+          "mimo_seat_guard": false,
+          "peq_analytic_derivatives": false,
+          "mimo_iir_analytic_derivatives": false,
+          "xo": {},
+          "xo_rec": {},
+          "ultra_ms": 200.0,
+          "subs_manual": {},
+          "sub_main_delay_ms": 0.0,
+          "bundle_layouts": {},
+          "infra_boost_max_db": 24.0,
+          "xo_peq_on": true,
+          "boost_max_db": 10.0,
+          "xo_peq_lo": 0.0,
+          "xo_peq_hi": 0.0
+        }
+      }
+    }
+  },
+  {
+    "params": {
+      "edit": {
+        "kind": "input_hp",
+        "hz": 1.0
+      }
+    },
+    "data": {
+      "ok": false,
+      "error": {
+        "code": "invalid_request",
+        "params": {
+          "field": "input_hp",
+          "max": "50",
+          "min": "10",
+          "reason": "input_hp_range"
+        },
+        "retryable": false,
+        "detail": "input high-pass is outside its range"
+      }
+    }
+  },
+  {
+    "params": {
+      "edit": {
+        "kind": "rc_lo",
+        "hz": 1.0
+      }
+    },
+    "data": {
+      "ok": false,
+      "error": {
+        "code": "invalid_request",
+        "params": {
+          "field": "rc_lo",
+          "max": "200",
+          "min": "20",
+          "reason": "rc_lo_range"
+        },
+        "retryable": false,
+        "detail": "RC lower limit is outside its range"
+      }
+    }
+  },
+  {
+    "params": {
+      "edit": {
+        "kind": "rc_hi",
+        "hz": 50000.0
+      }
+    },
+    "data": {
+      "ok": false,
+      "error": {
+        "code": "invalid_request",
+        "params": {
+          "field": "rc_hi",
+          "max": "20000",
+          "min": "100",
+          "reason": "rc_hi_range"
+        },
+        "retryable": false,
+        "detail": "RC upper limit is outside its range"
+      }
+    }
+  },
+  {
+    "params": {
+      "edit": {
+        "kind": "rc_hi_transition",
+        "factor": 3
+      }
+    },
+    "data": {
+      "ok": false,
+      "error": {
+        "code": "invalid_request",
+        "params": {
+          "field": "rc_hi_transition"
+        },
+        "retryable": false,
+        "detail": "RC transition factor must be 1, 2 or 4"
+      }
+    }
+  },
+  {
+    "params": {
+      "edit": {
+        "kind": "rc_bands",
+        "bands": [
+          {
+            "lo_hz": 2000.0,
+            "hi_hz": 1000.0
+          }
+        ]
+      }
+    },
+    "data": {
+      "ok": false,
+      "error": {
+        "code": "invalid_request",
+        "params": {
+          "field": "rc_bands",
+          "hi_hz": "1000",
+          "index": "1",
+          "lo_hz": "2000",
+          "reason": "rc_band_range"
+        },
+        "retryable": false,
+        "detail": "an extra RC band is outside its range"
+      }
+    }
+  },
+  {
+    "params": {
+      "edit": {
+        "kind": "room_volume",
+        "m3": 1000000.0
+      }
+    },
+    "data": {
+      "ok": true,
+      "data": {
+        "method": "calibration_settings_edit",
+        "data": {
+          "mode": "mixed",
+          "sample_rate_policy": "reject",
+          "low_protect": false,
+          "lf_align": false,
+          "mode_decay": false,
+          "hf_phase": false,
+          "dip_limit": false,
+          "input_hp_hz": null,
+          "rc_lo": 20.0,
+          "rc_hi": null,
+          "rc_hi_basis": "strict",
+          "rc_hi_transition": 1,
+          "rc_bands": [],
+          "room_volume_m3": 100000.0,
+          "room_dims_m": null,
+          "mimo_on": false,
+          "fsiso": 150.0,
+          "mimo_low": null,
+          "mimo_max_supports": 0,
+          "mimo_fir": true,
+          "mimo_early_ms": 60.0,
+          "mimo_seat_guard": false,
+          "peq_analytic_derivatives": false,
+          "mimo_iir_analytic_derivatives": false,
+          "xo": {},
+          "xo_rec": {},
+          "ultra_ms": 200.0,
+          "subs_manual": {},
+          "sub_main_delay_ms": 0.0,
+          "bundle_layouts": {},
+          "infra_boost_max_db": 24.0,
+          "xo_peq_on": true,
+          "boost_max_db": 10.0,
+          "xo_peq_lo": 0.0,
+          "xo_peq_hi": 0.0
+        }
+      }
+    }
+  },
+  {
+    "params": {
+      "edit": {
+        "kind": "room_dims",
+        "dims": [
+          200.0,
+          200.0,
+          200.0
+        ]
+      }
+    },
+    "data": {
+      "ok": true,
+      "data": {
+        "method": "calibration_settings_edit",
+        "data": {
+          "mode": "mixed",
+          "sample_rate_policy": "reject",
+          "low_protect": false,
+          "lf_align": false,
+          "mode_decay": false,
+          "hf_phase": false,
+          "dip_limit": false,
+          "input_hp_hz": null,
+          "rc_lo": 20.0,
+          "rc_hi": null,
+          "rc_hi_basis": "strict",
+          "rc_hi_transition": 1,
+          "rc_bands": [],
+          "room_volume_m3": 100000.0,
+          "room_dims_m": [
+            100.0,
+            100.0,
+            100.0
+          ],
+          "mimo_on": false,
+          "fsiso": 150.0,
+          "mimo_low": null,
+          "mimo_max_supports": 0,
+          "mimo_fir": true,
+          "mimo_early_ms": 60.0,
+          "mimo_seat_guard": false,
+          "peq_analytic_derivatives": false,
+          "mimo_iir_analytic_derivatives": false,
+          "xo": {},
+          "xo_rec": {},
+          "ultra_ms": 200.0,
+          "subs_manual": {},
+          "sub_main_delay_ms": 0.0,
+          "bundle_layouts": {},
+          "infra_boost_max_db": 24.0,
+          "xo_peq_on": true,
+          "boost_max_db": 10.0,
+          "xo_peq_lo": 0.0,
+          "xo_peq_hi": 0.0
+        }
+      }
+    }
+  },
+  {
+    "params": {
+      "edit": {
+        "kind": "boost_max",
+        "db": 100.0
+      }
+    },
+    "data": {
+      "ok": true,
+      "data": {
+        "method": "calibration_settings_edit",
+        "data": {
+          "mode": "mixed",
+          "sample_rate_policy": "reject",
+          "low_protect": false,
+          "lf_align": false,
+          "mode_decay": false,
+          "hf_phase": false,
+          "dip_limit": false,
+          "input_hp_hz": null,
+          "rc_lo": 20.0,
+          "rc_hi": null,
+          "rc_hi_basis": "strict",
+          "rc_hi_transition": 1,
+          "rc_bands": [],
+          "room_volume_m3": null,
+          "room_dims_m": null,
+          "mimo_on": false,
+          "fsiso": 150.0,
+          "mimo_low": null,
+          "mimo_max_supports": 0,
+          "mimo_fir": true,
+          "mimo_early_ms": 60.0,
+          "mimo_seat_guard": false,
+          "peq_analytic_derivatives": false,
+          "mimo_iir_analytic_derivatives": false,
+          "xo": {},
+          "xo_rec": {},
+          "ultra_ms": 200.0,
+          "subs_manual": {},
+          "sub_main_delay_ms": 0.0,
+          "bundle_layouts": {},
+          "infra_boost_max_db": 24.0,
+          "xo_peq_on": true,
+          "boost_max_db": 10.0,
+          "xo_peq_lo": 0.0,
+          "xo_peq_hi": 0.0
+        }
+      }
+    }
+  },
+  {
+    "params": {
+      "edit": {
+        "kind": "xo",
+        "group": "프론트",
+        "hz": 1000.0
+      }
+    },
+    "data": {
+      "ok": true,
+      "data": {
+        "method": "calibration_settings_edit",
+        "data": {
+          "mode": "mixed",
+          "sample_rate_policy": "reject",
+          "low_protect": false,
+          "lf_align": false,
+          "mode_decay": false,
+          "hf_phase": false,
+          "dip_limit": false,
+          "input_hp_hz": null,
+          "rc_lo": 20.0,
+          "rc_hi": null,
+          "rc_hi_basis": "strict",
+          "rc_hi_transition": 1,
+          "rc_bands": [],
+          "room_volume_m3": null,
+          "room_dims_m": null,
+          "mimo_on": false,
+          "fsiso": 150.0,
+          "mimo_low": null,
+          "mimo_max_supports": 0,
+          "mimo_fir": true,
+          "mimo_early_ms": 60.0,
+          "mimo_seat_guard": false,
+          "peq_analytic_derivatives": false,
+          "mimo_iir_analytic_derivatives": false,
+          "xo": {
+            "프론트": 200.0
+          },
+          "xo_rec": {},
+          "xo_rec_include": false,
+          "ultra_ms": 200.0,
+          "subs_manual": {},
+          "sub_main_delay_ms": 0.0,
+          "bundle_layouts": {},
+          "infra_boost_max_db": 24.0,
+          "xo_peq_on": true,
+          "boost_max_db": 10.0,
+          "xo_peq_lo": 0.0,
+          "xo_peq_hi": 0.0
+        }
+      }
+    }
+  },
+  {
+    "params": {
+      "edit": {
+        "kind": "xo_peq",
+        "lo": -100.0,
+        "hi": 2000.0
+      }
+    },
+    "data": {
+      "ok": true,
+      "data": {
+        "method": "calibration_settings_edit",
+        "data": {
+          "mode": "mixed",
+          "sample_rate_policy": "reject",
+          "low_protect": false,
+          "lf_align": false,
+          "mode_decay": false,
+          "hf_phase": false,
+          "dip_limit": false,
+          "input_hp_hz": null,
+          "rc_lo": 20.0,
+          "rc_hi": null,
+          "rc_hi_basis": "strict",
+          "rc_hi_transition": 1,
+          "rc_bands": [],
+          "room_volume_m3": null,
+          "room_dims_m": null,
+          "mimo_on": false,
+          "fsiso": 150.0,
+          "mimo_low": null,
+          "mimo_max_supports": 0,
+          "mimo_fir": true,
+          "mimo_early_ms": 60.0,
+          "mimo_seat_guard": false,
+          "peq_analytic_derivatives": false,
+          "mimo_iir_analytic_derivatives": false,
+          "xo": {},
+          "xo_rec": {},
+          "ultra_ms": 200.0,
+          "subs_manual": {},
+          "sub_main_delay_ms": 0.0,
+          "bundle_layouts": {},
+          "infra_boost_max_db": 24.0,
+          "xo_peq_on": true,
+          "boost_max_db": 10.0,
+          "xo_peq_lo": 0.0,
+          "xo_peq_hi": 1000.0
+        }
+      }
+    }
+  },
+  {
+    "params": {
+      "edit": {
+        "kind": "infra",
+        "role": "SW1",
+        "hz": 1000.0,
+        "type": "LR24",
+        "subs": [
+          "SW1",
+          "SW2",
+          "SW3"
+        ]
+      }
+    },
+    "data": {
+      "ok": true,
+      "data": {
+        "method": "calibration_settings_edit",
+        "data": {
+          "mode": "mixed",
+          "sample_rate_policy": "reject",
+          "low_protect": false,
+          "lf_align": false,
+          "mode_decay": false,
+          "hf_phase": false,
+          "dip_limit": false,
+          "input_hp_hz": null,
+          "rc_lo": 20.0,
+          "rc_hi": null,
+          "rc_hi_basis": "strict",
+          "rc_hi_transition": 1,
+          "rc_bands": [],
+          "room_volume_m3": null,
+          "room_dims_m": null,
+          "mimo_on": false,
+          "fsiso": 150.0,
+          "mimo_low": null,
+          "mimo_max_supports": 0,
+          "mimo_fir": true,
+          "mimo_early_ms": 60.0,
+          "mimo_seat_guard": false,
+          "peq_analytic_derivatives": false,
+          "mimo_iir_analytic_derivatives": false,
+          "xo": {},
+          "xo_rec": {},
+          "ultra_ms": 200.0,
+          "subs_manual": {
+            "SW1": {
+              "mode": "auto",
+              "bundle": "A",
+              "gain_db": 0.0,
+              "delay_ms": 0.0,
+              "polarity": 1,
+              "allpass": [],
+              "mimo_support": true,
+              "hp_hz": 0.0,
+              "lp_hz": 300.0,
+              "peq": [],
+              "hp_type": "LR24",
+              "lp_type": "LR24",
+              "dba_row": "front"
+            },
+            "SW2": {
+              "mode": "auto",
+              "bundle": "A",
+              "gain_db": 0.0,
+              "delay_ms": 0.0,
+              "polarity": 1,
+              "allpass": [],
+              "mimo_support": true,
+              "hp_hz": 300.0,
+              "lp_hz": 0.0,
+              "peq": [],
+              "hp_type": "LR24",
+              "lp_type": "LR24",
+              "dba_row": "front"
+            },
+            "SW3": {
+              "mode": "auto",
+              "bundle": "A",
+              "gain_db": 0.0,
+              "delay_ms": 0.0,
+              "polarity": 1,
+              "allpass": [],
+              "mimo_support": true,
+              "hp_hz": 300.0,
+              "lp_hz": 0.0,
+              "peq": [],
+              "hp_type": "LR24",
+              "lp_type": "LR24",
+              "dba_row": "front"
+            }
+          },
+          "sub_main_delay_ms": 0.0,
+          "bundle_layouts": {},
+          "infra_boost_max_db": 24.0,
+          "xo_peq_on": true,
+          "boost_max_db": 10.0,
+          "xo_peq_lo": 0.0,
+          "xo_peq_hi": 0.0
+        }
+      }
+    }
+  },
+  {
+    "params": {
+      "edit": {
+        "kind": "infra_boost",
+        "db": 100.0
+      }
+    },
+    "data": {
+      "ok": true,
+      "data": {
+        "method": "calibration_settings_edit",
+        "data": {
+          "mode": "mixed",
+          "sample_rate_policy": "reject",
+          "low_protect": false,
+          "lf_align": false,
+          "mode_decay": false,
+          "hf_phase": false,
+          "dip_limit": false,
+          "input_hp_hz": null,
+          "rc_lo": 20.0,
+          "rc_hi": null,
+          "rc_hi_basis": "strict",
+          "rc_hi_transition": 1,
+          "rc_bands": [],
+          "room_volume_m3": null,
+          "room_dims_m": null,
+          "mimo_on": false,
+          "fsiso": 150.0,
+          "mimo_low": null,
+          "mimo_max_supports": 0,
+          "mimo_fir": true,
+          "mimo_early_ms": 60.0,
+          "mimo_seat_guard": false,
+          "peq_analytic_derivatives": false,
+          "mimo_iir_analytic_derivatives": false,
+          "xo": {},
+          "xo_rec": {},
+          "ultra_ms": 200.0,
+          "subs_manual": {},
+          "sub_main_delay_ms": 0.0,
+          "bundle_layouts": {},
+          "infra_boost_max_db": 24.0,
+          "xo_peq_on": true,
+          "boost_max_db": 10.0,
+          "xo_peq_lo": 0.0,
+          "xo_peq_hi": 0.0
+        }
+      }
+    }
+  },
+  {
+    "params": {
+      "edit": {
+        "kind": "rear_trim",
+        "bundle": "A",
+        "ms": 100.0
+      }
+    },
+    "data": {
+      "ok": true,
+      "data": {
+        "method": "calibration_settings_edit",
+        "data": {
+          "mode": "mixed",
+          "sample_rate_policy": "reject",
+          "low_protect": false,
+          "lf_align": false,
+          "mode_decay": false,
+          "hf_phase": false,
+          "dip_limit": false,
+          "input_hp_hz": null,
+          "rc_lo": 20.0,
+          "rc_hi": null,
+          "rc_hi_basis": "strict",
+          "rc_hi_transition": 1,
+          "rc_bands": [],
+          "room_volume_m3": null,
+          "room_dims_m": null,
+          "mimo_on": false,
+          "fsiso": 150.0,
+          "mimo_low": null,
+          "mimo_max_supports": 0,
+          "mimo_fir": true,
+          "mimo_early_ms": 60.0,
+          "mimo_seat_guard": false,
+          "peq_analytic_derivatives": false,
+          "mimo_iir_analytic_derivatives": false,
+          "xo": {},
+          "xo_rec": {},
+          "ultra_ms": 200.0,
+          "subs_manual": {},
+          "sub_main_delay_ms": 0.0,
+          "bundle_layouts": {
+            "A": {
+              "kind": "values",
+              "rear_trim_ms": 20.0
+            }
+          },
+          "infra_boost_max_db": 24.0,
+          "xo_peq_on": true,
+          "boost_max_db": 10.0,
+          "xo_peq_lo": 0.0,
+          "xo_peq_hi": 0.0
+        }
+      }
+    }
+  },
+  {
+    "params": {
+      "edit": {
+        "kind": "sub",
+        "role": "SW1",
+        "patch": {
+          "gain_db": 1000.0,
+          "delay_ms": 1000.0,
+          "hp_hz": 1000.0,
+          "lp_hz": 1000.0
+        }
+      }
+    },
+    "data": {
+      "ok": true,
+      "data": {
+        "method": "calibration_settings_edit",
+        "data": {
+          "mode": "mixed",
+          "sample_rate_policy": "reject",
+          "low_protect": false,
+          "lf_align": false,
+          "mode_decay": false,
+          "hf_phase": false,
+          "dip_limit": false,
+          "input_hp_hz": null,
+          "rc_lo": 20.0,
+          "rc_hi": null,
+          "rc_hi_basis": "strict",
+          "rc_hi_transition": 1,
+          "rc_bands": [],
+          "room_volume_m3": null,
+          "room_dims_m": null,
+          "mimo_on": false,
+          "fsiso": 150.0,
+          "mimo_low": null,
+          "mimo_max_supports": 0,
+          "mimo_fir": true,
+          "mimo_early_ms": 60.0,
+          "mimo_seat_guard": false,
+          "peq_analytic_derivatives": false,
+          "mimo_iir_analytic_derivatives": false,
+          "xo": {},
+          "xo_rec": {},
+          "ultra_ms": 200.0,
+          "subs_manual": {
+            "SW1": {
+              "mode": "auto",
+              "bundle": "A",
+              "gain_db": 20.0,
+              "delay_ms": 500.0,
+              "polarity": 1,
+              "allpass": [],
+              "mimo_support": true,
+              "hp_hz": 300.0,
+              "lp_hz": 300.0,
+              "peq": [],
+              "hp_type": "LR24",
+              "lp_type": "LR24",
+              "dba_row": "front"
+            }
+          },
+          "sub_main_delay_ms": 0.0,
+          "bundle_layouts": {},
+          "infra_boost_max_db": 24.0,
+          "xo_peq_on": true,
+          "boost_max_db": 10.0,
+          "xo_peq_lo": 0.0,
+          "xo_peq_hi": 0.0
+        }
+      }
+    }
+  },
+  {
+    "params": {
+      "edit": {
+        "kind": "main_delay",
+        "ms": 1000.0
+      }
+    },
+    "data": {
+      "ok": true,
+      "data": {
+        "method": "calibration_settings_edit",
+        "data": {
+          "mode": "mixed",
+          "sample_rate_policy": "reject",
+          "low_protect": false,
+          "lf_align": false,
+          "mode_decay": false,
+          "hf_phase": false,
+          "dip_limit": false,
+          "input_hp_hz": null,
+          "rc_lo": 20.0,
+          "rc_hi": null,
+          "rc_hi_basis": "strict",
+          "rc_hi_transition": 1,
+          "rc_bands": [],
+          "room_volume_m3": null,
+          "room_dims_m": null,
+          "mimo_on": false,
+          "fsiso": 150.0,
+          "mimo_low": null,
+          "mimo_max_supports": 0,
+          "mimo_fir": true,
+          "mimo_early_ms": 60.0,
+          "mimo_seat_guard": false,
+          "peq_analytic_derivatives": false,
+          "mimo_iir_analytic_derivatives": false,
+          "xo": {},
+          "xo_rec": {},
+          "ultra_ms": 200.0,
+          "subs_manual": {},
+          "sub_main_delay_ms": 100.0,
+          "bundle_layouts": {},
+          "infra_boost_max_db": 24.0,
+          "xo_peq_on": true,
+          "boost_max_db": 10.0,
+          "xo_peq_lo": 0.0,
+          "xo_peq_hi": 0.0
+        }
+      }
+    }
+  },
+  {
+    "params": {
+      "edit": {
+        "kind": "fsiso",
+        "hz": 1000.0
+      }
+    },
+    "data": {
+      "ok": true,
+      "data": {
+        "method": "calibration_settings_edit",
+        "data": {
+          "mode": "mixed",
+          "sample_rate_policy": "reject",
+          "low_protect": false,
+          "lf_align": false,
+          "mode_decay": false,
+          "hf_phase": false,
+          "dip_limit": false,
+          "input_hp_hz": null,
+          "rc_lo": 20.0,
+          "rc_hi": null,
+          "rc_hi_basis": "strict",
+          "rc_hi_transition": 1,
+          "rc_bands": [],
+          "room_volume_m3": null,
+          "room_dims_m": null,
+          "mimo_on": false,
+          "fsiso": 150.0,
+          "mimo_low": null,
+          "mimo_max_supports": 0,
+          "mimo_fir": true,
+          "mimo_early_ms": 60.0,
+          "mimo_seat_guard": false,
+          "peq_analytic_derivatives": false,
+          "mimo_iir_analytic_derivatives": false,
+          "xo": {},
+          "xo_rec": {},
+          "ultra_ms": 200.0,
+          "subs_manual": {},
+          "sub_main_delay_ms": 0.0,
+          "bundle_layouts": {},
+          "infra_boost_max_db": 24.0,
+          "xo_peq_on": true,
+          "boost_max_db": 10.0,
+          "xo_peq_lo": 0.0,
+          "xo_peq_hi": 0.0
+        }
+      }
+    }
+  },
+  {
+    "params": {
+      "edit": {
+        "kind": "mimo_low",
+        "hz": 1000.0
+      }
+    },
+    "data": {
+      "ok": true,
+      "data": {
+        "method": "calibration_settings_edit",
+        "data": {
+          "mode": "mixed",
+          "sample_rate_policy": "reject",
+          "low_protect": false,
+          "lf_align": false,
+          "mode_decay": false,
+          "hf_phase": false,
+          "dip_limit": false,
+          "input_hp_hz": null,
+          "rc_lo": 20.0,
+          "rc_hi": null,
+          "rc_hi_basis": "strict",
+          "rc_hi_transition": 1,
+          "rc_bands": [],
+          "room_volume_m3": null,
+          "room_dims_m": null,
+          "mimo_on": false,
+          "fsiso": 150.0,
+          "mimo_low": 150.0,
+          "mimo_max_supports": 0,
+          "mimo_fir": true,
+          "mimo_early_ms": 60.0,
+          "mimo_seat_guard": false,
+          "peq_analytic_derivatives": false,
+          "mimo_iir_analytic_derivatives": false,
+          "xo": {},
+          "xo_rec": {},
+          "ultra_ms": 200.0,
+          "subs_manual": {},
+          "sub_main_delay_ms": 0.0,
+          "bundle_layouts": {},
+          "infra_boost_max_db": 24.0,
+          "xo_peq_on": true,
+          "boost_max_db": 10.0,
+          "xo_peq_lo": 0.0,
+          "xo_peq_hi": 0.0
+        }
+      }
+    }
+  },
+  {
+    "params": {
+      "edit": {
+        "kind": "mimo_max",
+        "count": 100.0
+      }
+    },
+    "data": {
+      "ok": true,
+      "data": {
+        "method": "calibration_settings_edit",
+        "data": {
+          "mode": "mixed",
+          "sample_rate_policy": "reject",
+          "low_protect": false,
+          "lf_align": false,
+          "mode_decay": false,
+          "hf_phase": false,
+          "dip_limit": false,
+          "input_hp_hz": null,
+          "rc_lo": 20.0,
+          "rc_hi": null,
+          "rc_hi_basis": "strict",
+          "rc_hi_transition": 1,
+          "rc_bands": [],
+          "room_volume_m3": null,
+          "room_dims_m": null,
+          "mimo_on": false,
+          "fsiso": 150.0,
+          "mimo_low": null,
+          "mimo_max_supports": 12,
+          "mimo_fir": true,
+          "mimo_early_ms": 60.0,
+          "mimo_seat_guard": false,
+          "peq_analytic_derivatives": false,
+          "mimo_iir_analytic_derivatives": false,
+          "xo": {},
+          "xo_rec": {},
+          "ultra_ms": 200.0,
+          "subs_manual": {},
+          "sub_main_delay_ms": 0.0,
+          "bundle_layouts": {},
+          "infra_boost_max_db": 24.0,
+          "xo_peq_on": true,
+          "boost_max_db": 10.0,
+          "xo_peq_lo": 0.0,
+          "xo_peq_hi": 0.0
+        }
+      }
+    }
+  },
+  {
+    "params": {
+      "edit": {
+        "kind": "mimo_early",
+        "ms": 1000.0
+      }
+    },
+    "data": {
+      "ok": false,
+      "error": {
+        "code": "invalid_request",
+        "params": {
+          "field": "mimo_early_ms",
+          "max": "60",
+          "min": "5",
+          "reason": "mimo_early_range"
+        },
+        "retryable": false,
+        "detail": "MIMO early interval is outside its range"
+      }
+    }
+  }
+]
