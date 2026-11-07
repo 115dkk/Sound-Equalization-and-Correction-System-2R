@@ -488,7 +488,7 @@ impl Service {
 /// The open project a request started from (ADR 0009). A job takes one when
 /// its handler starts and changes the project only through [`commit`], so a
 /// late result of an earlier project never lands in a newer one.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub(crate) struct ProjectTicket(u64);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -867,11 +867,11 @@ fn measurement_bytes(path: &Path, project: &Project) -> Result<u64, IpcError> {
 fn reserve_measurements<'a>(
     path: &Path,
     project: &Project,
-    job: &JobContext,
+    cancel: &secs_compute::CancelToken,
     budget: &'a secs_compute::MemoryBudget,
 ) -> Result<secs_compute::MemoryPermit<'a>, IpcError> {
     budget
-        .acquire(measurement_bytes(path, project)?, job.cancel())
+        .acquire(measurement_bytes(path, project)?, cancel)
         .map_err(|error| match error {
             secs_compute::MemoryError::Cancelled => {
                 IpcError::new(ErrorCode::Cancelled, "cancelled")
@@ -895,13 +895,18 @@ impl ProjectSnapshot {
         job: &JobContext,
         budget: &secs_compute::MemoryBudget,
     ) -> Result<LoadedMeasurements, IpcError> {
-        let permit = reserve_measurements(&self.path, &self.project, job, budget)?;
+        self.load_measurements_with(job.cancel(), budget)
+    }
+
+    pub(crate) fn load_measurements_with(
+        &self,
+        cancel: &secs_compute::CancelToken,
+        budget: &secs_compute::MemoryBudget,
+    ) -> Result<LoadedMeasurements, IpcError> {
+        let permit = reserve_measurements(&self.path, &self.project, cancel, budget)?;
         let mut store = MeasurementStore::new(&self.path, self.project.clone());
-        let loaded = super::calibration::load_measurements_with_notices(
-            &mut store,
-            &self.sources,
-            job.cancel(),
-        )?;
+        let loaded =
+            super::calibration::load_measurements_with_notices(&mut store, &self.sources, cancel)?;
         drop(permit);
         Ok(LoadedMeasurements {
             project: self.project.clone(),
@@ -925,7 +930,7 @@ impl ProjectSnapshot {
             .iter()
             .map(|record| record.ir.values().filter(|path| !path.is_empty()).count())
             .sum::<usize>();
-        let permit = reserve_measurements(&self.path, &project, job, budget)?;
+        let permit = reserve_measurements(&self.path, &project, job.cancel(), budget)?;
         let mut originals = Vec::with_capacity(total);
         for record in records {
             let position = u32::try_from(record.pos).map_err(|_| {

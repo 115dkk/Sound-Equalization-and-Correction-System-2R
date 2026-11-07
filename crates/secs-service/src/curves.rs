@@ -2,7 +2,8 @@
 #[path = "curves_tests.rs"]
 mod tests;
 
-use std::sync::Arc;
+use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, Mutex};
 
 use secs_engine::{
     Design,
@@ -15,7 +16,20 @@ use secs_types::{
     role::{RoleKind, role_kind},
 };
 
+use crate::session::ProjectTicket;
 use crate::{Service, lock};
+
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+pub(crate) struct CurveCacheKey {
+    ticket: ProjectTicket,
+    role: String,
+    position: i64,
+    uuid: Option<String>,
+    ir: String,
+    calibration: Option<u64>,
+}
+
+pub(crate) type CurvesCache = Mutex<HashMap<CurveCacheKey, Arc<Vec<f64>>>>;
 
 #[cfg(test)]
 use secs_engine::Design as display;
@@ -182,28 +196,113 @@ impl Service {
         &self,
         params: MeasurementCurvesParams,
     ) -> Result<MeasurementCurvesResult, IpcError> {
-        let (inputs, reference) = {
-            let mut inputs = Vec::new();
-            let mut session = lock(&self.session);
-            let open = session.require_mut().map_err(IpcError::from)?;
+        let (snapshot, entries, reference) = {
+            let session = lock(&self.session);
+            let ticket = session.ticket()?;
+            let open = session.require().map_err(IpcError::from)?;
             let records = open.store().records();
             let reference = measurement_reference(open.project(), &records);
-            for record in records {
-                for role in record.ir.keys() {
-                    let (samples, rate) = open.store_mut().measured_ir(role, record.pos)?;
-                    inputs.push((role.clone(), record.pos, samples, rate));
+            let entries = records
+                .iter()
+                .flat_map(|record| {
+                    record.ir.iter().map(move |(role, ir)| {
+                        let calibration = open
+                            .project()
+                            .measurement_calibration
+                            .get(&(record.pos, role.clone()))
+                            .copied();
+                        let uuid = record.uuid.get(role).cloned().flatten();
+                        (
+                            CurveCacheKey {
+                                ticket,
+                                role: role.clone(),
+                                position: record.pos,
+                                uuid,
+                                ir: ir.clone(),
+                                calibration,
+                            },
+                            role.clone(),
+                            record.pos,
+                        )
+                    })
+                })
+                .collect::<Vec<_>>();
+            (
+                crate::session::ProjectSnapshot::of(ticket, open),
+                entries,
+                reference,
+            )
+        };
+
+        let active = entries
+            .iter()
+            .map(|(key, _, _)| key.clone())
+            .collect::<HashSet<_>>();
+        let mut values = HashMap::new();
+        {
+            let mut cache = lock(&self.curves_cache);
+            cache.retain(|key, _| active.contains(key));
+            for (key, _, _) in &entries {
+                if let Some(curve) = cache.get(key) {
+                    values.insert(key.clone(), Arc::clone(curve));
                 }
             }
-            (inputs, reference)
-        };
+        }
+
         let context = secs_compute::Context::new(
             std::thread::available_parallelism().map_or(1, |v| v.get()),
-            secs_compute::MemoryBudget::new(self.deps.memory.available_bytes() / 2),
+            secs_compute::MemoryBudget::from_probe(
+                self.deps.memory.as_ref(),
+                0.5,
+                64 * 1024 * 1024,
+            ),
             Arc::new(secs_compute::NoProgress),
             secs_compute::CancelToken::new(),
         );
-        let mut curves = context
-            .map(inputs, |(role, position, samples, rate)| {
+        let missing = entries
+            .iter()
+            .filter(|(key, _, _)| !values.contains_key(key))
+            .cloned()
+            .collect::<Vec<_>>();
+        if !missing.is_empty() {
+            let loaded = snapshot.load_measurements_with(context.cancel(), context.budget())?;
+            let inputs = missing
+                .into_iter()
+                .map(|(key, role, position)| {
+                    let position_u32 = u32::try_from(position).map_err(|_| {
+                        IpcError::new(ErrorCode::ProjectIo, "invalid measurement position")
+                            .with_param("position", position.to_string())
+                    })?;
+                    let measurement = loaded.values.get(position_u32, &role).ok_or_else(|| {
+                        IpcError::new(
+                            ErrorCode::ProjectIo,
+                            "measurement disappeared while loading",
+                        )
+                        .with_param("role", role.clone())
+                        .with_param("position", position.to_string())
+                    })?;
+                    let samples = (0..measurement.samples.len())
+                        .map(|index| measurement.samples.at(index))
+                        .collect::<Vec<_>>();
+                    Ok((key, samples, measurement.sample_rate))
+                })
+                .collect::<Result<Vec<_>, IpcError>>()?;
+            let smoothed = context
+                .map(inputs, |(key, samples, rate)| {
+                    let curve = Arc::new(Design::smoothed_db(&samples, rate as f64));
+                    (key, curve)
+                })
+                .map_err(|_| IpcError::new(ErrorCode::Cancelled, "cancelled"))?;
+            let mut cache = lock(&self.curves_cache);
+            for (key, curve) in smoothed {
+                values.insert(key.clone(), Arc::clone(&curve));
+                cache.insert(key, curve);
+            }
+        }
+
+        let mut curves = entries
+            .into_iter()
+            .map(|(key, role, position)| {
                 let kind = match role_kind(&role) {
                     RoleKind::Main => "main",
                     RoleKind::Sub => "sub",
@@ -213,13 +312,14 @@ impl Service {
                     kind: kind.into(),
                     role,
                     position,
-                    values: Design::smoothed_db(
-                        &samples.iter().map(|&v| f64::from(v)).collect::<Vec<_>>(),
-                        rate as f64,
-                    ),
+                    values: values
+                        .remove(&key)
+                        .expect("every measurement curve was loaded")
+                        .as_ref()
+                        .clone(),
                 }
             })
-            .map_err(|_| IpcError::new(ErrorCode::Cancelled, "cancelled"))?;
+            .collect::<Vec<_>>();
         if let Some(value) = reference.as_ref().and_then(|reference| {
             curves
                 .iter()
