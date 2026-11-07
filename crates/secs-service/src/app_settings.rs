@@ -75,7 +75,7 @@ struct AppSettingsVersion {
 
 impl AppSettingsStore {
     pub fn open(path: Option<&Path>) -> Opened {
-        let (settings, read_only_reason, warning) = load(path);
+        let (settings, read_only_reason, notice, warning) = load(path);
         Opened {
             store: Self {
                 path: path.map(Path::to_path_buf),
@@ -91,7 +91,7 @@ impl AppSettingsStore {
                 effects_changed: Condvar::new(),
                 registered: Vec::new(),
             },
-            notice: None,
+            notice,
             warning,
         }
     }
@@ -134,6 +134,11 @@ impl AppSettingsStore {
         let revision = {
             let mut state = lock(&self.state);
             if let Some(reason) = state.read_only_reason {
+                let reason = if reason == "newer_version" {
+                    "app_settings_newer"
+                } else {
+                    reason
+                };
                 return Err(IpcError::new(
                     ErrorCode::Unsupported,
                     "existing settings cannot be overwritten",
@@ -203,47 +208,61 @@ impl SettingsEffect for UpdatePolicyEffect {
     }
 }
 
-fn load(path: Option<&Path>) -> (AppSettings, Option<&'static str>, Option<String>) {
+fn load(
+    path: Option<&Path>,
+) -> (
+    AppSettings,
+    Option<&'static str>,
+    Option<Notice>,
+    Option<String>,
+) {
     let Some(path) = path else {
-        return (AppSettings::default(), None, None);
+        return (AppSettings::default(), None, None, None);
     };
     if !path.exists() {
-        return (AppSettings::default(), None, None);
+        return (AppSettings::default(), None, None, None);
     }
+    let unreadable = |error: String, read_only_reason| {
+        let notice = Notice {
+            code: "app_settings_unreadable".into(),
+            params: [
+                ("path".into(), path.to_string_lossy().into_owned()),
+                ("error".into(), error.clone()),
+            ]
+            .into(),
+        };
+        (
+            AppSettings::default(),
+            read_only_reason,
+            Some(notice),
+            Some(format!(
+                "could not read settings file {}: {error}",
+                path.display()
+            )),
+        )
+    };
     let bytes = match read_bounded(path) {
         Ok(bytes) => bytes,
-        Err(error) => {
-            return (
-                AppSettings::default(),
-                Some("settings_unreadable"),
-                Some(format!(
-                    "could not read settings file {}: {}",
-                    path.display(),
-                    error.detail
-                )),
-            );
-        }
+        Err(error) => return unreadable(error.detail, Some("settings_unreadable")),
     };
     let version = serde_json::from_slice::<AppSettingsVersion>(&bytes).ok();
     let file = match serde_json::from_slice::<AppSettingsFile>(&bytes) {
         Ok(file) => file,
         Err(error) => {
-            return (
-                AppSettings::default(),
-                version
-                    .filter(|file| file.version > APP_SETTINGS_VERSION)
-                    .map(|_| "newer_version"),
-                Some(format!(
-                    "could not parse settings file {}: {error}",
-                    path.display()
-                )),
-            );
+            if let Some(version) = version.filter(|file| file.version > APP_SETTINGS_VERSION) {
+                return newer(path, version.version);
+            }
+            return unreadable(error.to_string(), None);
         }
     };
-    if file.version != APP_SETTINGS_VERSION {
+    if file.version > APP_SETTINGS_VERSION {
+        return newer(path, file.version);
+    }
+    if file.version < APP_SETTINGS_VERSION {
         return (
             AppSettings::default(),
-            (file.version > APP_SETTINGS_VERSION).then_some("newer_version"),
+            None,
+            None,
             Some(format!(
                 "unsupported settings version {} in {} (supported version {})",
                 file.version,
@@ -254,7 +273,30 @@ fn load(path: Option<&Path>) -> (AppSettings, Option<&'static str>, Option<Strin
     }
     let mut settings = file.settings;
     settings.recent_projects.truncate(RECENT_PROJECTS_MAX);
-    (settings, None, None)
+    (settings, None, None, None)
+}
+
+fn newer(
+    path: &Path,
+    version: u32,
+) -> (
+    AppSettings,
+    Option<&'static str>,
+    Option<Notice>,
+    Option<String>,
+) {
+    (
+        AppSettings::default(),
+        Some("newer_version"),
+        Some(Notice {
+            code: "app_settings_newer".into(),
+            params: [("version".into(), version.to_string())].into(),
+        }),
+        Some(format!(
+            "unsupported settings version {version} in {} (supported version {APP_SETTINGS_VERSION})",
+            path.display()
+        )),
+    )
 }
 
 fn read_bounded(path: &Path) -> Result<Vec<u8>, IpcError> {
@@ -305,6 +347,51 @@ mod tests {
         ));
         std::fs::create_dir_all(&path).unwrap();
         path
+    }
+
+    #[test]
+    fn open_reports_a_damaged_or_oversized_file_as_app_settings_unreadable() {
+        let root = root("unreadable");
+        for (name, bytes) in [
+            ("damaged", b"{not json".to_vec()),
+            ("oversized", vec![b'x'; FILE_LIMIT as usize + 1]),
+        ] {
+            let path = root.join(format!("{name}.json"));
+            std::fs::write(&path, bytes).unwrap();
+            let opened = AppSettingsStore::open(Some(&path));
+            assert_eq!(opened.store.get(), AppSettings::default());
+            let notice = opened.notice.expect("settings notice is absent");
+            assert_eq!(notice.code, "app_settings_unreadable");
+            assert_eq!(
+                notice.params.get("path").map(String::as_str),
+                Some(path.to_string_lossy().as_ref())
+            );
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn open_keeps_a_newer_file_read_only_and_set_refuses_it() {
+        let root = root("newer");
+        let path = root.join("settings.json");
+        let bytes = serde_json::to_vec(&serde_json::json!({
+            "version": APP_SETTINGS_VERSION + 1,
+            "settings": AppSettings::default(),
+        }))
+        .unwrap();
+        std::fs::write(&path, &bytes).unwrap();
+        let opened = AppSettingsStore::open(Some(&path));
+        let notice = opened.notice.expect("newer settings notice is absent");
+        assert_eq!(notice.code, "app_settings_newer");
+        assert_eq!(notice.params.get("version").map(String::as_str), Some("2"));
+        let error = opened.store.set(AppSettings::default()).unwrap_err();
+        assert_eq!(error.code, ErrorCode::Unsupported);
+        assert_eq!(
+            error.params.get("reason").map(String::as_str),
+            Some("app_settings_newer")
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

@@ -1919,7 +1919,7 @@ id = "service.app_settings"
 kind = "service"
 milestone = "M5"
 status = "implemented"
-tests = ["secs-service::app_settings_are_versioned_bounded_and_capped", "secs-service::legacy_expert_preference_is_ignored_without_resetting_other_settings", "secs-service::open_without_a_file_starts_from_defaults_without_a_notice", "secs-service::set_increments_the_revision_and_writes_atomically_and_a_rejected_value_changes_nothing", "secs-service::effects_run_once_per_revision_in_order_even_when_two_threads_interleave", "secs-service::typed_readers_return_the_stored_fields_and_apply_settings_set_touches_nothing_else", "secs-service::app_settings_writes_are_serialized_with_memory_and_bounded_by_the_read_cap"]
+tests = ["secs-service::app_settings_are_versioned_bounded_and_capped", "secs-service::legacy_expert_preference_is_ignored_without_resetting_other_settings", "secs-service::open_without_a_file_starts_from_defaults_without_a_notice", "secs-service::set_increments_the_revision_and_writes_atomically_and_a_rejected_value_changes_nothing", "secs-service::effects_run_once_per_revision_in_order_even_when_two_threads_interleave", "secs-service::typed_readers_return_the_stored_fields_and_apply_settings_set_touches_nothing_else", "secs-service::app_settings_writes_are_serialized_with_memory_and_bounded_by_the_read_cap", "secs-service::open_reports_a_damaged_or_oversized_file_as_app_settings_unreadable", "secs-service::open_keeps_a_newer_file_read_only_and_set_refuses_it", "secs-service::bootstrap_carries_the_settings_notice"]
 note = "versioned bounded data-only JSON, injected path or in-memory storage"
 
 [[feature]]

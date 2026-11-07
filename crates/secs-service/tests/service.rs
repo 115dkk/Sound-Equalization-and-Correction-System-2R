@@ -507,7 +507,7 @@ fn newer_settings_file_is_never_overwritten_td169() {
     assert_eq!(error.code, ErrorCode::Unsupported);
     assert_eq!(
         error.params.get("reason").map(String::as_str),
-        Some("newer_version")
+        Some("app_settings_newer")
     );
     assert_eq!(fs::read(&path).unwrap(), original);
     fs::remove_dir_all(root).unwrap();
@@ -1923,6 +1923,29 @@ fn automatic_camilla_has_mimo(service: &Service, root: &Path) -> bool {
         Arc::new(Events::default()),
     );
     result.folder.contains("_MIMO_")
+}
+
+#[test]
+fn bootstrap_carries_the_settings_notice() {
+    let root = temp_root("bootstrap-settings-notice");
+    fs::create_dir_all(&root).unwrap();
+    let path = root.join("settings.json");
+    fs::write(&path, b"{not json").unwrap();
+    let service = Service::new(Deps {
+        app_settings_path: Some(path.clone()),
+        ..Deps::default()
+    });
+    let Response::Bootstrap(info) = call_ok(&service, Request::Bootstrap, Arc::new(NoEvents))
+    else {
+        panic!("bootstrap response must match the request")
+    };
+    let notice = info.settings_notice.expect("settings notice is absent");
+    assert_eq!(notice.code, "app_settings_unreadable");
+    assert_eq!(
+        notice.params.get("path").map(String::as_str),
+        Some(path.to_string_lossy().as_ref())
+    );
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]

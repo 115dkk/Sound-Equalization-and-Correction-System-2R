@@ -1255,6 +1255,10 @@ pub struct BootstrapInfo {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub log_dir: Option<String>,
+    /// Application-settings load warning, when defaults replaced an unreadable file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub settings_notice: Option<Notice>,
 }
 /// The upstream SECS 2 release a build is ported from (`UPSTREAM.toml`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -3687,6 +3691,7 @@ mod tests {
                 arch: "x86_64".into(),
             },
             log_dir: None,
+            settings_notice: None,
         })));
         let value = serde_json::to_value(ok).unwrap();
         assert_eq!(value["ok"], true);

@@ -48,7 +48,7 @@ use std::time::{Duration, SystemTime};
 use secs_compute::MemoryProbe;
 use secs_types::ipc::{
     ApplyOutcome, BootstrapInfo, CamillaStatus, Envelope, ErrorCode, IncludeState, IpcError,
-    JobEvent, LocalApiStatus, Platform, Request, UpdatePhase, UpdatePolicy, UpdateStatus,
+    JobEvent, LocalApiStatus, Notice, Platform, Request, UpdatePhase, UpdatePolicy, UpdateStatus,
     UpstreamBase,
 };
 
@@ -675,6 +675,7 @@ pub struct Service {
     deps: Deps,
     session: Arc<Mutex<Session>>,
     app_settings: app_settings::AppSettingsStore,
+    settings_notice: Option<Notice>,
     side_mdat_queue: Arc<Mutex<session::SideMdatQueue>>,
     jobs: JobRegistry,
     level: monitor::LevelState,
@@ -686,7 +687,7 @@ impl Service {
     pub fn new(deps: Deps) -> Self {
         let opened = app_settings::AppSettingsStore::open(deps.app_settings_path.as_deref());
         let settings_warning = opened.warning;
-        let _settings_notice = opened.notice;
+        let settings_notice = opened.notice;
         let mut app_settings = opened.store;
         app_settings.register(Arc::new(app_settings::UpdatePolicyEffect(
             deps.updates.clone(),
@@ -696,6 +697,7 @@ impl Service {
             deps,
             session: Arc::new(Mutex::new(Session::default())),
             app_settings,
+            settings_notice,
             side_mdat_queue: Arc::new(Mutex::new(session::SideMdatQueue::default())),
             jobs: JobRegistry::default(),
             level: monitor::LevelState::default(),
@@ -784,6 +786,7 @@ impl Service {
                 .log_dir
                 .as_ref()
                 .map(|path| path.to_string_lossy().into_owned()),
+            settings_notice: self.settings_notice.clone(),
         }
     }
 }
