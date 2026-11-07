@@ -560,7 +560,7 @@ fn main() {
             let calls = if name == "dolby_ultra" {
                 Vec::new()
             } else {
-                secs_oracle::Fixture::all_calls("engine_fit", &format!("fit_{name}_{kind}_"))
+                cases::Fixture::all_calls("engine_fit", &format!("fit_{name}_{kind}_"))
             };
             let index = usize::from(op == "fit_rc2");
             let (fx, i) = if let Some(fx) = calls.get(index) {
@@ -571,14 +571,13 @@ fn main() {
                     "xo" => "Top:L",
                     _ => "Rc:L",
                 };
-                let selected =
-                    secs_oracle::Fixture::all_calls("engine_design", &format!("{name}_fits_"))
-                        .into_iter()
-                        .filter(|c| c.inputs()["stage"] == stage)
-                        .nth(index)
-                        .expect("recorded design fit");
+                let selected = cases::Fixture::all_calls("engine_design", &format!("{name}_fits_"))
+                    .into_iter()
+                    .filter(|c| c.inputs()["stage"] == stage)
+                    .nth(index)
+                    .expect("recorded design fit");
                 if let Some(r) = selected.inputs().get("reference") {
-                    let source = secs_oracle::Fixture::load(
+                    let source = cases::Fixture::load(
                         r["family"].as_str().unwrap(),
                         r["fixture"].as_str().unwrap(),
                     );
@@ -597,14 +596,14 @@ fn main() {
             };
             let g = fx.f64s(&i["g"]);
             let corr = fx.f64s(&i["corr_db"]);
-            let optional = |v: &serde_json::Value| (!v.is_null()).then(|| secs_oracle::number(v));
+            let optional = |v: &serde_json::Value| (!v.is_null()).then(|| cases::number(v));
             let request = perf::FitRequest {
                 g: &g,
                 corr_db: &corr,
                 n: i["n"].as_u64().unwrap() as usize,
-                lo: secs_oracle::number(&i["lo"]),
-                hi: secs_oracle::number(&i["hi"]),
-                boost: secs_oracle::number(&i["boost"]),
+                lo: cases::number(&i["lo"]),
+                hi: cases::number(&i["hi"]),
+                boost: cases::number(&i["boost"]),
                 ring_ms: optional(&i["ring_ms"]),
                 f_max: optional(&i["f_max"]),
                 bands: None,

@@ -12,4 +12,7 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+secs-compute.workspace = true
 secs-engine = { workspace = true, features = ["test-support"] }
+secs-oracle.workspace = true
+serde_json.workspace = true

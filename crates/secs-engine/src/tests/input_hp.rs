@@ -41,11 +41,11 @@ fn filtered_error(a: &[C], b: &[C], hp: &[C]) -> f64 {
 #[test]
 fn input_hp_keeps_rc_ba_bits_and_filters_export_and_mimo_once() {
     for name in ["room", "room_filters"] {
-        let case = testkit::load(name);
+        let case = testkit::load(&crate::tests::Oracle, name);
         let run = |hp| {
             let mut config = case.config.clone();
             config.input_hp_hz = hp;
-            let replay = testkit::Replay::for_case(name);
+            let replay = testkit::Replay::for_case(&crate::tests::Oracle, name);
             let design = crate::design(
                 &DesignRequest {
                     measurements: &case.measurements,
@@ -196,7 +196,7 @@ fn input_hp_keeps_rc_ba_bits_and_filters_export_and_mimo_once() {
 
 #[test]
 fn input_hp_setting_reaches_engine_without_changing_other_fields() {
-    let case = testkit::load("room");
+    let case = testkit::load(&crate::tests::Oracle, "room");
     let view = crate::calibration::ProjectView {
         groups: &case.config.groups,
         project_xo: &case.config.xo,

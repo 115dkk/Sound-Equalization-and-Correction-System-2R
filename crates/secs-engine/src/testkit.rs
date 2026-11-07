@@ -3,10 +3,59 @@
 use std::collections::BTreeMap;
 
 use secs_compute::Context;
-use secs_oracle::{Fixture, PLATFORM_RTOL, errors, integer, number, oracle_libm};
 use secs_types::target::TargetCurve;
 use serde_json::Value;
 use std::sync::{Arc, Mutex};
+
+/// Supplies oracle fixtures without making the published engine depend on the
+/// unpublished `secs-oracle` crate.
+pub trait FixtureStore {
+    fn load(&self, dir: &str, name: &str) -> Value;
+    fn names(&self, dir: &str, prefix: &str) -> Vec<String>;
+    fn calls(&self, dir: &str, prefix: &str) -> Vec<(String, Value)>;
+    fn f64s(&self, dir: &str, name: &str, value: &Value) -> Vec<f64>;
+    fn blob(&self, dir: &str, name: &str, value: &Value) -> Vec<u8>;
+    fn assert_digest(&self, dir: &str, name: &str, field: &str, descriptor: &Value, got: &[f64]);
+    fn platform_rtol(&self) -> f64;
+    fn oracle_libm(&self) -> bool;
+}
+
+/// Copied from `secs-oracle` because a published crate cannot depend on it
+/// (audit #186 A9).
+fn number(v: &Value) -> f64 {
+    match v.as_str() {
+        Some("nan") => f64::NAN,
+        Some("+inf" | "inf") => f64::INFINITY,
+        Some("-inf") => f64::NEG_INFINITY,
+        _ => v.as_f64().unwrap_or_else(|| panic!("not a number: {v}")),
+    }
+}
+
+/// Copied from `secs-oracle` because a published crate cannot depend on it
+/// (audit #186 A9).
+fn integer(v: &Value) -> u64 {
+    v.as_u64()
+        .unwrap_or_else(|| panic!("not a non-negative integer: {v}"))
+}
+
+/// Copied from `secs-oracle` because a published crate cannot depend on it
+/// (audit #186 A9).
+fn errors(got: &[f64], expected: &[f64]) -> (f64, f64) {
+    assert_eq!(got.len(), expected.len(), "shape");
+    let mut worst = (0.0_f64, 0.0_f64);
+    for (&g, &e) in got.iter().zip(expected) {
+        let (abs, rel) = if g.is_nan() && e.is_nan() || g == e {
+            (0.0, 0.0)
+        } else if !g.is_finite() || !e.is_finite() {
+            (f64::INFINITY, f64::INFINITY)
+        } else {
+            let abs = (g - e).abs();
+            (abs, abs / e.abs().max(1.0))
+        };
+        worst = (worst.0.max(abs), worst.1.max(rel));
+    }
+    worst
+}
 
 pub use crate::fit::{RecordedFit, replay_fitter};
 
@@ -34,11 +83,8 @@ pub struct Case {
     pub project: Value,
 }
 
-pub fn names() -> Vec<String> {
-    Fixture::all("engine_inputs", "")
-        .iter()
-        .map(|f| f.id.strip_prefix("engine_inputs/").unwrap().to_owned())
-        .collect()
+pub fn names(store: &dyn FixtureStore) -> Vec<String> {
+    store.names("engine_inputs", "")
 }
 
 pub fn pairs(v: &Value) -> impl Iterator<Item = (&str, &Value)> {
@@ -97,19 +143,18 @@ pub fn peq(v: &Value) -> Vec<Peq> {
         .collect()
 }
 
-pub fn load(name: &str) -> Case {
+pub fn load(store: &dyn FixtureStore, name: &str) -> Case {
     let large = name == "big_fir";
-    let fixture = Fixture::load(
-        if name == "big" || large {
-            "perf_mimo"
-        } else {
-            "engine_inputs"
-        },
-        if large { "big" } else { name },
-    );
-    let mut case = load_fixture(&fixture);
+    let dir = if name == "big" || large {
+        "perf_mimo"
+    } else {
+        "engine_inputs"
+    };
+    let fixture_name = if large { "big" } else { name };
+    let fixture = store.load(dir, fixture_name);
+    let mut case = load_fixture(store, dir, fixture_name, &fixture);
     if name == "big" || large {
-        case.measurements = big_measurements(&fixture, large);
+        case.measurements = big_measurements(store, dir, fixture_name, &fixture, large);
     }
     if large {
         expand_config(&mut case.config);
@@ -117,8 +162,8 @@ pub fn load(name: &str) -> Case {
     case
 }
 
-pub fn load_fixture(fx: &Fixture) -> Case {
-    let i = fx.inputs();
+pub fn load_fixture(store: &dyn FixtureStore, dir: &str, name: &str, fixture: &Value) -> Case {
+    let i = &fixture["inputs"];
     let v = &i["config"];
     let config = EngineConfig {
         mains: strings(&v["mains"]),
@@ -187,7 +232,7 @@ pub fn load_fixture(fx: &Fixture) -> Case {
         .map(|p| {
             let roles = pairs(&p[1])
                 .map(|(r, m)| {
-                    let bytes = fx.blob(&m["samples"]);
+                    let bytes = store.blob(dir, name, &m["samples"]);
                     let (chunks, rest) = bytes.as_chunks::<4>();
                     assert!(rest.is_empty());
                     let samples: Vec<_> = chunks.iter().map(|b| f32::from_le_bytes(*b)).collect();
@@ -262,10 +307,16 @@ fn expand_config(config: &mut EngineConfig) {
         .collect();
 }
 
-pub(crate) fn read_recorded_fit(fixture: &Fixture, input: &Value, result: &Value) -> RecordedFit {
+pub(crate) fn read_recorded_fit(
+    store: &dyn FixtureStore,
+    dir: &str,
+    name: &str,
+    input: &Value,
+    result: &Value,
+) -> RecordedFit {
     RecordedFit {
-        g: fixture.f64s(&input["g"]),
-        corr_db: fixture.f64s(&input["corr_db"]),
+        g: store.f64s(dir, name, &input["g"]),
+        corr_db: store.f64s(dir, name, &input["corr_db"]),
         n: input["n"].as_u64().expect("n") as usize,
         lo: number(&input["lo"]),
         hi: number(&input["hi"]),
@@ -278,14 +329,14 @@ pub(crate) fn read_recorded_fit(fixture: &Fixture, input: &Value, result: &Value
 
 /// Runs a shared oracle input with production fitters for release benchmarks.
 /// Unlike replay, this supports cases whose BA path diverges from the oracle.
-pub fn production_case(name: &str, threads: usize) -> ReplayCase {
+pub fn production_case(store: &dyn FixtureStore, name: &str, threads: usize) -> ReplayCase {
     let Case {
         measurements,
         config,
         tuning,
         settings,
         ..
-    } = load(name);
+    } = load(store, name);
     let ctx = Context::new(
         threads,
         secs_compute::MemoryBudget::new(u64::MAX),
@@ -312,9 +363,39 @@ pub fn production_case(name: &str, threads: usize) -> ReplayCase {
     }
 }
 
-fn verify_request_hash(fixture: &Fixture, fit: &RecordedFit, hashes: &Value) {
+fn fixture_calls(value: &Value) -> Vec<Value> {
+    let (Some(inputs), Some(outputs)) = (
+        value["inputs"]["calls"].as_array(),
+        value["outputs"]["calls"].as_array(),
+    ) else {
+        return vec![value.clone()];
+    };
+    assert_eq!(inputs.len(), outputs.len(), "fixture calls");
+    inputs
+        .iter()
+        .zip(outputs)
+        .map(|(input, output)| {
+            serde_json::json!({"inputs": input, "outputs": output, "meta": value["meta"]})
+        })
+        .collect()
+}
+
+fn fixture_name(id: &str) -> &str {
+    let name = id.rsplit_once('/').map_or(id, |(_, name)| name);
+    name.split_once('#').map_or(name, |(name, _)| name)
+}
+
+fn verify_request_hash(
+    store: &dyn FixtureStore,
+    dir: &str,
+    name: &str,
+    fit: &RecordedFit,
+    hashes: &Value,
+) {
     for (key, values) in [("g", &fit.g), ("corr_db", &fit.corr_db)] {
-        fixture.assert_digest(
+        store.assert_digest(
+            dir,
+            name,
             key,
             &serde_json::json!({
                 "digest": hashes[key], "length": values.len(), "first": [], "last": []
@@ -349,36 +430,64 @@ pub struct Replay {
     name: String,
     stages: BTreeMap<String, Vec<RecordedFit>>,
     counts: Arc<Mutex<BTreeMap<String, (usize, usize)>>>,
+    platform_rtol: f64,
+    oracle_libm: bool,
 }
 
 impl Replay {
-    pub fn for_case(name: &str) -> Self {
+    pub fn for_case(store: &dyn FixtureStore, name: &str) -> Self {
         let mut stages: BTreeMap<String, Vec<RecordedFit>> = BTreeMap::new();
-        for call in Fixture::all_calls("engine_design", &format!("{name}_fits_")) {
-            let recorded = if let Some(reference) = call.inputs().get("reference") {
-                let source = Fixture::load(
-                    reference["family"].as_str().unwrap(),
-                    reference["fixture"].as_str().unwrap(),
-                );
+        for (id, call) in store.calls("engine_design", &format!("{name}_fits_")) {
+            let input = &call["inputs"];
+            let output = &call["outputs"];
+            let recorded = if let Some(reference) = input.get("reference") {
+                let family = reference["family"].as_str().unwrap();
+                let source_name = reference["fixture"].as_str().unwrap();
+                let source = store.load(family, source_name);
                 let fit = if let Some(index) = reference["call"].as_u64() {
-                    let calls = source.calls();
-                    let c = &calls[index as usize];
-                    read_recorded_fit(c, c.inputs(), &c.outputs()["result"])
+                    let calls = fixture_calls(&source);
+                    let call = &calls[index as usize];
+                    read_recorded_fit(
+                        store,
+                        family,
+                        source_name,
+                        &call["inputs"],
+                        &call["outputs"]["result"],
+                    )
                 } else {
-                    let fit = &source.outputs()["candidates"]
+                    let fit = &source["outputs"]["candidates"]
                         [reference["candidate"].as_u64().unwrap() as usize]["fits"]
                         [reference["fit"].as_u64().unwrap() as usize];
-                    read_recorded_fit(&source, &fit["inputs"], &fit["result"])
+                    read_recorded_fit(store, family, source_name, &fit["inputs"], &fit["result"])
                 };
-                verify_request_hash(&source, &fit, &reference["request_sha256"]);
+                verify_request_hash(
+                    store,
+                    family,
+                    source_name,
+                    &fit,
+                    &reference["request_sha256"],
+                );
                 fit
             } else {
-                let fit = read_recorded_fit(&call, call.inputs(), &call.outputs()["result"]);
-                verify_request_hash(&call, &fit, &call.inputs()["request_sha256"]);
+                let source_name = fixture_name(&id);
+                let fit = read_recorded_fit(
+                    store,
+                    "engine_design",
+                    source_name,
+                    input,
+                    &output["result"],
+                );
+                verify_request_hash(
+                    store,
+                    "engine_design",
+                    source_name,
+                    &fit,
+                    &input["request_sha256"],
+                );
                 fit
             };
             stages
-                .entry(call.inputs()["stage"].as_str().unwrap().into())
+                .entry(input["stage"].as_str().unwrap().into())
                 .or_default()
                 .push(recorded);
         }
@@ -412,6 +521,8 @@ impl Replay {
             name: name.into(),
             stages,
             counts,
+            platform_rtol: store.platform_rtol(),
+            oracle_libm: store.oracle_libm(),
         }
     }
 
@@ -419,6 +530,8 @@ impl Replay {
         let seen = self.counts.clone();
         let stages = &self.stages;
         let name = self.name.as_str();
+        let oracle_libm = self.oracle_libm;
+        let platform_rtol = self.platform_rtol;
         Box::new(move |stage| {
             let key = match stage {
                 FitStage::Ba => "Ba".into(),
@@ -427,14 +540,14 @@ impl Replay {
             };
             let calls = stages.get(&key).cloned().unwrap_or_default();
             let expected = calls.len();
-            let report_calls = (name == "room" || !oracle_libm()).then(|| calls.clone());
+            let report_calls = (name == "room" || !oracle_libm).then(|| calls.clone());
             let mut next = 0;
             let mut fit = replay_fitter(
                 calls,
-                if name == "room" || !oracle_libm() {
+                if name == "room" || !oracle_libm {
                     f64::INFINITY
                 } else {
-                    PLATFORM_RTOL
+                    platform_rtol
                 },
             );
             let seen = seen.clone();
@@ -463,23 +576,27 @@ impl Replay {
 }
 
 #[cfg(test)]
-pub(crate) fn replay(name: &str) -> Design {
-    replay_case(name).design
+pub(crate) fn replay(store: &dyn FixtureStore, name: &str) -> Design {
+    replay_case(store, name).design
 }
 
 #[cfg(test)]
-pub(crate) fn replay_with_context(name: &str, context: &Context) -> Design {
-    replay_case_with_context(name, context).design
+pub(crate) fn replay_with_context(
+    store: &dyn FixtureStore,
+    name: &str,
+    context: &Context,
+) -> Design {
+    replay_case_with_context(store, name, context).design
 }
 
 /// Replays the recorded fitter decisions and checks requests and call counts.
-pub fn replay_case(name: &str) -> ReplayCase {
-    replay_case_with_context(name, &Context::serial())
+pub fn replay_case(store: &dyn FixtureStore, name: &str) -> ReplayCase {
+    replay_case_with_context(store, name, &Context::serial())
 }
 
-fn replay_case_with_context(name: &str, context: &Context) -> ReplayCase {
-    let case = load(name);
-    let replay = Replay::for_case(name);
+fn replay_case_with_context(store: &dyn FixtureStore, name: &str, context: &Context) -> ReplayCase {
+    let case = load(store, name);
+    let replay = Replay::for_case(store, name);
     let design = design(
         &DesignRequest {
             measurements: &case.measurements,
@@ -502,20 +619,26 @@ fn replay_case_with_context(name: &str, context: &Context) -> ReplayCase {
 }
 
 // Same recorded modal-room reconstruction as the release engine_perf harness.
-fn big_measurements(fx: &Fixture, expanded: bool) -> MeasurementSet {
+fn big_measurements(
+    store: &dyn FixtureStore,
+    dir: &str,
+    name: &str,
+    fixture: &Value,
+    expanded: bool,
+) -> MeasurementSet {
     use crate::C;
     use std::f64::consts::PI;
     let mut out = MeasurementSet {
         positions: Vec::new(),
     };
-    let r = &fx.inputs()["recipe"];
+    let r = &fixture["inputs"]["recipe"];
     let xyz = |v: &serde_json::Value| [number(&v[0]), number(&v[1]), number(&v[2])];
     let dims = xyz(&r["dims"]);
     let q = number(&r["q"]);
     let scale = number(&r["scale"]);
     let excitations: Vec<_> = pairs(&r["excitations"])
         .map(|(_, v)| {
-            let data = fx.blob(v);
+            let data = store.blob(dir, name, v);
             let (chunks, rest) = data.as_chunks::<8>();
             assert!(rest.is_empty());
             let samples: Vec<_> = chunks.iter().map(|b| f64::from_le_bytes(*b)).collect();
@@ -610,6 +733,7 @@ pub struct MimoAcousticMetrics {
 }
 
 pub fn mimo_acoustic_metrics(
+    _store: &dyn FixtureStore,
     case: &ReplayCase,
     run: &crate::mimo::MimoRun,
     ctx: &Context,
@@ -756,7 +880,7 @@ mod tests {
     #[test]
     fn names_match_the_oracle_case_set() {
         assert_eq!(
-            super::names(),
+            super::names(&crate::tests::Oracle),
             [
                 "dolby",
                 "dolby_infra",

@@ -38,7 +38,7 @@ fn synthetic(i: usize) -> Vec<C> {
 #[test]
 fn sub_sum_and_term_match_numpy() {
     let fx = Fixture::load("engine_prep", "sub_sum");
-    let case = cases::load("room");
+    let case = cases::load(&crate::tests::Oracle, "room");
     let setup = Setup::new(&case.config);
     let prepared = prepare(&case.measurements, &case.config, &setup).unwrap();
     let f = design_freqs();

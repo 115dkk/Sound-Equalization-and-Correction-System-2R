@@ -434,7 +434,7 @@ fn mimo_seat_guard_applies_to_iir_guards() {
 #[test]
 fn mimo_iir_problem_from_replayed_design_matches_oracle() {
     for case_name in ["room", "room_dba"] {
-        let case = super::cases::load(case_name);
+        let case = super::cases::load(&crate::tests::Oracle, case_name);
         let design = super::design::replay(case_name);
         let view = crate::export_view(&design, &case.measurements, &case.config).unwrap();
         let prepared = crate::measurement::prepare(
@@ -493,7 +493,7 @@ fn mimo_iir_problem_from_replayed_design_matches_oracle() {
 }
 
 fn whole(case_name: &str, threads: usize) -> crate::MimoIir {
-    let case = super::cases::load(case_name);
+    let case = super::cases::load(&crate::tests::Oracle, case_name);
     let d = super::design::replay(case_name);
     let ctx = context(threads);
     let req = crate::MimoRequest::default();
@@ -746,7 +746,7 @@ fn mimo_iir_joint_seed_fallback_is_reported() {
         joint.nfev, 0,
         "the result must be the untouched seed fallback"
     );
-    let case = super::cases::load("room_dba");
+    let case = super::cases::load(&crate::tests::Oracle, "room_dba");
     let design = super::design::replay("room_dba");
     let ideal = crate::MimoDesign {
         ranges: pb
@@ -780,7 +780,7 @@ fn mimo_iir_joint_seed_fallback_is_reported() {
 
 #[test]
 fn mimo_run_preserves_iir_seed_fallback_note() {
-    let case = super::cases::load("room_dba");
+    let case = super::cases::load(&crate::tests::Oracle, "room_dba");
     let design = super::design::replay("room_dba");
     let tuning = Tuning {
         mimo_effort: 1e300,
@@ -813,7 +813,7 @@ fn mimo_run_preserves_iir_seed_fallback_note() {
 
 #[test]
 fn mimo_validation_names_the_invalid_field() {
-    let case = super::cases::load("room_dba");
+    let case = super::cases::load(&crate::tests::Oracle, "room_dba");
     let design = super::design::replay("room_dba");
     let ctx = context(1);
     for (request, field) in [

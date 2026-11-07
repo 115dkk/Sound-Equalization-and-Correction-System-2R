@@ -4,7 +4,7 @@ use secs_types::chain::{MimoFilter, MimoPath, MimoPaths};
 #[test]
 fn design_replay_cached_mimo_matches_fresh_service_bits() {
     for name in ["room_dba", "room_filters"] {
-        let case = testkit::replay_case(name);
+        let case = testkit::replay_case(&crate::tests::Oracle, name);
         let design = &case.design;
         let prepared = crate::measurement::prepare(
             &case.measurements,

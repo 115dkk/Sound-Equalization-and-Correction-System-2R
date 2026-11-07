@@ -8,7 +8,7 @@ use std::{collections::BTreeMap, time::Instant};
 fn engine_e2e_spread() {
     let mut failures = Vec::new();
     for name in ["dolby", "room", "room_dba"] {
-        let c = cases::load(name);
+        let c = cases::load(&crate::tests::Oracle, name);
         let started = Instant::now();
         let context = Context::serial();
         let longest_fit = std::sync::Mutex::new(std::time::Duration::ZERO);

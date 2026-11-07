@@ -19,8 +19,8 @@ fn ordered_values(name: &str, got: &[(String, f64)], expected: &Value) {
 
 #[test]
 fn setup_matches_oracle() {
-    for name in cases::names() {
-        let case = cases::load(&name);
+    for name in cases::names(&crate::tests::Oracle) {
+        let case = cases::load(&crate::tests::Oracle, &name);
         let fx = Fixture::load("engine_prep", &name);
         let o = &fx.outputs()["setup"];
         let setup = Setup::new(&case.config);
@@ -132,8 +132,8 @@ fn preparation_and_levels_match_oracle() {
     let bank_fx = Fixture::load("engine_prep", "spectra");
     let bank = bank_fx.c128s(&bank_fx.outputs()["values"]);
     let mut measure = ErrorMeasure::default();
-    for name in cases::names() {
-        let case = cases::load(&name);
+    for name in cases::names(&crate::tests::Oracle) {
+        let case = cases::load(&crate::tests::Oracle, &name);
         let fx = Fixture::load("engine_prep", &name);
         let o = fx.outputs();
         let bins: Vec<_> = fx
@@ -233,7 +233,7 @@ fn preparation_and_levels_match_oracle() {
 
 #[test]
 fn rejects_invalid_measurements_at_every_position_d2() {
-    let case = cases::load("room");
+    let case = cases::load(&crate::tests::Oracle, "room");
     let setup = Setup::new(&case.config);
     let mut set = case.measurements.clone();
     set.positions[1].1[0].1.sample_rate = 44100;
@@ -324,7 +324,7 @@ fn preparation_stops_at_every_cancellation_check() {
     // TD-49: validation, reference onsets and the per-cell FFTs all poll the
     // token, so a cancel anywhere in them returns at the next cell; with no
     // cancel the spectra are the uncancellable call's, bit for bit.
-    let case = cases::load("room");
+    let case = cases::load(&crate::tests::Oracle, "room");
     let setup = Setup::new(&case.config);
     let plain = prepare(&case.measurements, &case.config, &setup).unwrap();
     let bits = |s: &Spectra| {
@@ -361,7 +361,7 @@ fn preparation_stops_at_every_cancellation_check() {
 
 #[test]
 fn setup_caps_lift_and_preserves_dictionary_order() {
-    let mut c = cases::load("room_filters").config;
+    let mut c = cases::load(&crate::tests::Oracle, "room_filters").config;
     c.taps = 1024;
     c.lift_ms = 30.0;
     c.max_latency_ms = Some(40.0);

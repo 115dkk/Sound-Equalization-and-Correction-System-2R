@@ -252,7 +252,7 @@ fn compare_curves(fx: &Fixture, run: &mimo::MimoRun, tolerance: f64) {
 #[test]
 fn mimo_run_assemble_recorded_supports_matches_oracle() {
     for name in ["room_dba", "room_filters"] {
-        let case = cases::load(name);
+        let case = cases::load(&crate::tests::Oracle, name);
         let d = design::replay(name);
         for fir in [false, true] {
             let fx = Fixture::load(
@@ -308,11 +308,11 @@ fn input_hp_leaves_the_mimo_scorecard_as_without_it() {
     // response with the common input cut divided back out, so the cut never
     // changes a verdict; the applied responses themselves keep the cut.
     let name = "room_dba";
-    let case = cases::load(name);
+    let case = cases::load(&crate::tests::Oracle, name);
     let off = design::replay(name);
     let mut config = case.config.clone();
     config.input_hp_hz = Some(27.0);
-    let replay = cases::Replay::for_case(name);
+    let replay = cases::Replay::for_case(&crate::tests::Oracle, name);
     let on = crate::design(
         &crate::DesignRequest {
             measurements: &case.measurements,
@@ -371,7 +371,7 @@ fn input_hp_leaves_the_mimo_scorecard_as_without_it() {
 #[test]
 fn mimo_scorecard_matches_applied_response_and_reports_late_energy() {
     let name = "room_dba";
-    let case = cases::load(name);
+    let case = cases::load(&crate::tests::Oracle, name);
     let design = design::replay(name);
     let fixture = Fixture::load("engine_mimo_run", "room_dba_iir");
     let ideal = ideal(&fixture);
@@ -549,7 +549,7 @@ fn mimo_scorecard_matches_applied_response_and_reports_late_energy() {
 #[test]
 fn mimo_scorecard_and_late_energy_are_deterministic_across_threads() {
     let name = "room_dba";
-    let case = cases::load(name);
+    let case = cases::load(&crate::tests::Oracle, name);
     let design = design::replay(name);
     let fixture = Fixture::load("engine_mimo_run", "room_dba_iir");
     let ideal = ideal(&fixture);
@@ -592,7 +592,7 @@ impl ProgressSink for Events {
 #[test]
 fn mimo_run_compute_fir_and_iir_end_to_end() {
     for name in ["room_dba", "room_filters"] {
-        let case = cases::load(name);
+        let case = cases::load(&crate::tests::Oracle, name);
         let d = design::replay(name);
         for fir in [false, true] {
             let fx = Fixture::load(
@@ -721,7 +721,7 @@ fn mimo_run_compute_fir_and_iir_end_to_end() {
 
 #[test]
 fn mimo_seat_guard_off_keeps_goldens_bit_identical() {
-    let case = cases::load("room_filters");
+    let case = cases::load(&crate::tests::Oracle, "room_filters");
     let design = design::replay("room_filters");
     for fir in [false, true] {
         let explicit = settings(fir);
@@ -865,7 +865,7 @@ fn mimo_run_helpers_settings_and_cancellation() {
         (key.fsiso, key.f_low, key.exclude),
         (150., Some(15.), vec!["SW1".to_string(), "SW2".to_string()])
     );
-    let case = cases::load("room_dba");
+    let case = cases::load(&crate::tests::Oracle, "room_dba");
     let mut d = design::replay("room_dba");
     let ctx = Context::serial();
     let off = CalibrationSettings::default();
@@ -920,7 +920,7 @@ fn mimo_run_helpers_settings_and_cancellation() {
 
 #[test]
 fn mimo_run_empty_supports_preserve_final_and_fallback_paths() {
-    let case = cases::load("room_dba");
+    let case = cases::load(&crate::tests::Oracle, "room_dba");
     let d = design::replay("room_dba");
     let key = mimo::MimoKey::from_settings(&settings(false));
     let ctx = Context::serial();
@@ -974,7 +974,7 @@ fn mimo_run_empty_supports_preserve_final_and_fallback_paths() {
 
 #[test]
 fn mimo_compute_shared_preparation_bit_identical() {
-    let case = cases::load("room_dba");
+    let case = cases::load(&crate::tests::Oracle, "room_dba");
     let d = design::replay("room_dba");
     let ctx = Context::serial();
     for fir in [false, true] {
@@ -1088,7 +1088,7 @@ fn iir_acceleration_request_keeps_cpu_target_and_outputs_bit_identical() {
             panic!("IIR must retain the CPU reference target");
         }
     }
-    let case = cases::load("room");
+    let case = cases::load(&crate::tests::Oracle, "room");
     let d = design::replay("room");
     let ctx = Context::serial();
     let cpu = mimo::AccelerationSelection {
@@ -1142,7 +1142,7 @@ fn iir_acceleration_request_keeps_cpu_target_and_outputs_bit_identical() {
 
 #[test]
 fn mimo_preparation_budget_refuses_before_spectra() {
-    let case = cases::load("room_dba");
+    let case = cases::load(&crate::tests::Oracle, "room_dba");
     let d = design::replay("room_dba");
     let (peak, held) = mimo::prepared::Prepared::bytes(&case.measurements, &case.config);
     assert!(held > 0 && peak > 2 * held);

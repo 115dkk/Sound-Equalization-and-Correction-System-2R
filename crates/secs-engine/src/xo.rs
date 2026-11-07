@@ -438,7 +438,7 @@ mod perf_tests {
     #[test]
     fn xo_replay_scores_match_fresh_preparation_bits() {
         for name in ["dolby", "room_filters"] {
-            let case = crate::testkit::replay_case(name);
+            let case = crate::testkit::replay_case(&crate::tests::Oracle, name);
             let prepared =
                 measurement::prepare(&case.measurements, &case.config, &Setup::new(&case.config))
                     .unwrap();
@@ -470,7 +470,7 @@ mod perf_tests {
     #[test]
     fn xo_preparation_is_candidate_independent() {
         for name in ["dolby", "room", "room_dba", "room_filters"] {
-            let case = cases::load(name);
+            let case = cases::load(&crate::tests::Oracle, name);
             let settings: CalibrationSettings = serde_json::from_value(case.settings).unwrap();
             let view = ProjectView {
                 groups: &case.config.groups,
@@ -527,7 +527,7 @@ mod perf_tests {
     #[test]
     fn xo_shared_windows_preserve_filtered_bits() {
         for name in ["dolby", "room_dba", "room_filters"] {
-            let case = cases::load(name);
+            let case = cases::load(&crate::tests::Oracle, name);
             let setup = Setup::new(&case.config);
             let prepared = measurement::prepare(&case.measurements, &case.config, &setup).unwrap();
             let mut filters = setup.sub_filters.clone();
@@ -570,7 +570,7 @@ mod perf_tests {
 
     #[test]
     fn xo_shared_preparation_preserves_candidate_bits() {
-        let case = cases::load("room_dba");
+        let case = cases::load(&crate::tests::Oracle, "room_dba");
         let prepared =
             measurement::prepare(&case.measurements, &case.config, &Setup::new(&case.config))
                 .unwrap();

@@ -57,7 +57,7 @@ fn compare(name: &str, a: &[f64], b: &[f64], tol: f64) {
 fn ba_oracle_auto_manual_bus() {
     for fx in Fixture::all("engine_ba", "") {
         let o = fx.outputs();
-        let mut case = cases::load(fx.inputs()["case"].as_str().unwrap());
+        let mut case = cases::load(&crate::tests::Oracle, fx.inputs()["case"].as_str().unwrap());
         let knobs = &fx.inputs()["knobs"];
         if knobs["sub_allpass"] == "full" {
             case.tuning.sub_allpass = SubAllpass::Full;
@@ -559,7 +559,7 @@ fn ba_oracle_auto_manual_bus() {
 fn ba_bus_delay_stops_at_every_cancellation_check() {
     // TD-49: the bus-delay grid search polls the token once per main position
     // while it gathers the crossover bands and once per candidate delay.
-    let case = cases::load("room");
+    let case = cases::load(&crate::tests::Oracle, "room");
     let setup = Setup::new(&case.config);
     let prep = crate::measurement::prepare(&case.measurements, &case.config, &setup).unwrap();
     let cancel = CancelToken::new();
@@ -626,7 +626,7 @@ fn ba_bus_delay_stops_at_every_cancellation_check() {
 
 #[test]
 fn ba_cancelled_before_work() {
-    let case = cases::load("room");
+    let case = cases::load(&crate::tests::Oracle, "room");
     let setup = Setup::new(&case.config);
     let prep = crate::measurement::prepare(&case.measurements, &case.config, &setup).unwrap();
     let cancel = CancelToken::new();
@@ -649,7 +649,7 @@ fn ba_cancelled_before_work() {
 
 #[test]
 fn ba_single_sub_and_inflight_cancellation() {
-    let mut case = cases::load("room");
+    let mut case = cases::load(&crate::tests::Oracle, "room");
     case.config.subs.truncate(1);
     case.tuning.sub_allpass = SubAllpass::Full;
     case.tuning.xo_stage = false;

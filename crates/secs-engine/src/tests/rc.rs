@@ -69,7 +69,7 @@ fn rc_recorded_candidates_and_channel() {
         let i = fx.inputs();
         let o = fx.outputs();
         let recipe = &i["recipe"];
-        let case = cases::load(i["case"].as_str().unwrap());
+        let case = cases::load(&crate::tests::Oracle, i["case"].as_str().unwrap());
         let mut tuning = case.tuning.clone();
         tuning.gd_cuts = i["gd_cuts"].as_bool().unwrap();
         let mut setup = Setup::new(&case.config);
@@ -434,7 +434,7 @@ fn rc_channel_stops_at_every_cancellation_check() {
     // (three columns), tries one step, takes one more Jacobian and stops at
     // its gradient test (3 + 1 + 3), then the fit's own check and the
     // channel's check after the cuts read true once each: 9 polls.
-    let mut case = cases::load("room");
+    let mut case = cases::load(&crate::tests::Oracle, "room");
     case.config.taps = 2048;
     case.config.peq_bands = Some(2);
     case.config.phase_frac = 24.0;
@@ -480,7 +480,7 @@ fn rc_channel_stops_at_every_cancellation_check() {
 
 #[test]
 fn rc_phase_candidates_share_preparation() {
-    let mut case = cases::load("room");
+    let mut case = cases::load(&crate::tests::Oracle, "room");
     case.config.taps = 2048;
     case.config.peq_bands = Some(2);
     case.config.phase_frac = 24.0;

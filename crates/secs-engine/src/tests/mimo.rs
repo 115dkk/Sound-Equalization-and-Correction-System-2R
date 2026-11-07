@@ -142,7 +142,7 @@ fn mimo_early_clamps_to_three_samples() {
     assert_eq!(crate::mimo::design::early_samples(5.0), 3);
     assert_eq!(crate::mimo::design::early_samples(1.0), 3);
 
-    let case = cases::load("room_dba");
+    let case = cases::load(&crate::tests::Oracle, "room_dba");
     let design = design::replay("room_dba");
     for invalid in [4.9, 60.1, f64::NAN] {
         let request = MimoRequest {
@@ -883,7 +883,7 @@ fn mimo_whole_path_goldens() {
     // Replay only the preceding engine's optimizer decisions. MIMO receives
     // Rust spectra, chain responses and alignment, never recorded low-rate data.
     for base in ["room", "room_dba", "room_filters", "room_multi"] {
-        let case = cases::load(base);
+        let case = cases::load(&crate::tests::Oracle, base);
         let mut d = design::replay(base);
         for name in CASES.into_iter().filter(|name| {
             *name == base
@@ -989,7 +989,7 @@ fn mimo_whole_path_goldens() {
 
 #[test]
 fn mimo_cap_four_is_subset_of_six_candidates() {
-    let case = cases::load("room_dba");
+    let case = cases::load(&crate::tests::Oracle, "room_dba");
     let d = design::replay("room_dba");
     let ctx = Context::serial();
     let uncapped = crate::design_mimo(
@@ -1378,7 +1378,7 @@ fn mimo_ridge_sweep_recorded_systems_and_trajectories() {
 
 #[test]
 fn mimo_ranges_and_upstream_behaviors() {
-    let case = cases::load("room");
+    let case = cases::load(&crate::tests::Oracle, "room");
     let mut d = design::replay("room");
     let ctx = Context::serial();
     let req = MimoRequest::default();
@@ -1454,7 +1454,7 @@ fn mimo_ranges_and_upstream_behaviors() {
 
 #[test]
 fn mimo_input_selection_preserves_all_input_result() {
-    let case = cases::load("room");
+    let case = cases::load(&crate::tests::Oracle, "room");
     let d = design::replay("room");
     let ctx = Context::new(
         1,
@@ -1487,7 +1487,7 @@ fn mimo_input_selection_preserves_all_input_result() {
 
 #[test]
 fn mimo_deterministic_threads() {
-    let case = cases::load("room");
+    let case = cases::load(&crate::tests::Oracle, "room");
     let d = design::replay("room");
     let make = |n| {
         Context::new(
@@ -1513,7 +1513,7 @@ fn mimo_deterministic_threads() {
 fn mimo_whole_path_inputs_match_recorded() {
     let mut failures = Vec::new();
     for base in ["room", "room_dba", "room_filters", "room_multi"] {
-        let case = cases::load(base);
+        let case = cases::load(&crate::tests::Oracle, base);
         let mut d = design::replay(base);
         let spectra = crate::export_view(&d, &case.measurements, &case.config)
             .unwrap()
@@ -1630,7 +1630,7 @@ fn mimo_shared_preparation_bit_identical() {
             "room_dba" | "room_filters" | "room_multi" => name,
             _ => "room",
         };
-        let case = cases::load(base);
+        let case = cases::load(&crate::tests::Oracle, base);
         let mut d = design::replay(base);
         let fx = Fixture::load("engine_mimo", name);
         if let Some(positions) = fx.inputs()["settings"]["positions"].as_array() {
@@ -1690,7 +1690,7 @@ fn mimo_shared_preparation_bit_identical() {
 
 #[test]
 fn mimo_one_input_budget_completes_parallel_and_matches_unbounded() {
-    let case = cases::load("room_dba");
+    let case = cases::load(&crate::tests::Oracle, "room_dba");
     let mut d = design::replay("room_dba");
     // Repeat the two recorded inputs so nested Rayon maps can steal another
     // input even on a four-thread pool; the acoustic problem stays small, but
@@ -1786,7 +1786,7 @@ fn mimo_one_input_budget_completes_parallel_and_matches_unbounded() {
 
 #[test]
 fn mimo_shared_paths_reject_combined_budget() {
-    let case = cases::load("room");
+    let case = cases::load(&crate::tests::Oracle, "room");
     let d = design::replay("room");
     let req = MimoRequest::default();
     let serial = Context::serial();

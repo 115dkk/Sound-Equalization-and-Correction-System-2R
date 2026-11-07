@@ -1,6 +1,12 @@
 use super::cases;
 use crate::notes::MimoOracleText;
-pub(super) use crate::testkit::{replay, replay_with_context};
+pub(super) fn replay(name: &str) -> crate::Design {
+    crate::testkit::replay(&crate::tests::Oracle, name)
+}
+
+fn replay_with_context(name: &str, context: &Context) -> crate::Design {
+    crate::testkit::replay_with_context(&crate::tests::Oracle, name, context)
+}
 use crate::{
     C,
     design::{self, DesignRequest},
@@ -204,8 +210,8 @@ fn complex(fx: &Fixture, name: &str, h: &[C], expected: &Value, gate: bool) {
 }
 #[test]
 fn replay_case_linear_matches_checked_engine_replay() {
-    let case = cases::load("dolby_linear");
-    let replay = crate::testkit::Replay::for_case("dolby_linear");
+    let case = cases::load(&crate::tests::Oracle, "dolby_linear");
+    let replay = crate::testkit::Replay::for_case(&crate::tests::Oracle, "dolby_linear");
     let expected = design::design(
         &DesignRequest {
             measurements: &case.measurements,
@@ -219,7 +225,7 @@ fn replay_case_linear_matches_checked_engine_replay() {
     )
     .unwrap();
     replay.finish();
-    let actual = crate::testkit::replay_case("dolby_linear").design;
+    let actual = crate::testkit::replay_case(&crate::tests::Oracle, "dolby_linear").design;
     assert_eq!(actual.chain, expected.chain);
     assert_eq!(actual.notes, expected.notes);
     assert_eq!(actual.adapter_notes, expected.adapter_notes);
@@ -260,7 +266,7 @@ fn replay_case_linear_matches_checked_engine_replay() {
 
 #[test]
 fn polarity_check_runs_once_on_the_final_pass() {
-    let mut case = cases::load("room");
+    let mut case = cases::load(&crate::tests::Oracle, "room");
     case.config.rc_range.1 = None;
     case.config.rc_hi_basis = secs_types::calibration::RcHiBasis::Agreement;
     for (_, roles) in &mut case.measurements.positions {
@@ -394,7 +400,7 @@ fn pair_phase_runs_once_on_the_final_pass_and_reports_dolby() {
             runs.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         }
     };
-    let mut case = cases::load("room");
+    let mut case = cases::load(&crate::tests::Oracle, "room");
     case.config.rc_range.1 = None;
     case.config.rc_hi_basis = secs_types::calibration::RcHiBasis::Agreement;
     let context = Context::serial();
@@ -434,7 +440,7 @@ fn pair_phase_runs_once_on_the_final_pass_and_reports_dolby() {
 fn design_reserves_preparation_and_one_channel_before_allocating() {
     use secs_compute::{CancelToken, MemoryBudget, NoProgress};
     let name = "room_dba";
-    let case = cases::load(name);
+    let case = cases::load(&crate::tests::Oracle, name);
     let setup = crate::setup::Setup::new(&case.config);
     let bytes = design::DesignBytes::new(&case.measurements, &case.config, &setup, false);
     let needed = crate::measurement::preparation_bytes(&case.measurements, &setup)
@@ -559,7 +565,7 @@ fn design_parallel_progress_counts_completed_channels() {
 
 #[test]
 fn design_empty_subs_and_subs_only_keep_axes_and_shared_spectra() {
-    let mut c = cases::load("room_manual");
+    let mut c = cases::load(&crate::tests::Oracle, "room_manual");
     let notes = vec!["adapter note".to_owned()];
     c.config.subs.clear();
     c.config.sub_manual.clear();
@@ -595,7 +601,7 @@ fn design_empty_subs_and_subs_only_keep_axes_and_shared_spectra() {
 fn design_rejects_taps_beyond_the_design_fft() {
     // TD-50: RC truncates the N_FFT-point FIR to `taps`; more taps than that
     // used to panic on a slice (2·N_FFT) or taper garbage (N_FFT + 1).
-    let mut c = cases::load("room");
+    let mut c = cases::load(&crate::tests::Oracle, "room");
     c.config.subs.clear();
     c.config.sub_manual.clear();
     c.config.bundle_layouts.clear();
@@ -632,7 +638,7 @@ fn design_rejects_an_input_cut_outside_its_limits() {
     // ADR 0031: a config built without the settings edit (a calculation
     // override, the public engine) keeps the cut inside 10–50 Hz too; 0 Hz
     // used to make every export response non-finite.
-    let mut c = cases::load("room");
+    let mut c = cases::load(&crate::tests::Oracle, "room");
     for hz in [0.0, -25.0, 9.9, 50.1, f64::NAN, f64::INFINITY] {
         c.config.input_hp_hz = Some(hz);
         let context = Context::serial();
@@ -671,7 +677,7 @@ fn design_cancellation_returns_within_one_second() {
         thread,
         time::{Duration, Instant},
     };
-    let case = cases::load("dolby");
+    let case = cases::load(&crate::tests::Oracle, "dolby");
     let mut failures = Vec::new();
     let request = DesignRequest {
         measurements: &case.measurements,
@@ -755,7 +761,7 @@ fn design_cancellation_returns_within_one_second() {
 
 #[test]
 fn design_matches_recorded_stages() {
-    for name in cases::names() {
+    for name in cases::names(&crate::tests::Oracle) {
         let started = std::time::Instant::now();
         let result = replay(&name);
         let fx = Fixture::load("engine_design", &name);
@@ -1132,7 +1138,7 @@ fn design_matches_recorded_stages() {
 fn simulator_matches_recorded_stages() {
     for name in ["dolby", "room_dba"] {
         let d = replay(name);
-        let case = cases::load(name);
+        let case = cases::load(&crate::tests::Oracle, name);
         let setup = crate::setup::Setup::new(&case.config);
         let prep = crate::measurement::prepare(&case.measurements, &case.config, &setup).unwrap();
         let filters = d
@@ -1188,7 +1194,7 @@ fn simulator_matches_recorded_stages() {
 #[test]
 fn design_memory_refusal_preserves_requested_and_total_bytes() {
     use secs_compute::{CancelToken, MemoryBudget, NoProgress};
-    let case = cases::load("room_dba");
+    let case = cases::load(&crate::tests::Oracle, "room_dba");
     let ctx = Context::new(
         1,
         MemoryBudget::new(1024),
@@ -1215,7 +1221,7 @@ fn design_memory_refusal_preserves_requested_and_total_bytes() {
 
 #[test]
 fn design_missing_reference_sub_returns_structured_error() {
-    let mut case = cases::load("room_manual");
+    let mut case = cases::load(&crate::tests::Oracle, "room_manual");
     let role = case.config.subs[0].clone();
     let position = case.config.main_position;
     case.measurements

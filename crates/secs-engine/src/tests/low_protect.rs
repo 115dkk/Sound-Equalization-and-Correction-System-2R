@@ -532,7 +532,7 @@ fn bass_db(h: &[C]) -> Vec<f64> {
 
 #[test]
 fn low_protect_room_bass_survives() {
-    let case = super::cases::load("room");
+    let case = super::cases::load(&crate::tests::Oracle, "room");
     let base: CalibrationSettings = serde_json::from_value(case.settings.clone()).unwrap();
     let view = ProjectView {
         groups: &case.config.groups,
