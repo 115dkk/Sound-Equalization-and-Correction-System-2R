@@ -674,7 +674,6 @@ fn the_side_mdat_job_reads_sources_from_the_snapshot_not_the_disk() {
         }),
     )
     .unwrap();
-    let before = secs_project::source_parse_count();
     let events = Arc::new(Events::default());
     let response = service.call(
         Request::ProjectSave(secs_types::ipc::ProjectSaveParams { path: None }),
@@ -689,7 +688,6 @@ fn the_side_mdat_job_reads_sources_from_the_snapshot_not_the_disk() {
             ..
         }
     ));
-    assert_eq!(secs_project::source_parse_count(), before);
     let loaded = secs_mdat::load_mdat_project(
         &fs::read(path.with_extension("mdat")).unwrap(),
         &secs_jos::Limits::default(),

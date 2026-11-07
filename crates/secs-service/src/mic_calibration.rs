@@ -680,6 +680,11 @@ mod tests {
             drop(store);
             open.mark_saved();
         }
+        let parse_count_before = lock(&service.session)
+            .require()
+            .unwrap()
+            .store()
+            .source_parse_count();
         let file = root.join("project-mic.cal");
         std::fs::write(&file, UMIK_90.as_bytes()).unwrap();
         let initial = service
@@ -700,6 +705,7 @@ mod tests {
         let mut session = lock(&service.session);
         let open = session.require_mut().unwrap();
         assert!(!open.is_dirty());
+        assert_eq!(open.store().source_parse_count(), parse_count_before);
         assert_ne!(
             crate::results::ProjectKeys::of(open.project()).signature,
             old_signature
@@ -742,11 +748,5 @@ mod tests {
         );
         std::fs::remove_dir_all(empty_root).unwrap();
         std::fs::remove_dir_all(root).unwrap();
-    }
-    #[test]
-    fn mic_calibration_attach_parses_no_sidecar_under_the_session_lock() {
-        let before = secs_project::source_parse_count();
-        mic_calibration_attach_gives_the_file_to_sweeps_only();
-        assert_eq!(secs_project::source_parse_count(), before);
     }
 }

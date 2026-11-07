@@ -7,31 +7,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::UNIX_EPOCH;
-
-static SOURCE_PARSE_COUNT: AtomicUsize = AtomicUsize::new(0);
-
-#[cfg(test)]
-std::thread_local! {
-    static LOCAL_SOURCE_PARSE_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-}
-
-#[cfg(test)]
-fn reset_local_source_parse_count() {
-    LOCAL_SOURCE_PARSE_COUNT.set(0);
-}
-
-#[cfg(test)]
-fn local_source_parse_count() -> usize {
-    LOCAL_SOURCE_PARSE_COUNT.get()
-}
-
-#[doc(hidden)]
-#[allow(dead_code)] // Integration crates use this audit test hook.
-pub fn source_parse_count() -> usize {
-    SOURCE_PARSE_COUNT.load(Ordering::Relaxed)
-}
 
 pub const IR_CACHE_LIMIT_BYTES: usize = 256 * 1024 * 1024;
 pub const MAX_PROJECT_BYTES: u64 = 64 * 1024 * 1024;
@@ -220,6 +196,7 @@ pub struct MeasurementStore {
     snr_db: BTreeMap<(i64, String), f64>,
     sources: BTreeMap<(i64, String), Arc<SourceInfo>>,
     source_budget: SourceBudget,
+    source_parse_count: usize,
     warnings: Vec<MigrationWarning>,
     cache: IrCache,
     saves: u64,
@@ -262,6 +239,7 @@ impl MeasurementStore {
             by_entry: sources,
             exhausted,
             skipped,
+            parse_count,
         } = loaded;
         debug_assert_eq!(
             exhausted,
@@ -280,6 +258,7 @@ impl MeasurementStore {
         let mut store = Self::new(path, project);
         store.sources = sources;
         store.source_budget = SourceBudget::from_sources(source_budget, &store.sources);
+        store.source_parse_count = parse_count;
         store.warnings.extend(warnings);
         Ok(store)
     }
@@ -291,6 +270,7 @@ impl MeasurementStore {
             snr_db: BTreeMap::new(),
             sources: BTreeMap::new(),
             source_budget: SourceBudget::new(MAX_PROJECT_SOURCE_BYTES),
+            source_parse_count: 0,
             warnings: Vec::new(),
             cache: IrCache::default(),
             saves: 0,
@@ -302,6 +282,7 @@ impl MeasurementStore {
         let mut relocated = Self::new(path, project);
         relocated.sources = self.sources.clone();
         relocated.source_budget = self.source_budget.clone();
+        relocated.source_parse_count = self.source_parse_count;
         relocated
     }
 
@@ -314,6 +295,12 @@ impl MeasurementStore {
             self.keep_source((pos, role), source);
         }
         self
+    }
+
+    /// Number of source sidecars parsed when this store opened.
+    /// Relocation preserves the diagnostic count without parsing again.
+    pub fn source_parse_count(&self) -> usize {
+        self.source_parse_count
     }
 
     pub fn project(&self) -> &Project {
@@ -797,9 +784,6 @@ pub fn save_source(wav: &Path, info: Option<&SourceInfo>) -> Result<(), ProjectE
 }
 
 fn load_source_checked(wav: &Path) -> Result<Option<SourceInfo>, ProjectError> {
-    SOURCE_PARSE_COUNT.fetch_add(1, Ordering::Relaxed);
-    #[cfg(test)]
-    LOCAL_SOURCE_PARSE_COUNT.set(LOCAL_SOURCE_PARSE_COUNT.get() + 1);
     let path = source_path(wav);
     let bytes = match crate::irs::read_bounded(&path, MAX_SOURCE_BYTES, "measurement source") {
         Ok(bytes) => bytes,
@@ -881,6 +865,7 @@ pub(crate) struct LoadedSources {
     pub(crate) by_entry: BTreeMap<(i64, String), Arc<SourceInfo>>,
     pub(crate) exhausted: bool,
     pub(crate) skipped: Vec<SourceSkip>,
+    pub(crate) parse_count: usize,
 }
 
 #[derive(Clone, Debug)]
@@ -983,6 +968,7 @@ pub(crate) fn load_project_sources_within(
     let mut budget = SourceBudget::new(budget);
     let mut by_entry = BTreeMap::new();
     let mut skipped = Vec::new();
+    let mut parse_count = 0;
     for record in measurement_values(project)
         .iter()
         .filter_map(MeasurementRecord::from_json)
@@ -1063,6 +1049,7 @@ pub(crate) fn load_project_sources_within(
                         skip(&mut skipped, pos, &role, &sidecar, SourceSkipReason::Budget);
                         continue;
                     }
+                    parse_count += 1;
                     let info = match load_source_checked(&path) {
                         Ok(Some(info)) => {
                             let bytes = source_info_bytes(&info);
@@ -1102,6 +1089,7 @@ pub(crate) fn load_project_sources_within(
         by_entry,
         exhausted: budget.exhausted,
         skipped,
+        parse_count,
     }
 }
 
@@ -1857,13 +1845,14 @@ mod source_budget_tests {
     #[cfg_attr(miri, ignore = "uses temporary files")]
     fn open_parses_each_sidecar_once_and_source_of_never_parses_again() {
         let (root, project_path) = three_source_project("parse-once");
-        reset_local_source_parse_count();
         let store = MeasurementStore::open(&project_path).unwrap();
-        assert_eq!(local_source_parse_count(), 3);
+        assert_eq!(store.source_parse_count(), 3);
         for _ in 0..5 {
             assert!(store.source_of("L", 1).is_some());
         }
-        assert_eq!(local_source_parse_count(), 3);
+        assert_eq!(store.source_parse_count(), 3);
+        let relocated = store.relocated(root.join("relocated.secs"), store.project().clone());
+        assert_eq!(relocated.source_parse_count(), 3);
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -1952,11 +1941,10 @@ mod source_budget_tests {
         let mut project = Project::from_preset("2.0").unwrap();
         project.measurements = PyJson::Array(entries);
 
-        reset_local_source_parse_count();
         let loaded = load_project_sources_within(&project, &project_path, MAX_PROJECT_SOURCE_BYTES);
         assert!(loaded.exhausted);
+        let parsed = loaded.parse_count;
         let sources = loaded.by_entry;
-        let parsed = local_source_parse_count();
         assert!(parsed > 0);
         assert!(
             parsed < 10,
@@ -1992,9 +1980,8 @@ mod source_budget_tests {
         let mut project = Project::from_preset("2.0").unwrap();
         project.measurements = PyJson::Array(entries);
 
-        reset_local_source_parse_count();
         let loaded = load_project_sources_within(&project, &project_path, 4096);
-        let parsed = local_source_parse_count();
+        let parsed = loaded.parse_count;
         assert!(loaded.by_entry.is_empty());
         assert!(loaded.exhausted);
         assert!(parsed > 0);
