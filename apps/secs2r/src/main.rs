@@ -23,7 +23,7 @@ mod local_api;
 mod self_test;
 mod update;
 
-use secs_service::{AppEffects, Deps, EventSink, LocalTime, NoEvents, Service};
+use secs_service::{AppEffects, Deps, EventSink, LocalTime, LogLevel, NoEvents, Service};
 use secs_types::ipc::{Envelope, ErrorCode, IpcError, JobEvent, Request, Response};
 use tauri::{AppHandle, Manager, Webview, ipc::JavaScriptChannelId};
 
@@ -171,7 +171,13 @@ fn main() {
             let updates = Arc::new(update::TauriUpdates::new(
                 handle.clone(),
                 &config_dir,
-                Arc::new(move |text| update_log.line(applog::Level::Error, "update", text)),
+                Arc::new(move |level, text| {
+                    let level = match level {
+                        LogLevel::Warn => applog::Level::Warn,
+                        LogLevel::Error => applog::Level::Error,
+                    };
+                    update_log.line(level, "update", text);
+                }),
             ));
             let hub = secs_local_api::EventHub::default();
             let observer = Arc::new(applog::FanOut {

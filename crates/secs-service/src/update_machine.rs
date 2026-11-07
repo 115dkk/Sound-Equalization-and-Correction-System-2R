@@ -133,7 +133,7 @@ impl UpdateMachine {
         };
         vec![UpdateCommand::Log {
             level: LogLevel::Error,
-            line: format!("{}: {}", failure.reason, failure.cause),
+            line: failure.cause,
         }]
     }
 
@@ -361,6 +361,22 @@ fn invalid(reason: &str) -> IpcError {
     use secs_types::ipc::ErrorCode;
 
     IpcError::new(ErrorCode::InvalidRequest, reason)
+}
+
+pub fn notice_from_pending(pending: PendingUpdate, current: &str) -> Option<UpdateNotice> {
+    if pending.to != current {
+        return None;
+    }
+    Some(UpdateNotice {
+        skipped: pending
+            .previous
+            .as_ref()
+            .is_some_and(|previous| previous != &pending.from),
+        release_url: format!("{RELEASES}{}", pending.to),
+        from: pending.from,
+        to: pending.to,
+        notes: pending.notes,
+    })
 }
 
 #[cfg(test)]
@@ -679,6 +695,108 @@ mod tests {
                 line,
             } if line.contains("connection refused at 127.0.0.1:1")
         )));
+    }
+
+    #[test]
+    fn update_policy_and_portable_decisions() {
+        for (policy, phase) in [
+            (UpdatePolicy::Off, UpdatePhase::Off),
+            (UpdatePolicy::Auto, UpdatePhase::Idle),
+            (UpdatePolicy::Notify, UpdatePhase::Idle),
+        ] {
+            let mut machine = UpdateMachine::new("1.0.0", false, UpdateInstall::OnExit);
+            machine
+                .step(UpdateEvent::Start {
+                    policy,
+                    notice: None,
+                })
+                .unwrap();
+            assert_eq!(machine.status().phase, phase);
+        }
+
+        let (mut portable, generation) = checking(UpdatePolicy::Auto, true, UpdateInstall::OnExit);
+        portable
+            .step(UpdateEvent::CheckResult {
+                generation,
+                result: Ok(Some(release("1.2.3"))),
+            })
+            .unwrap();
+        assert_eq!(
+            portable.status().phase,
+            UpdatePhase::Portable {
+                version: "1.2.3".into(),
+                url: format!("{RELEASES}1.2.3"),
+            }
+        );
+
+        let (on_exit, _) = ready(UpdateInstall::OnExit);
+        let (on_request, _) = ready(UpdateInstall::OnRequest);
+        assert!(matches!(
+            on_exit.status().phase,
+            UpdatePhase::Ready {
+                install: UpdateInstall::OnExit,
+                ..
+            }
+        ));
+        assert!(matches!(
+            on_request.status().phase,
+            UpdatePhase::Ready {
+                install: UpdateInstall::OnRequest,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn update_actions_reject_wrong_phases() {
+        for event in [UpdateEvent::Download, UpdateEvent::Restart] {
+            let mut machine = UpdateMachine::new("1.0.0", false, UpdateInstall::OnExit);
+            machine
+                .step(UpdateEvent::Start {
+                    policy: UpdatePolicy::Notify,
+                    notice: None,
+                })
+                .unwrap();
+            assert_eq!(
+                machine.step(event).unwrap_err().code,
+                secs_types::ipc::ErrorCode::InvalidRequest
+            );
+        }
+
+        let (mut available, generation) =
+            checking(UpdatePolicy::Notify, false, UpdateInstall::OnExit);
+        available
+            .step(UpdateEvent::CheckResult {
+                generation,
+                result: Ok(Some(release("1.2.3"))),
+            })
+            .unwrap();
+        assert!(available.step(UpdateEvent::Download).is_ok());
+        let (mut ready, _) = ready(UpdateInstall::OnExit);
+        assert!(ready.step(UpdateEvent::Restart).is_ok());
+    }
+
+    #[test]
+    fn update_notice_matches_running_version_and_tracks_skipped_releases() {
+        let mut pending = PendingUpdate {
+            from: "1.0.0".into(),
+            to: "1.2.0".into(),
+            notes: "Changes".into(),
+            previous: Some("1.1.0".into()),
+        };
+        let notice = notice_from_pending(pending.clone(), "1.2.0").unwrap();
+        assert!(notice.skipped);
+        assert_eq!(notice.notes, "Changes");
+        assert_eq!(notice.release_url, format!("{RELEASES}1.2.0"));
+        assert!(notice_from_pending(pending.clone(), "1.0.0").is_none());
+        pending.previous = Some(pending.from.clone());
+        assert!(
+            !notice_from_pending(pending.clone(), "1.2.0")
+                .unwrap()
+                .skipped
+        );
+        pending.previous = None;
+        assert!(!notice_from_pending(pending, "1.2.0").unwrap().skipped);
     }
 
     #[test]
