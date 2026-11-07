@@ -1,6 +1,7 @@
 //! Time-domain rendering of complete export-plan input-to-output paths.
 
 use crate::{FiltersError, SECTION_Q};
+use secs_compute::Context;
 use secs_dsp::iir::{Biquad, Tdf2, rbj_allpass, rbj_band, rbj_peaking};
 use secs_dsp::rate::{DESIGN_RATE, delay_samples, is_output_rate, taps_at};
 use secs_graph::emit::guard::find_ops;
@@ -80,7 +81,7 @@ impl Route {
             max_len,
             rate,
             &mut firs,
-            &|| false,
+            &Context::serial(),
         )
     }
 
@@ -91,7 +92,7 @@ impl Route {
         max_len: usize,
         rate: u32,
         firs: &mut Vec<(String, Arc<[f64]>)>,
-        cancelled: &dyn Fn() -> bool,
+        ctx: &Context,
     ) -> Result<Self, FiltersError> {
         let (input, output) = pair;
         let mut route = Self {
@@ -103,9 +104,7 @@ impl Route {
         };
         let mut has_fir = false;
         for op in parts.iter().flat_map(|ops| ops.iter()) {
-            if cancelled() {
-                return Err(FiltersError::Cancelled);
-            }
+            ctx.cancel().check()?;
             match op {
                 Op::Peq {
                     frequency,
@@ -125,7 +124,7 @@ impl Route {
                         taps,
                         max_len,
                         (input, output),
-                        cancelled,
+                        ctx,
                     )?;
                     has_fir = true;
                 }
@@ -142,7 +141,7 @@ impl Route {
                         taps,
                         max_len,
                         (input, output),
-                        cancelled,
+                        ctx,
                     )?;
                     has_fir = true;
                 }
@@ -217,14 +216,8 @@ impl Route {
         Ok(route)
     }
 
-    fn render_cancellable(
-        &self,
-        length: usize,
-        cancelled: &dyn Fn() -> bool,
-    ) -> Result<Vec<f64>, FiltersError> {
-        if cancelled() {
-            return Err(FiltersError::Cancelled);
-        }
+    fn render_cancellable(&self, length: usize, ctx: &Context) -> Result<Vec<f64>, FiltersError> {
+        ctx.cancel().check()?;
         let mut response = vec![0.0; length];
         let available = length
             .saturating_sub(self.delay_samples)
@@ -238,8 +231,8 @@ impl Route {
         for &biquad in &self.biquads {
             let mut filter = Tdf2::new(biquad);
             for (index, sample) in response.iter_mut().enumerate() {
-                if index.is_multiple_of(4096) && cancelled() {
-                    return Err(FiltersError::Cancelled);
+                if index.is_multiple_of(4096) {
+                    ctx.cancel().check()?;
                 }
                 *sample = filter.process(*sample);
             }
@@ -262,11 +255,11 @@ fn chained_fir(
     taps: Arc<[f64]>,
     max_len: usize,
     pair: (&str, &str),
-    cancelled: &dyn Fn() -> bool,
+    ctx: &Context,
 ) -> Result<Arc<[f64]>, FiltersError> {
     let (input, output) = pair;
     match current {
-        Some(current) => Ok(convolve(current, &taps, max_len, input, output, cancelled)?.into()),
+        Some(current) => Ok(convolve(current, &taps, max_len, input, output, ctx)?.into()),
         None if taps.len() > max_len => Err(FiltersError::Invalid(format!(
             "path {input} -> {output} exceeds max_len {max_len}"
         ))),
@@ -294,7 +287,7 @@ fn convolve(
     max_len: usize,
     input: &str,
     output: &str,
-    cancelled: &dyn Fn() -> bool,
+    ctx: &Context,
 ) -> Result<Vec<f64>, FiltersError> {
     if left.is_empty() || right.is_empty() {
         return Ok(Vec::new());
@@ -315,9 +308,7 @@ fn convolve(
     }
     let mut result = vec![0.0; length];
     for (left_index, &left_value) in left.iter().enumerate() {
-        if cancelled() {
-            return Err(FiltersError::Cancelled);
-        }
+        ctx.cancel().check()?;
         for (right_index, &right_value) in right.iter().enumerate() {
             result[left_index + right_index] += left_value * right_value;
         }
@@ -336,7 +327,7 @@ fn collect_routes(
     plan: &FilterPlan,
     max_len: usize,
     rate: u32,
-    cancelled: &dyn Fn() -> bool,
+    ctx: &Context,
 ) -> Result<Vec<PairRoutes>, FiltersError> {
     let mut pairs = plan
         .inputs
@@ -369,15 +360,13 @@ fn collect_routes(
             max_len,
             rate,
             &mut firs,
-            cancelled,
+            ctx,
         )?);
         Ok(())
     };
 
     for (input_index, input) in plan.inputs.iter().enumerate() {
-        if cancelled() {
-            return Err(FiltersError::Cancelled);
-        }
+        ctx.cancel().check()?;
         if input == "LFE" {
             for (output, feed) in &plan.subs {
                 if feed.sources.iter().any(|source| source == input) {
@@ -440,7 +429,7 @@ pub fn render_paths_at(
     max_len_48k: usize,
     rate: u32,
 ) -> Result<RenderedPaths, FiltersError> {
-    render_paths_at_cancellable(plan, max_len_48k, rate, &|| false)
+    render_paths_at_cancellable(plan, max_len_48k, rate, &Context::serial())
 }
 
 /// Render at an output rate while checking cooperative cancellation during
@@ -449,7 +438,7 @@ pub fn render_paths_at_cancellable(
     plan: &FilterPlan,
     max_len_48k: usize,
     rate: u32,
-    cancelled: &dyn Fn() -> bool,
+    ctx: &Context,
 ) -> Result<RenderedPaths, FiltersError> {
     plan.check_structure()?;
     if !is_output_rate(rate) {
@@ -465,7 +454,7 @@ pub fn render_paths_at_cancellable(
             "max_len {max_len} is below the minimum {MIN_LENGTH}"
         )));
     }
-    let pairs = collect_routes(plan, max_len, rate, cancelled)?;
+    let pairs = collect_routes(plan, max_len, rate, ctx)?;
     let finite_end = pairs
         .iter()
         .flat_map(|pair| &pair.routes)
@@ -478,14 +467,12 @@ pub fn render_paths_at_cancellable(
         let mut rendered = Vec::with_capacity(pairs.len());
         let mut peak = 0.0_f64;
         for (pair_index, pair) in pairs.iter().enumerate() {
-            if cancelled() {
-                return Err(FiltersError::Cancelled);
-            }
+            ctx.cancel().check()?;
             let mut response = vec![0.0; candidate];
             for route in &pair.routes {
                 for (sum, value) in response
                     .iter_mut()
-                    .zip(route.render_cancellable(candidate, cancelled)?)
+                    .zip(route.render_cancellable(candidate, ctx)?)
                 {
                     *sum += value;
                 }
@@ -602,8 +589,8 @@ mod input_hp_tests {
         let off = crate::make_plan(&chain, Some(&mimo)).unwrap();
         chain.input_hp_hz = Some(27.0);
         let on = crate::make_plan(&chain, Some(&mimo)).unwrap();
-        let before = collect_routes(&off, 1 << 18, 48000, &|| false).unwrap();
-        let after = collect_routes(&on, 1 << 18, 48000, &|| false).unwrap();
+        let before = collect_routes(&off, 1 << 18, 48000, &Context::serial()).unwrap();
+        let after = collect_routes(&on, 1 << 18, 48000, &Context::serial()).unwrap();
         let hp = Route::from_parts(&[&on.pre_ops], 1.0, "L", "L", 1 << 18, 48000).unwrap();
         let f: Vec<_> = (0..=400)
             .map(|i| 10.0 * 2000.0_f64.powf(i as f64 / 400.0))

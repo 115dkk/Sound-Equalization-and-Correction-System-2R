@@ -3,6 +3,7 @@
 
 mod support;
 
+use secs_compute::{CancelToken, Context, MemoryBudget, NoProgress, Progress, ProgressSink};
 use secs_filters::{
     CONVOLUTION_GUIDE, FilterPlan, FilterRun, FiltersError, MimoFeed, Op, Options, SECTION_Q,
     SubFeed, eqapo_config, eqapo_filters, eqapo_guide, export_convolution,
@@ -19,10 +20,12 @@ use secs_types::chain::{
 };
 use secs_types::ipc::ExportBlock;
 use serde_json::Value;
-use std::cell::Cell;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicU64, Ordering},
+};
 
 static TEMP_ID: AtomicU64 = AtomicU64::new(0);
 const RESPONSE_ATOL: f64 = 8e-14;
@@ -62,6 +65,15 @@ impl TempDir {
 impl Drop for TempDir {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+#[derive(Debug, Default)]
+struct RecordingProgress(Mutex<Vec<Progress>>);
+
+impl ProgressSink for RecordingProgress {
+    fn report(&self, progress: &Progress) {
+        self.0.lock().unwrap().push(progress.clone());
     }
 }
 
@@ -1229,7 +1241,45 @@ fn output_rates_change_eqapo_text_and_convolution_bundles() {
 }
 
 #[test]
-fn convolution_cancel_inside_the_first_rate_finishes_before_rate_progress() {
+fn convolution_prepare_reports_progress_until_done_equals_total() {
+    const FIXTURE_PATH_COUNT: u64 = 2;
+    let chain = f11_synthetic_chain(true, true, false);
+    let run = FilterRun {
+        chain: &chain,
+        mimo: None,
+        mode: "mixed",
+        note: "record progress",
+        label: "record progress",
+        latency_ms: chain.latency_ms,
+        rc_pieces: &[],
+        stamp: "2026-11-02 00:00",
+    };
+    let options = Options {
+        output_rate: 96_000,
+        extra_rates: vec![44_100],
+    };
+    let progress = Arc::new(RecordingProgress::default());
+    let ctx = Context::new(
+        1,
+        MemoryBudget::new(u64::MAX),
+        progress.clone(),
+        CancelToken::new(),
+    );
+
+    prepare_convolution_named_with_options(&run, &options, None, &ctx).unwrap();
+
+    let reports = progress.0.lock().unwrap();
+    let last = reports
+        .iter()
+        .rfind(|report| report.stage == "filters.convolution")
+        .expect("convolution progress");
+    assert_eq!(last.done, last.total);
+    assert_eq!(last.total, FIXTURE_PATH_COUNT);
+}
+
+#[test]
+fn convolution_prepare_cancelled_midway_writes_nothing() {
+    let destination = TempDir::new("cancelled_convolution_prepare");
     let chain = f11_synthetic_chain(true, true, false);
     let run = FilterRun {
         chain: &chain,
@@ -1245,22 +1295,13 @@ fn convolution_cancel_inside_the_first_rate_finishes_before_rate_progress() {
         output_rate: 96_000,
         extra_rates: vec![44_100],
     };
-    let checks = Cell::new(0_u64);
-    let completed = Cell::new(u64::MAX);
-    let result = prepare_convolution_named_with_options(
-        &run,
-        &options,
-        None,
-        &|| {
-            let current = checks.get() + 1;
-            checks.set(current);
-            current == 8
-        },
-        &|done, _| completed.set(done),
-    );
+    let (cancel, _checks) = CancelToken::probe(8);
+    let ctx = Context::new(1, MemoryBudget::new(u64::MAX), Arc::new(NoProgress), cancel);
+
+    let result = prepare_convolution_named_with_options(&run, &options, None, &ctx);
+
     assert!(matches!(result, Err(FiltersError::Cancelled)));
-    assert_eq!(checks.get(), 8);
-    assert_eq!(completed.get(), 0, "no sample-rate bundle completed");
+    assert!(fs::read_dir(&destination.0).unwrap().next().is_none());
 }
 
 #[test]

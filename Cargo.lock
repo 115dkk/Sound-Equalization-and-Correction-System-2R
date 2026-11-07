@@ -4441,6 +4441,7 @@ dependencies = [
 name = "secs-filters"
 version = "0.21.0"
 dependencies = [
+ "secs-compute",
  "secs-dsp",
  "secs-graph",
  "secs-oracle",

@@ -1226,13 +1226,14 @@ tests = [
   "secs-filters::convolution_bundle_contains_complete_paths_and_is_atomic",
   "secs-service::convolution_export_with_subs_and_mimo_reopens_byte_identically",
   "secs-service::cancelled_convolution_compute_installs_no_files",
-  "secs-filters::convolution_cancel_inside_the_first_rate_finishes_before_rate_progress",
+  "secs-filters::convolution_prepare_reports_progress_until_done_equals_total",
+  "secs-filters::convolution_prepare_cancelled_midway_writes_nothing",
   "secs-graph::check_structure_rejects_missing_paths_firs_and_outputs_td180",
   "secs-filters::malformed_plans_return_errors_instead_of_panicking_td180",
   "secs-filters::convolution_guide_uses_python_fixed_numbers_td226",
   "secs-filters::convolution_guide_formats_exact_ties_like_python_td226",
 ]
-note = "New: complete f32 convolution IRs fold FIR, PEQ, crossovers, all-pass, gain, polarity and delay into one WAV and exact-DTFT CSV per reachable input/output pair, with routing metadata and shared headroom. Additional output rates are written into rate-named subfolders."
+note = "New: complete f32 convolution IRs fold FIR, PEQ, crossovers, all-pass, gain, polarity and delay into one WAV and exact-DTFT CSV per reachable input/output pair, with routing metadata and shared headroom. Additional output rates are written into rate-named subfolders. Progress uses the stable stage id filters.convolution."
 
 [[feature]]
 id = "export.output_rate"

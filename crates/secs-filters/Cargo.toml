@@ -19,9 +19,11 @@ workspace = true
 secs-types.workspace = true
 secs-dsp.workspace = true
 secs-graph.workspace = true
+secs-compute.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+secs-compute = { workspace = true, features = ["test-support"] }
 secs-oracle.workspace = true

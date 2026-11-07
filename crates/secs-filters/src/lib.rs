@@ -143,6 +143,12 @@ pub enum FiltersError {
     Io(#[from] std::io::Error),
 }
 
+impl From<secs_compute::Cancelled> for FiltersError {
+    fn from(_: secs_compute::Cancelled) -> Self {
+        Self::Cancelled
+    }
+}
+
 fn validate_options(options: &Options, convolution: bool) -> Result<(), FiltersError> {
     if !secs_dsp::rate::is_output_rate(options.output_rate) {
         return Err(FiltersError::Invalid(
@@ -1657,7 +1663,7 @@ fn exact_dtft_cancellable(
     samples: &[f64],
     frequency: f64,
     rate: u32,
-    cancelled: &dyn Fn() -> bool,
+    ctx: &secs_compute::Context,
 ) -> Result<Complex64, FiltersError> {
     let step = Complex64::from_polar(
         1.0,
@@ -1666,8 +1672,8 @@ fn exact_dtft_cancellable(
     let mut phase = Complex64::new(1.0, 0.0);
     let mut response = Complex64::new(0.0, 0.0);
     for (index, &sample) in samples.iter().enumerate() {
-        if index.is_multiple_of(4096) && cancelled() {
-            return Err(FiltersError::Cancelled);
+        if index.is_multiple_of(4096) {
+            ctx.cancel().check()?;
         }
         response += phase * sample;
         phase *= step;
@@ -1679,12 +1685,12 @@ fn convolution_csv(
     samples: &[f64],
     frequencies: &[f64],
     rate: u32,
-    cancelled: &dyn Fn() -> bool,
+    ctx: &secs_compute::Context,
 ) -> Result<(String, f64), FiltersError> {
     let mut text = String::from("frequency_hz,magnitude_db,phase_deg\n");
     let mut peak = 0.0_f64;
     for &frequency in frequencies {
-        let response = exact_dtft_cancellable(samples, frequency, rate, cancelled)?;
+        let response = exact_dtft_cancellable(samples, frequency, rate, ctx)?;
         let magnitude = response.norm();
         if (20.0..=20_000.0).contains(&frequency) {
             peak = peak.max(magnitude);
@@ -1880,15 +1886,11 @@ impl PreparedConvolution {
 }
 
 /// Compute convolution bundles without changing the filesystem.
-///
-/// `cancelled` is checked inside rendering and DTFT loops. `progress` reports
-/// completed sample-rate bundles out of the main rate plus all extra rates.
 pub fn prepare_convolution_named_with_options(
     run: &FilterRun<'_>,
     options: &Options,
     design_name: Option<&str>,
-    cancelled: &dyn Fn() -> bool,
-    progress: &dyn Fn(u64, u64),
+    ctx: &secs_compute::Context,
 ) -> Result<PreparedConvolution, FiltersError> {
     validate_options(options, true)?;
     if let Some(block) = filter_export_block(
@@ -1904,10 +1906,8 @@ pub fn prepare_convolution_named_with_options(
     let headroom_db = secs_graph::headroom_db_half_db(plan)?;
     let attenuation = 10_f64.powf(-headroom_db / 20.0);
     let total = 1 + options.extra_rates.len() as u64;
-    progress(0, total);
-    if cancelled() {
-        return Err(FiltersError::Cancelled);
-    }
+    let progress = ctx.stage("filters.convolution", total);
+    ctx.cancel().check()?;
     let mut files = Vec::new();
     for (rate_index, (rate, prefix)) in std::iter::once((options.output_rate, PathBuf::new()))
         .chain(
@@ -1918,13 +1918,11 @@ pub fn prepare_convolution_named_with_options(
         )
         .enumerate()
     {
-        let rendered = render_paths_at_cancellable(plan, CONVOLUTION_MAX_LEN, rate, cancelled)?;
+        let rendered = render_paths_at_cancellable(plan, CONVOLUTION_MAX_LEN, rate, ctx)?;
         let frequencies = convolution_grid(rate);
         let mut routes = Vec::with_capacity(rendered.paths.len());
         for path in &rendered.paths {
-            if cancelled() {
-                return Err(FiltersError::Cancelled);
-            }
+            ctx.cancel().check()?;
             let stem = format!("{}_to_{}", path.input, path.output);
             let wav = format!("{stem}.wav");
             let csv = format!("{stem}.csv");
@@ -1933,8 +1931,7 @@ pub fn prepare_convolution_named_with_options(
                 .iter()
                 .map(|sample| f64::from((*sample * attenuation) as f32))
                 .collect::<Vec<_>>();
-            let (csv_text, written_peak) =
-                convolution_csv(&written, &frequencies, rate, cancelled)?;
+            let (csv_text, written_peak) = convolution_csv(&written, &frequencies, rate, ctx)?;
             let peak = written_peak / attenuation;
             let peak_gain_db = if peak == 0.0 {
                 -200.0
@@ -1985,7 +1982,7 @@ pub fn prepare_convolution_named_with_options(
             .map_err(|error| FiltersError::Invalid(format!("routing.json: {error}")))?;
         routing_bytes.push(b'\n');
         files.push((entry, routing_bytes));
-        progress(rate_index as u64 + 1, total);
+        progress.set(rate_index as u64 + 1);
     }
     Ok(PreparedConvolution { files })
 }
@@ -1998,8 +1995,13 @@ pub fn export_convolution_named_with_options(
     options: &Options,
     design_name: Option<&str>,
 ) -> Result<Vec<PathBuf>, FiltersError> {
-    prepare_convolution_named_with_options(run, options, design_name, &|| false, &|_, _| {})?
-        .install(folder)
+    prepare_convolution_named_with_options(
+        run,
+        options,
+        design_name,
+        &secs_compute::Context::serial(),
+    )?
+    .install(folder)
 }
 
 fn finite(name: &str, value: f64) -> Result<(), FiltersError> {

@@ -591,10 +591,7 @@ impl Service {
                                 &run,
                                 &options,
                                 requested_design_name.as_deref(),
-                                &|| job.cancel().is_cancelled(),
-                                &|done, total| {
-                                    job.report_progress("export.convolution", done, total);
-                                },
+                                &ctx,
                             )
                             .map_err(filter_error)?;
                             job.begin_commit()?;
