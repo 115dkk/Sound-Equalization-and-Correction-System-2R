@@ -352,19 +352,6 @@ fn validate_service_directory(path: &Path) -> Result<(), IpcError> {
 }
 
 #[cfg(target_os = "windows")]
-fn mark_other_user(core: &mut Core, paths: &Paths, session: u32) -> Result<(), IpcError> {
-    if rules::mark_other_user(&mut core.camilla) {
-        record(
-            core,
-            paths,
-            rules::log_line("other_user", [("session".to_owned(), session.to_string())]),
-        )
-    } else {
-        Ok(())
-    }
-}
-
-#[cfg(target_os = "windows")]
 fn append_log_nonfatal(path: &Path, line: &secs_types::ipc::HostLogLine) {
     if let Err(error) = rules::append_log(path, line, rules::LOG_LIMIT) {
         static LAST_REPORT: std::sync::OnceLock<std::sync::Mutex<Option<Instant>>> =
@@ -477,13 +464,31 @@ fn service_loop(
     };
     let mut child = None;
     let active_session = managing_session_or_none(&mut core, paths);
+    let mut transition_state = TransitionState::new(core.managed.clone(), None);
     if active_session.is_none()
         && (core.managed.camilla.is_some() || core.managed.eqapo.is_some())
         && let Some(session) = secs_sys::host::active_console_session()
     {
-        mark_other_user(&mut core, paths, session)?;
+        let (next, effects) = transitions::decide(
+            &transition_state,
+            TransitionInput::Session {
+                event: TransitionSessionEvent::ConsoleConnect,
+                session_id: session,
+                owner_matches: false,
+            },
+        );
+        transition_state = next;
+        drive_transition(
+            &mut transition_state,
+            effects,
+            &mut core,
+            &mut child,
+            &mut watcher,
+            &config_sender,
+            &work_sender,
+            paths,
+        )?;
     }
-    let mut transition_state = TransitionState::new(core.managed.clone(), None);
     if core.managed.camilla.is_some() && active_session.is_some() {
         let (next, effects) = transitions::decide(
             &transition_state,
@@ -582,9 +587,6 @@ fn service_loop(
                         &work_sender,
                         paths,
                     )?;
-                    if !owner_matches {
-                        mark_other_user(&mut core, paths, session)?;
-                    }
                 }
                 event @ (secs_sys::host::ServiceEvent::SessionLogoff(session)
                 | secs_sys::host::ServiceEvent::ConsoleDisconnect(session)) => {
@@ -597,8 +599,6 @@ fn service_loop(
                         }
                         _ => unreachable!("matched a console disconnection event"),
                     };
-                    let child_session_ended =
-                        transition_state.running_child_session() == Some(session);
                     let owner_session_ended =
                         transition_state.managed.owner_session_id == Some(session);
                     let (next, effects) = transitions::decide(
@@ -620,13 +620,6 @@ fn service_loop(
                         &work_sender,
                         paths,
                     )?;
-                    if child_session_ended
-                        || owner_session_ended
-                        || transition_event == TransitionSessionEvent::ConsoleDisconnect
-                    {
-                        core.camilla.state = ManagedProcessState::NoSession;
-                        core.camilla.pid = None;
-                    }
                 }
             }
         }
@@ -700,7 +693,7 @@ fn service_loop(
             None => None,
         };
         if let Some(exit_code) = child_exit {
-            let pid = core.camilla.pid.take();
+            let pid = core.camilla.pid;
             child = None;
             let (next, effects) = transitions::decide(
                 &transition_state,
@@ -845,6 +838,11 @@ impl TransitionPlatform for RealTransitionPlatform<'_> {
     }
 
     fn set_camilla_state(&mut self, state: ManagedProcessState) {
+        self.core.camilla.pid = if state == ManagedProcessState::Running {
+            self.child.as_ref().and_then(|child| child.pid().ok())
+        } else {
+            None
+        };
         self.core.camilla.state = state;
     }
 
@@ -968,7 +966,6 @@ fn handle_request(
             let (next, effects) =
                 transitions::decide(transition_state, TransitionInput::StopManaging);
             *transition_state = next;
-            core.camilla = Default::default();
             core.eqapo_include = IncludeState::Absent;
             drive_transition(
                 transition_state,
@@ -1364,8 +1361,18 @@ fn finish_takeover_work(
                 let _ = previous.stop();
             }
             transition_state.running_child_session = Some(pending.session);
-            core.camilla.state = ManagedProcessState::Running;
-            core.camilla.pid = Some(pid);
+            drive_transition(
+                transition_state,
+                vec![transitions::Effect::SetCamillaState(
+                    ManagedProcessState::Running,
+                )],
+                core,
+                child,
+                watcher,
+                config_sender,
+                work_sender,
+                paths,
+            )?;
             record(
                 core,
                 paths,
@@ -1379,7 +1386,6 @@ fn finish_takeover_work(
             )
         }
         Ok(TakeoverWorkResult::Busy { reason, detail }) => {
-            core.camilla.pid = None;
             let (next, effects) = transitions::decide(
                 transition_state,
                 TransitionInput::PortBusy {
@@ -1403,8 +1409,18 @@ fn finish_takeover_work(
         }
         Ok(TakeoverWorkResult::NoSession) => {
             transition_state.running_child_session = None;
-            core.camilla.state = ManagedProcessState::NoSession;
-            core.camilla.pid = None;
+            drive_transition(
+                transition_state,
+                vec![transitions::Effect::SetCamillaState(
+                    ManagedProcessState::NoSession,
+                )],
+                core,
+                child,
+                watcher,
+                config_sender,
+                work_sender,
+                paths,
+            )?;
             Ok(())
         }
         Err(error) => {

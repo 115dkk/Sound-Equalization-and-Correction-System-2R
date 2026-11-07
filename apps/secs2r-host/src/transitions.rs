@@ -161,6 +161,7 @@ impl State {
         }
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn running_child_session(&self) -> Option<u32> {
         self.running_child_session
     }
@@ -374,6 +375,7 @@ pub fn decide(state: &State, input: Input) -> (State, Vec<Effect>) {
                     }
                     next.pending_takeover = None;
                     next.restart_due = None;
+                    effects.push(Effect::SetCamillaState(ManagedProcessState::OtherUser));
                 }
                 SessionEvent::Logoff | SessionEvent::ConsoleDisconnect if owner_matches => {
                     next.other_user = false;
@@ -385,18 +387,22 @@ pub fn decide(state: &State, input: Input) -> (State, Vec<Effect>) {
                     }
                     next.pending_takeover = None;
                     next.restart_due = None;
+                    effects.push(Effect::SetCamillaState(ManagedProcessState::NoSession));
                 }
                 SessionEvent::Logoff | SessionEvent::ConsoleDisconnect => {
                     if event == SessionEvent::ConsoleDisconnect {
                         next.other_user = false;
                     }
-                    if next.running_child_session == Some(session_id)
+                    let child_ended = next.running_child_session == Some(session_id)
                         || next.pending_takeover.as_ref().map(|work| work.session)
-                            == Some(session_id)
-                    {
+                            == Some(session_id);
+                    if child_ended {
                         effects.push(Effect::StopChild);
                         next.pending_takeover = None;
                         next.restart_due = None;
+                    }
+                    if child_ended || event == SessionEvent::ConsoleDisconnect {
+                        effects.push(Effect::SetCamillaState(ManagedProcessState::NoSession));
                     }
                 }
             }
@@ -735,6 +741,29 @@ mod tests {
             effects
                 .iter()
                 .any(|effect| matches!(effect, Effect::LaunchChild { session: 7, .. }))
+        );
+    }
+
+    #[test]
+    fn fake_platform_records_no_session_after_owner_logoff() {
+        let mut state = State::new(managed_camilla(), Some(7));
+        let mut platform = FakePlatform::default();
+        let (next, effects) = decide(
+            &state,
+            Input::Session {
+                event: SessionEvent::Logoff,
+                session_id: 7,
+                owner_matches: true,
+            },
+        );
+        state = next;
+
+        drive(&mut state, effects, &mut platform).unwrap();
+
+        assert!(
+            platform
+                .camilla_states
+                .contains(&ManagedProcessState::NoSession)
         );
     }
 
@@ -1117,7 +1146,7 @@ mod tests {
         state = next;
         drive(&mut state, effects, &mut platform).unwrap();
 
-        assert_eq!(state.running_child_session, Some(7));
+        assert_eq!(state.running_child_session(), Some(7));
         assert!(state.restart_due.is_some());
         assert_eq!(platform.stops, 0);
 

@@ -7,7 +7,7 @@ use std::time::Duration;
 use base64::Engine;
 use secs_types::ipc::{
     ErrorCode, HostLogLine, HostManaged, HostRequest, HostResponse, HostStatus, IncludeState,
-    IpcError, ManagedProcess, ManagedProcessState,
+    IpcError, ManagedProcess,
 };
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
@@ -737,16 +737,6 @@ pub fn after_exit_decision(still_answering: bool) -> TakeoverDecision {
     }
 }
 
-pub fn mark_other_user(process: &mut ManagedProcess) -> bool {
-    process.pid = None;
-    if process.state == ManagedProcessState::OtherUser {
-        false
-    } else {
-        process.state = ManagedProcessState::OtherUser;
-        true
-    }
-}
-
 pub fn log_line(event: &str, fields: impl IntoIterator<Item = (String, String)>) -> HostLogLine {
     HostLogLine {
         timestamp: chrono::Utc::now().to_rfc3339(),
@@ -1185,19 +1175,6 @@ mod tests {
         assert!(!service_directory_allowed(true, true, true));
         assert!(!service_directory_allowed(false, false, true));
         assert!(!service_directory_allowed(true, false, false));
-    }
-
-    #[test]
-    fn other_user_changes_state_once() {
-        let mut process = ManagedProcess {
-            state: ManagedProcessState::Running,
-            pid: Some(42),
-            restarts_in_window: 0,
-        };
-        assert!(mark_other_user(&mut process));
-        assert_eq!(process.state, ManagedProcessState::OtherUser);
-        assert_eq!(process.pid, None);
-        assert!(!mark_other_user(&mut process));
     }
 
     #[test]
