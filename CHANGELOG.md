@@ -21,10 +21,11 @@ SECS 2R의 변경 기록입니다. 번호는 major.minor.patch이고, 0.x는 모
 - 보정 알림 가운데 짝 위상, 딥 보정 제한, RC 대역은 항목마다 하나의 기록으로 오고 화면도 그 기록을 읽습니다. 서브 측정이 빠졌거나 IIR 맞춤이 초기값으로 대체되면 알림이 생깁니다.
 - 자동 업데이트의 확인·내려받기·설치 실패 원인이 앱 로그에 남고, 내려받기는 512 MiB를 넘으면 취소합니다. 정책 규칙은 서비스 안의 상태 기계 하나가 정합니다(docs/adr/0058).
 - Windows 관리 서비스가 CamillaDSP 자식 종료 뒤 1·2·4·8초 간격으로 다시 띄우고 5분 안에 다섯 번 실패하면 포기하며, 빠른 사용자 전환(콘솔 연결·해제)도 다룹니다. 감시자 실패는 상태에 남고 루프는 계속됩니다(docs/adr/0057). 시작 오류는 서비스 종료 코드로 보고하고, 관리 파이프의 상대가 SYSTEM 세션의 설치 경로인지 확인합니다.
-- 공개 API(`secs-api`)와 파이썬·.NET 바인딩이 같은 오류 모양(`code`, `message`, `detail`, `params`, `retryable`)을 쓰고, 느린 구독에는 누락 수를 담은 `lagged` 이벤트를 보내며, 구독과 잡 대기를 `Secs` trait 하나가 소유합니다. 파이썬의 이벤트 반복은 `close()`와 `timeout`으로 멈출 수 있고, 엔진을 버리면 잡이 멈춥니다. `RecommendXo` 요청은 typed 페이로드로 배경 추천을 받습니다.
+- 공개 API(`secs-api`)와 파이썬·.NET 바인딩이 같은 오류 모양(`code`, `message`, `detail`, `params`, `retryable`)을 쓰고, 느린 구독에는 누락 수를 담은 `lagged` 이벤트를 보내며, 구독과 잡 대기를 `Secs` trait 하나가 소유합니다. 파이썬의 이벤트 반복은 `close()`와 `timeout`으로 멈출 수 있고, 엔진을 버리면 잡이 멈춥니다. `RecommendXo` 요청은 typed 페이로드로 배경 추천을 받습니다. 보정 요약(`CalibrationSummary`, `MimoSummary`)과 결과 줄(`ResultLinesResult`)의 `notes`는 엔진 메모의 typed 기록(`Note`) 목록이 되고, 서비스가 만든 알림은 `notices`에 따로 실립니다(docs/adr/0042). 전에는 메모가 문자열 매개변수를 이어 붙인 `Notice`였습니다.
+- CLI가 공개 API(`Engine`)를 거쳐 서비스를 부르고, 내보낸 manifest의 `created_utc`는 컴퓨터의 시간대와 상관없이 UTC입니다. 전에는 CLI가 시간대 오프셋을 서비스에 전달하지 않아 한국 시간에서 9시간 어긋났습니다.
 - 앱 로그의 요청·잡 오류 줄에 `key=value` params가 들어가고, 취소된 잡은 늘 경고 수준입니다.
 - 화면에서 프로젝트 대화상자의 오류는 전역 알림으로 다시 뜨지 않고, 프로젝트를 바깥에서 교체하면 설계 이름과 미리듣기가 비며(docs/adr/0056), 새 알림·오류 사유·진행 단계마다 문장이 있습니다. 반올림하면 0이 되는 양수는 `+0.0` 대신 `0.0`으로 보입니다. 화면의 CSP는 그림과 글꼴 출처를 `'self'`로 좁혔습니다.
-- 라이브러리의 공개 항목이 바뀝니다. `secs-project`에서 `load_project_sources`, `load_project_irs`, `LoadedIr`, `load_source`가 사라지고 `MeasurementStore`가 출처(`source_of`, `sources_by_position`)를 가집니다. `secs-service`에서 `AppEffects`, `RevisedAppSettings`, `Service::revised_app_settings`가 사라지고 `SettingsEffect`와 `Service::register_settings_effect`가 생기며, `measure` 모듈은 비공개가 됩니다.
+- 라이브러리의 공개 항목이 바뀝니다. `secs-project`에서 `load_project_sources`, `load_project_irs`, `LoadedIr`, `load_source`가 사라지고 `MeasurementStore`가 출처(`source_of`, `sources_by_position`)를 가집니다. `secs-service`에서 `AppEffects`, `RevisedAppSettings`, `Service::revised_app_settings`가 사라지고 `SettingsEffect`와 `Service::register_settings_effect`가 생기며, `measure` 모듈은 비공개가 됩니다. `secs-engine`은 ADR 0046의 목록만 공개하고(`Design.chain`, `mimo` 모듈, 리샘플링 상수는 크레이트 안으로), `secs-api`의 `EngineBuilder::from_deps`가 서비스의 의존 묶음을 그대로 받습니다.
 - 공개 크레이트와 `secs2r`, `Secs2R`의 판이 함께 0.23.0으로 오릅니다.
 
 ### 안쪽에서 바뀐 것
