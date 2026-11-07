@@ -19,11 +19,6 @@ use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent}
 use tauri::{AppHandle, Manager, Runtime, State, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_updater::UpdaterExt;
 
-const HOST_EXECUTABLE: &str = if cfg!(target_os = "windows") {
-    "secs2r-host.exe"
-} else {
-    "secs2r-host"
-};
 const SHELL_HIDDEN_ARGUMENT: &str = "--hidden";
 const MAIN_APP_NAMES: [&str; 2] = ["SECS 2R.exe", "secs2r.exe"];
 const PORTABLE_MARKER: &str = "portable";
@@ -40,10 +35,6 @@ struct HostStatusReply {
 }
 
 trait HostPlatform: Send + Sync + 'static {
-    fn service_state(&self) -> ServiceState;
-    fn pipe_call(&self, request: &HostRequest) -> Result<HostResponse, IpcError>;
-    fn install_service(&self, executable: &Path) -> Result<(), IpcError>;
-    fn uninstall_service(&self, executable: &Path) -> Result<(), IpcError>;
     fn set_shell_autostart(&self, executable: Option<&Path>) -> Result<(), IpcError>;
     fn spawn_detached(&self, executable: &Path, args: &[&str]) -> Result<(), IpcError>;
     fn main_app_running(&self) -> bool;
@@ -53,22 +44,6 @@ trait HostPlatform: Send + Sync + 'static {
 struct NativeHost;
 
 impl HostPlatform for NativeHost {
-    fn service_state(&self) -> ServiceState {
-        secs_sys::host::service_state()
-    }
-
-    fn pipe_call(&self, request: &HostRequest) -> Result<HostResponse, IpcError> {
-        secs_sys::host::pipe_call(request)
-    }
-
-    fn install_service(&self, executable: &Path) -> Result<(), IpcError> {
-        secs_sys::host::install_service_elevated(executable)
-    }
-
-    fn uninstall_service(&self, executable: &Path) -> Result<(), IpcError> {
-        secs_sys::host::uninstall_service_elevated(executable)
-    }
-
     fn set_shell_autostart(&self, executable: Option<&Path>) -> Result<(), IpcError> {
         secs_sys::host::set_shell_autostart(executable)
     }
@@ -85,6 +60,7 @@ impl HostPlatform for NativeHost {
 #[derive(Debug)]
 struct HostShell<P> {
     platform: P,
+    managed: secs_sys::embed::OsManagedHost,
     executable: PathBuf,
     package_info: tauri::PackageInfo,
     offered_host_versions: Mutex<BTreeSet<String>>,
@@ -92,9 +68,10 @@ struct HostShell<P> {
 }
 
 impl<P: HostPlatform> HostShell<P> {
-    fn new(platform: P, executable: PathBuf) -> Self {
+    fn new(platform: P, managed: secs_sys::embed::OsManagedHost, executable: PathBuf) -> Self {
         Self {
             platform,
+            managed,
             executable,
             package_info: tauri::PackageInfo {
                 name: "SECS 2R Host".into(),
@@ -120,9 +97,9 @@ impl<P: HostPlatform> HostShell<P> {
     }
 
     fn status(&self) -> Result<HostStatusReply, IpcError> {
-        let service = self.platform.service_state();
-        let response = (service == ServiceState::Running)
-            .then(|| self.platform.pipe_call(&HostRequest::Status));
+        let service = self.managed.service_state();
+        let response =
+            (service == ServiceState::Running).then(|| self.managed.call(&HostRequest::Status));
         let reply = compose_status(service, response)?;
         if let Some(host) = &reply.host {
             self.offer_host_update(host);
@@ -144,7 +121,7 @@ impl<P: HostPlatform> HostShell<P> {
             return;
         }
         let response = self.install_directory().and_then(|directory| {
-            self.platform.pipe_call(&HostRequest::UpdateSelf {
+            self.managed.call(&HostRequest::UpdateSelf {
                 from_dir: directory.to_string_lossy().into_owned(),
             })
         });
@@ -176,7 +153,7 @@ impl<P: HostPlatform> HostShell<P> {
 
     fn log(&self, lines: u32) -> Result<Vec<HostLogLine>, IpcError> {
         let lines = clamp_log_lines(lines);
-        let mut host_lines = match self.platform.pipe_call(&HostRequest::Log { lines })? {
+        let mut host_lines = match self.managed.call(&HostRequest::Log { lines })? {
             HostResponse::Log(lines) => lines,
             HostResponse::Error(error) => return Err(error),
             response => return Err(unexpected_response("host log", &response)),
@@ -196,19 +173,17 @@ impl<P: HostPlatform> HostShell<P> {
     }
 
     fn install(&self) -> Result<(), IpcError> {
-        let host = self.install_directory()?.join(HOST_EXECUTABLE);
-        self.platform.install_service(&host)?;
+        self.managed.install()?;
         self.platform.set_shell_autostart(Some(&self.executable))
     }
 
     fn uninstall(&self) -> Result<(), IpcError> {
-        let host = self.install_directory()?.join(HOST_EXECUTABLE);
-        self.platform.uninstall_service(&host)?;
+        self.managed.uninstall()?;
         self.platform.set_shell_autostart(None)
     }
 
     fn stop_managing(&self) -> Result<(), IpcError> {
-        match self.platform.pipe_call(&HostRequest::StopManaging)? {
+        match self.managed.call(&HostRequest::StopManaging)? {
             HostResponse::Ok => Ok(()),
             HostResponse::Error(error) => Err(error),
             response => Err(unexpected_response("stop managing", &response)),
@@ -551,7 +526,11 @@ fn main() {
         }))
         .setup(move |app| {
             let executable = std::env::current_exe()?;
-            let shell = Arc::new(HostShell::new(NativeHost, executable));
+            let managed = secs_sys::embed::OsManagedHost::new(
+                secs_sys::embed::host_executable(&executable),
+                None,
+            );
+            let shell = Arc::new(HostShell::new(NativeHost, managed, executable));
             let _ = shell.status();
             app.manage(shell);
             start_update_scheduler(app.handle().clone());
@@ -643,11 +622,11 @@ mod tests {
 
     use super::*;
 
-    #[derive(Debug)]
+    #[derive(Debug, Clone)]
     struct FakeHost {
         service: ServiceState,
-        responses: Mutex<VecDeque<Result<HostResponse, IpcError>>>,
-        actions: Mutex<Vec<String>>,
+        responses: Arc<Mutex<VecDeque<Result<HostResponse, IpcError>>>>,
+        actions: Arc<Mutex<Vec<String>>>,
         main_running: bool,
     }
 
@@ -655,8 +634,8 @@ mod tests {
         fn new(service: ServiceState, responses: Vec<Result<HostResponse, IpcError>>) -> Self {
             Self {
                 service,
-                responses: Mutex::new(responses.into()),
-                actions: Mutex::new(Vec::new()),
+                responses: Arc::new(Mutex::new(responses.into())),
+                actions: Arc::new(Mutex::new(Vec::new())),
                 main_running: false,
             }
         }
@@ -664,9 +643,24 @@ mod tests {
         fn actions(&self) -> Vec<String> {
             self.actions.lock().unwrap().clone()
         }
+
+        fn set_autostart(&self, executable: Option<&Path>) {
+            self.actions.lock().unwrap().push(match executable {
+                Some(path) => format!("autostart:{}", path.display()),
+                None => "autostart:off".into(),
+            });
+        }
+
+        fn spawn(&self, executable: &Path, args: &[&str]) {
+            self.actions.lock().unwrap().push(format!(
+                "spawn:{}:{}",
+                executable.display(),
+                args.join(" ")
+            ));
+        }
     }
 
-    impl HostPlatform for FakeHost {
+    impl secs_sys::embed::HostCommands for FakeHost {
         fn service_state(&self) -> ServiceState {
             self.service
         }
@@ -693,25 +687,39 @@ mod tests {
         }
 
         fn set_shell_autostart(&self, executable: Option<&Path>) -> Result<(), IpcError> {
-            self.actions.lock().unwrap().push(match executable {
-                Some(path) => format!("autostart:{}", path.display()),
-                None => "autostart:off".into(),
-            });
+            self.set_autostart(executable);
             Ok(())
         }
 
         fn spawn_detached(&self, executable: &Path, args: &[&str]) -> Result<(), IpcError> {
-            self.actions.lock().unwrap().push(format!(
-                "spawn:{}:{}",
-                executable.display(),
-                args.join(" ")
-            ));
+            self.spawn(executable, args);
+            Ok(())
+        }
+    }
+
+    impl HostPlatform for FakeHost {
+        fn set_shell_autostart(&self, executable: Option<&Path>) -> Result<(), IpcError> {
+            self.set_autostart(executable);
+            Ok(())
+        }
+
+        fn spawn_detached(&self, executable: &Path, args: &[&str]) -> Result<(), IpcError> {
+            self.spawn(executable, args);
             Ok(())
         }
 
         fn main_app_running(&self) -> bool {
             self.main_running
         }
+    }
+
+    fn host_shell(fake: FakeHost, executable: PathBuf) -> HostShell<FakeHost> {
+        let managed = secs_sys::embed::OsManagedHost::with_commands(
+            secs_sys::embed::host_executable(&executable),
+            None,
+            Arc::new(fake.clone()),
+        );
+        HostShell::new(fake, managed, executable)
     }
 
     fn host_status_value() -> HostStatus {
@@ -807,7 +815,7 @@ mod tests {
                 Ok(HostResponse::Status(Box::new(old))),
             ],
         );
-        let shell = HostShell::new(fake, PathBuf::from("SECS 2R").join("secs2r-host-shell.exe"));
+        let shell = host_shell(fake, PathBuf::from("SECS 2R").join("secs2r-host-shell.exe"));
 
         shell.status().unwrap();
         shell.status().unwrap();
@@ -911,14 +919,17 @@ mod tests {
         // service has no .exe suffix there.
         let folder = PathBuf::from("SECS 2R");
         let shell_path = folder.join("secs2r-host-shell.exe");
-        let shell = HostShell::new(fake, shell_path.clone());
+        let shell = host_shell(fake, shell_path.clone());
         assert!(shell.log(0).unwrap().is_empty());
         shell.install().unwrap();
         assert_eq!(
             shell.platform.actions(),
             [
                 "Log { lines: 1 }".to_owned(),
-                format!("install:{}", folder.join(HOST_EXECUTABLE).display()),
+                format!(
+                    "install:{}",
+                    secs_sys::embed::host_executable(&shell_path).display()
+                ),
                 format!("autostart:{}", shell_path.display()),
             ]
         );

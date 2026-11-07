@@ -4612,6 +4612,7 @@ dependencies = [
  "secs-audio",
  "secs-compute",
  "secs-rew",
+ "secs-service",
  "secs-types",
  "serde",
  "serde_json",
@@ -4640,7 +4641,6 @@ version = "0.55.0"
 dependencies = [
  "secs-gpu",
  "secs-local-api",
- "secs-rew",
  "secs-service",
  "secs-sys",
  "secs-types",
@@ -4660,7 +4660,6 @@ dependencies = [
  "rayon",
  "secs-compute",
  "secs-gpu",
- "secs-rew",
  "secs-service",
  "secs-sys",
  "secs-types",

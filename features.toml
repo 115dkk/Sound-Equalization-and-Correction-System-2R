@@ -1334,7 +1334,16 @@ kind = "ipc"
 milestone = "M6"
 status = "implemented"
 upstream = "new"
-tests = ["secs-service::managed_host_status_and_missing_camilla_executable_are_typed"]
+tests = ["secs-service::managed_host_status_and_missing_camilla_executable_are_typed", "secs-sys::managed_host_install_touches_the_shell_only_when_asked"]
+
+[[feature]]
+id = "app.native_dependencies"
+kind = "app"
+milestone = "M6"
+status = "implemented"
+upstream = "new"
+tests = ["secs-sys::native_deps_keeps_the_clock_and_its_offset_consistent"]
+note = "ADR 0053: secs-sys assembles the operating-system adapters and paired local clock values for both native applications."
 
 [[feature]]
 id = "ipc.host_uninstall"

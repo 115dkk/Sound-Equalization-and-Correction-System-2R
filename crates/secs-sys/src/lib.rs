@@ -19,6 +19,7 @@
 //! adapters into the seams of `secs-audio` and `secs-compute`.
 
 pub mod clock;
+pub mod embed;
 pub mod host;
 pub mod memory;
 pub mod process;

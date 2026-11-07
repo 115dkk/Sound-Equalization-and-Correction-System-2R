@@ -13,17 +13,16 @@
 
 use std::fmt;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
 
 mod applog;
-mod apply;
 mod host;
 mod icon;
 mod local_api;
 mod self_test;
 mod update;
 
-use secs_service::{Deps, EventSink, LocalTime, LogLevel, NoEvents, Service, SettingsEffect};
+use secs_service::{EventSink, LogLevel, NoEvents, Service, SettingsEffect};
 use secs_types::ipc::{Envelope, ErrorCode, IpcError, JobEvent, Request, Response};
 use tauri::{AppHandle, Manager, Webview, ipc::JavaScriptChannelId};
 
@@ -220,38 +219,29 @@ fn main() {
                 second: Arc::new(log.clone()),
             });
             let service_log = log.clone();
-            let service = Arc::new(Service::new(Deps {
+            let current = secs_sys::embed::application_executable()
+                .map_err(|error| std::io::Error::other(error.detail))?;
+            let mut deps = secs_sys::embed::native_deps(secs_sys::embed::NativeEmbedding {
                 app_version: env!("CARGO_PKG_VERSION").into(),
-                acceleration: Arc::new(secs_gpu::select),
-                audio_backend: Arc::new(secs_sys::audio::default_backend),
-                rew_transport: Arc::new(|| Box::new(secs_rew::HttpTransport::default())),
-                process: Arc::new(secs_sys::process::OsProcessProbe),
-                memory: Arc::new(secs_sys::memory::OsMemoryProbe),
-                host: Arc::new(host::TauriHost::new(handle.clone())),
-                observer,
-                clock: Arc::new(|| {
-                    let now = SystemTime::now();
-                    LocalTime::from_system(now, secs_sys::clock::utc_offset_seconds(now))
-                }),
-                clock_offset_seconds: Arc::new(|| {
-                    secs_sys::clock::utc_offset_seconds(SystemTime::now())
-                }),
-                app_settings_path: Some(config_dir.join("settings.json")),
                 app_data_path: config_dir.clone(),
-                log_dir: Some(log_dir),
-                log: Arc::new(move |level, scope, text| {
-                    let level = match level {
-                        secs_service::LogLevel::Warn => applog::Level::Warn,
-                        secs_service::LogLevel::Error => applog::Level::Error,
-                    };
-                    service_log.line(level, scope, text);
-                }),
-                eqapo_install: Arc::new(secs_sys::eqapo_install),
-                apply: Arc::new(apply::NativeApply),
-                managed_host: Arc::new(apply::NativeManagedHost),
-                updates: updates.clone(),
-                ..Deps::default()
-            }));
+                shell: Some(secs_sys::embed::ShellAutostart::new(
+                    secs_sys::embed::shell_executable(&current),
+                )),
+            });
+            deps.acceleration = Arc::new(secs_gpu::select);
+            deps.host = Arc::new(host::TauriHost::new(handle.clone()));
+            deps.observer = observer;
+            deps.app_settings_path = Some(config_dir.join("settings.json"));
+            deps.log_dir = Some(log_dir);
+            deps.log = Arc::new(move |level, scope, text| {
+                let level = match level {
+                    secs_service::LogLevel::Warn => applog::Level::Warn,
+                    secs_service::LogLevel::Error => applog::Level::Error,
+                };
+                service_log.line(level, scope, text);
+            });
+            deps.updates = updates.clone();
+            let service = Arc::new(Service::new(deps));
             let start_service = service.clone();
             let start_log = log.clone();
             let _ = std::thread::Builder::new()
@@ -336,7 +326,7 @@ mod tests {
 
     #[test]
     fn missing_request_argument_is_an_envelope() {
-        let service = Service::new(Deps::default());
+        let service = Service::new(secs_service::Deps::default());
         let Envelope::Err(error) = handle(&service, None, Arc::new(NoEvents)) else {
             panic!("a missing request must be an error envelope");
         };

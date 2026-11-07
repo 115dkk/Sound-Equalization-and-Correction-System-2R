@@ -4,7 +4,6 @@
 //!
 //! Commands call the application service and write JSON Lines to standard output.
 
-mod apply;
 mod args;
 mod commands;
 mod runner;

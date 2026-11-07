@@ -1,6 +1,5 @@
 //! Public API runner, event sink, and production dependencies.
 
-use crate::apply;
 use crate::args::ComputeChoice;
 use crate::commands::print_json;
 use secs_api::{Engine, Error, Event, Secs};
@@ -8,7 +7,7 @@ use secs_service::{Deps, EventSink, LocalTime};
 use secs_types::ipc::*;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
 
 const JOB_TIMEOUT: Duration = Duration::from_secs(24 * 60 * 60);
 
@@ -215,27 +214,15 @@ fn response_job(response: &Response) -> Option<JobStarted> {
 }
 
 pub(crate) fn deps(deterministic: bool, compute: Option<ComputeChoice>) -> Deps {
-    let mut deps = Deps {
+    let mut deps = secs_sys::embed::native_deps(secs_sys::embed::NativeEmbedding {
         app_version: env!("CARGO_PKG_VERSION").into(),
-        acceleration: Arc::new(secs_gpu::select),
-        compute_override: compute.map(Into::into),
-        audio_backend: Arc::new(secs_sys::audio::default_backend),
-        rew_transport: Arc::new(|| Box::new(secs_rew::HttpTransport::default())),
-        process: Arc::new(secs_sys::process::OsProcessProbe),
-        memory: Arc::new(secs_sys::memory::OsMemoryProbe),
         app_data_path: std::env::current_dir()
             .unwrap_or_else(|_| std::env::temp_dir())
             .join(".secs2r"),
-        eqapo_install: Arc::new(secs_sys::eqapo_install),
-        apply: Arc::new(apply::NativeApply),
-        managed_host: Arc::new(apply::NativeManagedHost),
-        clock: Arc::new(|| {
-            let now = SystemTime::now();
-            LocalTime::from_system(now, secs_sys::clock::utc_offset_seconds(now))
-        }),
-        clock_offset_seconds: Arc::new(|| secs_sys::clock::utc_offset_seconds(SystemTime::now())),
-        ..Deps::default()
-    };
+        shell: None,
+    });
+    deps.acceleration = Arc::new(secs_gpu::select);
+    deps.compute_override = compute.map(Into::into);
     if deterministic {
         let mut next = 1_u128;
         deps.uuid = Arc::new(Mutex::new(Box::new(move || {

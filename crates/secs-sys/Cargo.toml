@@ -24,6 +24,7 @@ secs-apply.workspace = true
 secs-audio.workspace = true
 secs-rew.workspace = true
 secs-compute.workspace = true
+secs-service.workspace = true
 secs-types.workspace = true
 sysinfo.workspace = true
 chrono.workspace = true

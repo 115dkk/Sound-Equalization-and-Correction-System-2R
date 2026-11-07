@@ -173,7 +173,7 @@ pub fn pipe_server(
         Err(PipeError::TimedOut) => return Ok(false),
         Err(error) => return Err(ipc_error(format!("accept managed-host pipe: {error}"))),
     }
-    let served = (|| {
+    let served: Result<(), IpcError> = (|| {
         let process_id = slot
             .server
             .client_process_id()

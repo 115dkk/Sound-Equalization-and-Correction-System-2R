@@ -27,7 +27,6 @@ secs-service.workspace = true
 secs-local-api = { path = "../../crates/secs-local-api" }
 secs-gpu = { path = "../../crates/secs-gpu" }
 secs-types.workspace = true
-secs-rew.workspace = true
 secs-sys = { path = "../../crates/secs-sys" }
 serde_json.workspace = true
 # Keep Tauri core exact like the plugins below: a lock refresh must not move
