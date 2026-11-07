@@ -25,14 +25,33 @@ enum JobGroup {
     SideMdat,
     StatusWatch,
 }
-fn group(kind: JobKind) -> JobGroup {
+fn kind_name(kind: JobKind) -> &'static str {
     match kind {
-        JobKind::Measure | JobKind::SampleLoad | JobKind::MdatImport | JobKind::LevelMonitor => {
-            JobGroup::Device
-        }
-        JobKind::Calibrate | JobKind::RecommendXo | JobKind::Mimo => JobGroup::Compute,
-        JobKind::Export | JobKind::Apply => JobGroup::Export,
-        JobKind::StatusWatch => JobGroup::StatusWatch,
+        JobKind::Measure => "measure",
+        JobKind::SampleLoad => "sample_load",
+        JobKind::MdatImport => "mdat_import",
+        JobKind::LevelMonitor => "level_monitor",
+        JobKind::Calibrate => "calibrate",
+        JobKind::RecommendXo => "recommend_xo",
+        JobKind::Mimo => "mimo",
+        JobKind::Export => "export",
+        JobKind::Apply => "apply",
+        JobKind::StatusWatch => "status_watch",
+    }
+}
+
+fn group(kind: JobKind) -> JobGroup {
+    let name = kind_name(kind);
+    let group = secs_types::rules::JOB_GROUPS
+        .iter()
+        .find_map(|(group, kinds)| kinds.contains(&name).then_some(*group))
+        .expect("every foreground job kind belongs to an exported group");
+    match group {
+        "device" => JobGroup::Device,
+        "compute" => JobGroup::Compute,
+        "export" => JobGroup::Export,
+        "status_watch" => JobGroup::StatusWatch,
+        _ => unreachable!("rules.rs contains a known job group"),
     }
 }
 
@@ -470,6 +489,34 @@ mod tests {
     }
     fn memory() -> Arc<dyn secs_compute::MemoryProbe> {
         Arc::new(secs_compute::FixedMemory(u64::MAX))
+    }
+
+    #[test]
+    fn job_groups_match_the_exported_table() {
+        let kinds = [
+            JobKind::Measure,
+            JobKind::SampleLoad,
+            JobKind::MdatImport,
+            JobKind::LevelMonitor,
+            JobKind::Calibrate,
+            JobKind::RecommendXo,
+            JobKind::Mimo,
+            JobKind::Export,
+            JobKind::Apply,
+            JobKind::StatusWatch,
+        ];
+        for kind in kinds {
+            let name = kind_name(kind);
+            assert_eq!(
+                secs_types::rules::JOB_GROUPS
+                    .iter()
+                    .filter(|(_, members)| members.contains(&name))
+                    .count(),
+                1,
+                "{name}"
+            );
+            let _ = group(kind);
+        }
     }
 
     impl Events {

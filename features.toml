@@ -1346,6 +1346,15 @@ tests = ["secs-sys::native_deps_keeps_the_clock_and_its_offset_consistent"]
 note = "ADR 0053: secs-sys assembles the operating-system adapters and paired local clock values for both native applications."
 
 [[feature]]
+id = "ipc.mock_rules"
+kind = "ipc"
+milestone = "M5"
+status = "implemented"
+upstream = "new"
+tests = ["secs-types::exports_architecture_tables_to_typescript", "secs-types::engine_key_reads_exactly_the_exported_fields", "secs-service::job_groups_match_the_exported_table"]
+note = "ADR 0052: the screen mock reads generated service tables instead of copying rule values."
+
+[[feature]]
 id = "ipc.host_uninstall"
 kind = "ipc"
 milestone = "M6"

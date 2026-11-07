@@ -29,3 +29,97 @@ export const RECENT_PROJECTS_MAX = 10;
 export const CONFIG_GROUPS = [["프론트", "front"], ["센터", "center"], ["서브", "sub"], ["서라운드", "surround"], ["백", "back"], ["와이드", "wide"], ["탑", "top"], ["하이트", "height"], ["기타", "other"]] as const;
 export const ARRANGEMENT_COUNTS = [1, 9, 13, 17] as const;
 export const JOB_HISTORY_MAX = 32;
+export const ENGINE_KEY_FIELDS = ["mode", "rc_lo", "rc_hi", "room_volume_m3", "xo", "ultra_ms", "infra_boost_max_db", "xo_peq_on", "xo_peq_lo", "xo_peq_hi", "boost_max_db", "rc_hi_basis", "rc_hi_transition", "rc_bands", "sample_rate_policy", "low_protect", "lf_align", "mode_decay", "hf_phase", "dip_limit", "input_hp_hz", "peq_analytic_derivatives"] as const;
+export const MANUAL_KEY_FIELDS = ["subs_manual", "bundle_layouts", "sub_main_delay_ms"] as const;
+export const MIMO_KEY_FIELDS = ["fsiso", "mimo_low", "subs_manual", "mimo_max_supports", "mimo_fir", "mimo_iir_analytic_derivatives", "mimo_seat_guard", "mimo_early_ms"] as const;
+export const JOB_GROUPS = [["device", ["measure", "sample_load", "mdat_import", "level_monitor"]], ["compute", ["calibrate", "recommend_xo", "mimo"]], ["export", ["export", "apply"]], ["status_watch", ["status_watch"]]] as const;
+export const SCALAR_EDITS = [{
+  kind: "ultra_ms",
+  field: "ultra_ms",
+  limit: "ultra_ms",
+  policy: "clamp",
+}, {
+  kind: "input_hp",
+  field: "input_hp_hz",
+  limit: "input_hp",
+  policy: "refuse",
+}, {
+  kind: "rc_lo",
+  field: "rc_lo",
+  limit: "rc_lo",
+  policy: "refuse",
+}, {
+  kind: "rc_hi",
+  field: "rc_hi",
+  limit: "rc_hi",
+  policy: "refuse",
+}, {
+  kind: "room_volume",
+  field: "room_volume_m3",
+  limit: "volume",
+  policy: "clamp",
+}, {
+  kind: "boost_max",
+  field: "boost_max_db",
+  limit: "boost",
+  policy: "clamp",
+}, {
+  kind: "xo",
+  field: "xo",
+  limit: "xo",
+  policy: "clamp",
+}, {
+  kind: "infra_boost",
+  field: "infra_boost_max_db",
+  limit: "infra_boost",
+  policy: "clamp",
+}, {
+  kind: "rear_trim",
+  field: "rear_trim_ms",
+  limit: "rear_trim",
+  policy: "clamp",
+}, {
+  kind: "main_delay",
+  field: "sub_main_delay_ms",
+  limit: "main_delay",
+  policy: "clamp",
+}, {
+  kind: "fsiso",
+  field: "fsiso",
+  limit: "fsiso",
+  policy: "clamp",
+}, {
+  kind: "mimo_low",
+  field: "mimo_low",
+  limit: "mimo_low",
+  policy: "clamp",
+}, {
+  kind: "mimo_max",
+  field: "mimo_max_supports",
+  limit: "mimo_max",
+  policy: "clamp",
+}, {
+  kind: "mimo_early",
+  field: "mimo_early_ms",
+  limit: "mimo_early_ms",
+  policy: "refuse",
+}] as const;
+export const EXPORT_FOLDER_TAGS = [["camilla_dsp", "camilla"], ["before_after_mdat", "mdat"], ["staged_mdat", "mdat"], ["filter_text", "text"], ["equalizer_apo", "eqapo"], ["convolution", "convolution"]] as const;
+export const MIMO_MIN_POSITIONS = 3;
+export const DESIGN_RATE = 48000;
+export const OUTPUT_RATES = [44100, 48000, 88200, 96000, 176400, 192000] as const;
+export const SUB_LIMITS = {
+  gain: [-60, 20],
+  delay: [0, 500],
+  apHz: [10, 500],
+  apQ: [0.1, 20],
+  filterHz: [10, 300],
+  peqGain: [-30, 12],
+} as const;
+export const INFRA_DEFAULT_HZ = 25;
+export const ALLPASS_Q_DEFAULT = 0.71;
+export const TRANSITION_FACTORS = [1, 2, 4] as const;
+export const AGREEMENT_MIN_POSITIONS = 3;
+export const REPETITIONS = [1, 2, 4, 8] as const;
+export const NEW_PROJECT_PRESETS = ["2.0", "2.1", "2.2", "4.0", "4.1", "4.2", "5.1", "7.1", "7.1.4", "9.1.6"] as const;
+export const INPUT_HP_START = 25;

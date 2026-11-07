@@ -741,6 +741,27 @@ mod tests {
     }
 
     #[test]
+    fn engine_key_reads_exactly_the_exported_fields() {
+        let settings = serde_json::to_value(CalibrationSettings::default()).unwrap();
+        let fields = settings
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect::<std::collections::BTreeSet<_>>();
+        let keyed = crate::rules::ENGINE_KEY_FIELDS
+            .iter()
+            .chain(crate::rules::MANUAL_KEY_FIELDS)
+            .chain(crate::rules::MIMO_KEY_FIELDS)
+            .copied()
+            .collect::<std::collections::BTreeSet<_>>();
+        let excluded = ["room_dims_m", "mimo_on", "xo_rec"]
+            .into_iter()
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(fields, keyed.union(&excluded).copied().collect());
+    }
+
+    #[test]
     fn engine_key_lists_extra_bands_sorted_and_only_when_present() {
         let baseline = CalibrationSettings::default();
         assert!(!baseline.engine_key().contains("rc_bands"));

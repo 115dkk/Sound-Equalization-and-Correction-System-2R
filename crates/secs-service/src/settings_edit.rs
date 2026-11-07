@@ -15,6 +15,30 @@ fn invalid(detail: &str, params: impl IntoIterator<Item = (&'static str, String)
     )
 }
 
+fn scalar_rule(
+    kind: &str,
+    limit: &str,
+    policy: &str,
+) -> &'static secs_types::rules::ScalarEditRule {
+    let rule = secs_types::rules::SCALAR_EDITS
+        .iter()
+        .find(|rule| rule.kind == kind)
+        .unwrap_or_else(|| panic!("{kind} has an exported scalar edit rule"));
+    assert_eq!(rule.limit, limit, "{kind}");
+    assert_eq!(rule.policy, policy, "{kind}");
+    rule
+}
+
+fn scalar_outside(kind: &str, limit: &str, value: f64, bounds: (f64, f64)) -> bool {
+    let _ = scalar_rule(kind, limit, "refuse");
+    !value.is_finite() || !(bounds.0..=bounds.1).contains(&value)
+}
+
+fn clamp_scalar(kind: &str, limit: &str, value: f64, bounds: (f64, f64)) -> f64 {
+    let _ = scalar_rule(kind, limit, "clamp");
+    value.clamp(bounds.0, bounds.1)
+}
+
 fn validate_edit(edit: SettingEdit) -> Result<SettingEdit, IpcError> {
     match edit {
         SettingEdit::RcHiTransition { factor } if !matches!(factor, 1 | 2 | 4) => {
@@ -24,9 +48,7 @@ fn validate_edit(edit: SettingEdit) -> Result<SettingEdit, IpcError> {
             )
             .with_param("field", "rc_hi_transition"))
         }
-        SettingEdit::RcLo { hz }
-            if !hz.is_finite() || !(LIMITS.rc_lo.0..=LIMITS.rc_lo.1).contains(&hz) =>
-        {
+        SettingEdit::RcLo { hz } if scalar_outside("rc_lo", "rc_lo", hz, LIMITS.rc_lo) => {
             Err(invalid(
                 "RC lower limit is outside its range",
                 [
@@ -38,7 +60,7 @@ fn validate_edit(edit: SettingEdit) -> Result<SettingEdit, IpcError> {
             ))
         }
         SettingEdit::RcHi { hz: Some(hz) }
-            if !hz.is_finite() || !(LIMITS.rc_hi.0..=LIMITS.rc_hi.1).contains(&hz) =>
+            if scalar_outside("rc_hi", "rc_hi", hz, LIMITS.rc_hi) =>
         {
             Err(invalid(
                 "RC upper limit is outside its range",
@@ -51,7 +73,7 @@ fn validate_edit(edit: SettingEdit) -> Result<SettingEdit, IpcError> {
             ))
         }
         SettingEdit::InputHp { hz: Some(hz) }
-            if !hz.is_finite() || !(LIMITS.input_hp.0..=LIMITS.input_hp.1).contains(&hz) =>
+            if scalar_outside("input_hp", "input_hp", hz, LIMITS.input_hp) =>
         {
             Err(invalid(
                 "input high-pass is outside its range",
@@ -64,8 +86,7 @@ fn validate_edit(edit: SettingEdit) -> Result<SettingEdit, IpcError> {
             ))
         }
         SettingEdit::MimoEarly { ms }
-            if !ms.is_finite()
-                || !(LIMITS.mimo_early_ms.0..=LIMITS.mimo_early_ms.1).contains(&ms) =>
+            if scalar_outside("mimo_early", "mimo_early_ms", ms, LIMITS.mimo_early_ms) =>
         {
             Err(invalid(
                 "MIMO early interval is outside its range",
@@ -305,7 +326,7 @@ fn set_layout(
         .into();
     }
     if let Some(trim) = trim {
-        e.rear_trim_ms = trim.clamp(LIMITS.rear_trim.0, LIMITS.rear_trim.1);
+        e.rear_trim_ms = clamp_scalar("rear_trim", "rear_trim", trim, LIMITS.rear_trim);
     }
     put(&mut s.bundle_layouts, bundle.clone(), e);
     if let Some(first) = members(s, &bundle).first() {
@@ -391,7 +412,9 @@ fn apply(s: &mut CalibrationSettings, edit: SettingEdit, project: &Project) {
     match edit {
         SettingEdit::Mode { mode } => s.mode = mode,
         SettingEdit::SampleRatePolicy { policy } => s.sample_rate_policy = policy,
-        SettingEdit::UltraMs { ms } => s.ultra_ms = ms.clamp(LIMITS.ultra_ms.0, LIMITS.ultra_ms.1),
+        SettingEdit::UltraMs { ms } => {
+            s.ultra_ms = clamp_scalar("ultra_ms", "ultra_ms", ms, LIMITS.ultra_ms)
+        }
         SettingEdit::LowProtect { on } => s.low_protect = on,
         SettingEdit::LfAlign { on } => s.lf_align = on,
         SettingEdit::ModeDecay { on } => s.mode_decay = on,
@@ -404,7 +427,8 @@ fn apply(s: &mut CalibrationSettings, edit: SettingEdit, project: &Project) {
         SettingEdit::RcHiTransition { factor } => s.rc_hi_transition = factor,
         SettingEdit::RcBands { bands } => s.rc_bands = bands,
         SettingEdit::RoomVolume { m3 } => {
-            s.room_volume_m3 = (m3 > LIMITS.volume.0).then_some(m3.min(LIMITS.volume.1));
+            let bounded = clamp_scalar("room_volume", "volume", m3, LIMITS.volume);
+            s.room_volume_m3 = (m3 > LIMITS.volume.0).then_some(bounded);
             if !volume(s.room_dims_m)
                 .zip(s.room_volume_m3)
                 .is_some_and(|(a, b)| (a - b).abs() <= 0.5)
@@ -425,13 +449,15 @@ fn apply(s: &mut CalibrationSettings, edit: SettingEdit, project: &Project) {
                 );
             }
         }
-        SettingEdit::BoostMax { db } => s.boost_max_db = db.clamp(LIMITS.boost.0, LIMITS.boost.1),
+        SettingEdit::BoostMax { db } => {
+            s.boost_max_db = clamp_scalar("boost_max", "boost", db, LIMITS.boost)
+        }
         SettingEdit::Xo { group, hz } => {
             let groups = project.config.groups();
             if groups.iter().any(|(g, _)| *g == "sub")
                 && groups.iter().any(|(g, _)| *g == group && *g != "sub")
             {
-                let hz = hz.clamp(LIMITS.xo.0, LIMITS.xo.1).round_ties_even();
+                let hz = clamp_scalar("xo", "xo", hz, LIMITS.xo).round_ties_even();
                 let changed =
                     s.xo.iter()
                         .find(|(stored_group, _)| stored_group == &group)
@@ -461,7 +487,8 @@ fn apply(s: &mut CalibrationSettings, edit: SettingEdit, project: &Project) {
             subs,
         } => set_infra(s, role, hz, typ.name(), &subs),
         SettingEdit::InfraBoost { db } => {
-            s.infra_boost_max_db = db.clamp(LIMITS.infra_boost.0, LIMITS.infra_boost.1)
+            s.infra_boost_max_db =
+                clamp_scalar("infra_boost", "infra_boost", db, LIMITS.infra_boost)
         }
         SettingEdit::SubMode { role, mode } => {
             let mut e = sub(s, &role);
@@ -512,16 +539,16 @@ fn apply(s: &mut CalibrationSettings, edit: SettingEdit, project: &Project) {
             );
         }
         SettingEdit::MainDelay { ms } => {
-            s.sub_main_delay_ms = ms.clamp(LIMITS.main_delay.0, LIMITS.main_delay.1)
+            s.sub_main_delay_ms = clamp_scalar("main_delay", "main_delay", ms, LIMITS.main_delay)
         }
         SettingEdit::MimoOn { on } => s.mimo_on = on,
-        SettingEdit::Fsiso { hz } => s.fsiso = hz.clamp(LIMITS.fsiso.0, LIMITS.fsiso.1),
+        SettingEdit::Fsiso { hz } => s.fsiso = clamp_scalar("fsiso", "fsiso", hz, LIMITS.fsiso),
         SettingEdit::MimoLow { hz } => {
-            s.mimo_low = hz.map(|v| v.clamp(LIMITS.mimo_low.0, LIMITS.mimo_low.1))
+            s.mimo_low =
+                hz.map(|value| clamp_scalar("mimo_low", "mimo_low", value, LIMITS.mimo_low))
         }
         SettingEdit::MimoMax { count } => {
-            s.mimo_max_supports = count
-                .clamp(LIMITS.mimo_max.0, LIMITS.mimo_max.1)
+            s.mimo_max_supports = clamp_scalar("mimo_max", "mimo_max", count, LIMITS.mimo_max)
                 .round_ties_even() as i64
         }
         SettingEdit::MimoFir { on } => s.mimo_fir = on,
