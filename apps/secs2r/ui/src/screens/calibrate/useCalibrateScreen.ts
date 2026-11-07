@@ -24,14 +24,14 @@ export function useCalibrateScreen(goToMeasurements?: () => void, openPolarity?:
   const target = useResource("target");
   const config = useResource("config");
   const project = useResource("project");
-  const measurements = useResource("curves");
+  const records = useResource("records");
   const dsp = useResource("dsp");
   const subWarnings = useResource("subWarnings");
   const actions = useMemo<CalibrateActions>(() => {
     const selectedGroup = (channel: string | null) => {
       const config = session.stores.config.getSnapshot();
       if (!config) return null;
-      const measured = new Set(session.stores.curves.getSnapshot()?.curves.filter((curve) => curve.position === 1).map((curve) => curve.role));
+      const measured = new Set(session.stores.records.getSnapshot()?.records.find((record) => record.position === 1)?.roles);
       const channels = session.stores.results.getSnapshot()?.calibration
         ? session.stores.lines.getSnapshot()?.channels.map((line) => line.role) ?? []
         : config.speakers.map((speaker) => speaker.role).filter((role) => measured.has(role));
@@ -112,7 +112,8 @@ export function useCalibrateScreen(goToMeasurements?: () => void, openPolarity?:
   const failure = host.failure?.job === "calibrate" && host.failure.error.params.stage === "mimo"
     ? { job: "mimo" as const, error: { ...host.failure.error, params: withoutStage(host.failure.error.params) } }
     : host.failure;
-  const measuredRoles = new Set(measurements?.curves.filter((curve) => curve.position === 1).map((curve) => curve.role));
+  // The roles recorded at position 1, from measurement_records: the curves are read only for the measure screen.
+  const measuredRoles = new Set(records?.records.find((record) => record.position === 1)?.roles);
   return { view: results && lines && settings && modeSpec && target && config && project ? {
     compute: { preference: appSettings?.compute ?? "auto", status: computeStatus, loading: host.computeLoading || !appSettings, saving: host.computeSaving, error: host.computeError,
       locked: jobs.some((job) => !isMonitorJob(job.kind)) },
