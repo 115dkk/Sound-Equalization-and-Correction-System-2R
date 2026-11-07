@@ -12,7 +12,7 @@ import { createBandTargets, settingEdit } from "./settingsEdits";
 import { createResource as resource, createStore, type Failure } from "./store";
 import { isActiveJob, isMonitorJob } from "./jobRetention";
 import { createJobLedger, type FinishedJob, type JobRequestContext, type LedgerJob } from "./jobLedger";
-import { effectsOf, projectEdits, refreshInputs, refreshMeasurements, type EffectContext } from "./effects";
+import { effectsOf, isJobStarted, projectEdits, refreshInputs, refreshMeasurements, requestSource, type EffectContext } from "./effects";
 import { createAutoRefresh } from "./autoRefresh";
 import { calibrationMimo, startCalibration } from "./calibration";
 import { createWriter, createWriterQueue, type Patch, type Writer, type WriterDeps } from "./writers";
@@ -236,21 +236,21 @@ export function createSession(ipc: Ipc) {
         // A monitor that cannot be stopped must not keep the next project from opening.
         if (request.method === "project_new" || request.method === "project_open") await monitor(false).catch(() => {});
         const data = await ipc.request(request);
-        if (pendingStart) {
-          jobs.reply(pendingStart, data as import("../ipc/bindings/JobStarted").JobStarted);
-        }
+        const source = requestSource(request, data);
+        const started: unknown = data;
+        if (pendingStart && isJobStarted(started)) jobs.reply(pendingStart, started);
         if (epoch !== jobs.epoch) return data;
         errors.set(null);
-        if (request.method === "calibration_settings_edit" || request.method === "calibration_settings_set") {
-          const settings = data as import("../ipc/bindings/CalibrationSettings").CalibrationSettings;
-          const includeEdit = request.method === "calibration_settings_edit" && (request as Extract<Request, { method: "calibration_settings_edit" }>).params.edit.kind === "xo_rec_include";
+        if (source.method === "calibration_settings_edit" || source.method === "calibration_settings_set") {
+          const settings = source.data;
+          const includeEdit = source.method === "calibration_settings_edit" && source.request.params.edit.kind === "xo_rec_include";
           if (includeEdit || settings.xo_rec_include !== false) host.set({ xoRecTurnedOffByEdit: false });
           else if (edit === "xoEdit" && xoWasIncluded) host.set({ xoRecTurnedOffByEdit: true });
         }
         // Undo restores saved settings; the previous manual-edit notice is no longer current.
         if (["undo", "redo"].includes(request.method)) host.set({ xoRecTurnedOffByEdit: false });
         const effects = effectsOf({ request: request.method });
-        const ctx: EffectContext = { host, stores, jobs, call, configure, run, canContinueRefresh, source: { request, data },
+        const ctx: EffectContext = { host, stores, jobs, call, configure, run, canContinueRefresh, source,
           replaceProject: () => { replaceProject(scope, "request"); epoch = jobs.epoch; },
         };
         for (const rule of effects.rules) rule.beforeReload?.(ctx);
