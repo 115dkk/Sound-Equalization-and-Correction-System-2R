@@ -5,7 +5,10 @@
 //! The protocol, authentication rules, and app-owned lifecycle are fixed by
 //! [ADR 0016](https://github.com/115dkk/Sound-Equalization-and-Correction-System-2R/blob/main/docs/adr/0016-public-rust-api-and-local-api.md).
 
+pub mod runtime;
 pub mod token;
+
+pub use runtime::Runtime;
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -120,6 +123,15 @@ pub enum LocalApiError {
     /// The owning server thread could not be created.
     #[error("local API thread: {0}")]
     Thread(#[source] std::io::Error),
+    /// The bearer token could not be read or stored.
+    #[error("local API token at {path}: {source}")]
+    Token {
+        /// Token file path.
+        path: std::path::PathBuf,
+        /// File-system failure.
+        #[source]
+        source: std::io::Error,
+    },
 }
 
 /// Running server. Dropping it performs a blocking graceful stop.

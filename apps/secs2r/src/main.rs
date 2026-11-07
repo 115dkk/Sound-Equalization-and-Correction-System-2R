@@ -245,7 +245,8 @@ fn main() {
                         ),
                     );
                 });
-            let local_api = local_api::Manager::new(config_dir, service.clone(), hub, handle);
+            let local_api =
+                local_api::Manager::new(config_dir, service.clone(), hub, handle, log.clone());
             app.manage(log);
             app.manage(service.clone());
             app.manage(Mutex::new(AppEffects::default()));
