@@ -1,15 +1,24 @@
 # P202 (Daybreak): audit #186, the API ADR steps P190 could not finish
 
-Worktree `E:\wt\audit-api`, branch `audit/186-api-adr-2` (Claude creates it
-from the then-current `fix/audit-186` and pops the stash that holds P190's
-ignored Red tests for X-13 step 2 and the local API step 6 before handing you
-this packet; `git status` then shows those uncommitted files and nothing
-else). Every cargo command and every script that starts cargo runs with
-`CARGO_TARGET_DIR=C:\cargo-target\audit-api`; after the first command check
-that `E:\wt\audit-api\target` does not exist. No workspace-wide `cargo test`
-or `cargo clippy`; per-package (`-p`) only. One commit per step, titles as
-P190 gives them, trailer `Co-Authored-By: Claude Mythos 5.1 <noreply@anthropic.com>`.
-Do not push, do not rebase, do not touch `audit-state.md` or ADRs.
+Worktree `E:\wt\audit-api`, branch `audit/186-api-adr-2` (Claude created it
+from the current `fix/audit-186`). P190's ignored Red tests sit in the
+worktree as uncommitted changes to exactly three files, which is what
+`git status` shows when you start: `crates/secs-api/src/lib.rs`,
+`crates/secs-api/tests/public_api.rs` (`#[ignore = "blocked: Cargo.lock is
+outside P190 allowed files"]`, X-13 step 2) and
+`crates/secs-local-api/tests/local_api.rs` (`#[ignore = "blocked: typed notes
+require forbidden service calibration/results/curves files"]`, X-1 step 6).
+Un-ignore each when its step starts and commit it with that step. Every cargo command and every script
+that starts cargo runs with `CARGO_TARGET_DIR=C:\cargo-target\audit-api`;
+after the first command check that `E:\wt\audit-api\target` does not exist.
+No workspace-wide `cargo test` or `cargo clippy`; per-package (`-p`) only;
+the public API crate's package name is
+`sound-equalization-and-correction-system-rust-api`. One commit per step,
+titles as P190 gives them, trailer
+`Co-Authored-By: Claude Mythos 5.1 <noreply@anthropic.com>`. Do not push, do
+not rebase, do not touch `audit-state.md` or ADRs. Another worker (P203) is
+fixing service files in a different worktree at the same time: stay inside
+the allowed files below so the two branches merge.
 
 ## Why
 
