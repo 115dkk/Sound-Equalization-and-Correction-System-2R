@@ -78,7 +78,12 @@ export function createSession(ipc: Ipc) {
     micCalBusy: null, micCalError: null,
     rewLaunch: "idle", rewProblem: null, rewProblemDetail: null, readingRew: false, switchingRewDriver: false, opened: 0,
   });
-  const host = { ...rawHost, set: (patch: Partial<HostState>) => rawHost.set({ ...rawHost.getSnapshot(), ...patch }) };
+  // A patch that changes nothing keeps the snapshot, so subscribers do not render again (TD-176).
+  const host = { ...rawHost, set: (patch: Partial<HostState>) => {
+    const current = rawHost.getSnapshot();
+    if ((Object.keys(patch) as (keyof HostState)[]).every((key) => Object.is(current[key], patch[key]))) return;
+    rawHost.set({ ...current, ...patch });
+  } };
   const errors = createStore<Failure | null>(null);
   const ready = createStore(false);
   const tutorialReady = createStore(false);
