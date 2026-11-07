@@ -382,6 +382,11 @@ impl Session {
         self.open.as_mut().ok_or(ServiceError::ProjectNotOpen)
     }
 
+    pub(crate) fn snapshot(&self) -> Result<ProjectSnapshot, ServiceError> {
+        let open = self.require()?;
+        Ok(ProjectSnapshot::of(ProjectTicket(open.identity), open))
+    }
+
     /// The open project's ticket; `ProjectNotOpen` when none is open.
     pub(crate) fn ticket(&self) -> Result<ProjectTicket, IpcError> {
         Ok(ProjectTicket(self.require()?.identity))
@@ -441,9 +446,8 @@ impl Service {
         let info = session
             .save(params.path.map(Into::into))
             .map_err(IpcError::from)?;
-        let open = session.require().map_err(IpcError::from)?;
-        let originals = original_snapshot(open);
-        let destination = open.path.with_extension("mdat");
+        let originals = session.snapshot().map_err(IpcError::from)?;
+        let destination = originals.path.with_extension("mdat");
         let work = SideMdatWork {
             originals,
             destination: destination.clone(),
@@ -796,9 +800,20 @@ fn copy_tree_contents(source: &Path, destination: &Path) -> Result<(), std::io::
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct OriginalSnapshot {
-    path: PathBuf,
-    project: Project,
+pub(crate) struct ProjectSnapshot {
+    pub ticket: ProjectTicket,
+    pub path: PathBuf,
+    pub project: Project,
+}
+
+impl ProjectSnapshot {
+    pub(crate) fn of(ticket: ProjectTicket, open: &OpenProject) -> Self {
+        Self {
+            ticket,
+            path: open.path.clone(),
+            project: open.project().clone(),
+        }
+    }
 }
 
 pub(crate) struct LoadedOriginals<'a> {
@@ -806,29 +821,10 @@ pub(crate) struct LoadedOriginals<'a> {
     _permit: secs_compute::MemoryPermit<'a>,
 }
 
-#[derive(Debug)]
-pub(crate) struct MeasurementSnapshot {
-    path: PathBuf,
-    project: Project,
-}
-
 pub(crate) struct LoadedMeasurements {
     pub project: Project,
     pub values: secs_engine::MeasurementSet,
-}
-
-pub(crate) fn original_snapshot(open: &OpenProject) -> OriginalSnapshot {
-    OriginalSnapshot {
-        path: open.path.clone(),
-        project: open.project().clone(),
-    }
-}
-
-pub(crate) fn measurement_snapshot(open: &OpenProject) -> MeasurementSnapshot {
-    MeasurementSnapshot {
-        path: open.path.clone(),
-        project: open.project().clone(),
-    }
+    pub notices: Vec<Notice>,
 }
 
 fn measurement_bytes(path: &Path, project: &Project) -> Result<u64, IpcError> {
@@ -873,30 +869,29 @@ fn reserve_measurements<'a>(
         })
 }
 
-impl MeasurementSnapshot {
-    pub(crate) fn load(
-        self,
+impl ProjectSnapshot {
+    pub(crate) fn load_measurements(
+        &self,
         job: &JobContext,
         budget: &secs_compute::MemoryBudget,
     ) -> Result<LoadedMeasurements, IpcError> {
         let permit = reserve_measurements(&self.path, &self.project, job, budget)?;
         let mut store = MeasurementStore::new(&self.path, self.project.clone());
-        let values = super::calibration::load_measurements_cancellable(&mut store, job.cancel())?;
+        let loaded = super::calibration::load_measurements_with_notices(&mut store, job.cancel())?;
         drop(permit);
         Ok(LoadedMeasurements {
-            project: self.project,
-            values,
+            project: self.project.clone(),
+            values: loaded.measurements,
+            notices: loaded.notices,
         })
     }
-}
 
-impl OriginalSnapshot {
-    pub(crate) fn load<'a>(
-        self,
+    pub(crate) fn load_originals<'a>(
+        &self,
         job: &JobContext,
         budget: &'a secs_compute::MemoryBudget,
     ) -> Result<LoadedOriginals<'a>, IpcError> {
-        let mut store = MeasurementStore::new(&self.path, self.project);
+        let mut store = MeasurementStore::new(&self.path, self.project.clone());
         let mut records = store.records();
         records.sort_by_key(|record| record.pos);
         let project = store.project().clone();
@@ -981,7 +976,7 @@ impl OriginalSnapshot {
 
 #[derive(Clone)]
 struct SideMdatWork {
-    originals: OriginalSnapshot,
+    originals: ProjectSnapshot,
     destination: PathBuf,
     uuid: crate::UuidSource,
     now_ms: i64,
@@ -1089,7 +1084,7 @@ fn write_side_mdat_entry(
     job: &JobContext,
 ) -> Result<Option<secs_types::ipc::JobResult>, IpcError> {
     let context = super::calibration::compute_context(job, work.memory, false);
-    let originals = work.originals.clone().load(job, context.budget())?;
+    let originals = work.originals.load_originals(job, context.budget())?;
     let LoadedOriginals { values, _permit } = originals;
     let inputs = values
         .into_iter()
@@ -1287,7 +1282,7 @@ mod tests {
 
 #[cfg(test)]
 mod commit_tests {
-    use std::sync::atomic::AtomicBool;
+    use std::sync::atomic::{AtomicBool, AtomicU64};
     use std::sync::mpsc;
     use std::sync::{Arc, Condvar};
     use std::time::{Duration, Instant};
@@ -1315,6 +1310,29 @@ mod commit_tests {
             }
         }
     }
+    #[derive(Debug)]
+    struct CancelOnFirstRead {
+        registry: JobRegistry,
+        finished: Finished,
+        reads: AtomicU64,
+    }
+
+    impl EventSink for CancelOnFirstRead {
+        fn send(&self, event: JobEvent) {
+            if let JobEvent::Progress {
+                job, stage, done, ..
+            } = &event
+                && stage == "read_measurements"
+            {
+                self.reads.store(*done, Ordering::SeqCst);
+                if *done == 1 {
+                    self.registry.cancel(*job).unwrap();
+                }
+            }
+            self.finished.send(event);
+        }
+    }
+
     impl Finished {
         fn wait(&self, job: JobId) -> (JobStatus, Option<IpcError>) {
             let deadline = Instant::now() + Duration::from_secs(60);
@@ -1416,6 +1434,86 @@ mod commit_tests {
             )
             .unwrap();
         assert!(open.is_dirty());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn project_snapshot_load_originals_checks_cancel_between_files_and_keeps_plan_order() {
+        let root = std::env::temp_dir().join(format!(
+            "secs-service-project-snapshot-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("room.secs");
+        let mut store = MeasurementStore::new(&path, Project::from_preset("2.0").unwrap());
+        for role in ["A", "R", "L"] {
+            store
+                .record(
+                    MeasurementResult {
+                        role: role.into(),
+                        pos: 1,
+                        ir: vec![0.0, 1.0, 0.0],
+                        sample_rate: 48_000,
+                        t0_s: 0.0,
+                        spl_db: None,
+                        spl_offset_db: None,
+                        snr_db: None,
+                        uuid: None,
+                        source: None,
+                        source_info: None,
+                    },
+                    None,
+                )
+                .unwrap();
+        }
+        let session = Arc::new(Mutex::new(Session {
+            open: Some(OpenProject {
+                path,
+                store,
+                dirty: false,
+                tutorial: false,
+                tutorial_folder: None,
+                results: crate::results::ResultBook::default(),
+                identity: next_identity(),
+                undo: Default::default(),
+            }),
+            last_export: None,
+        }));
+        let snapshot = lock(&session).snapshot().unwrap();
+        let roles = Arc::new(Mutex::new(Vec::new()));
+        let captured = roles.clone();
+        let registry = JobRegistry::default();
+        let finished = Arc::new(Finished::default());
+        let started = registry
+            .start(JobKind::Export, finished.clone(), move |job| {
+                let budget = secs_compute::MemoryBudget::new(u64::MAX);
+                let loaded = snapshot.load_originals(&job, &budget)?;
+                *lock(&captured) = loaded.values.into_iter().map(|value| value.role).collect();
+                Ok(JobResult::Stopped)
+            })
+            .unwrap();
+        assert_eq!(finished.wait(started.job), (JobStatus::Succeeded, None));
+        assert_eq!(&*lock(&roles), &["L", "R", "A"]);
+
+        let snapshot = lock(&session).snapshot().unwrap();
+        let registry = JobRegistry::default();
+        let events = Arc::new(CancelOnFirstRead {
+            registry: registry.clone(),
+            finished: Finished::default(),
+            reads: AtomicU64::new(0),
+        });
+        let started = registry
+            .start(JobKind::Export, events.clone(), move |job| {
+                let budget = secs_compute::MemoryBudget::new(u64::MAX);
+                snapshot.load_originals(&job, &budget)?;
+                Ok(JobResult::Stopped)
+            })
+            .unwrap();
+        let (status, error) = events.finished.wait(started.job);
+        assert_eq!(status, JobStatus::Cancelled);
+        assert_eq!(error.unwrap().code, ErrorCode::Cancelled);
+        assert_eq!(events.reads.load(Ordering::SeqCst), 1);
         fs::remove_dir_all(root).unwrap();
     }
 

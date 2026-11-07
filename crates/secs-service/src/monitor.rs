@@ -68,10 +68,9 @@ impl Service {
         params: LevelMonitorStartParams,
         events: Arc<dyn EventSink>,
     ) -> Result<JobStarted, IpcError> {
-        let (project, ticket) = {
-            let session = lock(&self.session);
-            (session.require()?.project().clone(), session.ticket()?)
-        };
+        let snapshot = lock(&self.session).snapshot().map_err(IpcError::from)?;
+        let ticket = snapshot.ticket;
+        let project = snapshot.project;
         let settings = MeasurementSettings::from_project(&project)
             .map_err(|error| level_error(error, "settings", secs_audio::SharePreference::Auto))?;
         let plan = plan_for(&project, &settings);

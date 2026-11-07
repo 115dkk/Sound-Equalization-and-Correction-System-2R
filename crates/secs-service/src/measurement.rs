@@ -532,10 +532,9 @@ impl Service {
         params: MeasurePositionParams,
         events: Arc<dyn EventSink>,
     ) -> Result<JobStarted, IpcError> {
-        let (project, ticket) = {
-            let session = lock(&self.session);
-            (session.require()?.project().clone(), session.ticket()?)
-        };
+        let snapshot = lock(&self.session).snapshot().map_err(IpcError::from)?;
+        let ticket = snapshot.ticket;
+        let project = snapshot.project;
         let active_method = method(&project);
         if matches!(active_method, "none" | "mdat") {
             return Err(input("method", "selected method cannot run a measurement"));
@@ -919,10 +918,9 @@ impl Service {
         params: MdatImportParams,
         events: Arc<dyn EventSink>,
     ) -> Result<JobStarted, IpcError> {
-        let (project, ticket) = {
-            let session = lock(&self.session);
-            (session.require()?.project().clone(), session.ticket()?)
-        };
+        let snapshot = lock(&self.session).snapshot().map_err(IpcError::from)?;
+        let ticket = snapshot.ticket;
+        let project = snapshot.project;
         let session = self.session.clone();
         self.jobs.start(JobKind::MdatImport, events, move |ctx| {
             // Read the file once here, without the session lock; the lock

@@ -18,24 +18,22 @@ use secs_types::ipc::{
 use crate::jobs::JobContext;
 use crate::measure::json::JsonExt;
 use crate::results::{CacheOwner, CalibrationRun, MimoResult, calibration_stale};
-use crate::session::{self, ProjectTicket};
+use crate::session::{self, ProjectSnapshot, ProjectTicket};
 use crate::{EventSink, Service, lock};
 
 /// What loading the measurements needs, taken under the session lock
 /// without reading any WAV (TD-37).
 #[derive(Debug)]
 pub(crate) struct Snapshot {
-    ticket: ProjectTicket,
-    path: std::path::PathBuf,
-    project: Project,
+    project: ProjectSnapshot,
     project_settings: CalibrationSettings,
     settings: CalibrationSettings,
 }
 
 #[derive(Debug)]
-struct LoadedMeasurements {
-    measurements: MeasurementSet,
-    notices: Vec<Notice>,
+pub(crate) struct LoadedMeasurements {
+    pub measurements: MeasurementSet,
+    pub notices: Vec<Notice>,
 }
 
 pub(crate) struct Prepared {
@@ -61,15 +59,15 @@ impl Service {
         let selection = run_mimo.then(|| self.require_acceleration()).transpose()?;
         let snapshot = self.snapshot(params.settings)?;
         if run_mimo {
-            check_mimo_preconditions(&snapshot.project, &snapshot.settings)?;
+            check_mimo_preconditions(&snapshot.project.project, &snapshot.settings)?;
         }
         let subs_only = params.subs_only;
         let session = self.session.clone();
         let memory = self.deps.memory.available_bytes();
         self.jobs.start(JobKind::Calibrate, events, move |job| {
             job.log(settings_notice(&snapshot.settings, background));
-            let prepared = snapshot.load(&job)?;
             let ctx = compute_context(&job, memory, background);
+            let prepared = snapshot.load(&job, ctx.budget())?;
             let groups = project_groups(&prepared.project);
             let inverted = prepared.project.config.inverted_mains();
             let view = ProjectView {
@@ -162,12 +160,13 @@ impl Service {
         events: Arc<dyn EventSink>,
     ) -> Result<JobStarted, IpcError> {
         let snapshot = self.snapshot(None)?;
-        let recommendation_key = xo_rec_key(&snapshot.project, &snapshot.settings);
+        let recommendation_key = xo_rec_key(&snapshot.project.project, &snapshot.settings);
         let memory = self.deps.memory.available_bytes();
         let session = self.session.clone();
         self.jobs.start(JobKind::RecommendXo, events, move |job| {
             job.log(settings_notice(&snapshot.settings, background));
-            let prepared = snapshot.load(&job)?;
+            let ctx = compute_context(&job, memory, background);
+            let prepared = snapshot.load(&job, ctx.budget())?;
             let groups = project_groups(&prepared.project);
             let inverted = prepared.project.config.inverted_mains();
             let view = ProjectView {
@@ -176,7 +175,6 @@ impl Service {
                 target: &prepared.project.target,
                 inverted: &inverted,
             };
-            let ctx = compute_context(&job, memory, background);
             let result = secs_engine::xo::recommend_xo(
                 &view,
                 &prepared.measurements,
@@ -279,16 +277,13 @@ impl Service {
         override_settings: Option<CalibrationSettings>,
     ) -> Result<Snapshot, IpcError> {
         let session = lock(&self.session);
-        let open = session.require().map_err(IpcError::from)?;
-        let project = open.project().clone();
-        let project_settings = calibration_from_project(&project);
+        let project = session.snapshot().map_err(IpcError::from)?;
+        let project_settings = calibration_from_project(&project.project);
         let mut settings = override_settings.unwrap_or_else(|| project_settings.clone());
         // A request may carry settings the edit checks never saw; the run, its
         // notes and its export use the bands the engine uses (ADR 0024).
         settings.rc_bands = secs_types::calibration::valid_rc_bands(&settings.rc_bands);
         Ok(Snapshot {
-            ticket: session.ticket()?,
-            path: open.path.clone(),
             project,
             project_settings,
             settings,
@@ -414,20 +409,23 @@ fn summarize_mimo(run: &secs_engine::mimo::MimoRun) -> MimoSummary {
 impl Snapshot {
     /// Reads every IR of the snapshot without the session lock, checking for
     /// cancellation between files. The commit checks the ticket.
-    pub(crate) fn load(self, job: &JobContext) -> Result<Prepared, IpcError> {
-        let mut store = secs_project::MeasurementStore::new(&self.path, self.project.clone());
-        let loaded = load_measurements_with_notices(&mut store, job.cancel())?;
-        check_rc_agreement(&self.project, &self.settings, &loaded.measurements)?;
-        let project = self.project;
+    pub(crate) fn load(
+        self,
+        job: &JobContext,
+        budget: &secs_compute::MemoryBudget,
+    ) -> Result<Prepared, IpcError> {
+        let loaded = self.project.load_measurements(job, budget)?;
+        check_rc_agreement(&loaded.project, &self.settings, &loaded.values)?;
+        let project = loaded.project;
         Ok(Prepared {
-            ticket: self.ticket,
+            ticket: self.project.ticket,
             signature: signature_key(&project),
             target_key: target_key_string(&project),
             config_key: config_key(&project),
             project,
             project_settings: self.project_settings,
             settings: self.settings,
-            measurements: loaded.measurements,
+            measurements: loaded.values,
             measurement_notices: loaded.notices,
         })
     }
@@ -633,14 +631,7 @@ pub(crate) fn measured_ir(
     measured_ir_with_curve_status(store, role, pos).map(|(measurement, _)| measurement)
 }
 
-pub(crate) fn load_measurements_cancellable(
-    store: &mut secs_project::MeasurementStore,
-    cancel: &secs_compute::CancelToken,
-) -> Result<MeasurementSet, IpcError> {
-    load_measurements_with_notices(store, cancel).map(|loaded| loaded.measurements)
-}
-
-fn load_measurements_with_notices(
+pub(crate) fn load_measurements_with_notices(
     store: &mut secs_project::MeasurementStore,
     cancel: &secs_compute::CancelToken,
 ) -> Result<LoadedMeasurements, IpcError> {

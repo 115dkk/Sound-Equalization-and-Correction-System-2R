@@ -234,7 +234,7 @@ impl Service {
                 )
                 .with_param("reason", "no_measurements"));
             }
-            let originals = session::original_snapshot(open);
+            let originals = session::ProjectSnapshot::of(ticket, open);
             let uuid = self.deps.uuid.clone();
             let now_ms = (self.deps.unix_ms)();
             let export_session = self.session.clone();
@@ -250,7 +250,7 @@ impl Service {
             };
             return self.jobs.start(JobKind::Export, events, move |job| {
                 let ctx = super::calibration::compute_context(&job, memory, false);
-                let originals = originals.load(&job, ctx.budget())?;
+                let originals = originals.load_originals(&job, ctx.budget())?;
                 if originals.values.is_empty() {
                     return Err(IpcError::new(
                         ErrorCode::EngineInput,
@@ -313,7 +313,7 @@ impl Service {
         };
         let originals = (params.kind == ExportKind::BeforeAfterMdat
             && mdat_scope == secs_export::MdatScope::All)
-            .then(|| session::original_snapshot(open));
+            .then(|| session::ProjectSnapshot::of(ticket, open));
         let project = open.project();
         let project_name =
             (!project.name.trim().is_empty()).then(|| project.name.trim().to_owned());
@@ -324,7 +324,7 @@ impl Service {
             params.kind,
             ExportKind::BeforeAfterMdat | ExportKind::StagedMdat
         );
-        let replay_snapshot = (mdat && live.is_none()).then(|| session::measurement_snapshot(open));
+        let replay_snapshot = (mdat && live.is_none()).then(|| session::ProjectSnapshot::of(ticket, open));
         let cached_sample_rate_policy = cached.map(|cache| cache.labels.sample_rate_policy);
         let expected_mdat_input_key = (mdat && live.is_none()).then(|| {
             let settings = secs_project::calibration_from_project(project);
@@ -611,7 +611,7 @@ impl Service {
                             .ok_or_else(|| {
                                 IpcError::new(ErrorCode::Internal, "replay snapshot disappeared")
                             })?
-                            .load(&job, ctx.budget())?;
+                            .load_measurements(&job, ctx.budget())?;
                         job.report_progress("read_measurements", 1, 1);
                         job.cancel()
                             .check()
@@ -676,7 +676,7 @@ impl Service {
                         (Arc::new(design), settings)
                     };
                     let originals = originals
-                        .map(|snapshot| snapshot.load(&job, ctx.budget()))
+                        .map(|snapshot| snapshot.load_originals(&job, ctx.budget()))
                         .transpose()?;
                     let original_values = originals
                         .as_ref()
