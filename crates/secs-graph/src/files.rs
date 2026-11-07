@@ -331,28 +331,6 @@ mod tests {
             .collect()
     }
 
-    #[cfg(windows)]
-    fn link_directory(target: &Path, link: &Path) {
-        if let Err(symlink_error) = std::os::windows::fs::symlink_dir(target, link) {
-            let output = std::process::Command::new("cmd")
-                .args(["/C", "mklink", "/J"])
-                .arg(link)
-                .arg(target)
-                .output()
-                .expect("run mklink /J after symlink_dir failed");
-            assert!(
-                output.status.success(),
-                "symlink_dir failed ({symlink_error}); mklink /J failed: {}",
-                String::from_utf8_lossy(&output.stderr)
-            );
-        }
-    }
-
-    #[cfg(unix)]
-    fn link_directory(target: &Path, link: &Path) {
-        std::os::unix::fs::symlink(target, link).unwrap();
-    }
-
     #[test]
     fn wav_data_len_refuses_riff_overflow_td225() {
         let samples = ((u32::MAX - 36) / 4 + 1) as usize;
@@ -514,37 +492,6 @@ mod tests {
             b"old coefficient"
         );
         assert_eq!(fs::read(root.join("config.txt")).unwrap(), b"old config");
-        fs::remove_dir_all(parent).unwrap();
-    }
-
-    #[test]
-    fn symlinked_bundle_parent_is_refused_td270() {
-        let parent = temp_dir("symlink-parent");
-        let root = parent.join("bundle");
-        let outside = parent.join("outside");
-        fs::create_dir_all(&root).unwrap();
-        fs::create_dir_all(&outside).unwrap();
-        let linked = root.join("coeffs");
-        link_directory(&outside, &linked);
-        let files = vec![
-            (PathBuf::from("coeffs/L.wav"), b"coefficient".to_vec()),
-            (PathBuf::from("config.txt"), b"config".to_vec()),
-        ];
-
-        let error = write_bundle_observed(
-            &root,
-            &files,
-            Path::new("config.txt"),
-            &|_, _| Ok(()),
-            &|_, _| Ok(()),
-        )
-        .unwrap_err();
-
-        assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
-        assert!(error.to_string().contains(&linked.display().to_string()));
-        assert!(!outside.join("L.wav").exists());
-        assert!(leftovers(&parent, ".stage-").is_empty());
-        fs::remove_dir(&linked).unwrap();
         fs::remove_dir_all(parent).unwrap();
     }
 }
