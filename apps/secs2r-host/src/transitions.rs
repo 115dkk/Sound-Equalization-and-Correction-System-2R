@@ -1,9 +1,62 @@
 use std::collections::{BTreeMap, VecDeque};
 use std::time::{Duration, Instant};
 
-use secs_types::ipc::{HostLogLine, HostManaged, IpcError, ManagedCamilla, ManagedEqApo};
+use secs_types::ipc::{
+    HostLogLine, HostManaged, IpcError, ManagedCamilla, ManagedEqApo, ManagedProcessState,
+};
 
 const MAX_REPAIR_ATTEMPTS: u8 = 3;
+
+const RESTART_DELAYS: [Duration; 4] = [
+    Duration::from_secs(1),
+    Duration::from_secs(2),
+    Duration::from_secs(4),
+    Duration::from_secs(8),
+];
+const RESTART_WINDOW: Duration = Duration::from_secs(5 * 60);
+const MAX_RESTART_FAILURES: usize = 5;
+const GIVE_UP_REASON: &str = "five exits within five minutes";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RestartDecision {
+    RestartAfter(Duration),
+    GiveUp,
+}
+
+#[derive(Debug, Clone)]
+struct Supervisor {
+    failures: Vec<Instant>,
+}
+
+impl Supervisor {
+    fn new() -> Self {
+        Self {
+            failures: Vec::new(),
+        }
+    }
+
+    fn on_exit(&mut self, now: Instant) -> RestartDecision {
+        self.failures.retain(|failure| {
+            now.checked_duration_since(*failure)
+                .is_none_or(|age| age < RESTART_WINDOW)
+        });
+        self.failures.push(now);
+        if self.failures.len() >= MAX_RESTART_FAILURES {
+            return RestartDecision::GiveUp;
+        }
+        let index = self.failures.len().saturating_sub(1);
+        let delay = RESTART_DELAYS
+            .get(index)
+            .or_else(|| RESTART_DELAYS.last())
+            .copied()
+            .unwrap_or(Duration::ZERO);
+        RestartDecision::RestartAfter(delay)
+    }
+
+    fn on_stable(&mut self) {
+        self.failures.clear();
+    }
+}
 const REPAIR_DELAYS: [Duration; MAX_REPAIR_ATTEMPTS as usize - 1] =
     [Duration::from_secs(1), Duration::from_secs(2)];
 
@@ -32,6 +85,18 @@ pub enum Input {
     ConfigChanged {
         owner_session: Option<u32>,
     },
+    #[cfg_attr(not(test), allow(dead_code))]
+    ChildExited {
+        pid: Option<u32>,
+        exit_code: i32,
+        now: Instant,
+    },
+    #[cfg_attr(not(test), allow(dead_code))]
+    PortBusy {
+        reason: &'static str,
+        detail: String,
+        now: Instant,
+    },
     WatcherFailed {
         detail: String,
     },
@@ -51,6 +116,8 @@ pub enum Effect {
         session: u32,
     },
     StopChild,
+    SetCamillaState(ManagedProcessState),
+    CountRestart,
     ClearCamillaStatus,
     ClearEqapoStatus,
     LaunchChild {
@@ -71,6 +138,8 @@ pub struct State {
     pub managed: HostManaged,
     pub running_child_session: Option<u32>,
     pub restart_scheduled: bool,
+    pub restart_due: Option<Instant>,
+    restart: Supervisor,
     pub eqapo_error: Option<String>,
     pub pending_takeover: Option<PendingTakeover>,
     pub other_user: bool,
@@ -85,6 +154,8 @@ impl State {
             managed,
             running_child_session,
             restart_scheduled: false,
+            restart_due: None,
+            restart: Supervisor::new(),
             eqapo_error: None,
             pending_takeover: None,
             other_user: false,
@@ -92,6 +163,10 @@ impl State {
             repair_retry_after: None,
             repair_retry_pending: false,
         }
+    }
+
+    pub fn running_child_session(&self) -> Option<u32> {
+        self.running_child_session
     }
 
     pub fn sync_repair_retry_deadline(&mut self, deadline: &mut Option<Instant>, now: Instant) {
@@ -115,6 +190,8 @@ pub trait Platform {
     fn replace_watcher(&mut self, target: Option<&ManagedEqApo>) -> Result<(), IpcError>;
     fn repair_eqapo(&mut self, session: u32) -> Result<(), IpcError>;
     fn stop_child(&mut self) -> Result<(), IpcError>;
+    fn set_camilla_state(&mut self, state: ManagedProcessState);
+    fn count_restart(&mut self);
     fn clear_camilla_status(&mut self);
     fn clear_eqapo_status(&mut self);
     fn launch_child(&mut self, session: u32, target: &ManagedCamilla) -> Result<(), IpcError>;
@@ -157,6 +234,46 @@ fn schedule_takeover(
     if state.pending_takeover.as_ref() != Some(&pending) {
         state.pending_takeover = Some(pending);
         effects.push(Effect::LaunchChild { session, target });
+    }
+}
+
+fn event_line(event: &str, fields: impl IntoIterator<Item = (String, String)>) -> HostLogLine {
+    HostLogLine {
+        timestamp: chrono::Utc::now().to_rfc3339(),
+        event: event.into(),
+        fields: fields.into_iter().collect(),
+    }
+}
+
+fn schedule_restart(state: &mut State, effects: &mut Vec<Effect>, now: Instant) {
+    match state.restart.on_exit(now) {
+        RestartDecision::RestartAfter(delay) => {
+            state.restart_due = Some(now + delay);
+            // Kept only until service_loop is routed through restart_due in the next step.
+            state.restart_scheduled = true;
+            let until = (chrono::Utc::now()
+                + chrono::Duration::from_std(delay).unwrap_or_default())
+            .to_rfc3339();
+            effects.push(Effect::SetCamillaState(ManagedProcessState::BackingOff {
+                until,
+            }));
+            effects.push(Effect::CountRestart);
+            effects.push(Effect::Log(event_line(
+                "restart",
+                [("after_ms".into(), delay.as_millis().to_string())],
+            )));
+        }
+        RestartDecision::GiveUp => {
+            state.restart_due = None;
+            state.restart_scheduled = false;
+            effects.push(Effect::SetCamillaState(ManagedProcessState::GivenUp {
+                reason: GIVE_UP_REASON.into(),
+            }));
+            effects.push(Effect::Log(event_line(
+                "given_up",
+                [("reason".into(), GIVE_UP_REASON.into())],
+            )));
+        }
     }
 }
 
@@ -208,6 +325,7 @@ pub fn decide(state: &State, input: Input) -> (State, Vec<Effect>) {
         Input::StopManaging => {
             next.managed = HostManaged::default();
             next.restart_scheduled = false;
+            next.restart_due = None;
             next.eqapo_error = None;
             next.pending_takeover = None;
             next.other_user = false;
@@ -240,6 +358,7 @@ pub fn decide(state: &State, input: Input) -> (State, Vec<Effect>) {
             match event {
                 SessionEvent::Logon | SessionEvent::ConsoleConnect if owner_matches => {
                     next.other_user = false;
+                    next.restart.on_stable();
                     if next.managed.owner_session_id != Some(session_id) {
                         next.managed.owner_session_id = Some(session_id);
                         effects.push(Effect::SaveState(next.managed.clone()));
@@ -262,17 +381,20 @@ pub fn decide(state: &State, input: Input) -> (State, Vec<Effect>) {
                     }
                     next.pending_takeover = None;
                     next.restart_scheduled = false;
+                    next.restart_due = None;
                 }
                 SessionEvent::Logoff | SessionEvent::ConsoleDisconnect if owner_matches => {
                     next.other_user = false;
                     if next.running_child_session.is_some()
                         || next.restart_scheduled
+                        || next.restart_due.is_some()
                         || next.pending_takeover.is_some()
                     {
                         effects.push(Effect::StopChild);
                     }
                     next.pending_takeover = None;
                     next.restart_scheduled = false;
+                    next.restart_due = None;
                 }
                 SessionEvent::Logoff | SessionEvent::ConsoleDisconnect => {
                     if event == SessionEvent::ConsoleDisconnect {
@@ -285,8 +407,44 @@ pub fn decide(state: &State, input: Input) -> (State, Vec<Effect>) {
                         effects.push(Effect::StopChild);
                         next.pending_takeover = None;
                         next.restart_scheduled = false;
+                        next.restart_due = None;
                     }
                 }
+            }
+        }
+        Input::ChildExited {
+            pid,
+            exit_code,
+            now,
+        } => {
+            let had_session = next.running_child_session.take().is_some();
+            next.pending_takeover = None;
+            effects.push(Effect::Log(event_line(
+                "exit",
+                [
+                    (
+                        "pid".into(),
+                        pid.map_or_else(String::new, |pid| pid.to_string()),
+                    ),
+                    ("code".into(), exit_code.to_string()),
+                ],
+            )));
+            if had_session {
+                schedule_restart(&mut next, &mut effects, now);
+            }
+        }
+        Input::PortBusy {
+            reason,
+            detail,
+            now,
+        } => {
+            next.pending_takeover = None;
+            effects.push(Effect::Log(event_line(
+                "port_busy",
+                [("reason".into(), reason.into()), ("detail".into(), detail)],
+            )));
+            if next.managed.camilla.is_some() {
+                schedule_restart(&mut next, &mut effects, now);
             }
         }
         Input::ConfigChanged { owner_session } => {
@@ -308,6 +466,7 @@ pub fn decide(state: &State, input: Input) -> (State, Vec<Effect>) {
         }
         Input::RestartTick { owner_session } => {
             next.restart_scheduled = false;
+            next.restart_due = None;
             if let (Some(session), Some(target)) = (owner_session, next.managed.camilla.clone()) {
                 schedule_takeover(&mut next, &mut effects, session, target);
             }
@@ -374,6 +533,8 @@ pub fn drive(
             Effect::SaveState(managed) => platform.save_state(&managed)?,
             Effect::ReplaceWatcher(target) => platform.replace_watcher(target.as_ref())?,
             Effect::RepairEqapo { session } => platform.repair_eqapo(session)?,
+            Effect::SetCamillaState(state) => platform.set_camilla_state(state),
+            Effect::CountRestart => platform.count_restart(),
             Effect::StopChild => {
                 // The real adapter takes ownership of the child before stop can
                 // fail, so the transition must forget it on both outcomes.
@@ -405,6 +566,8 @@ mod tests {
         repair_sessions: Vec<u32>,
         stops: usize,
         fail_stop: bool,
+        camilla_states: Vec<ManagedProcessState>,
+        restart_counts: usize,
         camilla_status_clears: usize,
         eqapo_status_clears: usize,
     }
@@ -432,6 +595,14 @@ mod tests {
             } else {
                 Ok(())
             }
+        }
+
+        fn set_camilla_state(&mut self, state: ManagedProcessState) {
+            self.camilla_states.push(state);
+        }
+
+        fn count_restart(&mut self) {
+            self.restart_counts += 1;
         }
 
         fn clear_camilla_status(&mut self) {
@@ -466,6 +637,177 @@ mod tests {
             config_path: "apo".into(),
             design_id: "apo-design".into(),
         }
+    }
+
+    fn managed_camilla() -> HostManaged {
+        HostManaged {
+            camilla: Some(camilla("camilladsp.exe")),
+            owner_session_id: Some(7),
+            owner_user_sid: Some("sid-a".into()),
+            ..HostManaged::default()
+        }
+    }
+
+    #[test]
+    fn one_child_exit_schedules_the_first_backoff_and_counts_it() {
+        let now = Instant::now();
+        let state = State::new(managed_camilla(), Some(7));
+
+        let (next, effects) = decide(
+            &state,
+            Input::ChildExited {
+                pid: Some(42),
+                exit_code: 7,
+                now,
+            },
+        );
+
+        assert_eq!(next.restart_due, Some(now + Duration::from_secs(1)));
+        assert!(effects.iter().any(|effect| matches!(
+            effect,
+            Effect::SetCamillaState(ManagedProcessState::BackingOff { .. })
+        )));
+        assert!(
+            effects
+                .iter()
+                .any(|effect| matches!(effect, Effect::CountRestart))
+        );
+        assert!(effects.iter().any(|effect| matches!(
+            effect,
+            Effect::Log(line)
+                if line.event == "exit"
+                    && line.fields.get("pid").map(String::as_str) == Some("42")
+                    && line.fields.get("code").map(String::as_str) == Some("7")
+        )));
+    }
+
+    #[test]
+    fn five_exits_within_five_minutes_give_up() {
+        let now = Instant::now();
+        let mut state = State::new(managed_camilla(), Some(7));
+        let mut effects = Vec::new();
+        for second in 0_u32..5 {
+            state.running_child_session = Some(7);
+            (state, effects) = decide(
+                &state,
+                Input::ChildExited {
+                    pid: Some(40 + second),
+                    exit_code: 1,
+                    now: now + Duration::from_secs(u64::from(second)),
+                },
+            );
+        }
+
+        assert_eq!(state.restart_due, None);
+        assert!(effects.iter().any(|effect| matches!(
+            effect,
+            Effect::SetCamillaState(ManagedProcessState::GivenUp { reason })
+                if reason == "five exits within five minutes"
+        )));
+        assert!(effects.iter().any(|effect| matches!(
+            effect,
+            Effect::Log(line) if line.event == "given_up"
+        )));
+    }
+
+    #[test]
+    fn exit_without_a_session_schedules_nothing() {
+        let state = State::new(managed_camilla(), None);
+
+        let (next, effects) = decide(
+            &state,
+            Input::ChildExited {
+                pid: Some(42),
+                exit_code: 0,
+                now: Instant::now(),
+            },
+        );
+
+        assert_eq!(next.restart_due, None);
+        assert!(!effects.iter().any(|effect| matches!(
+            effect,
+            Effect::CountRestart | Effect::SetCamillaState(ManagedProcessState::BackingOff { .. })
+        )));
+    }
+
+    #[test]
+    fn restart_tick_after_restart_due_launches() {
+        let mut state = State::new(managed_camilla(), None);
+        state.restart_due = Some(Instant::now());
+
+        let (next, effects) = decide(
+            &state,
+            Input::RestartTick {
+                owner_session: Some(7),
+            },
+        );
+
+        assert_eq!(next.restart_due, None);
+        assert!(
+            effects
+                .iter()
+                .any(|effect| matches!(effect, Effect::LaunchChild { session: 7, .. }))
+        );
+    }
+
+    #[test]
+    fn owner_logoff_and_stop_managing_clear_restart_due_and_stop() {
+        let mut state = State::new(managed_camilla(), None);
+        state.restart_due = Some(Instant::now());
+        let (logged_off, logoff_effects) = decide(
+            &state,
+            Input::Session {
+                event: SessionEvent::Logoff,
+                session_id: 7,
+                owner_matches: true,
+            },
+        );
+        assert_eq!(logged_off.restart_due, None);
+        assert!(
+            logoff_effects
+                .iter()
+                .any(|effect| matches!(effect, Effect::StopChild))
+        );
+
+        state.restart_due = Some(Instant::now());
+        let (stopped, stop_effects) = decide(&state, Input::StopManaging);
+        assert_eq!(stopped.restart_due, None);
+        assert!(
+            stop_effects
+                .iter()
+                .any(|effect| matches!(effect, Effect::StopChild))
+        );
+    }
+
+    #[test]
+    fn port_busy_backs_off_and_gives_up_on_the_fifth() {
+        let now = Instant::now();
+        let mut state = State::new(managed_camilla(), None);
+        let mut effects = Vec::new();
+        for second in 0_u32..5 {
+            (state, effects) = decide(
+                &state,
+                Input::PortBusy {
+                    reason: "not_camilla",
+                    detail: "port 1234 is busy".into(),
+                    now: now + Duration::from_secs(u64::from(second)),
+                },
+            );
+            if second == 0 {
+                assert_eq!(state.restart_due, Some(now + Duration::from_secs(1)));
+                assert!(effects.iter().any(|effect| matches!(
+                    effect,
+                    Effect::Log(line) if line.event == "port_busy"
+                )));
+            }
+        }
+
+        assert_eq!(state.restart_due, None);
+        assert!(effects.iter().any(|effect| matches!(
+            effect,
+            Effect::SetCamillaState(ManagedProcessState::GivenUp { reason })
+                if reason == "five exits within five minutes"
+        )));
     }
 
     #[test]

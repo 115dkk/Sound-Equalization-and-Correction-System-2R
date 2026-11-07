@@ -624,7 +624,7 @@ fn service_loop(
                         _ => unreachable!("matched a console disconnection event"),
                     };
                     let child_session_ended =
-                        transition_state.running_child_session == Some(session);
+                        transition_state.running_child_session() == Some(session);
                     let owner_session_ended =
                         transition_state.managed.owner_session_id == Some(session);
                     if child_session_ended || owner_session_ended {
@@ -909,6 +909,15 @@ impl TransitionPlatform for RealTransitionPlatform<'_> {
             running.stop()?;
         }
         Ok(())
+    }
+
+    fn set_camilla_state(&mut self, state: ManagedProcessState) {
+        self.core.camilla.state = state;
+    }
+
+    fn count_restart(&mut self) {
+        self.core.camilla.restarts_in_window =
+            self.core.camilla.restarts_in_window.saturating_add(1);
     }
 
     fn clear_camilla_status(&mut self) {
