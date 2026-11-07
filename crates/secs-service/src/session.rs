@@ -1687,6 +1687,38 @@ mod commit_tests {
     }
 
     #[test]
+    fn a_cancelled_stale_ticket_finishes_with_the_canonical_cancelled_error() {
+        let registry = JobRegistry::default();
+        let session = opened();
+        let ticket = lock(&session).ticket().unwrap();
+        let job_session = session.clone();
+        let (status, error) = run(
+            &registry,
+            |job| {
+                registry.cancel(job).unwrap();
+                replace(&session);
+            },
+            move |job| {
+                commit(
+                    &job_session,
+                    ticket,
+                    &job,
+                    Finality::Final,
+                    |_| -> Result<((), bool), IpcError> {
+                        unreachable!("change runs only for the current project")
+                    },
+                )
+                .map(|()| JobResult::Stopped)
+            },
+        );
+        assert_eq!(status, JobStatus::Cancelled);
+        assert_eq!(
+            error.expect("the cancelled job has one error shape").code,
+            ErrorCode::Cancelled
+        );
+    }
+
+    #[test]
     fn final_commit_runs_the_change_after_begin_commit_and_dirty_follows_the_return_value() {
         for changed in [false, true] {
             let registry = JobRegistry::default();
@@ -1715,6 +1747,35 @@ mod commit_tests {
                 Some((PathBuf::from("commit-test.secs"), false))
             );
             assert_eq!(dirty(&session), changed);
+        }
+    }
+
+    #[test]
+    fn a_failing_change_leaves_dirty_alone_for_final_and_phase_commits() {
+        for finality in [Finality::Final, Finality::Phase] {
+            let registry = JobRegistry::default();
+            let session = opened();
+            let ticket = lock(&session).ticket().unwrap();
+            let job_session = session.clone();
+            let (status, error) = run(
+                &registry,
+                |_| {},
+                move |job| {
+                    commit(
+                        &job_session,
+                        ticket,
+                        &job,
+                        finality,
+                        |_| -> Result<((), bool), IpcError> {
+                            Err(IpcError::new(ErrorCode::ProjectIo, "disk full"))
+                        },
+                    )
+                    .map(|()| JobResult::Stopped)
+                },
+            );
+            assert_eq!(status, JobStatus::Failed);
+            assert_eq!(error.unwrap().code, ErrorCode::ProjectIo);
+            assert!(!dirty(&session));
         }
     }
 
@@ -1773,6 +1834,30 @@ mod commit_tests {
             "phase one"
         );
         assert!(dirty(&session));
+    }
+
+    #[test]
+    fn streaming_commit_returns_its_value_keeps_clean_and_stays_cancellable() {
+        let registry = JobRegistry::default();
+        let session = opened();
+        let ticket = lock(&session).ticket().unwrap();
+        let seen = Arc::new(Mutex::new(None));
+        let (job_session, job_registry, job_seen) =
+            (session.clone(), registry.clone(), seen.clone());
+        let (status, error) = run(
+            &registry,
+            |_| {},
+            move |job| {
+                let value = commit(&job_session, ticket, &job, Finality::Streaming, |_| {
+                    Ok((7, false))
+                })?;
+                *lock(&job_seen) = Some((value, cancellable(&job_registry, job.id())));
+                Ok(JobResult::Stopped)
+            },
+        );
+        assert_eq!((status, error), (JobStatus::Succeeded, None));
+        assert_eq!(lock(&seen).take(), Some((7, true)));
+        assert!(!dirty(&session));
     }
 
     #[test]

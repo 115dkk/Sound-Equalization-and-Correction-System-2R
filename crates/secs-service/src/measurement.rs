@@ -558,6 +558,7 @@ impl Service {
             let mut seconds_passed = 0;
             while seconds_passed < delay {
                 if ctx.cancel().is_cancelled() {
+                    ctx.role_progress("cancelled", 0, 100);
                     return Err(IpcError::new(ErrorCode::Cancelled, "cancelled"));
                 }
                 let next = std::time::Duration::from_secs(seconds_passed + 1);
@@ -570,6 +571,7 @@ impl Service {
                 ctx.report_progress("countdown", seconds_passed, delay);
             }
             if ctx.cancel().is_cancelled() {
+                ctx.role_progress("cancelled", 0, 100);
                 return Err(IpcError::new(ErrorCode::Cancelled, "cancelled"));
             }
             let mut count = 0;
@@ -662,6 +664,7 @@ impl Service {
                 rew_link.confirm_license();
             }
             if ctx.cancel().is_cancelled() {
+                ctx.role_progress("cancelled", 0, 100);
                 return Err(IpcError::new(ErrorCode::Cancelled, "cancelled"));
             }
             let info = session::commit(

@@ -1,7 +1,17 @@
 #![forbid(unsafe_code)]
 use secs_project::{MeasurementStore, Project, PyJson};
 use secs_service::measure::*;
-use std::{collections::BTreeMap, path::PathBuf, sync::Arc, time::Duration};
+use secs_service::{Deps, EventSink, NoEvents, Service};
+use secs_types::ipc::{
+    Envelope, JobCancelParams, JobEvent, JobStatus, MeasureConfigureParams, MeasurePositionParams,
+    ProjectNewParams, Request, Response,
+};
+use std::{
+    collections::BTreeMap,
+    path::PathBuf,
+    sync::{Arc, Condvar, Mutex},
+    time::{Duration, Instant},
+};
 fn project() -> Project {
     Project::from_preset("2.0").unwrap()
 }
@@ -343,16 +353,108 @@ fn rew_source_devices_fall_back_only_to_names_in_rew_lists() {
     assert!(result[0].source_info.is_none());
 }
 
+#[derive(Debug)]
+struct CancelOnStarted {
+    service: Arc<Service>,
+    events: Mutex<Vec<JobEvent>>,
+    changed: Condvar,
+}
+
+impl EventSink for CancelOnStarted {
+    fn send(&self, event: JobEvent) {
+        if let JobEvent::Started { job, .. } = &event {
+            let response = self.service.call(
+                Request::JobCancel(JobCancelParams { job: *job }),
+                Arc::new(NoEvents),
+            );
+            assert!(matches!(response, Envelope::Ok(_)));
+        }
+        self.events.lock().unwrap().push(event);
+        self.changed.notify_all();
+    }
+}
+
+impl CancelOnStarted {
+    fn wait_finished(&self) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut events = self.events.lock().unwrap();
+        while !events
+            .iter()
+            .any(|event| matches!(event, JobEvent::Finished { .. }))
+        {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            assert!(!remaining.is_zero(), "measurement did not finish");
+            events = self.changed.wait_timeout(events, remaining).unwrap().0;
+        }
+    }
+}
+
 #[test]
 fn test_cancel_before_start_measures_nothing() {
-    let cancel = CancelToken::default();
-    cancel.cancel();
-    let mut mock = MockMeasurer::new();
-    assert!(
-        mock.measure_position(&plan(), 1, None, &cancel)
-            .unwrap()
-            .is_empty()
+    let dir = temp("cancel-before-start");
+    let path = dir.join("room.secs");
+    let service = Arc::new(Service::new(Deps::default()));
+    assert!(matches!(
+        service.call(
+            Request::ProjectNew(ProjectNewParams {
+                path: path.to_string_lossy().into_owned(),
+                preset: "2.0".into(),
+                sub_count: 0,
+                sample: false,
+                tutorial: false,
+            }),
+            Arc::new(NoEvents),
+        ),
+        Envelope::Ok(_)
+    ));
+    assert!(matches!(
+        service.call(
+            Request::MeasureConfigure(MeasureConfigureParams {
+                method: "mock".into(),
+                ..Default::default()
+            }),
+            Arc::new(NoEvents),
+        ),
+        Envelope::Ok(_)
+    ));
+    let events = Arc::new(CancelOnStarted {
+        service: service.clone(),
+        events: Mutex::new(Vec::new()),
+        changed: Condvar::new(),
+    });
+    assert!(matches!(
+        service.call(
+            Request::MeasurePosition(MeasurePositionParams { position: 1 }),
+            events.clone(),
+        ),
+        Envelope::Ok(response) if matches!(*response, Response::MeasurePosition(_))
+    ));
+    events.wait_finished();
+
+    let values = events.events.lock().unwrap();
+    assert!(matches!(
+        values.last(),
+        Some(JobEvent::Finished {
+            status: JobStatus::Cancelled,
+            ..
+        })
+    ));
+    assert_eq!(
+        values.iter().rev().find_map(|event| match event {
+            JobEvent::Progress { stage, .. } => Some(stage.as_str()),
+            _ => None,
+        }),
+        Some("cancelled")
     );
+    drop(values);
+    let Envelope::Ok(response) = service.call(Request::ProjectInfo, Arc::new(NoEvents)) else {
+        panic!()
+    };
+    let Response::ProjectInfo(info) = *response else {
+        panic!()
+    };
+    assert!(info.positions.is_empty());
+    std::fs::remove_dir_all(dir).unwrap();
 }
 #[test]
 fn native_plan_ignores_the_rew_only_timing_and_repetitions_u15() {

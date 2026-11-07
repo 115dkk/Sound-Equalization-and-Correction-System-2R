@@ -537,13 +537,26 @@ fn test_t0_is_stored_in_secs_because_wav_cannot_hold_it_and_defaults_to_zero() {
 }
 
 #[test]
+fn test_load_project_irs_without_measurements() {
+    let (_directory, path, _store, _roles) = setup();
+    let reopened = MeasurementStore::open(path).unwrap();
+    assert!(reopened.sources_by_position().is_empty());
+}
+
+#[test]
 fn test_reload_project_restores_irs_by_role() {
     let (_directory, path, mut store, roles) = setup();
     for role in &roles {
         store.record(result(role, 1, role), Some(&roles)).unwrap();
     }
     let mut reopened = MeasurementStore::open(path).unwrap();
-    assert_eq!(reopened.irs_by_role(1).unwrap().len(), 3);
+    let restored = reopened.irs_by_role(1).unwrap();
+    assert_eq!(restored.len(), 3);
+    assert!(
+        restored
+            .values()
+            .all(|(_, sample_rate)| *sample_rate == 48_000)
+    );
     assert_eq!(reopened.t0_of("L", 1), -0.25);
 }
 
