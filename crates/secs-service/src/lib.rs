@@ -662,7 +662,7 @@ mod app_effect_tests {
 
 /// One coherent application-settings snapshot and its save revision.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RevisedAppSettings {
+pub(crate) struct RevisedAppSettings {
     /// Monotonically increasing within one service process.
     pub revision: u64,
     /// Settings stored by that revision.
@@ -688,7 +688,7 @@ impl Service {
         let opened = app_settings::AppSettingsStore::open(deps.app_settings_path.as_deref());
         let settings_warning = opened.warning;
         let settings_notice = opened.notice;
-        let mut app_settings = opened.store;
+        let app_settings = opened.store;
         app_settings.register(Arc::new(app_settings::UpdatePolicyEffect(
             deps.updates.clone(),
         )));
@@ -710,7 +710,7 @@ impl Service {
     }
 
     /// Registers an application-owned effect before the service is shared.
-    pub fn register_settings_effect(&mut self, effect: Arc<dyn app_settings::SettingsEffect>) {
+    pub fn register_settings_effect(&self, effect: Arc<dyn app_settings::SettingsEffect>) {
         self.app_settings.register(effect);
     }
 

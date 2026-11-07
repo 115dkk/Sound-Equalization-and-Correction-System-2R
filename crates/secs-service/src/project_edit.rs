@@ -762,11 +762,6 @@ impl Service {
         self.app_settings.get()
     }
 
-    /// Returns settings and the revision assigned to their successful save.
-    pub fn revised_app_settings(&self) -> crate::RevisedAppSettings {
-        self.app_settings.revised()
-    }
-
     pub(crate) fn app_settings_set(
         &self,
         params: AppSettingsParams,

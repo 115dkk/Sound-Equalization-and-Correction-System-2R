@@ -1,13 +1,12 @@
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::Arc;
 
 use secs_local_api::{EventHub, LocalApiError, Runtime};
-use secs_service::{AppEffects, LogLevel, RevisedAppSettings, Service};
+use secs_service::{LogLevel, Service};
 use secs_types::ipc::{ErrorCode, IpcError, LocalApiSettings, LocalApiStatus};
 use tauri::{AppHandle, Emitter};
 
 pub(crate) struct Manager {
     runtime: Runtime,
-    app: AppHandle,
 }
 
 impl std::fmt::Debug for Manager {
@@ -27,9 +26,8 @@ impl Manager {
         app: AppHandle,
         log: crate::applog::AppLog,
     ) -> Self {
-        let change_app = app.clone();
         let on_change = Arc::new(move |method: &str| {
-            let _ = change_app.emit("secs://external-change", method.to_owned());
+            let _ = app.emit("secs://external-change", method.to_owned());
         });
         let runtime_log = Arc::new(move |level: LogLevel, text: &str| {
             let level = match level {
@@ -40,7 +38,6 @@ impl Manager {
         });
         Self {
             runtime: Runtime::new(config_dir, service, hub, on_change, runtime_log),
-            app,
         }
     }
 
@@ -48,18 +45,10 @@ impl Manager {
         self.runtime.startup(settings);
     }
 
-    pub(crate) fn apply_revision(&self, effects: &Mutex<AppEffects>, revised: RevisedAppSettings) {
-        let mut effects = lock(effects);
-        let Some(previous) = effects.accept(revised.revision, &revised.settings) else {
-            return;
-        };
-        if previous.icon != revised.settings.icon {
-            crate::icon::show(&self.app, revised.settings.icon);
-        }
-        if previous.local_api != revised.settings.local_api {
-            self.runtime
-                .apply_settings(previous.local_api, revised.settings.local_api);
-        }
+    /// The service's local-API settings effect (ADR 0051) lands here, once per
+    /// saved revision and outside the settings lock.
+    pub(crate) fn apply_settings(&self, old: LocalApiSettings, new: LocalApiSettings) {
+        self.runtime.apply_settings(old, new);
     }
 
     pub(crate) fn status(&self) -> Result<LocalApiStatus, IpcError> {
@@ -76,12 +65,6 @@ fn local_error(error: LocalApiError) -> IpcError {
         LocalApiError::Token { path, source } => IpcError::io(ErrorCode::ProjectIo, path, source),
         error => IpcError::new(ErrorCode::Internal, error.to_string()),
     }
-}
-
-fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 #[cfg(test)]

@@ -6027,7 +6027,7 @@ fn settings_effect_runs_once_after_a_successful_set_and_never_after_a_refusal() 
     fs::create_dir_all(&root).unwrap();
     let path = root.join("settings.json");
     let calls = Arc::new(AtomicUsize::new(0));
-    let mut service = Service::new(Deps {
+    let service = Service::new(Deps {
         app_settings_path: Some(path.clone()),
         ..Deps::default()
     });

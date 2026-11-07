@@ -4,10 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex};
 
 use secs_types::compute::ComputePreference;
-use secs_types::ipc::{
-    AppIcon, AppSettings, ApplySettings, ErrorCode, IpcError, LocalApiSettings, Notice,
-    UpdatePolicy,
-};
+use secs_types::ipc::{AppSettings, ApplySettings, ErrorCode, IpcError, Notice, UpdatePolicy};
 use secs_types::rules::RECENT_PROJECTS_MAX;
 use serde::{Deserialize, Serialize};
 
@@ -40,7 +37,7 @@ pub struct AppSettingsStore {
     state: Mutex<State>,
     effects: Mutex<AppEffects>,
     effects_changed: Condvar,
-    registered: Vec<Arc<dyn SettingsEffect>>,
+    registered: Mutex<Vec<Arc<dyn SettingsEffect>>>,
 }
 
 impl std::fmt::Debug for AppSettingsStore {
@@ -49,7 +46,7 @@ impl std::fmt::Debug for AppSettingsStore {
             .debug_struct("AppSettingsStore")
             .field("path", &self.path)
             .field("state", &self.state)
-            .field("registered", &self.registered.len())
+            .field("registered", &lock(&self.registered).len())
             .finish_non_exhaustive()
     }
 }
@@ -89,21 +86,22 @@ impl AppSettingsStore {
                     settings,
                 }),
                 effects_changed: Condvar::new(),
-                registered: Vec::new(),
+                registered: Mutex::new(Vec::new()),
             },
             notice,
             warning,
         }
     }
 
-    pub fn register(&mut self, effect: Arc<dyn SettingsEffect>) {
-        self.registered.push(effect);
+    pub fn register(&self, effect: Arc<dyn SettingsEffect>) {
+        lock(&self.registered).push(effect);
     }
 
     pub fn get(&self) -> AppSettings {
         lock(&self.state).settings.clone()
     }
 
+    #[cfg(test)]
     pub fn revised(&self) -> RevisedAppSettings {
         let state = lock(&self.state);
         RevisedAppSettings {
@@ -165,7 +163,8 @@ impl AppSettingsStore {
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
         }
         let previous = effects.settings.clone();
-        for effect in &self.registered {
+        let registered = lock(&self.registered).clone();
+        for effect in &registered {
             effect.changed(&previous, &settings);
         }
         effects.revision = revision;
@@ -184,16 +183,6 @@ impl AppSettingsStore {
 
     pub fn updates(&self) -> UpdatePolicy {
         lock(&self.state).settings.updates
-    }
-
-    #[allow(dead_code)] // Used by the application effect adapter in ADR 0051 step 3.
-    pub fn local_api(&self) -> LocalApiSettings {
-        lock(&self.state).settings.local_api
-    }
-
-    #[allow(dead_code)] // Used by the application effect adapter in ADR 0051 step 3.
-    pub fn icon(&self) -> AppIcon {
-        lock(&self.state).settings.icon
     }
 }
 
@@ -457,7 +446,7 @@ mod tests {
 
     #[test]
     fn effects_run_once_per_revision_in_order_even_when_two_threads_interleave() {
-        let mut store = AppSettingsStore::open(None).store;
+        let store = AppSettingsStore::open(None).store;
         let calls_a = Arc::new(Mutex::new(Vec::new()));
         let calls_b = Arc::new(Mutex::new(Vec::new()));
         let entered = Arc::new((Mutex::new(false), Condvar::new()));
@@ -513,7 +502,7 @@ mod tests {
         let mut settings = AppSettings {
             compute: ComputePreference::Gpu,
             updates: UpdatePolicy::Notify,
-            icon: AppIcon::Civilian,
+            icon: secs_types::ipc::AppIcon::Civilian,
             ..AppSettings::default()
         };
         settings.apply.camilla.address = "127.0.0.1:2345".into();
@@ -522,7 +511,6 @@ mod tests {
         assert_eq!(store.apply(), settings.apply);
         assert_eq!(store.compute(), settings.compute);
         assert_eq!(store.updates(), settings.updates);
-        assert_eq!(store.local_api(), settings.local_api);
-        assert_eq!(store.icon(), settings.icon);
+        assert_eq!(store.get(), settings);
     }
 }

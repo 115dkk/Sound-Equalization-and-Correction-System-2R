@@ -12,7 +12,7 @@
 //! unless `SECS2R_SELF_TEST` armed one.
 
 use std::fmt;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 mod applog;
@@ -23,7 +23,7 @@ mod local_api;
 mod self_test;
 mod update;
 
-use secs_service::{AppEffects, Deps, EventSink, LocalTime, LogLevel, NoEvents, Service};
+use secs_service::{Deps, EventSink, LocalTime, LogLevel, NoEvents, Service, SettingsEffect};
 use secs_types::ipc::{Envelope, ErrorCode, IpcError, JobEvent, Request, Response};
 use tauri::{AppHandle, Manager, Webview, ipc::JavaScriptChannelId};
 
@@ -39,6 +39,48 @@ impl fmt::Debug for EventChannel {
 impl EventSink for EventChannel {
     fn send(&self, event: JobEvent) {
         let _ = self.0.send(event);
+    }
+}
+
+struct IconSettingsEffect(AppHandle);
+
+impl fmt::Debug for IconSettingsEffect {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("IconSettingsEffect")
+    }
+}
+
+impl SettingsEffect for IconSettingsEffect {
+    fn changed(
+        &self,
+        previous: &secs_types::ipc::AppSettings,
+        next: &secs_types::ipc::AppSettings,
+    ) {
+        if previous.icon != next.icon {
+            icon::show(&self.0, next.icon);
+        }
+    }
+}
+
+struct LocalApiSettingsEffect(AppHandle);
+
+impl fmt::Debug for LocalApiSettingsEffect {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("LocalApiSettingsEffect")
+    }
+}
+
+impl SettingsEffect for LocalApiSettingsEffect {
+    fn changed(
+        &self,
+        previous: &secs_types::ipc::AppSettings,
+        next: &secs_types::ipc::AppSettings,
+    ) {
+        if previous.local_api != next.local_api {
+            self.0
+                .state::<local_api::Manager>()
+                .apply_settings(previous.local_api, next.local_api);
+        }
     }
 }
 
@@ -242,17 +284,15 @@ fn main() {
                 local_api::Manager::new(config_dir, service.clone(), hub, handle, log.clone());
             app.manage(log);
             app.manage(service.clone());
-            app.manage(Mutex::new(AppEffects::default()));
             app.manage(local_api);
             app.manage(icon::Shown::default());
+            service.register_settings_effect(Arc::new(IconSettingsEffect(app.handle().clone())));
+            service
+                .register_settings_effect(Arc::new(LocalApiSettingsEffect(app.handle().clone())));
             if let Envelope::Ok(response) =
                 service.call(Request::AppSettingsGet, Arc::new(NoEvents))
                 && let Response::AppSettingsGet(settings) = *response
             {
-                *app.state::<Mutex<AppEffects>>()
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner()) =
-                    AppEffects::new(1, settings.clone());
                 updates.start(settings.updates);
                 icon::show(app.handle(), settings.icon);
                 app.state::<local_api::Manager>()
