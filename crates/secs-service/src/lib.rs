@@ -31,6 +31,7 @@ mod project_edit;
 mod results;
 mod session;
 mod settings_edit;
+pub mod update_machine;
 mod watch;
 
 use std::borrow::Cow;

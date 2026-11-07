@@ -21,6 +21,14 @@ tests = ["secs2r::update_policy_and_portable_decisions", "secs2r::update_endpoin
 note = "The managed service refuses an update source that is a link or junction (audit #155 TD-135); apps/secs2r-host/src/rules.rs pins it with Windows-only tests, update_source_refuses_an_existing_system_junction and update_source_refuses_an_existing_directory_symlink, that the Linux registry check cannot list."
 
 [[feature]]
+id = "update.machine"
+kind = "service"
+milestone = "M6"
+status = "implemented"
+upstream = "new; ADR 0020, ADR 0058"
+tests = ["secs-service::download_past_the_cap_cancels_and_fails_before_buffering_td204"]
+
+[[feature]]
 id = "ipc.update_status"
 kind = "ipc"
 milestone = "M6"
