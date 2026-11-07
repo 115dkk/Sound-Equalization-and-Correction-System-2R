@@ -773,3 +773,274 @@ mod tests {
         );
     }
 }
+
+/// Release-only timing hooks. This module exists only with `test-support`.
+pub mod perf {
+    use secs_compute::{Context, MemoryBudget, NoProgress};
+    use secs_dsp::Complex64 as C;
+    use secs_types::{calibration::CalibrationSettings, chain::Peq};
+    use std::sync::Arc;
+
+    use crate::{
+        Design, DesignRequest, EngineConfig, EngineError, FitterFactory, MeasurementSet, Tuning,
+        mimo::{MimoRequest, MimoRun},
+    };
+
+    pub use crate::chain::{BaRow, term};
+    pub use crate::fit::{FitRequest, fit_gd_cuts};
+    pub use crate::measurement::{Prepared, prepare};
+    pub use crate::setup::Setup;
+
+    pub const N_FFT: usize = crate::grid::N_FFT;
+
+    pub fn design_freqs() -> &'static [f64] {
+        crate::grid::design_freqs()
+    }
+
+    pub fn production_fitters(ctx: &Context) -> Box<FitterFactory<'_>> {
+        crate::design::production_fitters(ctx)
+    }
+
+    pub fn design_observed(
+        request: &DesignRequest<'_>,
+        ctx: &Context,
+        fitters: &FitterFactory<'_>,
+        observed: &(dyn Fn(&str, std::time::Duration) + Sync),
+    ) -> Result<Design, EngineError> {
+        crate::design::design_observed(request, ctx, fitters, observed)
+    }
+
+    pub fn input_response(
+        design: &Design,
+        role: &str,
+        spectra: &crate::measurement::Spectra,
+        position: u32,
+    ) -> Option<Vec<C>> {
+        crate::chain::input_response(design, role, spectra, position)
+    }
+
+    pub fn main_response<'a>(design: &'a Design, role: &str) -> Option<&'a [C]> {
+        design
+            .mains
+            .iter()
+            .find(|main| main.role == role)
+            .map(|main| main.response.as_ref())
+    }
+
+    pub fn main_after<'a>(design: &'a Design, role: &str) -> Option<&'a [C]> {
+        design
+            .mains
+            .iter()
+            .find(|main| main.role == role)
+            .map(|main| main.after.as_ref())
+    }
+
+    pub fn first_sub_profile(design: &Design) -> Option<(&[C], &BaRow)> {
+        let subs = design.subs.as_ref()?;
+        let (role, row) = subs.rows.first()?;
+        let response = design
+            .spectra
+            .used
+            .get(design.spectra.main_position, role)?;
+        Some((response.as_ref(), row))
+    }
+
+    pub fn score_metrics(h: &[C], f: &[f64], target: &[f64], norm: (f64, f64)) -> crate::Metrics {
+        crate::scorecard::metrics(h, f, target, norm)
+    }
+
+    pub fn mimo_convolve(a: &[f64], b: &[f64]) -> Vec<f64> {
+        crate::mimo::design::convolve(a, b)
+    }
+
+    pub fn mimo_normal_equations(
+        xs: &[Vec<f64>],
+        paths: &[Vec<Vec<f64>>],
+        taps: usize,
+        lambda: f64,
+        early_samples: usize,
+    ) -> (Vec<f64>, Vec<f64>) {
+        crate::mimo::design::normal_equations(xs, paths, taps, lambda, early_samples)
+    }
+
+    pub fn mimo_early_samples(milliseconds: f64) -> usize {
+        crate::mimo::design::early_samples(milliseconds)
+    }
+
+    pub struct MimoDesignInputResult(crate::mimo::design::InputResult);
+
+    impl MimoDesignInputResult {
+        pub fn trajectory_midpoints(&self) -> Vec<f64> {
+            self.0
+                .trace
+                .trajectory
+                .iter()
+                .map(|step| step.mid)
+                .collect()
+        }
+    }
+
+    impl std::fmt::Debug for MimoDesignInputResult {
+        fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            formatter
+                .debug_struct("MimoDesignInputResult")
+                .field("supports", &self.0.supports.len())
+                .field("trajectory", &self.0.trace.trajectory.len())
+                .finish_non_exhaustive()
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn mimo_design_input(
+        xs: &[Vec<f64>],
+        paths: &[Vec<Vec<f64>>],
+        direct: &[f64],
+        candidates: &[String],
+        request: &MimoRequest,
+        ctx: &Context,
+        observed: &dyn Fn(&str, std::time::Duration),
+    ) -> Result<MimoDesignInputResult, EngineError> {
+        crate::mimo::design::design_input_observed(
+            xs, paths, direct, candidates, request, ctx, observed,
+        )
+        .map(MimoDesignInputResult)
+    }
+
+    pub fn mimo_solve(
+        ata: &[f64],
+        atb: &[f64],
+        lambda: f64,
+        force_lu: bool,
+    ) -> Result<Vec<f64>, EngineError> {
+        crate::mimo::solve::solve(ata, atb, lambda, force_lu)
+    }
+
+    pub struct MimoRidgeSweep<'a>(crate::mimo::solve::RidgeSweep<'a>);
+
+    impl std::fmt::Debug for MimoRidgeSweep<'_> {
+        fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            formatter
+                .debug_struct("MimoRidgeSweep")
+                .finish_non_exhaustive()
+        }
+    }
+
+    impl<'a> MimoRidgeSweep<'a> {
+        pub fn new(ata: &'a [f64], atb: &'a [f64]) -> Self {
+            Self(crate::mimo::solve::RidgeSweep::new(ata, atb))
+        }
+
+        pub fn solve(&self, lambda: f64) -> Result<Vec<f64>, EngineError> {
+            self.0.solve(lambda)
+        }
+    }
+
+    pub struct MimoInputsResult(
+        crate::mimo::MimoDesign,
+        Vec<(String, crate::mimo::design::InputTrace)>,
+    );
+
+    impl std::fmt::Debug for MimoInputsResult {
+        fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            formatter
+                .debug_struct("MimoInputsResult")
+                .field("supports", &self.0.supports.len())
+                .field("inputs", &self.1.len())
+                .finish_non_exhaustive()
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn mimo_design_inputs_observed(
+        design: &Design,
+        measurements: &MeasurementSet,
+        config: &EngineConfig,
+        request: &MimoRequest,
+        ctx: &Context,
+        input: Option<&str>,
+        observed: &(dyn Fn(&str, std::time::Duration) + Sync),
+    ) -> Result<MimoInputsResult, EngineError> {
+        crate::mimo::design::design_mimo_inputs_observed(
+            design,
+            measurements,
+            config,
+            request,
+            ctx,
+            input,
+            observed,
+        )
+        .map(|(design, inputs)| MimoInputsResult(design, inputs))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn mimo_compute_observed(
+        design: &Design,
+        measurements: &MeasurementSet,
+        config: &EngineConfig,
+        settings: &CalibrationSettings,
+        tuning: &Tuning,
+        ctx: &Context,
+        observed: &(dyn Fn(&str, std::time::Duration) + Sync),
+    ) -> Result<MimoRun, EngineError> {
+        crate::mimo::run::compute_observed(
+            design,
+            measurements,
+            config,
+            settings,
+            tuning,
+            ctx,
+            observed,
+        )
+    }
+
+    #[derive(Debug)]
+    pub struct FitSeed {
+        pub bands: Vec<Peq>,
+        pub x0: Vec<f64>,
+        pub lb: Vec<f64>,
+        pub ub: Vec<f64>,
+    }
+
+    pub fn fit_seed(request: &FitRequest<'_>) -> FitSeed {
+        let seed = crate::fit::seed(request);
+        FitSeed {
+            bands: seed.bands,
+            x0: seed.x0,
+            lb: seed.lb,
+            ub: seed.ub,
+        }
+    }
+
+    pub struct FitResidualCache(crate::fit::ResidualCache);
+
+    impl std::fmt::Debug for FitResidualCache {
+        fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            formatter
+                .debug_struct("FitResidualCache")
+                .finish_non_exhaustive()
+        }
+    }
+
+    impl FitResidualCache {
+        pub fn new(grid: &[f64], bands: usize) -> Self {
+            Self(crate::fit::ResidualCache::new(grid, bands))
+        }
+
+        pub fn evaluate(&mut self, request: &FitRequest<'_>, x: &[f64]) -> Vec<f64> {
+            self.0.evaluate(request, x)
+        }
+    }
+
+    pub fn fit_result_bands(request: &FitRequest<'_>, x: &[f64]) -> Vec<Peq> {
+        crate::fit::result_bands(request, x)
+    }
+
+    pub fn unbounded_context(threads: usize) -> Context {
+        Context::new(
+            threads,
+            MemoryBudget::new(u64::MAX),
+            Arc::new(NoProgress),
+            secs_compute::CancelToken::new(),
+        )
+    }
+}
