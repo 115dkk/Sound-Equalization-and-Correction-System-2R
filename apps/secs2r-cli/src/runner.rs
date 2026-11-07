@@ -233,6 +233,7 @@ pub(crate) fn deps(deterministic: bool, compute: Option<ComputeChoice>) -> Deps 
             let now = SystemTime::now();
             LocalTime::from_system(now, secs_sys::clock::utc_offset_seconds(now))
         }),
+        clock_offset_seconds: Arc::new(|| secs_sys::clock::utc_offset_seconds(SystemTime::now())),
         ..Deps::default()
     };
     if deterministic {
@@ -242,16 +243,35 @@ pub(crate) fn deps(deterministic: bool, compute: Option<ComputeChoice>) -> Deps 
             next = next.wrapping_add(1);
             Ok(value)
         })));
-        deps.clock = Arc::new(|| LocalTime {
+        deterministic_clock(&mut deps);
+    }
+    deps
+}
+
+pub(crate) fn deterministic_clock(deps: &mut Deps) {
+    set_clock(
+        deps,
+        Arc::new(|| LocalTime {
             year: 2024,
             month: 1,
             day: 2,
             hour: 3,
             minute: 4,
             second: 5,
-        });
+        }),
+        Arc::new(|| 0),
         // 2024-01-02 03:04:05 UTC, the same instant as the fixed clock above.
-        deps.unix_ms = Arc::new(|| 1_704_164_645_000);
-    }
-    deps
+        Arc::new(|| 1_704_164_645_000),
+    );
+}
+
+pub(crate) fn set_clock(
+    deps: &mut Deps,
+    clock: Arc<dyn Fn() -> LocalTime + Send + Sync>,
+    clock_offset_seconds: Arc<dyn Fn() -> i32 + Send + Sync>,
+    unix_ms: Arc<dyn Fn() -> i64 + Send + Sync>,
+) {
+    deps.clock = clock;
+    deps.clock_offset_seconds = clock_offset_seconds;
+    deps.unix_ms = unix_ms;
 }

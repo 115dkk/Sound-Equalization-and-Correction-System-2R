@@ -450,7 +450,7 @@ mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
 
     use super::*;
-    use crate::runner::deps;
+    use crate::runner::{deps, set_clock};
     use secs_api::EngineBuilder;
 
     static TEMP: AtomicU64 = AtomicU64::new(0);
@@ -514,5 +514,62 @@ mod tests {
                 .contains("Include: SECS2R\\SECS.txt")
         );
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn cli_export_records_utc_under_a_nonzero_clock_offset_td152() {
+        use secs_service::LocalTime;
+
+        let root = std::env::temp_dir().join(format!(
+            "secs2r-cli-clock-{}-{}",
+            std::process::id(),
+            TEMP.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let mut injected = deps(true, None);
+        set_clock(
+            &mut injected,
+            Arc::new(|| LocalTime {
+                year: 2024,
+                month: 1,
+                day: 2,
+                hour: 12,
+                minute: 4,
+                second: 5,
+            }),
+            Arc::new(|| 32_400),
+            Arc::new(|| 1_704_164_645_000),
+        );
+        injected.app_data_path = root.join("app-data");
+        let mut runner = Runner {
+            engine: EngineBuilder::from_deps(injected).build(),
+            ok: true,
+        };
+        runner.call(Request::ProjectNew(ProjectNewParams {
+            path: root.join("room.secs").to_string_lossy().into_owned(),
+            preset: "2.0".into(),
+            sub_count: 0,
+            sample: true,
+            tutorial: false,
+        }));
+        runner.call(Request::SampleLoad(SampleLoadParams::default()));
+        runner.calibrate(None, false);
+        let output = root.join("export");
+        runner.export(
+            ExportKind::EqualizerApo,
+            &output,
+            None,
+            None,
+            None,
+            Vec::new(),
+        );
+        assert!(runner.ok);
+        let manifest: serde_json::Value =
+            serde_json::from_slice(&fs::read(output.join("secs-design.json")).unwrap()).unwrap();
+        let created = manifest["created_utc"].clone();
+        let last_export = runner.engine.service().status().last_export.unwrap().time;
+        fs::remove_dir_all(root).unwrap();
+        assert_eq!(created, "2024-01-02T03:04:05.000Z");
+        assert_eq!(last_export, "2024-01-02T03:04:05Z");
     }
 }
