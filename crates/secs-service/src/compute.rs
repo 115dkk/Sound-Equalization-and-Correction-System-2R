@@ -4,7 +4,7 @@ use secs_types::compute::{ComputeBackend, ComputePreference, ComputeReason, Comp
 use secs_types::ipc::{ErrorCode, IpcError};
 use serde::{Deserialize, Serialize};
 
-use crate::{Service, lock};
+use crate::Service;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct ComputeIdentity {
@@ -61,7 +61,7 @@ impl Service {
         let preference = self
             .deps
             .compute_override
-            .unwrap_or_else(|| lock(&self.app_settings).compute);
+            .unwrap_or_else(|| self.app_settings.compute());
         (self.deps.acceleration)(preference)
     }
 

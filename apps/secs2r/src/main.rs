@@ -178,12 +178,6 @@ fn main() {
                 second: Arc::new(log.clone()),
             });
             let service_log = log.clone();
-            let settings_app = handle.clone();
-            let on_app_settings = Arc::new(move |revised| {
-                settings_app
-                    .state::<local_api::Manager>()
-                    .apply_revision(settings_app.state::<Mutex<AppEffects>>().inner(), revised);
-            });
             let service = Arc::new(Service::new(Deps {
                 app_version: env!("CARGO_PKG_VERSION").into(),
                 acceleration: Arc::new(secs_gpu::select),
@@ -214,7 +208,6 @@ fn main() {
                 apply: Arc::new(apply::NativeApply),
                 managed_host: Arc::new(apply::NativeManagedHost),
                 updates: updates.clone(),
-                on_app_settings,
                 ..Deps::default()
             }));
             let start_service = service.clone();

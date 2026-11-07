@@ -1886,7 +1886,7 @@ tests = [
   "secs-types::method_names_match_the_wire",
   "secs-types::old_app_settings_without_local_api_use_the_disabled_default",
   "secs-service::observer_receives_every_caller_event_in_the_same_order",
-  "secs-service::on_app_settings_runs_once_after_a_successful_set_and_never_after_a_refusal",
+  "secs-service::settings_effect_runs_once_after_a_successful_set_and_never_after_a_refusal",
   "secs-service::oracle_project_calibrates_recommends_xo_and_exports",
   "secs-local-api::authentication_host_origin_and_body_limit_are_enforced",
   "secs-local-api::slow_reader_receives_lagged_before_the_1013_close_td161",
@@ -1919,7 +1919,7 @@ id = "service.app_settings"
 kind = "service"
 milestone = "M5"
 status = "implemented"
-tests = ["secs-service::app_settings_are_versioned_bounded_and_capped", "secs-service::legacy_expert_preference_is_ignored_without_resetting_other_settings", "secs-service::newer_app_settings_win_when_older_effects_finish_late_td115", "secs-service::effects_compare_with_the_last_applied_settings_td115"]
+tests = ["secs-service::app_settings_are_versioned_bounded_and_capped", "secs-service::legacy_expert_preference_is_ignored_without_resetting_other_settings", "secs-service::open_without_a_file_starts_from_defaults_without_a_notice", "secs-service::set_increments_the_revision_and_writes_atomically_and_a_rejected_value_changes_nothing", "secs-service::effects_run_once_per_revision_in_order_even_when_two_threads_interleave", "secs-service::typed_readers_return_the_stored_fields_and_apply_settings_set_touches_nothing_else", "secs-service::app_settings_writes_are_serialized_with_memory_and_bounded_by_the_read_cap"]
 note = "versioned bounded data-only JSON, injected path or in-memory storage"
 
 [[feature]]

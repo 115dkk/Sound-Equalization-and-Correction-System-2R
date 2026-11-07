@@ -10,15 +10,13 @@ use secs_project::{
 use secs_types::calibration::{CalibrationSettings, mode_params};
 use secs_types::ipc::*;
 use secs_types::role::{role_group, role_label};
-use secs_types::rules::{ARRANGEMENT_COUNTS, CONFIG_GROUPS, RECENT_PROJECTS_MAX};
-use serde::{Deserialize, Serialize};
+use secs_types::rules::{ARRANGEMENT_COUNTS, CONFIG_GROUPS};
 
 use crate::measure::json::JsonExt;
 use crate::measure::store_devices;
 use crate::{Service, lock, session};
 
 const FILE_LIMIT: u64 = 1024 * 1024;
-const APP_SETTINGS_VERSION: u32 = 1;
 
 fn invalid(field: &str, detail: impl Into<String>) -> IpcError {
     IpcError::new(ErrorCode::InvalidRequest, detail).with_param("field", field)
@@ -761,74 +759,21 @@ impl Service {
     }
 
     pub(crate) fn app_settings_get(&self) -> AppSettings {
-        lock(&self.app_settings).clone()
+        self.app_settings.get()
     }
 
     /// Returns settings and the revision assigned to their successful save.
     pub fn revised_app_settings(&self) -> crate::RevisedAppSettings {
-        let settings = lock(&self.app_settings);
-        crate::RevisedAppSettings {
-            revision: self
-                .app_settings_revision
-                .load(std::sync::atomic::Ordering::SeqCst),
-            settings: settings.clone(),
-        }
+        self.app_settings.revised()
     }
 
     pub(crate) fn app_settings_set(
         &self,
-        mut params: AppSettingsParams,
+        params: AppSettingsParams,
     ) -> Result<AppSettings, IpcError> {
-        params
-            .settings
-            .recent_projects
-            .truncate(RECENT_PROJECTS_MAX);
-        if let Some((width, height)) = params.settings.last_window_size
-            && (width == 0 || height == 0)
-        {
-            return Err(invalid(
-                "last_window_size",
-                "window dimensions must be positive",
-            ));
-        }
-        let bytes = serde_json::to_vec_pretty(&AppSettingsFile {
-            version: APP_SETTINGS_VERSION,
-            settings: params.settings.clone(),
-        })
-        .map_err(|error| invalid("settings", error.to_string()))?;
-        // Saved settings above the read cap would be dropped at the next start.
-        if bytes.len() as u64 > FILE_LIMIT {
-            return Err(invalid("settings", "settings exceed 1 MiB"));
-        }
-        if let Some(path) = self.deps.app_settings_path.as_deref() {
-            refuse_newer_app_settings(path)?;
-        }
-        // One critical section for the file and memory, so what is read now
-        // is what a restart restores even when requests run in parallel (TD-39).
-        let mut current = lock(&self.app_settings);
-        let revision = self
-            .app_settings_revision
-            .try_update(
-                std::sync::atomic::Ordering::SeqCst,
-                std::sync::atomic::Ordering::SeqCst,
-                |revision| revision.checked_add(1),
-            )
-            .map(|revision| revision + 1)
-            .map_err(|_| IpcError::new(ErrorCode::Internal, "app settings revision exhausted"))?;
-        if let Some(path) = self.deps.app_settings_path.as_deref() {
-            atomic_write(path, &bytes)?;
-        }
-        *current = params.settings.clone();
-        drop(current);
-        let mut effects = lock(&self.app_effects);
-        if let Some(previous) = effects.accept(revision, &params.settings)
-            && previous.updates != params.settings.updates
-        {
-            self.deps.updates.set_policy(params.settings.updates);
-        }
-        drop(effects);
-        (self.deps.on_app_settings)(self.revised_app_settings());
-        Ok(params.settings)
+        self.app_settings
+            .set(params.settings)
+            .map(|revised| revised.settings)
     }
 
     /// Opens `releases/tag/v<version>` of this repository. Only a plain
@@ -848,98 +793,9 @@ impl Service {
         mut status: secs_types::ipc::UpdateStatus,
     ) -> secs_types::ipc::UpdateStatus {
         status.current = self.deps.app_version.to_string();
-        status.policy = self.app_settings_get().updates;
+        status.policy = self.app_settings.updates();
         status
     }
-}
-
-#[derive(Serialize, Deserialize)]
-struct AppSettingsFile {
-    version: u32,
-    settings: AppSettings,
-}
-
-#[derive(Deserialize)]
-struct AppSettingsVersion {
-    version: u32,
-}
-
-fn refuse_newer_app_settings(path: &Path) -> Result<(), IpcError> {
-    if !path.exists() {
-        return Ok(());
-    }
-    // A file this app cannot read (denied, or over the size bound) may well be
-    // a newer version's; refuse to replace it. Damaged JSON is the one case an
-    // explicit set may overwrite (TD-169, audit #186 A-14).
-    let bytes = read_bounded(path).map_err(|error| {
-        IpcError::new(
-            ErrorCode::Unsupported,
-            format!("existing settings could not be read: {}", error.detail),
-        )
-        .with_param("path", path.to_string_lossy())
-        .with_param("reason", "settings_unreadable")
-    })?;
-    let Ok(file) = serde_json::from_slice::<AppSettingsVersion>(&bytes) else {
-        return Ok(());
-    };
-    if file.version > APP_SETTINGS_VERSION {
-        return Err(IpcError::new(
-            ErrorCode::Unsupported,
-            "settings were written by a newer app version",
-        )
-        .with_param("path", path.to_string_lossy())
-        .with_param("reason", "newer_version")
-        .with_param("version", file.version.to_string()));
-    }
-    Ok(())
-}
-
-pub(crate) fn load_app_settings(path: Option<&Path>) -> (AppSettings, Option<String>) {
-    let Some(path) = path else {
-        return (AppSettings::default(), None);
-    };
-    if !path.exists() {
-        return (AppSettings::default(), None);
-    }
-    let bytes = match read_bounded(path) {
-        Ok(bytes) => bytes,
-        Err(error) => {
-            return (
-                AppSettings::default(),
-                Some(format!(
-                    "could not read settings file {}: {}",
-                    path.display(),
-                    error.detail
-                )),
-            );
-        }
-    };
-    let file = match serde_json::from_slice::<AppSettingsFile>(&bytes) {
-        Ok(file) => file,
-        Err(error) => {
-            return (
-                AppSettings::default(),
-                Some(format!(
-                    "could not parse settings file {}: {error}",
-                    path.display()
-                )),
-            );
-        }
-    };
-    if file.version != APP_SETTINGS_VERSION {
-        return (
-            AppSettings::default(),
-            Some(format!(
-                "unsupported settings version {} in {} (supported version {})",
-                file.version,
-                path.display(),
-                APP_SETTINGS_VERSION
-            )),
-        );
-    }
-    let mut settings = file.settings;
-    settings.recent_projects.truncate(RECENT_PROJECTS_MAX);
-    (settings, None)
 }
 
 /// `MAJOR.MINOR.PATCH`, optionally followed by `-` and dot-separated

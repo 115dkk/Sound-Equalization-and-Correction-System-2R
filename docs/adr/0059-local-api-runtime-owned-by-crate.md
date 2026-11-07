@@ -59,6 +59,8 @@ Tauri 앱의 `local_api.rs`는 `Runtime`을 만들고 `on_change`에 `app.emit("
 
 `Deps`에 `on_app_settings: Arc<dyn Fn(RevisedAppSettings) + Send + Sync>`(기본은 아무 일도 하지 않음)를 추가하고, `project_edit.rs`의 `app_settings_set`이 저장에 성공한 뒤 `revised_app_settings()`로 그것을 부릅니다. 앱은 이 관찰자 하나에서 `AppEffects::accept`로 판을 걸러 `icon::show`와 `Runtime::apply_settings`를 부릅니다. `main.rs:74-80`의 응답 검사와 `local_api.rs:145-155`의 재적용 스레드는 지웁니다. A10(ADR 0051, 앱 설정 저장소 하나)과 같은 자리이므로 둘 가운데 먼저 들어오는 쪽이 이 관찰자를 만들고 나머지는 그것을 씁니다.
 
+이 ADR이 먼저 들어와 `Deps.on_app_settings`를 만들었고, 그다음 A10의 `AppSettingsStore`가 들어오면서 관찰자는 ADR 0051의 `Service::register_settings_effect`로 합쳐졌습니다. 앱은 `SettingsEffect` 구현 둘(아이콘, 로컬 API)을 등록하고, `Deps.on_app_settings`, `RevisedAppSettings`, `AppEffects`는 없습니다. 아래 `secs-service` 시험은 그 등록 위에서 같은 규칙을 확인합니다.
+
 ## 시험
 
 깊어진 interface인 `Runtime`에서 먼저 씁니다. 모두 `crates/secs-local-api/tests/local_api.rs`에 들어가고 실제 루프백 소켓을 씁니다.
@@ -68,7 +70,7 @@ Tauri 앱의 `local_api.rs`는 `Runtime`을 만들고 `on_change`에 `app.emit("
 - `regenerate_token` → 토큰 파일이 새 값이고 옛 토큰의 요청은 401, 새 토큰은 200입니다.
 - TD-214: 10초 자는 서비스 호출(`FakeHost`로 막는 요청)이 진행 중일 때 `apply_settings`로 끄면 `stop`이 3초 안에 돌아오고 포트가 닫혀 있습니다.
 - 토큰 폴더를 읽기 전용으로 만들면 `status()`가 `LocalApiError::Token`이고, 앱의 변환이 `PermissionDenied`입니다(`secs-service`의 `Host` 경로 시험).
-- `secs-service`: `app_settings_set`이 성공한 뒤에만 `on_app_settings`가 한 번 불리고, 거절된 설정에서는 불리지 않습니다.
+- `secs-service`: `app_settings_set`이 성공한 뒤에만 등록된 `SettingsEffect`가 한 번 불리고, 거절된 설정에서는 불리지 않습니다(`settings_effect_runs_once_after_a_successful_set_and_never_after_a_refusal`).
 
 ## 이행
 

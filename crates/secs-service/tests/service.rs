@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
-use secs_service::{Deps, EventSink, LocalTime, LogLevel, NoEvents, Service};
+use secs_service::{Deps, EventSink, LocalTime, LogLevel, NoEvents, Service, SettingsEffect};
 use secs_types::ipc::{Envelope, ErrorCode, JobEvent, ProjectNewParams, Request};
 use sha2::{Digest, Sha256};
 
@@ -5985,22 +5985,30 @@ fn calibration_summary_notes_are_scalar_records_td162() {
     fs::remove_dir_all(root).unwrap();
 }
 
+/// ADR 0059 and ADR 0051 share this seam: an application effect registered
+/// on the service runs once after a saved revision and never after a refusal.
 #[test]
-fn on_app_settings_runs_once_after_a_successful_set_and_never_after_a_refusal() {
+fn settings_effect_runs_once_after_a_successful_set_and_never_after_a_refusal() {
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[derive(Debug)]
+    struct CountingEffect(Arc<AtomicUsize>);
+
+    impl SettingsEffect for CountingEffect {
+        fn changed(&self, _previous: &AppSettings, _next: &AppSettings) {
+            self.0.fetch_add(1, Ordering::SeqCst);
+        }
+    }
 
     let root = temp_root("app-settings-observer");
     fs::create_dir_all(&root).unwrap();
     let path = root.join("settings.json");
     let calls = Arc::new(AtomicUsize::new(0));
-    let observed = calls.clone();
-    let service = Service::new(Deps {
+    let mut service = Service::new(Deps {
         app_settings_path: Some(path.clone()),
-        on_app_settings: Arc::new(move |_| {
-            observed.fetch_add(1, Ordering::SeqCst);
-        }),
         ..Deps::default()
     });
+    service.register_settings_effect(Arc::new(CountingEffect(calls.clone())));
 
     let accepted = service.call(
         Request::AppSettingsSet(AppSettingsParams {
@@ -6014,18 +6022,12 @@ fn on_app_settings_runs_once_after_a_successful_set_and_never_after_a_refusal() 
     assert!(matches!(accepted, Envelope::Ok(_)));
     assert_eq!(calls.load(Ordering::SeqCst), 1);
 
-    fs::write(
-        &path,
-        serde_json::to_vec(&serde_json::json!({
-            "version": 2,
-            "settings": AppSettings::default(),
-        }))
-        .unwrap(),
-    )
-    .unwrap();
     let refused = service.call(
         Request::AppSettingsSet(AppSettingsParams {
-            settings: AppSettings::default(),
+            settings: AppSettings {
+                last_window_size: Some((0, 720)),
+                ..AppSettings::default()
+            },
         }),
         Arc::new(NoEvents),
     );

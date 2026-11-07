@@ -6,7 +6,7 @@ use std::time::Duration;
 use secs_types::ipc::*;
 
 use crate::export_plan::ExportPurpose;
-use crate::{ApplyAdapter, EventSink, LogLevel, LogSink, Service, lock, results::MimoView};
+use crate::{ApplyAdapter, EventSink, LogLevel, LogSink, Service, results::MimoView};
 
 const TIMEOUT: Duration = Duration::from_secs(2);
 const EQAPO_FOLDER: &str = "SECS2R";
@@ -17,7 +17,7 @@ const RETAINED_GENERATIONS: &str = "secs-retained-generations.txt";
 impl Service {
     pub(crate) fn apply_status(&self) -> Result<ApplyStatus, IpcError> {
         let current = self.current_design_identity();
-        let address = lock(&self.app_settings).apply.camilla.address.clone();
+        let address = self.app_settings.apply().camilla.address;
         let camilla = match self.deps.apply.camilla_status(&address, TIMEOUT) {
             Ok(status) => {
                 let design = match (&current, &status.title, &status.description) {
@@ -70,7 +70,7 @@ impl Service {
         params: ApplyCamillaParams,
         events: Arc<dyn EventSink>,
     ) -> Result<JobStarted, IpcError> {
-        let settings = lock(&self.app_settings).apply.camilla.clone();
+        let settings = self.app_settings.apply().camilla;
         let managed_exe = if settings.level == ApplyLevel::Manage {
             Some(
                 settings
@@ -243,7 +243,7 @@ impl Service {
         &self,
         events: Arc<dyn EventSink>,
     ) -> Result<JobStarted, IpcError> {
-        let settings = lock(&self.app_settings).apply.eqapo.clone();
+        let settings = self.app_settings.apply().eqapo;
         check_level(settings.level, "equalizer_apo")?;
         let install = (self.deps.eqapo_install)().ok_or_else(|| {
             IpcError::new(ErrorCode::Unsupported, "Equalizer APO is not installed")
@@ -372,9 +372,9 @@ impl Service {
         settings: ApplySettings,
     ) -> Result<ApplySettings, IpcError> {
         validate_address(&settings.camilla.address)?;
-        let mut app = lock(&self.app_settings).clone();
+        let mut app = self.app_settings.get();
         app.apply = settings.clone();
-        self.app_settings_set(AppSettingsParams { settings: app })?;
+        self.app_settings.set(app)?;
         Ok(settings)
     }
 
