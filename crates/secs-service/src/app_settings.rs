@@ -35,7 +35,7 @@ pub trait SettingsEffect: Send + Sync + std::fmt::Debug {
 }
 
 /// One owner for the settings file, in-memory revision, typed reads and effects.
-pub struct AppSettingsStore {
+pub(crate) struct AppSettingsStore {
     path: Option<PathBuf>,
     state: Mutex<State>,
     effects: Mutex<AppEffects>,
@@ -56,7 +56,7 @@ impl std::fmt::Debug for AppSettingsStore {
 
 /// Result of opening the application settings.
 #[derive(Debug)]
-pub struct Opened {
+pub(crate) struct Opened {
     pub store: AppSettingsStore,
     pub notice: Option<Notice>,
     pub(crate) warning: Option<String>,
