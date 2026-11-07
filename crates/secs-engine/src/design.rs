@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 
-use secs_compute::Context;
+use secs_compute::{Context, StageProgress};
 use secs_dsp::{
     grid::geomspace,
     interp, response,
@@ -12,7 +12,7 @@ use secs_dsp::{
 };
 use secs_types::{
     calibration::RcHiBasis,
-    chain::{BandType, MainChannel, MimoPaths, SignalChain, SubChannel},
+    chain::{BandType, MainChannel, MimoPaths, Peq, SignalChain, SubChannel},
     target::TargetCurve,
 };
 
@@ -560,21 +560,21 @@ fn design_prepared_scored(
                 "RC agreement requires at least 3 measured positions; found {count}"
             )));
         }
-        let (probe, limits) = design_pass(
+        let (probe, limits) = design_pass(PassContext {
             req,
             ctx,
             fitters,
             prepared,
             observed,
-            false,
+            include_scores: false,
             reserve,
             schroeder,
-            RcPass::Probe,
-        )?;
+            pass: RcPass::Probe,
+        })?;
         let limit = levels::median(limits).clamp(100.0, 2000.0);
         drop(probe);
         ctx.cancel().check()?;
-        return design_pass(
+        return design_pass(PassContext {
             req,
             ctx,
             fitters,
@@ -583,11 +583,11 @@ fn design_prepared_scored(
             include_scores,
             reserve,
             schroeder,
-            RcPass::Final(limit),
-        )
+            pass: RcPass::Final(limit),
+        })
         .map(|(design, _)| design);
     }
-    design_pass(
+    design_pass(PassContext {
         req,
         ctx,
         fitters,
@@ -596,8 +596,8 @@ fn design_prepared_scored(
         include_scores,
         reserve,
         schroeder,
-        RcPass::Normal,
-    )
+        pass: RcPass::Normal,
+    })
     .map(|(design, _)| design)
 }
 
@@ -619,36 +619,79 @@ enum RcPass {
     Final(f64),
 }
 
-#[allow(clippy::too_many_arguments)]
-fn design_pass(
-    req: &DesignRequest<'_>,
-    ctx: &Context,
-    fitters: &FitterFactory<'_>,
-    prepared: &measurement::Prepared,
-    observed: &(dyn Fn(&str, std::time::Duration) + Sync),
+struct PassContext<'a, 'req, 'fit> {
+    req: &'a DesignRequest<'req>,
+    ctx: &'a Context,
+    fitters: &'a FitterFactory<'fit>,
+    prepared: &'a measurement::Prepared,
+    observed: &'a (dyn Fn(&str, std::time::Duration) + Sync),
     include_scores: bool,
     reserve: ChannelBytes,
     schroeder: levels::Schroeder,
     pass: RcPass,
-) -> Result<(Design, Vec<f64>), EngineError> {
-    ctx.cancel().check()?;
-    check_taps(req.config)?;
-    check_input_hp(req.config)?;
-    let config = req.config;
-    let mut setup = Setup::new(config);
-    if matches!(pass, RcPass::Probe) {
-        setup.rc_bands.clear();
-        setup.lf_align = false;
-        setup.mode_decay = false;
-        setup.hf_phase = false;
-    }
-    let positions = prepared.h.positions().to_vec();
-    let progress = ctx.stage("engine.design", 1 + config.mains.len() as u64);
-    let mut notes = Vec::new();
-    let run_final_checks = !req.subs_only && !matches!(pass, RcPass::Probe);
+}
+
+struct LevelStage {
+    positions: Vec<u32>,
+    rc_auto: bool,
+    schroeder_hz: Option<f64>,
+    rc_bands: Vec<(f64, f64)>,
+    xo_of: Vec<(String, f64)>,
+    weights: Vec<f64>,
+    levels: Vec<(String, f64)>,
+    ref_level: f64,
+}
+
+struct BaStage {
+    alignment: ba::SubAlignment,
+    used: Spectra,
+    top_peq: Vec<(String, Vec<Peq>)>,
+    top_responses: Vec<(String, Arc<[C]>)>,
+    bus_delay_ms: f64,
+    bus_polarity: i8,
+    rows: Vec<BaRow>,
+    shift: f64,
+    #[cfg(test)]
+    ba_elapsed: std::time::Duration,
+    #[cfg(test)]
+    top_elapsed: std::time::Duration,
+}
+
+struct RcStage {
+    channels: Vec<MainChannel>,
+    mains: Vec<MainDesign>,
+    agreement_limits: Vec<f64>,
+    #[cfg(test)]
+    timings: Vec<(String, std::time::Duration)>,
+}
+
+struct SubStage {
+    channels: Vec<SubChannel>,
+    design: Option<SubDesign>,
+    bus_peq: Vec<Peq>,
+    used: Spectra,
+    shift: f64,
+    latency_ms: f64,
+}
+
+struct ScoreStage {
+    scores: Vec<RoleScores>,
+    target_db: Arc<[f64]>,
+    spl_grid: Vec<f64>,
+    #[cfg(test)]
+    elapsed: std::time::Duration,
+}
+
+fn polarity_stage(
+    pass: &PassContext<'_, '_, '_>,
+    setup: &Setup,
+    run_final_checks: bool,
+    notes: &mut Vec<Note>,
+) {
+    let config = pass.req.config;
     if run_final_checks {
         notes.extend(crate::polarity::check(
-            req.measurements,
+            pass.req.measurements,
             &config.mains,
             config.main_position,
         ));
@@ -682,16 +725,25 @@ fn design_pass(
                 .collect(),
         });
     }
+}
+
+fn levels_stage(
+    pass: &PassContext<'_, '_, '_>,
+    setup: &mut Setup,
+    positions: Vec<u32>,
+    notes: &mut Vec<Note>,
+) -> Result<LevelStage, EngineError> {
+    let config = pass.req.config;
     let rc_auto = setup.rc_hi_manual.is_none();
-    let schroeder_hz = schroeder.strict;
-    let lenient = schroeder.lenient;
+    let schroeder_hz = pass.schroeder.strict;
+    let lenient = pass.schroeder.lenient;
     if rc_auto {
         if !matches!(config.rc_hi_transition, 1 | 2 | 4) {
             return Err(EngineError::Input(
                 "RC transition factor must be 1, 2 or 4".into(),
             ));
         }
-        setup.rc_hi = match pass {
+        setup.rc_hi = match pass.pass {
             RcPass::Probe => 2000.0,
             RcPass::Final(hz) => hz,
             RcPass::Normal => {
@@ -708,7 +760,7 @@ fn design_pass(
         band_hz: lenient.map(|v| v.0),
         band_t60_s: lenient.map(|v| v.1),
         positions: (rc_auto && config.rc_hi_basis == RcHiBasis::Agreement)
-            .then(|| agreement_positions(req.measurements, config)),
+            .then(|| agreement_positions(pass.req.measurements, config)),
     });
     let rc_bands = if setup.rc_bands.is_empty() {
         Vec::new()
@@ -725,64 +777,91 @@ fn design_pass(
     let xo_of: Vec<_> = config
         .groups
         .iter()
-        .filter(|(g, _)| g != "sub")
-        .flat_map(|(g, roles)| {
-            roles.iter().filter_map(move |r| {
+        .filter(|(group, _)| group != "sub")
+        .flat_map(|(group, roles)| {
+            roles.iter().filter_map(move |role| {
                 (!config.subs.is_empty())
-                    .then(|| RoleMap::get_from(&config.xo, g))
+                    .then(|| RoleMap::get_from(&config.xo, group))
                     .flatten()
                     .copied()
                     .filter(|xo| *xo != 0.0)
-                    .map(|xo| (r.clone(), xo))
+                    .map(|xo| (role.clone(), xo))
             })
         })
         .collect();
     let weights = levels::weights(&positions, config.main_position);
-    let levels: Vec<_> = config
+    let channel_levels: Vec<_> = config
         .mains
         .iter()
-        .filter(|r| prepared.h.get(config.main_position, r).is_some())
-        .map(|r| {
+        .filter(|role| pass.prepared.h.get(config.main_position, role).is_some())
+        .map(|role| {
             (
-                r.clone(),
-                levels::band_level(&prepared.h, r, &weights, &config.target, 300.0, 3000.0),
+                role.clone(),
+                levels::band_level(
+                    &pass.prepared.h,
+                    role,
+                    &weights,
+                    &config.target,
+                    300.0,
+                    3000.0,
+                ),
             )
         })
         .collect();
-    let ref_level = levels
+    let ref_level = channel_levels
         .iter()
-        .map(|(_, v)| *v)
+        .map(|(_, value)| *value)
         .reduce(f64::min)
         .ok_or_else(|| EngineError::Input("no measured main".into()))?;
-    let input = BaInput {
-        measurements: req.measurements,
-        prepared,
-        setup: &setup,
-        config,
-        tuning: req.tuning,
-        xo_of: &xo_of,
+    Ok(LevelStage {
+        positions,
+        rc_auto,
+        schroeder_hz,
+        rc_bands,
+        xo_of,
+        weights,
+        levels: channel_levels,
         ref_level,
-        cancel: ctx.cancel(),
+    })
+}
+
+fn ba_stage(
+    pass: &PassContext<'_, '_, '_>,
+    setup: &Setup,
+    level: &LevelStage,
+    progress: &StageProgress<'_>,
+    notes: &mut Vec<Note>,
+) -> Result<BaStage, EngineError> {
+    let config = pass.req.config;
+    let input = BaInput {
+        measurements: pass.req.measurements,
+        prepared: pass.prepared,
+        setup,
+        config,
+        tuning: pass.req.tuning,
+        xo_of: &level.xo_of,
+        ref_level: level.ref_level,
+        cancel: pass.ctx.cancel(),
     };
     let ba_started = std::time::Instant::now();
-    let mut ba_fitter = fitters(FitStage::Ba);
+    let mut ba_fitter = (pass.fitters)(FitStage::Ba);
     let alignment = ba::align(&input, &mut *ba_fitter)?;
-    ctx.cancel().check()?;
+    pass.ctx.cancel().check()?;
     #[cfg(test)]
-    let mut timings = vec![("BA".into(), ba_started.elapsed())];
+    let ba_timing = ba_started.elapsed();
     notes.extend(alignment.notes.clone());
     progress.advance(1);
     let ba_elapsed = ba_started.elapsed();
-    let mut used = prepared.h.clone();
-    for (p, r, h) in &alignment.h_subs {
-        used.set(*p, r, h.clone());
+    let mut used = pass.prepared.h.clone();
+    for (position, role, response) in &alignment.h_subs {
+        used.set(*position, role, response.clone());
     }
     let top_started = std::time::Instant::now();
     let mut top_peq = Vec::new();
     let mut top_responses = Vec::new();
-    if !config.subs.is_empty() && req.tuning.xo_stage {
-        for (role, xo) in &xo_of {
-            ctx.cancel().check()?;
+    if !config.subs.is_empty() && pass.req.tuning.xo_stage {
+        for (role, xo) in &level.xo_of {
+            pass.ctx.cancel().check()?;
             let lo = if config.xo_peq_lo_hz == 0.0 {
                 xo / 2.0
             } else {
@@ -796,38 +875,53 @@ fn design_pass(
             if !config.xo_peq_on || hi <= lo {
                 continue;
             }
-            let level = *RoleMap::get_from(&levels, role).ok_or_else(|| {
+            let channel_level = *RoleMap::get_from(&level.levels, role).ok_or_else(|| {
                 EngineError::Input(format!("XO role {role} missing at reference"))
             })?;
-            let gain = C::new(10f64.powf((ref_level - level) / 20.0), 0.0);
-            let by_pos: Vec<_> = positions
+            let gain = C::new(10f64.powf((level.ref_level - channel_level) / 20.0), 0.0);
+            let by_pos: Vec<_> = level
+                .positions
                 .iter()
-                .zip(&weights)
-                .filter_map(|(&p, &w)| {
-                    used.get(p, role)
-                        .map(|h| (w, h.iter().map(|v| v * gain).collect::<Vec<_>>()))
+                .zip(&level.weights)
+                .filter_map(|(&position, &weight)| {
+                    used.get(position, role).map(|response| {
+                        (
+                            weight,
+                            response
+                                .iter()
+                                .map(|value| value * gain)
+                                .collect::<Vec<_>>(),
+                        )
+                    })
                 })
                 .collect();
-            let weighted: Vec<_> = by_pos.iter().map(|(w, h)| (*w, h.as_slice())).collect();
+            let weighted: Vec<_> = by_pos
+                .iter()
+                .map(|(weight, response)| (*weight, response.as_slice()))
+                .collect();
             let peq = fit::xo_target_peq(
                 &weighted,
                 &config.target,
-                ref_level,
+                level.ref_level,
                 lo,
                 hi,
                 6,
                 config.max_boost_db.min(6.0),
                 Some(hi),
-                &mut *fitters(FitStage::Top(role)),
+                &mut *(pass.fitters)(FitStage::Top(role)),
             );
-            ctx.cancel().check()?;
+            pass.ctx.cancel().check()?;
             let response: Arc<[C]> = response::peq_response(design_freqs(), &peq).into();
-            for &p in &positions {
-                if let Some(h) = used.get(p, role) {
+            for &position in &level.positions {
+                if let Some(measured) = used.get(position, role) {
                     used.set(
-                        p,
+                        position,
                         role,
-                        h.iter().zip(response.iter()).map(|(h, p)| h * p).collect(),
+                        measured
+                            .iter()
+                            .zip(response.iter())
+                            .map(|(measured, correction)| measured * correction)
+                            .collect(),
                     );
                 }
             }
@@ -836,8 +930,8 @@ fn design_pass(
         }
     }
     #[cfg(test)]
-    timings.push(("top PEQ".into(), top_started.elapsed()));
-    observed("top", top_started.elapsed());
+    let top_timing = top_started.elapsed();
+    (pass.observed)("top", top_started.elapsed());
     let bus_started = std::time::Instant::now();
     let (bus_delay_ms, bus_polarity) = if config.subs.is_empty() {
         (0.0, 1)
@@ -845,19 +939,28 @@ fn design_pass(
         let earliest = alignment
             .rows
             .iter()
-            .map(|r| r.delay_ms)
+            .map(|row| row.delay_ms)
             .fold(f64::INFINITY, f64::min);
         let lo = (-(setup.max_latency_ms - setup.lift_ms) - earliest) * 4.0;
         let mains: Vec<_> = config
             .mains
             .iter()
-            .map(|r| {
+            .map(|role| {
                 (
-                    r.clone(),
-                    positions
+                    role.clone(),
+                    level
+                        .positions
                         .iter()
-                        .filter(|p| alignment.sub_sum_by_pos.iter().any(|(q, _)| q == *p))
-                        .filter_map(|&p| used.get(p, r).map(|h| (p, h.clone())))
+                        .filter(|position| {
+                            alignment
+                                .sub_sum_by_pos
+                                .iter()
+                                .any(|(candidate, _)| candidate == *position)
+                        })
+                        .filter_map(|&position| {
+                            used.get(position, role)
+                                .map(|response| (position, response.clone()))
+                        })
                         .collect(),
                 )
             })
@@ -865,31 +968,60 @@ fn design_pass(
         ba::bus_delay(
             &alignment,
             &mains,
-            &prepared.align_delay_ms,
-            &xo_of,
+            &pass.prepared.align_delay_ms,
+            &level.xo_of,
             lo.ceil() / 4.0,
-            ctx,
+            pass.ctx,
         )?
     };
-    ctx.cancel().check()?;
+    pass.ctx.cancel().check()?;
     let rows = ba::fold(
         &alignment.rows,
         alignment.bus_gain,
         bus_delay_ms,
         bus_polarity,
     );
-    observed("ba", ba_elapsed + bus_started.elapsed());
-    let shift = if alignment.plan.as_ref().is_some_and(|p| !p.fixed.is_empty()) {
+    (pass.observed)("ba", ba_elapsed + bus_started.elapsed());
+    let shift = if alignment
+        .plan
+        .as_ref()
+        .is_some_and(|plan| !plan.fixed.is_empty())
+    {
         config.sub_main_delay_ms
     } else {
         (-rows
             .iter()
-            .map(|r| r.delay_ms)
+            .map(|row| row.delay_ms)
             .reduce(f64::min)
             .unwrap_or(0.0))
         .max(0.0)
     };
-    let roles = if req.subs_only && !matches!(pass, RcPass::Probe) {
+    Ok(BaStage {
+        alignment,
+        used,
+        top_peq,
+        top_responses,
+        bus_delay_ms,
+        bus_polarity,
+        rows,
+        shift,
+        #[cfg(test)]
+        ba_elapsed: ba_timing,
+        #[cfg(test)]
+        top_elapsed: top_timing,
+    })
+}
+
+fn rc_stage(
+    pass: &PassContext<'_, '_, '_>,
+    setup: &Setup,
+    level: &LevelStage,
+    ba: &BaStage,
+    progress: &StageProgress<'_>,
+    notes: &mut Vec<Note>,
+) -> Result<RcStage, EngineError> {
+    let config = pass.req.config;
+    let roles = if pass.req.subs_only && !matches!(pass.pass, RcPass::Probe) {
         vec![]
     } else {
         config.mains.iter().collect()
@@ -898,70 +1030,72 @@ fn design_pass(
     // Batches of channels reserve on this thread before entering the pool,
     // never inside a pool task (TD-23); outputs keep the channel order.
     let outputs = crate::memory::try_map(
-        ctx,
+        pass.ctx,
         roles,
-        reserve.held,
-        |_| reserve.channel,
+        pass.reserve.held,
+        |_| pass.reserve.channel,
         |role| {
-            ctx.cancel().check()?;
-            let Some(before) = prepared.h0.get(config.main_position, role) else {
+            pass.ctx.cancel().check()?;
+            let Some(before) = pass.prepared.h0.get(config.main_position, role) else {
                 progress.advance(1);
                 return Ok(None);
             };
             let rc_started = std::time::Instant::now();
-            let gain_db = ref_level
-                - RoleMap::get_from(&levels, role).expect("role present: reference level");
-            let xo_hz = RoleMap::get_from(&xo_of, role).copied();
-            let align_delay_ms = *RoleMap::get_from(&prepared.align_delay_ms, role)
+            let gain_db = level.ref_level
+                - RoleMap::get_from(&level.levels, role).expect("role present: reference level");
+            let xo_hz = RoleMap::get_from(&level.xo_of, role).copied();
+            let align_delay_ms = *RoleMap::get_from(&pass.prepared.align_delay_ms, role)
                 .expect("role present: alignment delay");
-            let comb: Vec<(u32, Arc<[C]>)> = positions
+            let comb: Vec<(u32, Arc<[C]>)> = level
+                .positions
                 .iter()
-                .filter_map(|&p| {
-                    used.get(p, role).map(|h| {
-                        let sub = alignment
+                .filter_map(|&position| {
+                    ba.used.get(position, role).map(|response| {
+                        let sub = ba
+                            .alignment
                             .sub_sum_by_pos
                             .iter()
-                            .find(|(q, _)| *q == p)
-                            .map(|(_, h)| h.as_ref());
+                            .find(|(candidate, _)| *candidate == position)
+                            .map(|(_, response)| response.as_ref());
                         (
-                            p,
+                            position,
                             rc::combine(
-                                h,
+                                response,
                                 align_delay_ms,
                                 gain_db,
                                 xo_hz,
                                 sub,
-                                bus_polarity,
-                                bus_delay_ms,
+                                ba.bus_polarity,
+                                ba.bus_delay_ms,
                             )
                             .into(),
                         )
                     })
                 })
                 .collect();
-            let mut fitter = fitters(FitStage::Rc(role));
+            let mut fitter = (pass.fitters)(FitStage::Rc(role));
             let rc_input = RcInput {
                 role,
                 comb: &comb,
                 main_position: config.main_position,
-                level_db: ref_level,
-                setup: &setup,
+                level_db: level.ref_level,
+                setup,
                 config,
-                tuning: req.tuning,
-                positions: &positions,
+                tuning: pass.req.tuning,
+                positions: &level.positions,
                 bus_rolloff_hz: if config.low_protect && xo_hz.is_some_and(|hz| hz != 0.0) {
-                    alignment.bus_rolloff_hz
+                    ba.alignment.bus_rolloff_hz
                 } else {
                     None
                 },
             };
-            let result = rc::channel(&rc_input, &mut *fitter, ctx)?;
-            ctx.cancel().check()?;
-            let agreement = matches!(pass, RcPass::Probe)
+            let result = rc::channel(&rc_input, &mut *fitter, pass.ctx)?;
+            pass.ctx.cancel().check()?;
+            let agreement = matches!(pass.pass, RcPass::Probe)
                 .then(|| rc::agreement_limit(&rc_input, &result.response));
             let combined = comb
                 .iter()
-                .find(|(p, _)| *p == config.main_position)
+                .find(|(position, _)| *position == config.main_position)
                 .unwrap()
                 .1
                 .clone();
@@ -969,7 +1103,7 @@ fn design_pass(
             let after = combined
                 .iter()
                 .zip(response.iter())
-                .map(|(h, f)| h * f)
+                .map(|(measured, correction)| measured * correction)
                 .collect();
             let mut peq = result.out.peq;
             peq.extend(result.gd_cuts);
@@ -979,17 +1113,17 @@ fn design_pass(
                 fir: result.out.fir,
                 gain_db,
                 polarity: config.inverted_mains.contains(role).then_some(-1),
-                delay_ms: align_delay_ms + shift,
+                delay_ms: align_delay_ms + ba.shift,
                 xo_hz,
                 align_delay_ms,
-                top_peq: RoleMap::get_from(&top_peq, role).map_or_else(Vec::new, Clone::clone),
+                top_peq: RoleMap::get_from(&ba.top_peq, role).map_or_else(Vec::new, Clone::clone),
             };
             let main = MainDesign {
                 role: role.clone(),
                 gain_db,
                 xo_hz,
                 align_delay_ms,
-                top_response: RoleMap::get_from(&top_responses, role).cloned(),
+                top_response: RoleMap::get_from(&ba.top_responses, role).cloned(),
                 response,
                 phase_strength: result.out.phase_strength,
                 phase_band: result.out.phase_band,
@@ -998,7 +1132,7 @@ fn design_pass(
                 combined,
                 after,
             };
-            observed(&format!("rc:{role}"), rc_started.elapsed());
+            (pass.observed)(&format!("rc:{role}"), rc_started.elapsed());
             progress.advance(1);
             #[cfg(test)]
             let elapsed = rc_started.elapsed();
@@ -1007,10 +1141,12 @@ fn design_pass(
             Ok(Some((channel, main, result.out.notes, elapsed, agreement)))
         },
     )?;
-    observed("rc_all", rc_all_started.elapsed());
+    (pass.observed)("rc_all", rc_all_started.elapsed());
     let mut channels = Vec::new();
     let mut mains = Vec::new();
     let mut agreement_limits = Vec::new();
+    #[cfg(test)]
+    let mut timings = Vec::new();
     for (channel, main, channel_notes, _elapsed, agreement) in outputs.into_iter().flatten() {
         if let Some(limit) = agreement {
             agreement_limits.push(limit);
@@ -1021,13 +1157,39 @@ fn design_pass(
         mains.push(main);
         notes.extend(channel_notes);
     }
+    Ok(RcStage {
+        channels,
+        mains,
+        agreement_limits,
+        #[cfg(test)]
+        timings,
+    })
+}
+
+fn sub_stage(
+    pass: &PassContext<'_, '_, '_>,
+    setup: &Setup,
+    level: &LevelStage,
+    ba: BaStage,
+    notes: &mut Vec<Note>,
+) -> SubStage {
+    let config = pass.req.config;
+    let BaStage {
+        alignment,
+        used,
+        bus_delay_ms,
+        bus_polarity,
+        rows,
+        shift,
+        ..
+    } = ba;
     let latency_ms = setup.lift_ms + shift;
     notes.push(Note::Latency {
         latency_ms,
         lift_ms: setup.lift_ms,
         main_extra_ms: shift,
     });
-    let mut subs = Vec::new();
+    let mut channels = Vec::new();
     for (role, row) in config.subs.iter().zip(&rows) {
         let mut sub = SubChannel {
             role: role.clone(),
@@ -1040,32 +1202,36 @@ fn design_pass(
             lp_hz: 0.0,
             lp_type: BandType::Lr24,
             peq: vec![],
-            mode: ba::sub_mode_label(role, &setup, &alignment.layout_info),
+            mode: ba::sub_mode_label(role, setup, &alignment.layout_info),
         };
         if alignment
             .plan
             .as_ref()
-            .is_some_and(|p| p.fixed.contains(role))
+            .is_some_and(|plan| plan.fixed.contains(role))
         {
-            let m = RoleMap::get_from(&setup.sub_manual, role)
+            let manual = RoleMap::get_from(&setup.sub_manual, role)
                 .expect("role present: fixed sub settings");
-            sub.gain_db = m.gain_db;
-            sub.delay_ms = m.delay_ms;
-            sub.polarity = if m.polarity < 0 { -1 } else { 1 };
-            sub.allpass = m.allpass.iter().copied().take(2).collect();
+            sub.gain_db = manual.gain_db;
+            sub.delay_ms = manual.delay_ms;
+            sub.polarity = if manual.polarity < 0 { -1 } else { 1 };
+            sub.allpass = manual.allpass.iter().copied().take(2).collect();
             sub.mode = "fixed".into();
         }
-        if let Some(f) = RoleMap::get_from(&alignment.sub_filters, role) {
-            sub.hp_hz = f.hp_hz;
-            sub.hp_type = f.hp_type;
-            sub.lp_hz = f.lp_hz;
-            sub.lp_type = f.lp_type;
-            sub.peq = f.peq.clone();
+        if let Some(filter) = RoleMap::get_from(&alignment.sub_filters, role) {
+            sub.hp_hz = filter.hp_hz;
+            sub.hp_type = filter.hp_type;
+            sub.lp_hz = filter.lp_hz;
+            sub.lp_type = filter.lp_type;
+            sub.peq = filter.peq.clone();
         }
         if config.low_protect {
-            let by_pos: Vec<_> = positions
+            let by_pos: Vec<_> = level
+                .positions
                 .iter()
-                .filter_map(|&p| used.get(p, role).map(|h| (p, h.clone())))
+                .filter_map(|&position| {
+                    used.get(position, role)
+                        .map(|response| (position, response.clone()))
+                })
                 .collect();
             if let Some(hz) = crate::low_protect::rolloff(
                 &by_pos,
@@ -1086,9 +1252,9 @@ fn design_pass(
                 });
             }
         }
-        subs.push(sub);
+        channels.push(sub);
     }
-    let sub = if config.subs.is_empty() {
+    let design = if config.subs.is_empty() {
         None
     } else {
         Some(SubDesign {
@@ -1101,7 +1267,7 @@ fn design_pass(
             sum_at_reference: alignment
                 .sub_sum_by_pos
                 .iter()
-                .find(|(p, _)| *p == config.main_position)
+                .find(|(position, _)| *position == config.main_position)
                 .unwrap()
                 .1
                 .clone(),
@@ -1110,31 +1276,50 @@ fn design_pass(
             plan: alignment.plan,
         })
     };
+    SubStage {
+        channels,
+        design,
+        bus_peq: alignment.bus_peq,
+        used,
+        shift,
+        latency_ms,
+    }
+}
+
+fn score_stage(
+    pass: &PassContext<'_, '_, '_>,
+    setup: &Setup,
+    level: &LevelStage,
+    mains: &[MainDesign],
+    notes: &mut Vec<Note>,
+) -> Result<ScoreStage, EngineError> {
     let f = design_freqs();
-    let target = config
-        .target
-        .sample(&f.iter().map(|f| f.max(1.0)).collect::<Vec<_>>());
-    let target_db: Arc<[f64]> = target.iter().map(|v| v + ref_level).collect();
-    let spl_grid = if include_scores {
+    let target = pass.req.config.target.sample(
+        &f.iter()
+            .map(|frequency| frequency.max(1.0))
+            .collect::<Vec<_>>(),
+    );
+    let target_db: Arc<[f64]> = target.iter().map(|value| value + level.ref_level).collect();
+    let spl_grid = if pass.include_scores {
         geomspace(5.0, 20000.0, 1390)
     } else {
         Vec::new()
     };
-    let gd_grid = if include_scores {
+    let gd_grid = if pass.include_scores {
         geomspace(5.0, 5000.0, 1070)
     } else {
         Vec::new()
     };
     let scores_started = std::time::Instant::now();
-    let scores = if include_scores {
+    let scores = if pass.include_scores {
         // A channel's scores need less than its RC working set.
         crate::memory::try_map(
-            ctx,
+            pass.ctx,
             mains.iter().collect(),
-            reserve.held,
-            |_| reserve.channel,
+            pass.reserve.held,
+            |_| pass.reserve.channel,
             |main| {
-                ctx.cancel().check()?;
+                pass.ctx.cancel().check()?;
                 Ok(RoleScores {
                     role: main.role.clone(),
                     before: scorecard::metrics(&main.before, f, &target, (100.0, 400.0)),
@@ -1154,63 +1339,157 @@ fn design_pass(
     } else {
         Vec::new()
     };
-    observed("scores", scores_started.elapsed());
+    (pass.observed)("scores", scores_started.elapsed());
     #[cfg(test)]
-    timings.push(("scores".into(), scores_started.elapsed()));
+    let elapsed = scores_started.elapsed();
     notes.push(Note::PhaseStrength {
         values: mains
             .iter()
-            .map(|m| RoleValue {
-                role: m.role.clone(),
-                value: m.phase_strength,
+            .map(|main| RoleValue {
+                role: main.role.clone(),
+                value: main.phase_strength,
             })
             .collect(),
     });
     notes.push(Note::PhaseBand {
         values: mains
             .iter()
-            .map(|m| RoleBand {
-                role: m.role.clone(),
-                hz: m.phase_band,
+            .map(|main| RoleBand {
+                role: main.role.clone(),
+                hz: main.phase_band,
             })
             .collect(),
     });
     if let Some(hz) = setup.input_hp_hz {
         notes.push(Note::InputHp { hz });
     }
+    pass.ctx.cancel().check()?;
+    Ok(ScoreStage {
+        scores,
+        target_db,
+        spl_grid,
+        #[cfg(test)]
+        elapsed,
+    })
+}
+
+fn pair_phase_stage(
+    pass: &PassContext<'_, '_, '_>,
+    run_final_checks: bool,
+    design: &mut Design,
+) -> Result<(), EngineError> {
+    if !run_final_checks {
+        return Ok(());
+    }
+    let pair_started = std::time::Instant::now();
+    let f = design_freqs();
+    // Only the inspection range's bins are kept, a few hundred per main,
+    // so the check stays far below the reserved design budget (TD-24).
+    let (lo, hi) = crate::pair_phase::BAND_HZ;
+    let kept: Vec<usize> = f
+        .iter()
+        .enumerate()
+        .filter(|&(_, &hz)| hz >= lo && hz <= hi)
+        .map(|(index, _)| index)
+        .collect();
+    let band_f: Vec<f64> = kept.iter().map(|&index| f[index]).collect();
+    let mut responses = Vec::with_capacity(design.mains.len());
+    for main in &design.mains {
+        pass.ctx.cancel().check()?;
+        let Some(stages) = crate::stage_responses(
+            design,
+            &main.role,
+            &pass.prepared.h,
+            pass.req.config.main_position,
+        ) else {
+            continue;
+        };
+        let response: Vec<C> = kept
+            .iter()
+            .map(|&index| stages.top_xo[index] * main.response[index])
+            .collect();
+        responses.push((main.role.clone(), response));
+    }
+    design
+        .notes
+        .extend(crate::pair_phase::check(&band_f, &responses));
+    pass.ctx.cancel().check()?;
+    (pass.observed)("pair_phase", pair_started.elapsed());
+    Ok(())
+}
+
+fn design_pass(stage: PassContext<'_, '_, '_>) -> Result<(Design, Vec<f64>), EngineError> {
+    let req = stage.req;
+    let ctx = stage.ctx;
+    let prepared = stage.prepared;
+    let pass = stage.pass;
     ctx.cancel().check()?;
+    check_taps(req.config)?;
+    check_input_hp(req.config)?;
+    let config = req.config;
+    let mut setup = Setup::new(config);
+    if matches!(pass, RcPass::Probe) {
+        setup.rc_bands.clear();
+        setup.lf_align = false;
+        setup.mode_decay = false;
+        setup.hf_phase = false;
+    }
+    let positions = prepared.h.positions().to_vec();
+    let progress = ctx.stage("engine.design", 1 + config.mains.len() as u64);
+    let mut notes = Vec::new();
+    let run_final_checks = !req.subs_only && !matches!(pass, RcPass::Probe);
+    polarity_stage(&stage, &setup, run_final_checks, &mut notes);
+    let level = levels_stage(&stage, &mut setup, positions, &mut notes)?;
+    let ba = ba_stage(&stage, &setup, &level, &progress, &mut notes)?;
+    #[cfg(test)]
+    let mut timings = vec![
+        ("BA".into(), ba.ba_elapsed),
+        ("top PEQ".into(), ba.top_elapsed),
+    ];
+    let rc = rc_stage(&stage, &setup, &level, &ba, &progress, &mut notes)?;
+    #[cfg(test)]
+    timings.extend(rc.timings.iter().cloned());
+    let sub = sub_stage(&stage, &setup, &level, ba, &mut notes);
+    let score = score_stage(&stage, &setup, &level, &rc.mains, &mut notes)?;
+    #[cfg(test)]
+    timings.push(("scores".into(), score.elapsed));
+    let f = design_freqs();
     let mut design = Design {
         chain: SignalChain {
             input_hp_hz: setup.input_hp_hz,
             sample_rate: SR,
-            mains: channels,
-            subs,
-            sub_bus_peq: alignment.bus_peq,
-            main_extra_ms: shift,
+            mains: rc.channels,
+            subs: sub.channels,
+            sub_bus_peq: sub.bus_peq,
+            main_extra_ms: sub.shift,
             lift_ms: setup.lift_ms,
-            latency_ms,
+            latency_ms: sub.latency_ms,
         },
-        mains,
-        subs: sub,
-        ref_level,
+        mains: rc.mains,
+        subs: sub.design,
+        ref_level: level.ref_level,
         rc_hi: setup.rc_hi,
-        rc_bands,
-        rc_auto,
-        schroeder_hz,
-        target_display: spl_grid.iter().map(|&g| interp(g, f, &target_db)).collect(),
-        target_db,
+        rc_bands: level.rc_bands,
+        rc_auto: level.rc_auto,
+        schroeder_hz: level.schroeder_hz,
+        target_display: score
+            .spl_grid
+            .iter()
+            .map(|&frequency| interp(frequency, f, &score.target_db))
+            .collect(),
+        target_db: score.target_db,
         spectra: DesignSpectra {
             raw: Arc::new(prepared.h0.clone()),
-            used: Arc::new(used),
+            used: Arc::new(sub.used),
             main_position: config.main_position,
-            positions,
+            positions: level.positions,
         },
         notes,
         adapter_notes: req.adapter_notes.to_vec(),
         groups: config.groups.clone(),
         target: config.target.clone(),
         xo: config.xo.clone(),
-        scores,
+        scores: score.scores,
         replay: Arc::new(crate::DesignReplay::new(
             req.measurements,
             config,
@@ -1220,37 +1499,6 @@ fn design_pass(
         #[cfg(test)]
         timings,
     };
-    if run_final_checks {
-        let pair_started = std::time::Instant::now();
-        // Only the inspection range's bins are kept, a few hundred per main,
-        // so the check stays far below the reserved design budget (TD-24).
-        let (lo, hi) = crate::pair_phase::BAND_HZ;
-        let kept: Vec<usize> = f
-            .iter()
-            .enumerate()
-            .filter(|&(_, &hz)| hz >= lo && hz <= hi)
-            .map(|(i, _)| i)
-            .collect();
-        let band_f: Vec<f64> = kept.iter().map(|&i| f[i]).collect();
-        let mut responses = Vec::with_capacity(design.mains.len());
-        for main in &design.mains {
-            ctx.cancel().check()?;
-            let Some(stages) =
-                crate::stage_responses(&design, &main.role, &prepared.h, config.main_position)
-            else {
-                continue;
-            };
-            let response: Vec<C> = kept
-                .iter()
-                .map(|&i| stages.top_xo[i] * main.response[i])
-                .collect();
-            responses.push((main.role.clone(), response));
-        }
-        design
-            .notes
-            .extend(crate::pair_phase::check(&band_f, &responses));
-        ctx.cancel().check()?;
-        observed("pair_phase", pair_started.elapsed());
-    }
-    Ok((design, agreement_limits))
+    pair_phase_stage(&stage, run_final_checks, &mut design)?;
+    Ok((design, rc.agreement_limits))
 }
