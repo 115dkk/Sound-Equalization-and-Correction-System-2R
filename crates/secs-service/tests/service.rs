@@ -586,6 +586,80 @@ fn project_save_returns_before_the_side_mdat_exists_and_a_job_writes_it_td149() 
 }
 
 #[test]
+fn the_side_mdat_job_reads_sources_from_the_snapshot_not_the_disk() {
+    let root = temp_root("side-mdat-source-snapshot");
+    fs::create_dir_all(&root).unwrap();
+    let (path, _) = write_case(&root, "room");
+    let store = secs_project::MeasurementStore::open(&path).unwrap();
+    let raw = store
+        .records()
+        .into_iter()
+        .flat_map(|record| record.ir.into_values())
+        .find(|raw| !raw.is_empty())
+        .unwrap();
+    let wav = if Path::new(&raw).is_absolute() {
+        PathBuf::from(raw)
+    } else {
+        path.parent().unwrap().join(raw)
+    };
+    secs_project::save_source(
+        &wav,
+        Some(&secs_mdat::SourceInfo {
+            strings: vec![("outputName".into(), "snapshot source".into())],
+            ..Default::default()
+        }),
+    )
+    .unwrap();
+
+    let service = deterministic_service();
+    open(&service, &path);
+    secs_project::save_source(
+        &wav,
+        Some(&secs_mdat::SourceInfo {
+            strings: vec![("outputName".into(), "disk source".into())],
+            ..Default::default()
+        }),
+    )
+    .unwrap();
+    let before = secs_project::source_parse_count();
+    let events = Arc::new(Events::default());
+    let response = service.call(
+        Request::ProjectSave(secs_types::ipc::ProjectSaveParams { path: None }),
+        events.clone(),
+    );
+    assert!(matches!(response, Envelope::Ok(_)));
+    let job = events.wait_started(JobKind::Export, Duration::from_secs(2));
+    assert!(matches!(
+        events.wait(job, Duration::from_secs(30)),
+        JobEvent::Finished {
+            status: JobStatus::Succeeded,
+            ..
+        }
+    ));
+    assert_eq!(secs_project::source_parse_count(), before);
+    let loaded = secs_mdat::load_mdat_project(
+        &fs::read(path.with_extension("mdat")).unwrap(),
+        &secs_jos::Limits::default(),
+    )
+    .unwrap();
+    assert!(loaded.measurements.iter().any(|measurement| {
+        measurement
+            .source_info
+            .strings
+            .iter()
+            .any(|(name, value)| name == "outputName" && value == "snapshot source")
+    }));
+    assert!(loaded.measurements.iter().all(|measurement| {
+        measurement
+            .source_info
+            .strings
+            .iter()
+            .all(|(name, value)| name != "outputName" || value != "disk source")
+    }));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn side_mdat_failure_is_a_job_error_not_a_silent_save_td149() {
     let root = temp_root("side-mdat-job-error");
     fs::create_dir_all(&root).unwrap();
@@ -632,10 +706,10 @@ fn side_mdat_job_reports_sidecar_warnings_td183() {
     let wav = path.parent().unwrap().join(&record.ir[role]);
     let sidecar = secs_project::source_path(&wav);
     secs_project::save_source(&wav, Some(&secs_mdat::SourceInfo::default())).unwrap();
-    let service = deterministic_service();
-    open(&service, &path);
     fs::remove_file(&sidecar).unwrap();
     fs::create_dir(&sidecar).unwrap();
+    let service = deterministic_service();
+    open(&service, &path);
     let events = Arc::new(Events::default());
 
     call_ok(

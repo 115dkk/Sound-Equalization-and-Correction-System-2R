@@ -5,8 +5,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use secs_project::{
-    DspProfile, MeasurementStore, Project, PyJson, RemovedPosition, load_project_sources,
-    measured_positions, plan_from_project,
+    DspProfile, MeasurementStore, Project, PyJson, RemovedPosition, measured_positions,
+    plan_from_project,
 };
 use secs_types::ipc::{ErrorCode, IpcError, MigrationWarning, Notice, ProjectInfo};
 
@@ -160,7 +160,7 @@ impl StoreEdit<'_> {
         result
     }
 
-    pub(crate) fn source_of(&mut self, role: &str, pos: i64) -> Option<secs_mdat::SourceInfo> {
+    pub(crate) fn source_of(&self, role: &str, pos: i64) -> Option<Arc<secs_mdat::SourceInfo>> {
         self.store.source_of(role, pos)
     }
 
@@ -802,6 +802,8 @@ pub(crate) struct ProjectSnapshot {
     pub ticket: ProjectTicket,
     pub path: PathBuf,
     pub project: Project,
+    pub sources: BTreeMap<u32, BTreeMap<String, Arc<secs_mdat::SourceInfo>>>,
+    source_warnings: Vec<Notice>,
 }
 
 impl ProjectSnapshot {
@@ -810,6 +812,17 @@ impl ProjectSnapshot {
             ticket,
             path: open.path.clone(),
             project: open.project().clone(),
+            sources: open.store().sources_by_position(),
+            source_warnings: open
+                .store()
+                .warnings()
+                .iter()
+                .filter(|warning| warning.code.starts_with("measurement.source."))
+                .map(|warning| Notice {
+                    code: warning.code.into(),
+                    params: [("entry".into(), warning.entry.clone())].into(),
+                })
+                .collect(),
         }
     }
 }
@@ -868,6 +881,12 @@ fn reserve_measurements<'a>(
 }
 
 impl ProjectSnapshot {
+    pub(crate) fn log_source_warnings(&self, job: &JobContext) {
+        for warning in &self.source_warnings {
+            job.log(warning.clone());
+        }
+    }
+
     pub(crate) fn load_measurements(
         &self,
         job: &JobContext,
@@ -875,7 +894,11 @@ impl ProjectSnapshot {
     ) -> Result<LoadedMeasurements, IpcError> {
         let permit = reserve_measurements(&self.path, &self.project, job, budget)?;
         let mut store = MeasurementStore::new(&self.path, self.project.clone());
-        let loaded = super::calibration::load_measurements_with_notices(&mut store, job.cancel())?;
+        let loaded = super::calibration::load_measurements_with_notices(
+            &mut store,
+            &self.sources,
+            job.cancel(),
+        )?;
         drop(permit);
         Ok(LoadedMeasurements {
             project: self.project.clone(),
@@ -889,19 +912,12 @@ impl ProjectSnapshot {
         job: &JobContext,
         budget: &'a secs_compute::MemoryBudget,
     ) -> Result<LoadedOriginals<'a>, IpcError> {
+        self.log_source_warnings(job);
         let mut store = MeasurementStore::new(&self.path, self.project.clone());
         let mut records = store.records();
         records.sort_by_key(|record| record.pos);
         let project = store.project().clone();
         let plan_roles = plan_from_project(&project, std::iter::empty()).roles;
-        let sources = load_project_sources(&project, &self.path);
-        for warning in &sources.warnings {
-            job.log(secs_types::ipc::Notice {
-                code: warning.code.to_owned(),
-                params: [("entry".into(), warning.entry.clone())].into(),
-            });
-        }
-        let sources = sources.values;
         let total = records
             .iter()
             .map(|record| record.ir.values().filter(|path| !path.is_empty()).count())
@@ -945,10 +961,11 @@ impl ProjectSnapshot {
                 job.cancel()
                     .check()
                     .map_err(|_| IpcError::new(ErrorCode::Cancelled, "cancelled"))?;
-                let source_info = sources
+                let source_info = self
+                    .sources
                     .get(&position)
                     .and_then(|by_role| by_role.get(&role))
-                    .cloned();
+                    .map(|source| source.as_ref().clone());
                 originals.push(secs_export::Original {
                     position,
                     role: role.clone(),

@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use secs_compute::{Context, FixedMemory, MemoryBudget};
@@ -609,16 +610,17 @@ fn response_correction(info: &secs_mdat::SourceInfo) -> (secs_audio::ResponseCor
     )
 }
 
-fn measured_ir_with_curve_status(
+fn measured_ir_with_curve_status_from_source(
     store: &mut secs_project::MeasurementStore,
     role: &str,
     pos: i64,
+    info: Option<&secs_mdat::SourceInfo>,
 ) -> Result<((Vec<f32>, u32), bool), crate::ServiceError> {
     let (samples, sample_rate) = store.ir_of(role, pos)?;
-    let Some(info) = store.source_of(role, pos) else {
+    let Some(info) = info else {
         return Ok(((samples, sample_rate), false));
     };
-    let (correction, invalid_curve) = response_correction(&info);
+    let (correction, invalid_curve) = response_correction(info);
     if correction.is_empty() {
         return Ok(((samples, sample_rate), invalid_curve));
     }
@@ -626,6 +628,15 @@ fn measured_ir_with_curve_status(
         crate::ServiceError::ProjectMessage(format!("measurement response correction: {error}"))
     })?;
     Ok(((corrected, sample_rate), invalid_curve))
+}
+
+fn measured_ir_with_curve_status(
+    store: &mut secs_project::MeasurementStore,
+    role: &str,
+    pos: i64,
+) -> Result<((Vec<f32>, u32), bool), crate::ServiceError> {
+    let source = store.source_of(role, pos);
+    measured_ir_with_curve_status_from_source(store, role, pos, source.as_deref())
 }
 
 /// Loads a stored IR and removes the response curves attached to its source
@@ -640,6 +651,7 @@ pub(crate) fn measured_ir(
 
 pub(crate) fn load_measurements_with_notices(
     store: &mut secs_project::MeasurementStore,
+    sources: &BTreeMap<u32, BTreeMap<String, Arc<secs_mdat::SourceInfo>>>,
     cancel: &secs_compute::CancelToken,
 ) -> Result<LoadedMeasurements, IpcError> {
     let mut positions = Vec::new();
@@ -655,8 +667,17 @@ pub(crate) fn load_measurements_with_notices(
             if cancel.is_cancelled() {
                 return Err(IpcError::new(ErrorCode::Cancelled, "cancelled"));
             }
+            let source = u32::try_from(record.pos)
+                .ok()
+                .and_then(|position| sources.get(&position))
+                .and_then(|by_role| by_role.get(role));
             let ((samples, sample_rate), invalid_curve) =
-                measured_ir_with_curve_status(store, role, record.pos)?;
+                measured_ir_with_curve_status_from_source(
+                    store,
+                    role,
+                    record.pos,
+                    source.map(Arc::as_ref),
+                )?;
             if invalid_curve {
                 notices.push(Notice {
                     code: "calibration_curve_invalid".into(),

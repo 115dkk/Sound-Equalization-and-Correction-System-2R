@@ -7,12 +7,31 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
-#[cfg(test)]
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::UNIX_EPOCH;
 
-#[cfg(test)]
 static SOURCE_PARSE_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+#[cfg(test)]
+std::thread_local! {
+    static LOCAL_SOURCE_PARSE_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+fn reset_local_source_parse_count() {
+    LOCAL_SOURCE_PARSE_COUNT.set(0);
+}
+
+#[cfg(test)]
+fn local_source_parse_count() -> usize {
+    LOCAL_SOURCE_PARSE_COUNT.get()
+}
+
+#[doc(hidden)]
+#[allow(dead_code)] // Integration crates use this audit test hook.
+pub fn source_parse_count() -> usize {
+    SOURCE_PARSE_COUNT.load(Ordering::Relaxed)
+}
 
 pub const IR_CACHE_LIMIT_BYTES: usize = 256 * 1024 * 1024;
 pub const MAX_PROJECT_BYTES: u64 = 64 * 1024 * 1024;
@@ -716,8 +735,9 @@ pub fn load_source(wav: &Path) -> Option<SourceInfo> {
 }
 
 fn load_source_checked(wav: &Path) -> Result<Option<SourceInfo>, ProjectError> {
-    #[cfg(test)]
     SOURCE_PARSE_COUNT.fetch_add(1, Ordering::Relaxed);
+    #[cfg(test)]
+    LOCAL_SOURCE_PARSE_COUNT.set(LOCAL_SOURCE_PARSE_COUNT.get() + 1);
     let path = source_path(wav);
     let bytes = match crate::irs::read_bounded(&path, MAX_SOURCE_BYTES, "measurement source") {
         Ok(bytes) => bytes,
@@ -1697,13 +1717,13 @@ mod source_budget_tests {
     #[cfg_attr(miri, ignore = "uses temporary files")]
     fn open_parses_each_sidecar_once_and_source_of_never_parses_again() {
         let (root, project_path) = three_source_project("parse-once");
-        SOURCE_PARSE_COUNT.store(0, Ordering::Relaxed);
+        reset_local_source_parse_count();
         let store = MeasurementStore::open(&project_path).unwrap();
-        assert_eq!(SOURCE_PARSE_COUNT.load(Ordering::Relaxed), 3);
+        assert_eq!(local_source_parse_count(), 3);
         for _ in 0..5 {
             assert!(store.source_of("L", 1).is_some());
         }
-        assert_eq!(SOURCE_PARSE_COUNT.load(Ordering::Relaxed), 3);
+        assert_eq!(local_source_parse_count(), 3);
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -1806,9 +1826,9 @@ mod source_budget_tests {
         let mut project = Project::from_preset("2.0").unwrap();
         project.measurements = PyJson::Array(entries);
 
-        SOURCE_PARSE_COUNT.store(0, Ordering::Relaxed);
+        reset_local_source_parse_count();
         let sources = load_project_sources(&project, &project_path).values;
-        let parsed = SOURCE_PARSE_COUNT.load(Ordering::Relaxed);
+        let parsed = local_source_parse_count();
         assert!(parsed > 0);
         assert!(
             parsed < 10,
@@ -1844,9 +1864,9 @@ mod source_budget_tests {
         let mut project = Project::from_preset("2.0").unwrap();
         project.measurements = PyJson::Array(entries);
 
-        SOURCE_PARSE_COUNT.store(0, Ordering::Relaxed);
+        reset_local_source_parse_count();
         let sources = load_project_sources_within(&project, &project_path, 4096).values;
-        let parsed = SOURCE_PARSE_COUNT.load(Ordering::Relaxed);
+        let parsed = local_source_parse_count();
         assert!(sources.is_empty());
         assert!(parsed > 0);
         assert!(

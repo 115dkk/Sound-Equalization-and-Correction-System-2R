@@ -125,7 +125,7 @@ fn status(
             let has_meter = store
                 .source_of(role, record.pos)
                 .as_ref()
-                .is_some_and(crate::calibration::has_valid_meter_calibration);
+                .is_some_and(|info| crate::calibration::has_valid_meter_calibration(info));
             if has_meter {
                 attached = attached.saturating_add(1);
             } else if record.source.get(role).is_none_or(String::is_empty) {
@@ -385,7 +385,10 @@ impl Service {
             }
         }
         for (position, role) in candidates {
-            let mut info = store.source_of(&role, position).unwrap_or_default();
+            let mut info = store
+                .source_of(&role, position)
+                .map(|info| (*info).clone())
+                .unwrap_or_default();
             info.cal.retain(|(name, _)| name != "meterCal");
             info.cal.insert(0, ("meterCal".into(), meter.clone()));
             info.boxed.retain(|(name, _)| name != "usesEmbeddedCalData");
@@ -724,7 +727,10 @@ mod tests {
                 .source_name,
             "rew-own.cal"
         );
-        assert_eq!(open.store_mut().source_of("L", 2), Some(imported));
+        assert_eq!(
+            open.store_mut().source_of("L", 2).as_deref(),
+            Some(&imported)
+        );
         drop(session);
 
         let (without_file, empty_root) = service_with_project("no-file");
@@ -736,5 +742,11 @@ mod tests {
         );
         std::fs::remove_dir_all(empty_root).unwrap();
         std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn mic_calibration_attach_parses_no_sidecar_under_the_session_lock() {
+        let before = secs_project::source_parse_count();
+        mic_calibration_attach_gives_the_file_to_sweeps_only();
+        assert_eq!(secs_project::source_parse_count(), before);
     }
 }

@@ -985,15 +985,22 @@ impl Service {
             let sources = source_sidecars
                 .as_ref()
                 .map(|snapshot| {
-                    secs_project::load_project_sources(&snapshot.project, &snapshot.path)
+                    snapshot.log_source_warnings(&job);
+                    snapshot
+                        .sources
+                        .iter()
+                        .map(|(position, roles)| {
+                            (
+                                *position,
+                                roles
+                                    .iter()
+                                    .map(|(role, source)| (role.clone(), source.as_ref().clone()))
+                                    .collect(),
+                            )
+                        })
+                        .collect::<secs_export::Sources>()
                 })
                 .unwrap_or_default();
-            for warning in &sources.warnings {
-                job.log(Notice {
-                    code: warning.code.to_owned(),
-                    params: [("entry".into(), warning.entry.clone())].into(),
-                });
-            }
 
             let (mimo_paths, mimo_applied, compute_report) =
                 selection.map_or((None, None, None), |selection| {
@@ -1203,7 +1210,7 @@ impl Service {
                             original_values,
                             folder,
                             mimo.as_ref(),
-                            Some(&sources.values),
+                            Some(&sources),
                             spl_offset,
                             now_ms,
                             &uuid,

@@ -36,7 +36,7 @@ pub use record::{
     AttachedCalibration, IR_CACHE_LIMIT_BYTES, IrCache, LoadedIr, MAX_PROJECT_BYTES,
     MeasurementRecord, MeasurementResult, MeasurementStore, MigrationWarning, RemovedPosition,
     attached_calibration, calibration_fingerprint, load_project_irs, load_project_sources,
-    load_source, save_source, source_path,
+    load_source, save_source, source_parse_count, source_path,
 };
 pub use signature::{
     FloatKey, MeasurementSignatureEntry, estimate_seconds, estimate_subs_seconds,
