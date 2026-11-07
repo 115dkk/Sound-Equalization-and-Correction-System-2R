@@ -141,6 +141,7 @@ const STATES: Record<string, CalibrateView> = {
   mimoBehindCorrection: fx.mimoBehindCorrectionView,
   lowProtect: fx.lowProtectViews.on,
   lowProtectUnheld: fx.lowProtectViews.unheld,
+  polarityDip: fx.polarityDipView,
   lfOn: fx.lfViews.on,
   lfMixed: fx.lfViews.mixed,
   lfZero: fx.lfViews.zero,
@@ -1394,6 +1395,17 @@ describe("극저역 보호 자동 설정 (ADR 0022)", () => {
     setup(fx.lowProtectViews.off, { initial: { rangeAdvanced: true, notesOpen: true } });
     expect(must("calibrate.range.low_protect").getAttribute("aria-checked")).toBe("false");
     expect((must("calibrate.verdict.notes") as HTMLDetailsElement).open).toBe(true);
+  });
+});
+
+describe("polarity warning and dip-limit line specimens (ADR 0033, 0034)", () => {
+  it("shows the reversed main as a warning with its flip button and the limited dips as one note line", () => {
+    setup(fx.polarityDipView, { initial: { notesOpen: true } });
+    expect(must("calibrate.verdict.polarity_reversed").textContent).toContain("Rs의 직접음이 비교한 스피커 3개 가운데 3개와 반대 부호입니다");
+    expect(must("calibrate.polarity.flip.Rs")).toBeTruthy();
+    const lines = [...must("calibrate.verdict.notes").querySelectorAll("li")].map((li) => li.textContent ?? "");
+    expect(lines).toContain("딥 보정 제한(L): 94 Hz 7.5 dB 딥을 4.8 dB까지, 137 Hz 9.2 dB 딥을 5.6 dB까지");
+    expect(lines.some((line) => line.includes("극성"))).toBe(false);
   });
 });
 

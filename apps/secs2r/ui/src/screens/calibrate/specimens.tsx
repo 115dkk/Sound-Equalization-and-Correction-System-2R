@@ -352,6 +352,11 @@ export const calibrateSpecimens: SpecimenDef[] = [
     <CalibrateFrame view={fx.extraBandViews.two} initial={{ notesOpen: true }} scrollTo="calibrate.verdict.notes" />
   )),
   { id: "screen.calibrate.rc-bands-lines", title: "보정 · the band set line for one extra band, two bands, and a band merged with the RC band", width: 720, render: () => <RcBandsLines /> },
+  // A main against the others' polarity (ADR 0033) and the dips the limit filled only partly (ADR 0034).
+  frame("polarity-reversed", "a reversed main: the warning with what to do and its flip button above the figures", () => <CalibrateFrame view={fx.polarityDipView} />),
+  frame("dip-limit-notes", "calculation notes open: the dip-limit line naming each dip and how far it was filled", () => (
+    <CalibrateFrame view={fx.polarityDipView} initial={{ notesOpen: true }} scrollTo="calibrate.verdict.notes" />
+  )),
   // 극저역 보호, 자동 설정 (ADR 0022) and 수동 설정 (the input cut, ADR 0031): one group in the range card's body, never under 고급.
   frame("low-protect-off", "극저역 보호 자동 and 수동 설정 off (the default) in the range card's body", () => (
     <CalibrateFrame view={fx.lowProtectViews.off} scrollTo="calibrate.range.low_end" />

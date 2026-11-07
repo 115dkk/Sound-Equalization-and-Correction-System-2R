@@ -725,6 +725,25 @@ export const rcBandsNotes: Notice[][] = [
   rcBandsNote([{ lo_hz: 250, hi_hz: 800 }]),
 ];
 
+/* ── 극성 경고와 딥 보정 제한 (ADR 0033, 0034) ─────────────────────────── */
+
+/**
+ * A current result whose engine notes name a reversed main and the dips the
+ * limit filled only partly, as secs-engine records them (one record per
+ * dip). Hand-made until the service's recorded answers carry these notes.
+ */
+const POLARITY_DIP_NOTES: Notice[] = [
+  { code: "polarity_reversed", params: { role: "Rs", confidence: "0.94", compared: "3", opposite: "3" } },
+  { code: "dip_limit", params: { role: "L", index: "0", hz: "94.43", depth_db: "7.54", fill_db: "4.77" } },
+  { code: "dip_limit", params: { role: "L", index: "1", hz: "136.78", depth_db: "9.20", fill_db: "5.60" } },
+];
+
+/** The polarity warning with its flip button, and the dip-limit line among the calculation notes. */
+export const polarityDipView: CalibrateView = (() => {
+  const notes = [...NOTES, ...POLARITY_DIP_NOTES];
+  return { ...base, settings: { ...baseSettings, dip_limit: true }, results: { calibration: summary(false, notes), mimo: null, mimo_export: "off" }, lines: { ...lines(), notes } };
+})();
+
 /* ── 극저역 보호 (ADR 0022) ─────────────────────────────────────────────── */
 
 /**
