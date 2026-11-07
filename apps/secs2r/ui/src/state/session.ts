@@ -1,5 +1,5 @@
 import type { StepId } from "../app/model";
-import { IpcFailure, type ResponseOf } from "../ipc/client";
+import { IpcFailure, internalError, type ResponseOf } from "../ipc/client";
 import type { Ipc } from "../ipc/context";
 import type { Request } from "../ipc/bindings/Request";
 import type { JobEvent } from "../ipc/bindings/JobEvent";
@@ -10,7 +10,7 @@ import type { CalibrateActions } from "../screens/calibrate/types";
 import { isRangeEdit, rangeRejection } from "../screens/calibrate/settingsView";
 import { createBandTargets, settingEdit } from "./settingsEdits";
 import { createResource as resource, createStore, type Failure } from "./store";
-import { isActiveJob } from "./jobRetention";
+import { isActiveJob, isMonitorJob } from "./jobRetention";
 import { createJobLedger, type FinishedJob, type JobRequestContext, type LedgerJob } from "./jobLedger";
 import { effectsOf, projectEdits, refreshInputs, refreshMeasurements, type EffectContext } from "./effects";
 import { createAutoRefresh } from "./autoRefresh";
@@ -91,7 +91,7 @@ export function createSession(ipc: Ipc) {
   let errorId = 0;
   let appSettingsFailure: number | null = null;
   const report = (error: unknown) => {
-    const value = error instanceof IpcFailure ? error.error : { code: "internal" as const, params: {}, retryable: false, detail: String(error) };
+    const value = error instanceof IpcFailure ? error.error : internalError(String(error));
     if (value.code !== "project_not_open") errors.set({ id: ++errorId, error: value });
   };
   const read = <M extends Request["method"]>(request: Extract<Request, { method: M }>) => createResource(() => ipc.request(request), report);
@@ -107,7 +107,7 @@ export function createSession(ipc: Ipc) {
       try { return await ipc.request({ method: "compute_status" }); }
       finally { if (ticket === computeVersion) host.set({ computeLoading: false }); }
     }, (error) => {
-      const value = error instanceof IpcFailure ? error.error : { code: "internal" as const, params: {}, retryable: true, detail: String(error) };
+      const value = error instanceof IpcFailure ? error.error : internalError(String(error), true);
       host.set({ computeError: value });
     }),
     bootstrap: read({ method: "bootstrap" }), project: read({ method: "project_info" }),
@@ -444,7 +444,7 @@ export function createSession(ipc: Ipc) {
       const configured = await writers.measurement.edit({ method: systemQuest || quest === "connect.retry" ? "none" : "mock" });
       if (epoch !== jobs.epoch) return;
       // The request reported its failure; the tutorial is not ready and can be started again.
-      if (!configured) throw new IpcFailure(errors.getSnapshot()?.error ?? { code: "internal", params: {}, retryable: true, detail: "tutorial measurement settings were not saved" });
+      if (!configured) throw new IpcFailure(errors.getSnapshot()?.error ?? internalError("tutorial measurement settings were not saved", true));
       const config = stores.config.getSnapshot();
       const index = systemQuest && config ? wrongOutput(config) : null;
       if (index !== null) await call({ method: "config_set_speaker", params: { index, role: null, size: null, band_index: 0, out: 16, pol: null } });
@@ -512,15 +512,15 @@ export function createSession(ipc: Ipc) {
   async function startMonitor() {
     const started = await call({ method: "level_monitor_start", params: { role: null } });
     monitorJob = started.job;
-    monitoring = !jobs.getSnapshot().jobs.some((job) => job.job === started.job && !["running", "cancel_requested"].includes(job.status));
+    monitoring = !jobs.getSnapshot().jobs.some((job) => job.job === started.job && !isActiveJob(job.status));
     if (monitoring) armMeterTimer();
   }
   async function stopMonitor() {
     clearMeterTimer();
     if (monitoring) {
       const stopped = await call({ method: "level_monitor_stop" });
-      if (stopped && ["running", "cancel_requested"].includes(stopped.status)
-          && !jobs.getSnapshot().jobs.some((job) => job.job === stopped.job && !["running", "cancel_requested"].includes(job.status))) {
+      if (stopped && isActiveJob(stopped.status)
+          && !jobs.getSnapshot().jobs.some((job) => job.job === stopped.job && !isActiveJob(job.status))) {
         const finished = await new Promise<boolean>((resolve) => {
           const finish = (received: boolean) => { off(); clearTimeout(timer); resolve(received); };
           const off = ipc.events.subscribe((event) => {
@@ -609,7 +609,7 @@ export function createSession(ipc: Ipc) {
   let externalBatch: ReturnType<typeof coalesceExternalChanges> | null = null;
   let offExternal: (() => void) | null = null;
   let externalPoll: ReturnType<typeof setTimeout> | undefined;
-  const hasExternalJobs = () => jobs.getSnapshot().jobs.some((job) => job.epoch === jobs.epoch && !job.request && isActiveJob(job.status) && !["status_watch", "level_monitor"].includes(job.kind));
+  const hasExternalJobs = () => jobs.getSnapshot().jobs.some((job) => job.epoch === jobs.epoch && !job.request && isActiveJob(job.status) && !isMonitorJob(job.kind));
   async function refreshExternal(methods: readonly string[]) {
     clearTimeout(externalPoll);
     const plans = methods.map(externalRefresh);

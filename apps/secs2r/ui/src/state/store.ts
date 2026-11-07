@@ -1,5 +1,5 @@
 import type { IpcError } from "../ipc/bindings/IpcError";
-import { IpcFailure } from "../ipc/client";
+import { IpcFailure, internalError } from "../ipc/client";
 
 export function createStore<T>(initial: T) {
   let value = initial;
@@ -38,7 +38,7 @@ export function createResource<T>(read: () => Promise<T>, failed: (error: unknow
         if (ticket === generation) { store.set(value); loadState.set({ status: "ready", value }); }
       } catch (error) {
         if (ticket === generation) {
-          const typed = error instanceof IpcFailure ? error.error : { code: "internal" as const, params: {}, retryable: false, detail: String(error) };
+          const typed = error instanceof IpcFailure ? error.error : internalError(String(error));
           if (store.getSnapshot() === null) loadState.set({ status: "failed", error: typed });
           failed(error);
         }

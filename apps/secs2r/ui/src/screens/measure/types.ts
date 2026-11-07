@@ -18,6 +18,7 @@ import type { PositionRecord } from "../../ipc/bindings/PositionRecord";
 import type { PositionEstimateResult } from "../../ipc/bindings/PositionEstimateResult";
 import type { ProjectInfo } from "../../ipc/bindings/ProjectInfo";
 import type { AxisRangeValue } from "../../ui/plot/AxisRange";
+import { isActiveJob } from "../../state/jobRetention";
 
 /**
  * How this project gets its measurements. `measure`: a measurement method is
@@ -156,7 +157,7 @@ export type MeasureActions = {
   openCalibrate: () => void;
 };
 
-export const isRunning = (job: DeviceJob | null): job is DeviceJob => !!job && (job.status === "running" || job.status === "cancel_requested");
+export const isRunning = (job: DeviceJob | null): job is DeviceJob => !!job && isActiveJob(job.status);
 
 /** Positions measured with every role of the plan. */
 export function donePositions(view: MeasureView): number[] {

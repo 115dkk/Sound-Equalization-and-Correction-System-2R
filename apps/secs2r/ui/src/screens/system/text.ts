@@ -78,7 +78,7 @@ const NOTICE_TEXT: Record<string, { cause: MessageKey; next: MessageKey }> = {
 };
 
 /** A notice as words; role ids become the codes the screen shows. Unknown codes keep their code for the reader. */
-export function noticeText(t: Translate, notice: Notice): { cause: string; next: string | null } {
+export function configNoticeText(t: Translate, notice: Notice): { cause: string; next: string | null } {
   const params: MessageParams = { ...notice.params };
   for (const key of ["role", "first_role"]) {
     const value = notice.params[key];

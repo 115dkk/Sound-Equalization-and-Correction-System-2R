@@ -3,6 +3,7 @@ import type { ApplySettings } from "../../ipc/bindings/ApplySettings";
 import { IpcFailure } from "../../ipc/client";
 import { useHost, useResource, useSession } from "../../state/react";
 import { useJobLedger } from "../../state/useJobLedger";
+import { isActiveJob } from "../../state/jobRetention";
 import type { Patch } from "../../state/writers";
 import { startCalibration } from "../../state/calibration";
 import { DESIGN_RATE, countedRate, extraRatesFor } from "../system/outputRate";
@@ -220,7 +221,7 @@ export function useExportScreen(): { view: ExportView | null; actions: ExportAct
       stopManaging: (target) => hostAction("stop", target, () => session.call({ method: "host_stop_managing" })),
     };
   }, [session]);
-  const jobs = ledger.jobs.filter((job) => job.status === "running" || job.status === "cancel_requested");
+  const jobs = ledger.jobs.filter((job) => isActiveJob(job.status));
   const recalibrating = jobs.some((job) => ["calibrate", "recommend_xo", "mimo"].includes(job.kind));
   const exporting = jobs.find((job) => job.kind === "export");
   const request = exporting?.request;

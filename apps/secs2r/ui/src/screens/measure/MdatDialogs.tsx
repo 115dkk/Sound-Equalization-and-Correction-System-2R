@@ -204,7 +204,7 @@ export function MdatAssignDialog({
         </div>
         {notice && (
           <div id={problemId}>
-            <ErrorNotice id="measure.mdat.problem" tone="warning" cause={noticeText(t, notice)} />
+            <ErrorNotice id="measure.mdat.problem" tone="warning" cause={mdatNoticeText(t, notice)} />
           </div>
         )}
       </div>
@@ -213,7 +213,7 @@ export function MdatAssignDialog({
 }
 
 /** A service notice code as a sentence (`notice.<code>`). */
-function noticeText(t: Translate, notice: Notice): string {
+function mdatNoticeText(t: Translate, notice: Notice): string {
   switch (notice.code) {
     case "mdat_duplicate_roles":
       return t("notice.mdat_duplicate_roles", { roles: duplicateRoles(notice.params.roles ?? "") });

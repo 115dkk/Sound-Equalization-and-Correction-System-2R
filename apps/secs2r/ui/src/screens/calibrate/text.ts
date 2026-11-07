@@ -3,7 +3,7 @@
 // and numbers (ADR 0003); these helpers turn them into the current
 // language and never compute an engine value.
 import { isMessageKey, type MessageKey, type MessageParams } from "../../i18n";
-import type { Translate } from "../../i18n/react";
+import { plainNumber, signedNumber, type FormatNumber, type Translate } from "../../i18n/react";
 import type { ConfigResult } from "../../ipc/bindings/ConfigResult";
 import type { Mode } from "../../ipc/bindings/Mode";
 import type { ModeSpecResult } from "../../ipc/bindings/ModeSpecResult";
@@ -13,7 +13,7 @@ import { roleCode } from "../../ui/maps/geometry";
 import type { RangeRejection, RejectionPlace } from "./settingsView";
 import type { CalibrateJob } from "./types";
 
-export type FormatNumber = (value: number, digits?: number) => string;
+export { signedNumber, type FormatNumber };
 
 export const MODES: readonly Mode[] = ["zero", "mixed", "linear", "ultra"];
 
@@ -182,8 +182,7 @@ export function noticeText(t: Translate, number: FormatNumber, notice: Notice, r
   };
   const signed = (key: string, digits = 1) => {
     const value = num(p[key]);
-    if (!Number.isFinite(value)) return p[key] ?? "";
-    return `${value > 0 ? "+" : ""}${number(value, digits)}`;
+    return Number.isFinite(value) ? signedNumber(number, value, digits) : (p[key] ?? "");
   };
   const code = (key = "role") => roleCode(p[key] ?? "");
   const hz = (value: string | undefined) => `${number(num(value))} Hz`;
@@ -475,7 +474,7 @@ export function rangeRejectionText(t: Translate, number: FormatNumber, { error }
   const p = error.params;
   const plain = (value: string | number | undefined) => {
     const n = Number(value);
-    return Number.isFinite(n) ? number(n).replace(/,/g, "") : String(value ?? "");
+    return Number.isFinite(n) ? plainNumber(number, n) : String(value ?? "");
   };
   const range = (min: string | number | undefined, max: string | number | undefined) => t("ui.number.range", { min: plain(min), max: plain(max), unit: "Hz" }).trim();
   const outside = (min: string | number | undefined, max: string | number | undefined) => t("ui.number.out_of_range", { range: range(min, max) });
@@ -534,8 +533,3 @@ export function filterSpec(
   return parts.join(" · ");
 }
 
-/** "+1.5" / "−3.0": a sign on every value but zero. */
-export function signedNumber(number: FormatNumber, value: number, digits: number): string {
-  const text = number(value, digits);
-  return value > 0 && text !== number(0, digits) ? `+${text}` : text;
-}

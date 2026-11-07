@@ -5,7 +5,7 @@
 // range; Escape restores the last committed value. A form that submits
 // several fields at once hears each draft's validity (`onDraftValidity`).
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
-import { useNumber, useT } from "../i18n/react";
+import { plainNumber, useNumber, useT } from "../i18n/react";
 import { Field, describedBy } from "./Field";
 
 type NumberCheck = { ok: true; value: number } | { ok: false; reason: "empty" | "nan" | "below" | "above" };
@@ -79,7 +79,7 @@ export function NumberField({
 }: NumberFieldProps) {
   const t = useT();
   const number = useNumber();
-  const shown = (v: number) => number(v, digits).replace(/,/g, "");
+  const shown = (v: number) => plainNumber(number, v, digits);
   const [draft, setDraft] = useState(() => shown(value));
   const [touched, setTouched] = useState(false);
 

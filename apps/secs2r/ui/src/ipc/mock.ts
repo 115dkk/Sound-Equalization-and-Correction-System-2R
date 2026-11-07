@@ -6,6 +6,7 @@
 // new-project settings) are the service's recorded answers, returned as is.
 import type { Invoke } from "./client";
 import { makeClient } from "./client";
+import { isMonitorJob } from "../state/jobRetention";
 import { createEventBus, type JobEventBus } from "./events";
 import * as fx from "./fixtures";
 import type { ApplyStatus } from "./bindings/ApplyStatus";
@@ -103,7 +104,6 @@ class MockError extends Error {
 }
 const clone = <T,>(value: T): T => structuredClone(value);
 const clamp = (value: number, [lo, hi]: readonly [number, number]) => Math.min(hi, Math.max(lo, value));
-const monitor = (kind: JobKind) => kind === "level_monitor" || kind === "status_watch";
 /** Service jobs.rs groups, not individual kinds, own exclusivity (audit #155 TD-124). */
 const JOB_GROUPS = {
   measure: "device", sample_load: "device", mdat_import: "device", level_monitor: "device",
@@ -578,7 +578,7 @@ export function createMockService(options: MockOptions = {}): MockService {
   const step = (job: SimJob) => {
     job.ticks++;
     if (job.cancelRequested) { finish(job, "cancelled", ipcError("cancelled", "cancelled by the user")); return; }
-    if (monitor(job.kind)) {
+    if (isMonitorJob(job.kind)) {
       const failure = jobFailures.get(job.kind);
       if (failure) { finish(job, "failed", failure); return; }
       if (job.kind === "level_monitor" && playing && playFailure) {
@@ -625,7 +625,7 @@ export function createMockService(options: MockOptions = {}): MockService {
     }
   };
   const tick = () => { for (const job of [...jobs.values()]) step(job); };
-  const busy = () => [...jobs.values()].some((job) => !monitor(job.kind) || job.cancelRequested);
+  const busy = () => [...jobs.values()].some((job) => !isMonitorJob(job.kind) || job.cancelRequested);
   /** `then`: stages that follow the kind's own, reached through `phase` (the combined calibrate). */
   const start = (kind: JobKind, complete: () => JobResult, error?: IpcError, then?: { stages: Stage[]; phase: Omit<NonNullable<SimJob["phase"]>, "at"> }) => {
     if ([...jobs.values()].some((job) => jobGroup(job.kind) === jobGroup(kind))) throw new MockError(ipcError("job_busy", `a ${kind} job is running`));

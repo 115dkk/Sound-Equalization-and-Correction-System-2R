@@ -2,7 +2,7 @@
 // see it: the view they draw, the actions they call, and the pure checks
 // both share (the state line, the port draft, the request reference).
 import { useEffect, useMemo, useRef, useState } from "react";
-import { IpcFailure } from "../ipc/client";
+import { IpcFailure, internalError } from "../ipc/client";
 import { useOptionalSession } from "../state/react";
 import { useT } from "../i18n/react";
 import { useToast } from "../ui/Toast";
@@ -205,5 +205,5 @@ export function useLocalApi(open: boolean): LocalApi {
 }
 
 function typedError(error: unknown): IpcError {
-  return error instanceof IpcFailure ? error.error : { code: "internal", params: {}, retryable: false, detail: String(error) };
+  return error instanceof IpcFailure ? error.error : internalError(String(error));
 }

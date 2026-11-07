@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { RECENT_PROJECTS_MAX } from "../../ipc/bindings/rules";
-import { IpcFailure } from "../../ipc/client";
+import { IpcFailure, internalError } from "../../ipc/client";
 import { useResource, useSession } from "../../state/react";
 import type { ProjectDialog, ProjectDialogsActions, ProjectDialogsView, UnsavedReason } from "./types";
 
@@ -23,7 +23,7 @@ export function useProjectScreen(close: () => Promise<void>) {
   const perform = (work: () => Promise<void>) => {
     setView((v) => ({ ...v, busy: true, error: null }));
     void work().then(() => setView((v) => ({ ...v, busy: false }))).catch((error: unknown) => {
-      setView((v) => ({ ...v, busy: false, error: error instanceof IpcFailure ? error.error : { code: "internal", params: {}, retryable: false, detail: String(error) } }));
+      setView((v) => ({ ...v, busy: false, error: error instanceof IpcFailure ? error.error : internalError(String(error)) }));
     });
   };
   const guard = (reason: UnsavedReason, work: () => Promise<void>) => {

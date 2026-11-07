@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { useHost, useResource, useSession } from "../../state/react";
 import { useJobLedger } from "../../state/useJobLedger";
+import { MEASURING_KINDS, isActiveJob } from "../../state/jobRetention";
 import type { MeasureActions, MeasureView } from "./types";
 
 export function useMeasureScreen(): { view: MeasureView | null; actions: MeasureActions } {
@@ -47,7 +48,7 @@ export function useMeasureScreen(): { view: MeasureView | null; actions: Measure
     }),
     openCalibrate: () => session.navigate("calibrate"),
   }), [session]);
-  const running = ledger.jobs.find((job) => ["measure", "sample_load", "mdat_import", "level_monitor"].includes(job.kind) && (job.status === "running" || job.status === "cancel_requested"));
+  const running = ledger.jobs.find((job) => MEASURING_KINDS.includes(job.kind) && isActiveJob(job.status));
   const request = running?.request;
   return { view: project && layout && config ? {
     project, layout, estimate, config, path: host.path === "mdat" ? "import" : host.path ? "measure" : "none",
