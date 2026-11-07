@@ -299,6 +299,10 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      - id: toolchain
+        shell: bash
+        run: echo "channel=$(python3 -c "import tomllib;print(tomllib.load(open('rust-toolchain.toml','rb'))['toolchain']['channel'])")" >> "$GITHUB_OUTPUT"
+
       # Built as release.yml builds the one it publishes: before the wheel,
       # outside the root-run manylinux container.
       - name: Build the source distribution
@@ -308,7 +312,7 @@ jobs:
           command: sdist
           args: --out dist
           maturin-version: v1.15.0
-          rust-toolchain: "1.99.0"
+          rust-toolchain: ${{ steps.toolchain.outputs.channel }}
           working-directory: bindings/python
 
       - uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
@@ -318,7 +322,7 @@ jobs:
           maturin-version: v1.15.0
           target: ${{ matrix.target }}
           manylinux: ${{ matrix.manylinux }}
-          rust-toolchain: "1.99.0"
+          rust-toolchain: ${{ steps.toolchain.outputs.channel }}
           working-directory: bindings/python
 
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0

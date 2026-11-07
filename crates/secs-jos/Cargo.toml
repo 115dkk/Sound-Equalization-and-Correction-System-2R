@@ -19,4 +19,4 @@ workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
-secs-oracle = { path = "../secs-oracle" }
+secs-oracle.workspace = true

@@ -47,7 +47,8 @@ name: Monthly audit
 #      (public, so no token), and the prompt calls both skills. It is
 #      deliberately unpinned (the plugin manifest pins no version either), so
 #      the audit runs what the maintainer uses; the issue body records the
-#      commit it ran.
+#      commit it ran. Claude Code itself is pinned while the plugin is not;
+#      move the CLI pin deliberately in a `ci:` commit.
 #
 # The schedule is the 5th, the day after the API credit resets, and off the
 # hour.
@@ -275,7 +276,7 @@ jobs:
         run: npm ci --no-audit --no-fund
 
       - name: Install Claude Code
-        run: npm install -g @anthropic-ai/claude-code
+        run: npm install -g @anthropic-ai/claude-code@2.1.318
 
       - name: Install audit skills
         id: skills

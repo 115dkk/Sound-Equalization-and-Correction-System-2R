@@ -30,7 +30,9 @@ secs-types.workspace = true
 secs-rew.workspace = true
 secs-sys = { path = "../../crates/secs-sys" }
 serde_json.workspace = true
-tauri = { version = "2.12", features = [] }
+# Keep Tauri core exact like the plugins below: a lock refresh must not move
+# only one member of the set.
+tauri = { version = "=2.12.3", features = [] }
 tauri-plugin-dialog = "=2.6.0"
 tauri-plugin-opener = "=2.5.0"
 # Without "zip": that feature only reads the v1 `.nsis.zip` and `.AppImage.tar.gz`
