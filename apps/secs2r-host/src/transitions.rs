@@ -258,7 +258,6 @@ fn schedule_restart(state: &mut State, effects: &mut Vec<Effect>, now: Instant) 
     match state.restart.on_exit(now) {
         RestartDecision::RestartAfter(delay) => {
             state.restart_due = Some(now + delay);
-            // Kept only until service_loop is routed through restart_due in the next step.
             let until = (chrono::Utc::now()
                 + chrono::Duration::from_std(delay).unwrap_or_default())
             .to_rfc3339();
