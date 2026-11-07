@@ -4,6 +4,7 @@ import { createSession } from "./session";
 import { RULES, effectsOf, type ResourceKey, type Trigger } from "./effects";
 import type { Request } from "../ipc/bindings/Request";
 import { MOCK_DESIGN_ID, applyStatus, eqapoXt, xoRecommendation } from "../ipc/fixtures";
+import { PROJECT_HOST_DEFAULTS } from "./projectScope";
 
 const reloadCases: [ResourceKey, Request, Request["method"]][] = [
   ["project", { method: "project_save", params: { path: "/room.secs" } }, "project_info"],
@@ -388,7 +389,7 @@ it("resets a replaced project before reloads and restores its stored measurement
     const off = session.stores.project.subscribe(() => { duringReload = session.host.getSnapshot(); });
     await session.call({ method: "project_open", params: { path: "/kept.secs" } });
     await session.settled(); off();
-    expect(duringReload).toMatchObject({ selected: null, channel: null, path: null, micCalBusy: null, micCalError: null, opened: 1 });
+    expect(duringReload).toMatchObject({ ...PROJECT_HOST_DEFAULTS, opened: 1 });
     expect(session.host.getSnapshot().path).toBe("mock");
   } finally { session.dispose(); await session.settled(); mock.dispose(); }
 });
