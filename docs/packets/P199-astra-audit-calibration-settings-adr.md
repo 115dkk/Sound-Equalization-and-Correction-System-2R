@@ -242,9 +242,11 @@ generating:
 - the scalar `SettingEdit` variants (the enum keeps its hand-written
   structured variants);
 - `apply_scalar`, `checked`, `SettingsRefusal { field, reason, min, max }`
-  (`From<SettingsRefusal> for IpcError` lives in the service: code
-  `InvalidRequest`, params `field`, `reason`, `min`, `max`, the same shape
-  `validate_edit` produces today so the screen's rejection texts keep working);
+  (`From<SettingsRefusal> for IpcError` lives in `secs-types` next to
+  `SettingsRefusal`, because both types are defined there and the orphan
+  rule forbids the impl in the service: code `InvalidRequest`, params
+  `field`, `reason`, `min`, `max`, the same shape `validate_edit` produces
+  today so the screen's rejection texts keep working);
 - `rules::SCALAR_EDITS: &[ScalarEdit { kind, field, limit, policy }]` and
   `KNOWN_KEYS` (project-file key order; exported to `rules.ts` as
   `SCALAR_EDITS` and `KNOWN_KEYS`), and the two new `CalibrationLimits`
@@ -281,10 +283,15 @@ Red tests in `crates/secs-service/src/calibration.rs` tests:
 - `calibrate_params_settings_are_checked_like_edits` (the ADR's name): the
   override with `rc_lo = 5.0` makes `snapshot` answer an `IpcError` with
   code `InvalidRequest`, `params.field == "rc_lo"`, `params.reason ==
-  "rc_lo_range"`; the override with `room_volume_m3 = -1.0` answers
-  `InvalidRequest` with `params.field == "room_volume_m3"` and no engine call
-  is made (assert through the error alone: the engine is never reached
-  because `snapshot` runs before the job starts).
+  "rc_lo_range"`; the override with `room_volume_m3 = Some(-1.0)` (and, in a
+  second case, `Some(f64::NAN)`) is not an error: `snapshot` returns
+  settings whose `room_volume_m3 == None`, exactly what the screen edit
+  `RoomVolume { m3: -1.0 }` produces today (decided 2026-11-08: one policy
+  for every entrance, ADR 0055; the volume's policy is "at or below the low
+  end or non-finite clears it, above the high end clips", decision 4). Today
+  the override reaches the engine as `-1.0`, which is the TD-248 defect the
+  Red half shows. The engine's own refusal of a negative volume (step 3)
+  stays, for callers that reach the engine without the service.
 
 Green: `snapshot` calls `settings.checked()?` on the override (after the
 `rc_bands` fix-up that stays), mapping `SettingsRefusal` to `IpcError` with
