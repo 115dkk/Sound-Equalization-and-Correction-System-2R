@@ -199,6 +199,7 @@ pub struct MeasurementStore {
     path: PathBuf,
     project: Project,
     snr_db: BTreeMap<(i64, String), f64>,
+    sources: BTreeMap<(i64, String), Arc<SourceInfo>>,
     warnings: Vec<MigrationWarning>,
     cache: IrCache,
     saves: u64,
@@ -235,18 +236,22 @@ impl MeasurementStore {
             ProjectError::Invalid(format!("project {} is not UTF-8: {error}", path.display()))
         })?;
         let (mut project, mut warnings) = Project::from_json_with_warnings(loads(&text)?)?;
-        let sources = load_project_sources_within(&project, &path, source_budget);
-        for (pos, roles) in sources.values {
+        let loaded = load_project_sources_within(&project, &path, source_budget);
+        let mut sources = BTreeMap::new();
+        for (pos, roles) in loaded.values {
             for (role, info) in roles {
+                let key = (i64::from(pos), role);
                 if let Some(fingerprint) = calibration_fingerprint(&info) {
                     project
                         .measurement_calibration
-                        .insert((i64::from(pos), role), fingerprint);
+                        .insert(key.clone(), fingerprint);
                 }
+                sources.insert(key, Arc::new(info));
             }
         }
-        warnings.extend(sources.warnings);
+        warnings.extend(loaded.warnings);
         let mut store = Self::new(path, project);
+        store.sources = sources;
         store.warnings.extend(warnings);
         Ok(store)
     }
@@ -256,6 +261,7 @@ impl MeasurementStore {
             path: path.into(),
             project,
             snr_db: BTreeMap::new(),
+            sources: BTreeMap::new(),
             warnings: Vec::new(),
             cache: IrCache::default(),
             saves: 0,
@@ -545,24 +551,23 @@ impl MeasurementStore {
         self.cache.load(&path)
     }
 
-    /// Returns a recorded IR's source sidecar when both files are readable and
-    /// confined to the project's `.irs` directory.
-    pub fn source_of(&mut self, role: &str, pos: i64) -> Option<SourceInfo> {
-        let recorded = self
-            .entry_for(pos)
-            .and_then(|entry| entry.ir.get(role).cloned())
-            .is_some_and(|path| !path.is_empty());
-        if !recorded {
-            return None;
+    pub fn sources_by_position(&self) -> BTreeMap<u32, BTreeMap<String, Arc<SourceInfo>>> {
+        let mut by_position = BTreeMap::<u32, BTreeMap<String, Arc<SourceInfo>>>::new();
+        for ((position, role), source) in &self.sources {
+            let Ok(position) = u32::try_from(*position) else {
+                continue;
+            };
+            by_position
+                .entry(position)
+                .or_default()
+                .insert(role.clone(), source.clone());
         }
-        let path = self.ir_path_of(role, pos).ok()?;
-        if !path.is_file()
-            || confined_ir_path(&self.path, &path).is_err()
-            || confined_ir_path(&self.path, &source_path(&path)).is_err()
-        {
-            return None;
-        }
-        load_source(&path)
+        by_position
+    }
+
+    /// Returns a recorded IR's source sidecar from the map built when the store opened.
+    pub fn source_of(&self, role: &str, pos: i64) -> Option<Arc<SourceInfo>> {
+        self.sources.get(&(pos, role.to_owned())).cloned()
     }
 
     /// Rewrites a recorded IR's source sidecar and updates its in-memory
@@ -1613,6 +1618,91 @@ mod source_budget_tests {
         project.measurements = PyJson::Array(vec![entry(1, format!("{name}.irs/L_P1.wav"))]);
         fs::write(&project_path, project.save_text()).unwrap();
         (root, project_path, sidecar_path)
+    }
+
+    fn three_source_project(name: &str) -> (PathBuf, PathBuf) {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "secs-project-source-map-{}-{name}-{unique}",
+            std::process::id()
+        ));
+        let project_path = root.join("room.secs");
+        let irs = project_path.with_extension("irs");
+        fs::create_dir_all(&irs).unwrap();
+        let mut entries = Vec::new();
+        for (position, role) in [(1, "L"), (1, "R"), (2, "L")] {
+            let wav = irs.join(format!("{role}_P{position}.wav"));
+            fs::write(&wav, []).unwrap();
+            save_source(
+                &wav,
+                Some(&SourceInfo {
+                    notes: Some(format!("{role} at {position}")),
+                    ..SourceInfo::default()
+                }),
+            )
+            .unwrap();
+            let relative = format!("room.irs/{role}_P{position}.wav");
+            if let Some(PyJson::Object(fields)) = entries
+                .iter_mut()
+                .find(|entry| pos_of(entry) == Some(position))
+            {
+                let ir = fields.iter_mut().find(|(key, _)| key == "ir").unwrap();
+                ir.1.object_mut()
+                    .unwrap()
+                    .push((role.into(), PyJson::Str(relative)));
+            } else {
+                entries.push(PyJson::Object(vec![
+                    ("pos".into(), PyJson::Int(position.to_string())),
+                    (
+                        "ir".into(),
+                        PyJson::Object(vec![(role.into(), PyJson::Str(relative))]),
+                    ),
+                ]));
+            }
+        }
+        let mut project = Project::from_preset("2.0").unwrap();
+        project.measurements = PyJson::Array(entries);
+        fs::write(&project_path, project.save_text()).unwrap();
+        (root, project_path)
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "uses temporary files")]
+    fn open_parses_each_sidecar_once_and_source_of_never_parses_again() {
+        let (root, project_path) = three_source_project("parse-once");
+        SOURCE_PARSE_COUNT.store(0, Ordering::Relaxed);
+        let store = MeasurementStore::open(&project_path).unwrap();
+        assert_eq!(SOURCE_PARSE_COUNT.load(Ordering::Relaxed), 3);
+        for _ in 0..5 {
+            assert!(store.source_of("L", 1).is_some());
+        }
+        assert_eq!(SOURCE_PARSE_COUNT.load(Ordering::Relaxed), 3);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "uses temporary files")]
+    fn sources_by_position_matches_the_old_loader() {
+        let (root, project_path) = three_source_project("old-loader");
+        let store = MeasurementStore::open(&project_path).unwrap();
+        let expected = load_project_sources(store.project(), &project_path)
+            .values
+            .into_iter()
+            .map(|(position, roles)| {
+                (
+                    position,
+                    roles
+                        .into_iter()
+                        .map(|(role, source)| (role, Arc::new(source)))
+                        .collect(),
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        assert_eq!(store.sources_by_position(), expected);
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
