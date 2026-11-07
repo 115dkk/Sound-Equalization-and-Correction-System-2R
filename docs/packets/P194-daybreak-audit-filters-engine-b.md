@@ -394,7 +394,10 @@ Follow P188 steps 4 and 5 verbatim (`docs/packets/P188-daybreak-audit-engine-adr
 modules `pub(crate)`, put the test-only items behind
 `#[cfg(any(test, feature = "test-support"))]`, lower `Design`'s fields, and
 un-ignore `public_surface_is_the_adr_0046_list` in
-`crates/secs-engine/tests/surface.rs`. The compiler then names every outside
+`crates/secs-engine/tests/surface.rs` and register it again in `features.toml`
+(under the engine entry that lists `design_methods_reproduce_the_values_secs_export_reads`;
+it was unregistered while ignored, since the registration check counts an
+ignored test as not run). The compiler then names every outside
 read of `Design` internals; P188 found them in `crates/secs-service/src/{curves.rs, export.rs, export_run.rs, results.rs}`,
 the service tests, `crates/secs-export/examples/export_perf.rs`, the export
 goldens and the engine integration tests. Fix each with the `Design` methods
