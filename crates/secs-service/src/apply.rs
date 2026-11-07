@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use secs_types::ipc::*;
 
+use crate::export_plan::ExportPurpose;
 use crate::{ApplyAdapter, EventSink, LogLevel, LogSink, Service, lock, results::MimoView};
 
 const TIMEOUT: Duration = Duration::from_secs(2);
@@ -109,8 +110,7 @@ impl Service {
                 extra_rates: Vec::new(),
             },
             events,
-            JobKind::Apply,
-            false,
+            ExportPurpose::Apply,
             move |result| {
                 let design_id = result.design_id.clone().ok_or_else(|| {
                     IpcError::new(ErrorCode::Internal, "CamillaDSP export has no design id")
@@ -278,8 +278,7 @@ impl Service {
                 extra_rates: Vec::new(),
             },
             events,
-            JobKind::Apply,
-            false,
+            ExportPurpose::Apply,
             move |result| {
                 let design_id = result.design_id.clone().ok_or_else(|| {
                     IpcError::new(ErrorCode::Internal, "Equalizer APO export has no design id")

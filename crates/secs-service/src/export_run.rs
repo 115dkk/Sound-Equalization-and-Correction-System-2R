@@ -184,6 +184,24 @@ pub(crate) fn describe(
 }
 
 impl ExportDescription {
+    pub(crate) fn measurements(mode: Mode, now: crate::LocalTime) -> Self {
+        Self {
+            mode,
+            mode_name: note::mode_name(mode, 0.0),
+            camilla_note: String::new(),
+            filter_note: String::new(),
+            ultra_ms: 0.0,
+            label: mode_label(mode, None),
+            latency_ms: 0.0,
+            rc_hi_hz: 0.0,
+            rc_bands: Vec::new(),
+            rc_pieces: Vec::new(),
+            max_supports: 0,
+            mimo: None,
+            stamp: now.minute_stamp(),
+        }
+    }
+
     pub(crate) fn mode(&self) -> &'static str {
         mode_tag(self.mode)
     }

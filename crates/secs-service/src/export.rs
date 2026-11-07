@@ -7,12 +7,17 @@ use secs_export::ExportRun;
 use secs_filters::FiltersError;
 use secs_types::ipc::{
     CamillaCaptureDevice, CamillaDevices, CamillaPlaybackDevice, ErrorCode, ExportKind,
-    ExportParams, ExportResult as IpcExportResult, IpcError, JobKind, JobResult, JobStarted,
-    Notice, OutputRateChoice,
+    ExportParams, ExportResult as IpcExportResult, IpcError, JobResult, JobStarted, Notice,
+    OutputRateChoice,
 };
 
 use crate::{
-    EventSink, Service, lock,
+    EventSink, Service,
+    export_plan::{
+        DesignSource, Destination, ExportPlan, ExportPurpose, LastExportRecord, ManifestMeta,
+        MimoSelection,
+    },
+    lock,
     results::{MimoView, ProjectKeys},
     session,
 };
@@ -123,12 +128,405 @@ fn extra_rates_for(rates: &[u32], output_rate: u32, auto: bool) -> Result<Vec<u3
 }
 
 impl Service {
+    pub(crate) fn plan_export(
+        &self,
+        mut params: ExportParams,
+        purpose: ExportPurpose,
+    ) -> Result<ExportPlan, IpcError> {
+        let (ticket, output_rate_choice) = {
+            let session = lock(&self.session);
+            let ticket = session.ticket()?;
+            let open = session.require().map_err(IpcError::from)?;
+            (ticket, open.project().dsp.output_rate)
+        };
+        let output_rate_auto = output_rate_choice == OutputRateChoice::Auto;
+        let (output_rate, output_rate_notes) = if matches!(
+            params.kind,
+            ExportKind::BeforeAfterMdat | ExportKind::StagedMdat
+        ) {
+            (48_000, Vec::new())
+        } else {
+            resolve_output_rate(output_rate_choice, self.deps.audio_backend.as_ref())
+        };
+        let now = (self.deps.clock)();
+        let now_ms = (self.deps.unix_ms)();
+        self.with_open_ticket(ticket, |open, compute_key| {
+            if open.tutorial {
+                return Err(IpcError::new(
+                    ErrorCode::TutorialBlocked,
+                    "tutorial sessions cannot export",
+                )
+                .with_param("reason", "tutorial"));
+            }
+            if !params.folder.is_empty() && !Path::new(&params.folder).is_absolute() {
+                return Err(IpcError::new(
+                    ErrorCode::InvalidRequest,
+                    "export folder must be an absolute path",
+                )
+                .with_param("reason", "relative_folder")
+                .with_param("field", "folder"));
+            }
+            let requested_design_name = crate::design_export::validate_design_name(
+                params.design_name.as_deref(),
+            )
+            .map_err(|reason| {
+                IpcError::new(ErrorCode::InvalidRequest, "invalid design name")
+                    .with_param("reason", reason)
+            })?;
+            if requested_design_name.is_some()
+                && matches!(
+                    params.kind,
+                    ExportKind::BeforeAfterMdat | ExportKind::StagedMdat
+                )
+            {
+                return Err(IpcError::new(
+                    ErrorCode::InvalidRequest,
+                    "design_name only applies to filter exports",
+                )
+                .with_param("reason", "design_name"));
+            }
+            if params.camilla_devices.is_some() && params.kind != ExportKind::CamillaDsp {
+                return Err(IpcError::new(
+                    ErrorCode::InvalidRequest,
+                    "camilla_devices only applies to CamillaDSP",
+                )
+                .with_param("reason", "camilla_devices"));
+            }
+            if let Some(devices) = &params.camilla_devices {
+                let invalid_asio = matches!(&devices.capture, CamillaCaptureDevice::Asio { device } if device.trim().is_empty())
+                    || matches!(&devices.playback, CamillaPlaybackDevice::Asio { device } if device.trim().is_empty());
+                let invalid_loopback = matches!(
+                    &devices.capture,
+                    CamillaCaptureDevice::Wasapi {
+                        exclusive: true,
+                        loopback: true,
+                        ..
+                    }
+                );
+                if invalid_asio || invalid_loopback {
+                    return Err(IpcError::new(
+                        ErrorCode::InvalidRequest,
+                        "invalid CamillaDSP device options",
+                    )
+                    .with_param(
+                        "reason",
+                        if invalid_asio {
+                            "camilla_asio_device"
+                        } else {
+                            "camilla_wasapi_loopback_exclusive"
+                        },
+                    ));
+                }
+            }
+            if params.mdat_scope.is_some() && params.kind != ExportKind::BeforeAfterMdat {
+                return Err(IpcError::new(
+                    ErrorCode::InvalidRequest,
+                    "mdat_scope only applies to REW mdat",
+                )
+                .with_param("reason", "mdat_scope"));
+            }
+            if !params.extra_rates.is_empty() && params.kind != ExportKind::Convolution {
+                return Err(IpcError::new(
+                    ErrorCode::InvalidRequest,
+                    "extra_rates only applies to convolution export",
+                )
+                .with_param("reason", "extra_rates"));
+            }
+            params.extra_rates =
+                extra_rates_for(&params.extra_rates, output_rate, output_rate_auto)?;
+            let mdat_scope = params.mdat_scope.unwrap_or_default();
+            let project = open.project();
+            let project_mode = secs_types::calibration::mode_tag(
+                secs_project::calibration_from_project(project).mode,
+            )
+            .to_owned();
+
+            if params.kind == ExportKind::BeforeAfterMdat
+                && mdat_scope == secs_export::MdatScope::Measurements
+            {
+                if open
+                    .store()
+                    .records()
+                    .iter()
+                    .all(|record| record.ir.values().all(String::is_empty))
+                {
+                    return Err(IpcError::new(
+                        ErrorCode::EngineInput,
+                        "there are no measurements to export",
+                    )
+                    .with_param("reason", "no_measurements"));
+                }
+                let snapshot = session::ProjectSnapshot::of(ticket, open);
+                let final_folder = if params.folder.is_empty() {
+                    crate::export_folder::measurement_mdat_folder(
+                        &self.resolved_export_base_for(open)?,
+                        now,
+                    )
+                } else {
+                    Path::new(&params.folder).to_path_buf()
+                };
+                return Ok(ExportPlan {
+                    kind: params.kind,
+                    purpose,
+                    source: DesignSource::Measurements {
+                        snapshot: Arc::new(snapshot),
+                    },
+                    mimo: None,
+                    description: crate::export_run::ExportDescription::measurements(
+                        secs_project::calibration_from_project(project).mode,
+                        now,
+                    ),
+                    destination: Destination {
+                        staging: final_folder.clone(),
+                        final_folder,
+                        index_root: None,
+                        explicit_unnamed: !params.folder.is_empty(),
+                    },
+                    manifest: ManifestMeta {
+                        project_name: None,
+                        app_version: self.deps.app_version.to_string(),
+                        created_utc: None,
+                        display_design_name: String::new(),
+                        output_rate_auto: false,
+                        design_id: None,
+                    },
+                    record: (purpose == ExportPurpose::Export).then_some(LastExportRecord {
+                        mode: project_mode,
+                        includes_mimo: false,
+                        design_name: None,
+                    }),
+                    output_rate: 48_000,
+                    output_rate_notes: Vec::new(),
+                    extra_rates: Vec::new(),
+                    camilla_devices: None,
+                    mdat_scope,
+                    originals: None,
+                    source_sidecars: None,
+                    ticket,
+                    stale: false,
+                    spl_offset: None,
+                    now_ms,
+                });
+            }
+
+            let stale = {
+                let calibration = open.results.calibration(project);
+                if calibration.is_none() {
+                    return Err(IpcError::new(
+                        ErrorCode::EngineInput,
+                        "calibration must run before export",
+                    ));
+                }
+                calibration.is_some_and(crate::results::RunView::stale)
+            };
+            let live = open.results.live_calibration();
+            let cached = open.results.cached();
+            let mdat = matches!(
+                params.kind,
+                ExportKind::BeforeAfterMdat | ExportKind::StagedMdat
+            );
+            let source = if let Some(run) = live {
+                DesignSource::Live {
+                    design: run.shared_design(),
+                    settings: Arc::new(run.settings.clone()),
+                }
+            } else {
+                let cached = cached.ok_or_else(|| {
+                    IpcError::new(ErrorCode::Internal, "run cache disappeared")
+                })?;
+                let chain = Arc::new(cached.calibration_chain.clone());
+                if mdat {
+                    DesignSource::Replay {
+                        snapshot: Arc::new(session::ProjectSnapshot::of(ticket, open)),
+                        chain,
+                        sample_rate_policy: cached.labels.sample_rate_policy,
+                    }
+                } else {
+                    DesignSource::Cached { chain }
+                }
+            };
+            let description = crate::export_run::describe(&open.results, project, compute_key, now)?;
+            let mimo = match open.results.mimo(project, compute_key).exported() {
+                Some(MimoView::Live(result)) => Some(MimoSelection {
+                    paths: Arc::new(result.run.paths.clone()),
+                    applied: mdat.then(|| Arc::new(result.run.applied.clone())),
+                    compute: result.summary.compute.clone(),
+                }),
+                Some(MimoView::Cached(cache)) => Some(MimoSelection {
+                    paths: Arc::new(
+                        cache
+                            .mimo_paths
+                            .clone()
+                            .expect("exported cached MIMO has paths"),
+                    ),
+                    applied: None,
+                    compute: cache
+                        .mimo
+                        .as_ref()
+                        .expect("exported cached MIMO has summary")
+                        .compute
+                        .clone(),
+                }),
+                None => None,
+            };
+            let includes_mimo = mimo.is_some() && !mdat;
+            let export_chain = source
+                .chain()
+                .expect("a design export has a live or cached chain");
+            if let Some(block) = secs_types::ipc::export_block(
+                params.kind,
+                !export_chain.subs.is_empty(),
+                includes_mimo,
+                live.is_none() && stale,
+            ) {
+                return Err(IpcError::new(
+                    ErrorCode::ExportScope,
+                    "the chosen filter export cannot carry this result",
+                )
+                .with_param("reason", block.name()));
+            }
+            let project_name =
+                (!project.name.trim().is_empty()).then(|| project.name.trim().to_owned());
+            let display_design_name = requested_design_name
+                .clone()
+                .unwrap_or_else(|| description.label().to_owned());
+            let is_filter_export = matches!(
+                params.kind,
+                ExportKind::CamillaDsp
+                    | ExportKind::FilterText
+                    | ExportKind::EqualizerApo
+                    | ExportKind::Convolution
+            );
+            let created_utc = is_filter_export
+                .then(|| crate::design_export::created_utc(now_ms).map_err(export_error))
+                .transpose()?;
+            let design_id = is_filter_export
+                .then(|| {
+                    secs_graph::design::design_id(
+                        export_chain,
+                        mimo.as_ref().map(|selection| selection.paths.as_ref()),
+                        secs_graph::LfeChoice::DOLBY,
+                    )
+                    .map_err(export_error)
+                })
+                .transpose()?;
+            let explicit =
+                (!params.folder.is_empty()).then(|| Path::new(&params.folder).to_path_buf());
+            let explicit_unnamed = explicit.is_some() && requested_design_name.is_none();
+            let default_base = if explicit.is_none() {
+                Some(self.resolved_export_base_for(open)?)
+            } else {
+                None
+            };
+            let base = explicit
+                .clone()
+                .or(default_base.clone())
+                .unwrap_or_default();
+            let final_folder = if let Some(name) = requested_design_name.as_deref() {
+                crate::design_export::named_folder(&base, params.kind, name)
+            } else if let Some(explicit) = explicit {
+                explicit
+            } else {
+                let base = default_base.as_deref().expect("resolved export base");
+                match params.kind {
+                    ExportKind::CamillaDsp => crate::export_folder::camilladsp_folder(
+                        base,
+                        mimo.is_some(),
+                        description.mode(),
+                        now,
+                    ),
+                    ExportKind::BeforeAfterMdat | ExportKind::StagedMdat => {
+                        crate::export_folder::mdat_folder(
+                            base,
+                            mimo.is_some(),
+                            description.mode(),
+                            now,
+                        )
+                    }
+                    ExportKind::FilterText => crate::export_folder::text_folder(
+                        base,
+                        includes_mimo,
+                        description.mode(),
+                        now,
+                    ),
+                    ExportKind::EqualizerApo => crate::export_folder::eqapo_folder(
+                        base,
+                        includes_mimo,
+                        description.mode(),
+                        now,
+                    ),
+                    ExportKind::Convolution => crate::export_folder::convolution_folder(
+                        base,
+                        includes_mimo,
+                        description.mode(),
+                        now,
+                    ),
+                }
+            };
+            let staging = if requested_design_name.is_some() {
+                crate::design_export::staging_folder(&final_folder)
+            } else {
+                final_folder.clone()
+            };
+            let index_root = if is_filter_export && purpose == ExportPurpose::Export {
+                if requested_design_name.is_some() {
+                    Some(base)
+                } else if let Some(base) = default_base {
+                    Some(base)
+                } else {
+                    final_folder.parent().map(Path::to_path_buf)
+                }
+            } else {
+                None
+            };
+            let snapshot = mdat.then(|| session::ProjectSnapshot::of(ticket, open));
+            Ok(ExportPlan {
+                kind: params.kind,
+                purpose,
+                source,
+                mimo,
+                description,
+                destination: Destination {
+                    staging,
+                    final_folder,
+                    index_root,
+                    explicit_unnamed,
+                },
+                manifest: ManifestMeta {
+                    project_name,
+                    app_version: self.deps.app_version.to_string(),
+                    created_utc,
+                    display_design_name,
+                    output_rate_auto,
+                    design_id,
+                },
+                record: (purpose == ExportPurpose::Export).then_some(LastExportRecord {
+                    mode: project_mode,
+                    includes_mimo: open.results.mimo(project, compute_key).exported().is_some(),
+                    design_name: requested_design_name,
+                }),
+                output_rate,
+                output_rate_notes: output_rate_notes.clone(),
+                extra_rates: params.extra_rates.clone(),
+                camilla_devices: params.camilla_devices.clone(),
+                mdat_scope,
+                originals: (params.kind == ExportKind::BeforeAfterMdat
+                    && mdat_scope == secs_export::MdatScope::All)
+                    .then(|| session::ProjectSnapshot::of(ticket, open)),
+                source_sidecars: snapshot,
+                ticket,
+                stale,
+                spl_offset: secs_project::project_spl_offset(project),
+                now_ms,
+            })
+        })
+    }
     pub(crate) fn start_export(
         &self,
         params: ExportParams,
         events: Arc<dyn EventSink>,
     ) -> Result<JobStarted, IpcError> {
-        self.start_export_with(params, events, JobKind::Export, true, |result| {
+        self.start_export_with(params, events, ExportPurpose::Export, |result| {
             Ok(JobResult::Export(result.into_ipc()))
         })
     }
@@ -137,147 +535,60 @@ impl Service {
         &self,
         params: ExportParams,
         events: Arc<dyn EventSink>,
-        job_kind: JobKind,
-        record_export: bool,
+        purpose: ExportPurpose,
         complete: F,
     ) -> Result<JobStarted, IpcError>
     where
         F: FnOnce(ExportResult) -> Result<JobResult, IpcError> + Send + 'static,
     {
-        let ticket = lock(&self.session).ticket()?;
-        self.with_open_ticket(ticket, |open, compute_key| {
-        if open.tutorial {
-            return Err(IpcError::new(
-                ErrorCode::TutorialBlocked,
-                "tutorial sessions cannot export",
-            ));
-        }
-        if !params.folder.is_empty() && !Path::new(&params.folder).is_absolute() {
-            return Err(IpcError::new(
-                ErrorCode::InvalidRequest,
-                "export folder must be an absolute path",
-            )
-            .with_param("reason", "relative_folder")
-            .with_param("field", "folder"));
-        }
-        let requested_design_name = crate::design_export::validate_design_name(
-            params.design_name.as_deref(),
-        )
-        .map_err(|reason| {
-            IpcError::new(ErrorCode::InvalidRequest, "invalid design name")
-                .with_param("reason", reason)
-        })?;
-        if requested_design_name.is_some()
-            && matches!(
-                params.kind,
-                ExportKind::BeforeAfterMdat | ExportKind::StagedMdat
-            )
-        {
-            return Err(IpcError::new(
-                ErrorCode::InvalidRequest,
-                "design_name only applies to filter exports",
-            )
-            .with_param("reason", "design_name"));
-        }
-        if params.camilla_devices.is_some() && params.kind != ExportKind::CamillaDsp {
-            return Err(IpcError::new(
-                ErrorCode::InvalidRequest,
-                "camilla_devices only applies to CamillaDSP",
-            )
-            .with_param("reason", "camilla_devices"));
-        }
-        if let Some(devices) = &params.camilla_devices {
-            let invalid_asio = matches!(&devices.capture, CamillaCaptureDevice::Asio { device } if device.trim().is_empty())
-                || matches!(&devices.playback, CamillaPlaybackDevice::Asio { device } if device.trim().is_empty());
-            let invalid_loopback = matches!(
-                &devices.capture,
-                CamillaCaptureDevice::Wasapi {
-                    exclusive: true,
-                    loopback: true,
-                    ..
-                }
-            );
-            if invalid_asio || invalid_loopback {
-                return Err(IpcError::new(
-                    ErrorCode::InvalidRequest,
-                    "invalid CamillaDSP device options",
-                )
-                .with_param(
-                    "reason",
-                    if invalid_asio {
-                        "camilla_asio_device"
-                    } else {
-                        "camilla_wasapi_loopback_exclusive"
-                    },
-                ));
-            }
-        }
-        if params.mdat_scope.is_some() && params.kind != ExportKind::BeforeAfterMdat {
-            return Err(IpcError::new(
-                ErrorCode::InvalidRequest,
-                "mdat_scope only applies to REW mdat",
-            )
-            .with_param("reason", "mdat_scope"));
-        }
-        if !params.extra_rates.is_empty() && params.kind != ExportKind::Convolution {
-            return Err(IpcError::new(
-                ErrorCode::InvalidRequest,
-                "extra_rates only applies to convolution export",
-            )
-            .with_param("reason", "extra_rates"));
-        }
-        let mdat_scope = params.mdat_scope.unwrap_or_default();
-        let now = (self.deps.clock)();
-        let project_mode = secs_types::calibration::mode_tag(
-            secs_project::calibration_from_project(open.project()).mode,
-        )
-        .to_owned();
-        let output_rate_auto = open.project().dsp.output_rate == OutputRateChoice::Auto;
-        let (output_rate, output_rate_notes) = if matches!(
-            params.kind,
-            ExportKind::BeforeAfterMdat | ExportKind::StagedMdat
-        ) {
-            (48_000, Vec::new())
-        } else {
-            resolve_output_rate(
-                open.project().dsp.output_rate,
-                self.deps.audio_backend.as_ref(),
-            )
-        };
-        let mut params = params;
-        params.extra_rates = extra_rates_for(&params.extra_rates, output_rate, output_rate_auto)?;
-        if params.kind == ExportKind::BeforeAfterMdat
-            && mdat_scope == secs_export::MdatScope::Measurements
-        {
-            if open
-                .store()
-                .records()
-                .iter()
-                .all(|record| record.ir.values().all(String::is_empty))
-            {
-                return Err(IpcError::new(
-                    ErrorCode::EngineInput,
-                    "there are no measurements to export",
-                )
-                .with_param("reason", "no_measurements"));
-            }
-            let originals = session::ProjectSnapshot::of(ticket, open);
-            let uuid = self.deps.uuid.clone();
-            let now_ms = (self.deps.unix_ms)();
-            let export_session = self.session.clone();
-            let completion_clock = self.deps.clock.clone();
-            let completion_offset = self.deps.clock_offset_seconds.clone();
-            let destination = if params.folder.is_empty() {
-                crate::export_folder::measurement_mdat_folder(
-                    &self.resolved_export_base_for(open)?,
-                    now,
-                )
-            } else {
-                Path::new(&params.folder).to_path_buf()
-            };
-            return self.start_job(JobKind::Export, events, move |job| {
-                let ctx = super::calibration::compute_context(&job, false);
-                let originals = originals.load_originals(&job, ctx.budget())?;
+        let plan = self.plan_export(params, purpose)?;
+        self.start_export_plan(plan, events, complete)
+    }
+
+    fn start_export_plan<F>(
+        &self,
+        plan: ExportPlan,
+        events: Arc<dyn EventSink>,
+        complete: F,
+    ) -> Result<JobStarted, IpcError>
+    where
+        F: FnOnce(ExportResult) -> Result<JobResult, IpcError> + Send + 'static,
+    {
+        let job_kind = plan.purpose.job_kind();
+        let uuid = self.deps.uuid.clone();
+        let session_for_design = self.session.clone();
+        let completion_clock = self.deps.clock.clone();
+        let completion_offset = self.deps.clock_offset_seconds.clone();
+        let log = self.deps.log.clone();
+        self.start_job(job_kind, events, move |job| {
+            let ExportPlan {
+                kind,
+                purpose: _,
+                source,
+                mimo: selection,
+                description,
+                destination,
+                manifest,
+                record,
+                output_rate,
+                output_rate_notes,
+                extra_rates,
+                camilla_devices,
+                mdat_scope,
+                originals,
+                source_sidecars,
+                ticket,
+                stale,
+                spl_offset,
+                now_ms,
+            } = plan;
+            job.cancel()
+                .check()
+                .map_err(|_| IpcError::new(ErrorCode::Cancelled, "cancelled"))?;
+            let ctx = super::calibration::compute_context(&job, false);
+
+            if let DesignSource::Measurements { snapshot } = source {
+                let originals = snapshot.load_originals(&job, ctx.budget())?;
                 if originals.values.is_empty() {
                     return Err(IpcError::new(
                         ErrorCode::EngineInput,
@@ -286,7 +597,7 @@ impl Service {
                     .with_param("reason", "no_measurements"));
                 }
                 job.begin_commit()?;
-                let folder = destination.as_path();
+                let folder = destination.staging.as_path();
                 let mut uuid = lock(&uuid);
                 let destination = secs_export::export_rew_mdat_using(
                     None,
@@ -304,7 +615,7 @@ impl Service {
                 if let Some(path) = write_compute_provenance(folder, None)? {
                     paths.push(path);
                 }
-                let result = IpcExportResult {
+                let result = ExportResult {
                     files: paths
                         .into_iter()
                         .map(|path| path.to_string_lossy().into_owned())
@@ -313,224 +624,133 @@ impl Service {
                     notes: Vec::new(),
                     folder: folder.to_string_lossy().into_owned(),
                     stale: false,
-                };
-                lock(&export_session).record_export(secs_types::local_api::LastExport {
-                    kind: ExportKind::BeforeAfterMdat,
-                    folder: result.folder.clone(),
-                    mimo: false,
-                    mode: project_mode,
-                    design_name: None,
+                    main_config: None,
                     design_id: None,
-                    time: completion_clock()
-                        .shift_seconds(completion_offset().saturating_neg())
-                        .rfc3339_utc(),
-                });
-                Ok(JobResult::Export(result))
-            });
-        }
-        let stale = {
-            let calibration = open.results.calibration(open.project());
-            if calibration.is_none() {
-                return Err(IpcError::new(
-                    ErrorCode::EngineInput,
-                    "calibration must run before export",
-                ));
+                };
+                if let Some(record) = record {
+                    lock(&session_for_design).record_export(secs_types::local_api::LastExport {
+                        kind,
+                        folder: result.folder.clone(),
+                        mimo: record.includes_mimo,
+                        mode: record.mode,
+                        design_name: record.design_name,
+                        design_id: None,
+                        time: completion_clock()
+                            .shift_seconds(completion_offset().saturating_neg())
+                            .rfc3339_utc(),
+                    });
+                }
+                return complete(result);
             }
-            calibration.is_some_and(crate::results::RunView::stale)
-        };
-        let originals = (params.kind == ExportKind::BeforeAfterMdat
-            && mdat_scope == secs_export::MdatScope::All)
-            .then(|| session::ProjectSnapshot::of(ticket, open));
-        let project = open.project();
-        let project_name =
-            (!project.name.trim().is_empty()).then(|| project.name.trim().to_owned());
-        let app_version = self.deps.app_version.to_string();
-        let live = open.results.live_calibration();
-        let cached = open.results.cached();
-        let mdat = matches!(
-            params.kind,
-            ExportKind::BeforeAfterMdat | ExportKind::StagedMdat
-        );
-        let replay_snapshot = (mdat && live.is_none()).then(|| session::ProjectSnapshot::of(ticket, open));
-        let cached_sample_rate_policy = cached.map(|cache| cache.labels.sample_rate_policy);
-        let description = crate::export_run::describe(&open.results, project, compute_key, now)?;
-        let (live_mimo, cached_mimo) = match open.results.mimo(project, compute_key).exported() {
-            Some(MimoView::Live(result)) => (Some(result), None),
-            Some(MimoView::Cached(cache)) => (None, cache.mimo_paths.as_ref()),
-            None => (None, None),
-        };
-        // Capture only what this export format consumes. In particular the
-        // convolution writers never clone the large applied-response matrices.
-        let mut live_values = live
-            .filter(|_| mdat)
-            .map(|calibration| (calibration.shared_design(), calibration.settings.clone()));
-        let live_camilla = live
-            .filter(|_| params.kind == ExportKind::CamillaDsp)
-            .map(|calibration| calibration.shared_design());
-        let cached_camilla = cached
-            .filter(|_| live.is_none() && params.kind == ExportKind::CamillaDsp)
-            .map(|cache| cache.calibration_chain.clone());
-        let spl_offset = secs_project::project_spl_offset(project);
-        let sources = if mdat {
-            secs_project::load_project_sources(project, &open.path)
-        } else {
-            Default::default()
-        };
-        let uuid = self.deps.uuid.clone();
-        let session_for_design = self.session.clone();
-        let completion_clock = self.deps.clock.clone();
-        let completion_offset = self.deps.clock_offset_seconds.clone();
-        let mode_name = description.mode();
-        let mut mimo = live_mimo.filter(|_| mdat).map(|result| {
-            description.mimo_responses(result.run.paths.clone(), result.run.applied.clone())
-        });
-        let cached_mimo_paths = cached_mimo.cloned();
-        let mut export_mimo = if mdat {
-            None
-        } else {
-            live_mimo
-                .map(|result| &result.run.paths)
-                .or(cached_mimo)
-                .cloned()
-        };
-        let includes_mimo = export_mimo.is_some();
-        let folder_includes_mimo = mimo.is_some() || includes_mimo;
-        let compute_report = if let Some(result) = live_mimo {
-            Some(result.summary.compute.clone())
-        } else if cached_mimo.is_some() {
-            cached
-                .and_then(|cache| cache.mimo.as_ref())
-                .map(|result| result.compute.clone())
-        } else {
-            None
-        };
-        let export_chain = live
-            .map(|calibration| &calibration.design().chain)
-            .or_else(|| cached.map(|cache| &cache.calibration_chain))
-            .expect("live or cached calibration checked above");
-        if let Some(block) = secs_types::ipc::export_block(
-            params.kind,
-            !export_chain.subs.is_empty(),
-            includes_mimo,
-            live.is_none() && stale,
-        ) {
-            return Err(IpcError::new(
-                ErrorCode::ExportScope,
-                "the chosen filter export cannot carry this result",
-            )
-            .with_param("reason", block.name()));
-        }
-        let filter_values = matches!(
-            params.kind,
-            ExportKind::FilterText | ExportKind::EqualizerApo | ExportKind::Convolution
-        )
-        .then(|| (export_chain.clone(), export_mimo.take()));
-        // One export reads the clock once; every file in the bundle gets that date.
-        let now_ms = (self.deps.unix_ms)();
-        let log = self.deps.log.clone();
-        let is_filter_export = matches!(
-            params.kind,
-            ExportKind::CamillaDsp
-                | ExportKind::FilterText
-                | ExportKind::EqualizerApo
-                | ExportKind::Convolution
-        );
-        let manifest_chain = is_filter_export.then(|| export_chain.clone());
-        let manifest_mimo = if is_filter_export {
-            filter_values
-                .as_ref()
-                .and_then(|(_, mimo)| mimo.clone())
-                .or_else(|| export_mimo.clone())
-        } else {
-            None
-        };
-        let created_utc = is_filter_export
-            .then(|| crate::design_export::created_utc(now_ms).map_err(export_error))
-            .transpose()?;
-        let display_design_name = requested_design_name
-            .clone()
-            .unwrap_or_else(|| description.label().to_owned());
-        let design_id = is_filter_export
-            .then(|| {
-                secs_graph::design::design_id(
-                    export_chain,
-                    manifest_mimo.as_ref(),
-                    secs_graph::LfeChoice::DOLBY,
-                )
-                .map_err(export_error)
-            })
-            .transpose()?;
-        let camilla_devices = params.camilla_devices.clone();
-        let explicit = (!params.folder.is_empty()).then(|| Path::new(&params.folder).to_path_buf());
-        let explicit_unnamed = explicit.is_some() && requested_design_name.is_none();
-        // An explicit folder is the base of a named bundle too, so the default
-        // base (and the host's home directory behind it) is only read without one.
-        let default_base = if explicit.is_none() {
-            Some(self.resolved_export_base_for(open)?)
-        } else {
-            None
-        };
-        let base = explicit
-            .clone()
-            .or(default_base.clone())
-            .unwrap_or_default();
-        let final_destination = if let Some(name) = requested_design_name.as_deref() {
-            crate::design_export::named_folder(&base, params.kind, name)
-        } else if let Some(explicit) = explicit {
-            explicit
-        } else {
-            let base = default_base.as_deref().expect("resolved export base");
-            match params.kind {
-                ExportKind::CamillaDsp => crate::export_folder::camilladsp_folder(
-                    base,
-                    folder_includes_mimo,
-                    mode_name,
-                    now,
+
+            let mdat = matches!(kind, ExportKind::BeforeAfterMdat | ExportKind::StagedMdat);
+            let replay = matches!(source, DesignSource::Replay { .. });
+            let (
+                mut live_values,
+                live_camilla,
+                cached_camilla,
+                replay_snapshot,
+                cached_sample_rate_policy,
+                export_chain,
+            ) = match source {
+                DesignSource::Live { design, settings } => {
+                    let chain = Arc::new(design.signal_chain().clone());
+                    (
+                        mdat.then(|| (design.clone(), (*settings).clone())),
+                        (kind == ExportKind::CamillaDsp).then_some(design),
+                        None,
+                        None,
+                        None,
+                        chain,
+                    )
+                }
+                DesignSource::Cached { chain } => {
+                    let camilla = (kind == ExportKind::CamillaDsp).then(|| (*chain).clone());
+                    (None, None, camilla, None, None, chain)
+                }
+                DesignSource::Replay {
+                    snapshot,
+                    chain,
+                    sample_rate_policy,
+                } => (
+                    None,
+                    None,
+                    None,
+                    Some(snapshot),
+                    Some(sample_rate_policy),
+                    chain,
                 ),
-                ExportKind::BeforeAfterMdat | ExportKind::StagedMdat => {
-                    crate::export_folder::mdat_folder(base, folder_includes_mimo, mode_name, now)
-                }
-                ExportKind::FilterText => {
-                    crate::export_folder::text_folder(base, includes_mimo, mode_name, now)
-                }
-                ExportKind::EqualizerApo => {
-                    crate::export_folder::eqapo_folder(base, includes_mimo, mode_name, now)
-                }
-                ExportKind::Convolution => {
-                    crate::export_folder::convolution_folder(base, includes_mimo, mode_name, now)
-                }
-            }
-        };
-        let destination = if requested_design_name.is_some() {
-            crate::design_export::staging_folder(&final_destination)
-        } else {
-            final_destination.clone()
-        };
-        let registry_base = if is_filter_export && job_kind != JobKind::Apply {
-            if requested_design_name.is_some() {
-                Some(base)
-            } else if let Some(base) = default_base {
-                Some(base)
-            } else {
-                final_destination.parent().map(Path::to_path_buf)
-            }
-        } else {
-            None
-        };
-        self.start_job(job_kind, events, move |job| {
-            job.cancel()
-                .check()
-                .map_err(|_| IpcError::new(ErrorCode::Cancelled, "cancelled"))?;
+                DesignSource::Measurements { .. } => unreachable!(),
+            };
+            let sources = source_sidecars
+                .as_ref()
+                .map(|snapshot| {
+                    secs_project::load_project_sources(&snapshot.project, &snapshot.path)
+                })
+                .unwrap_or_default();
             for warning in &sources.warnings {
                 job.log(Notice {
                     code: warning.code.to_owned(),
                     params: [("entry".into(), warning.entry.clone())].into(),
                 });
             }
-            let ctx = super::calibration::compute_context(&job, false);
-            let folder = destination.as_path();
+
+            let (mimo_paths, mimo_applied, compute_report) =
+                selection.map_or((None, None, None), |selection| {
+                    (
+                        Some(selection.paths),
+                        selection.applied,
+                        Some(selection.compute),
+                    )
+                });
+            let mut mimo = if mdat {
+                match (mimo_paths.as_ref(), mimo_applied) {
+                    (Some(paths), Some(applied)) => Some(
+                        description
+                            .mimo_responses((**paths).clone(), Arc::unwrap_or_clone(applied)),
+                    ),
+                    _ => None,
+                }
+            } else {
+                None
+            };
+            let cached_mimo_paths = replay
+                .then(|| mimo_paths.as_ref().map(|paths| (**paths).clone()))
+                .flatten();
+            let mut export_mimo = (!mdat)
+                .then(|| mimo_paths.map(Arc::unwrap_or_clone))
+                .flatten();
+            let includes_mimo = export_mimo.is_some();
+            let folder_includes_mimo =
+                mimo.is_some() || includes_mimo || cached_mimo_paths.is_some();
+            let filter_values = matches!(
+                kind,
+                ExportKind::FilterText | ExportKind::EqualizerApo | ExportKind::Convolution
+            )
+            .then(|| ((*export_chain).clone(), export_mimo.take()));
+            let manifest_mimo = if matches!(
+                kind,
+                ExportKind::CamillaDsp
+                    | ExportKind::FilterText
+                    | ExportKind::EqualizerApo
+                    | ExportKind::Convolution
+            ) {
+                filter_values
+                    .as_ref()
+                    .and_then(|(_, mimo)| mimo.clone())
+                    .or_else(|| export_mimo.clone())
+            } else {
+                None
+            };
+            let requested_design_name = record
+                .as_ref()
+                .and_then(|record| record.design_name.clone());
+            let folder = destination.staging.as_path();
+            let final_destination = destination.final_folder;
+            let registry_base = destination.index_root;
+            let explicit_unnamed = destination.explicit_unnamed;
             let mut main_config = None;
-            let mut paths = match params.kind {
+            let mut paths = match kind {
                 ExportKind::CamillaDsp => {
                     let chain = if let Some(design) = &live_camilla {
                         design.signal_chain()
@@ -550,9 +770,9 @@ impl Service {
                         playback,
                         output_rate,
                         design: Some(DesignLabels {
-                            project_name: project_name.clone(),
-                            design_name: display_design_name.clone(),
-                            design_id: design_id.clone().expect("filter export design id"),
+                            project_name: manifest.project_name.clone(),
+                            design_name: manifest.display_design_name.clone(),
+                            design_id: manifest.design_id.clone().expect("filter export design id"),
                             bypass: false,
                         }),
                         headroom: true,
@@ -592,9 +812,9 @@ impl Service {
                     let run = description.filters(&values.0, values.1.as_ref());
                     let options = secs_filters::Options {
                         output_rate,
-                        extra_rates: params.extra_rates.clone(),
+                        extra_rates,
                     };
-                    let installed = match params.kind {
+                    let installed = match kind {
                         ExportKind::FilterText => {
                             job.begin_commit()?;
                             secs_filters::export_filter_text_observed_with_options(
@@ -642,17 +862,18 @@ impl Service {
                             &job,
                             session::Finality::Streaming,
                             |open| {
-                            let project = open.project();
-                            let settings = secs_project::calibration_from_project(project);
-                            let keys = ProjectKeys::of(project);
-                            if !open.results.inputs_unchanged_since(&keys, &settings) {
-                                return Err(IpcError::new(
-                                    ErrorCode::StaleInputs,
-                                    "project changed while computing",
-                                ));
-                            }
-                            Ok(((), false))
-                        })?;
+                                let project = open.project();
+                                let settings = secs_project::calibration_from_project(project);
+                                let keys = ProjectKeys::of(project);
+                                if !open.results.inputs_unchanged_since(&keys, &settings) {
+                                    return Err(IpcError::new(
+                                        ErrorCode::StaleInputs,
+                                        "project changed while computing",
+                                    ));
+                                }
+                                Ok(((), false))
+                            },
+                        )?;
                         let mut settings = secs_project::calibration_from_project(&loaded.project);
                         if let Some(policy) = cached_sample_rate_policy {
                             settings.sample_rate_policy = policy;
@@ -733,25 +954,28 @@ impl Service {
                 paths.push(path);
             }
             let mut written_design_id = None;
-            if is_filter_export {
+            if manifest.design_id.is_some() {
                 let metadata = crate::design_export::DesignMetadata {
-                    design_name: display_design_name.clone(),
-                    project_name: project_name.clone(),
-                    app_version: app_version.clone(),
-                    created_utc: created_utc.clone().expect("filter export timestamp"),
-                    export_kind: params.kind,
-                    mode: mode_name.to_owned(),
+                    design_name: manifest.display_design_name.clone(),
+                    project_name: manifest.project_name.clone(),
+                    app_version: manifest.app_version.clone(),
+                    created_utc: manifest
+                        .created_utc
+                        .clone()
+                        .expect("filter export timestamp"),
+                    export_kind: kind,
+                    mode: description.mode().to_owned(),
                     latency_ms: description.latency_ms(),
                     output_rate,
-                    output_rate_auto,
-                    chain: manifest_chain.clone().expect("filter export chain"),
-                    mimo: manifest_mimo.clone(),
-                    bypass_config: (params.kind == ExportKind::CamillaDsp)
+                    output_rate_auto: manifest.output_rate_auto,
+                    chain: (*export_chain).clone(),
+                    mimo: manifest_mimo,
+                    bypass_config: (kind == ExportKind::CamillaDsp)
                         .then(|| format!("configs/secs_{}_bypass.yml", description.camilla().mode)),
                 };
-                let (manifest, id) = crate::design_export::write_manifest(folder, &metadata)
+                let (manifest_path, id) = crate::design_export::write_manifest(folder, &metadata)
                     .map_err(export_error)?;
-                paths.push(manifest);
+                paths.push(manifest_path);
                 written_design_id = Some(id);
             }
             if requested_design_name.is_some() {
@@ -787,27 +1011,26 @@ impl Service {
                     .map(|path| path.to_string_lossy().into_owned())
                     .collect(),
                 output_rate,
-                notes: output_rate_notes.clone(),
+                notes: output_rate_notes,
                 folder: final_destination.to_string_lossy().into_owned(),
                 stale,
                 main_config,
                 design_id: written_design_id.clone(),
             };
-            if record_export {
+            if let Some(record) = record {
                 lock(&session_for_design).record_export(secs_types::local_api::LastExport {
-                    kind: params.kind,
+                    kind,
                     folder: result.folder.clone(),
-                    mimo: folder_includes_mimo,
-                    mode: mode_name.to_owned(),
-                    design_name: requested_design_name.clone(),
-                    design_id: written_design_id.clone(),
+                    mimo: record.includes_mimo || folder_includes_mimo,
+                    mode: record.mode,
+                    design_name: record.design_name,
+                    design_id: written_design_id,
                     time: completion_clock()
                         .shift_seconds(completion_offset().saturating_neg())
                         .rfc3339_utc(),
                 });
             }
             complete(result)
-        })
         })
     }
 }

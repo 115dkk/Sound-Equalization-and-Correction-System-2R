@@ -17,6 +17,9 @@ mod design_export;
 pub mod dirac_import;
 mod export;
 pub mod export_folder;
+mod export_plan;
+#[cfg(test)]
+mod export_plan_tests;
 mod export_run;
 mod host;
 mod ipc;
