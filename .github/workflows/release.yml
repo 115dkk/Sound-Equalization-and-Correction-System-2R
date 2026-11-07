@@ -348,7 +348,7 @@ jobs:
         run: |
           cargo install tauri-driver --locked --version 2.1.0
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          python -I -c "import runpy,sys; runpy.run_path(sys.argv[1])['prepare_edge'](sys.argv[2],sys.argv[3])" "$env:GITHUB_WORKSPACE\.github\scripts\manage_e2e.py" "$env:RUNNER_TEMP\update-edge" "$env:RUNNER_TEMP\update-e2e"
+          python -I "$env:GITHUB_WORKSPACE\.github\scripts\manage_e2e.py" prepare-edge "$env:RUNNER_TEMP\update-edge" "$env:RUNNER_TEMP\update-e2e"
 
       - name: Install the previous release and let it update itself
         run: python -I .github/scripts/update_e2e.py run --old "$env:RUNNER_TEMP\update-old" --old-version "$env:OLD_VERSION" --new "$env:RUNNER_TEMP\update-new" --version "$env:VERSION" --asset-version "$env:VERSION" --tls --tauri-driver "$env:USERPROFILE\.cargo\bin\tauri-driver.exe" --msedgedriver "$env:SECS_MSEDGEDRIVER" --artifacts "$env:RUNNER_TEMP\update-e2e" --report "$env:RUNNER_TEMP\update-e2e-report.md"

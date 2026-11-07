@@ -832,7 +832,7 @@ jobs:
 
       - name: Install SECS 2R silently and resolve its uninstall entry
         run: |
-          python -I -c "import runpy,sys; runpy.run_path(sys.argv[1])['install_app'](sys.argv[2])" "$env:GITHUB_WORKSPACE\.github\scripts\manage_e2e.py" "$env:RUNNER_TEMP\manage-installers"
+          python -I "$env:GITHUB_WORKSPACE\.github\scripts\manage_e2e.py" install "$env:RUNNER_TEMP\manage-installers"
 
       - name: Fetch pinned CamillaDSP for Windows
         run: python .github/scripts/camilla_engine.py fetch --engine windows --dest "$env:RUNNER_TEMP\manage-camilla" --github-env "$env:GITHUB_ENV"
@@ -848,7 +848,7 @@ jobs:
           # 2.1.0 was released 2026-09-26, over two weeks before this pin.
           cargo install tauri-driver --locked --version 2.1.0
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          python -I -c "import runpy,sys; runpy.run_path(sys.argv[1])['prepare_edge'](sys.argv[2],sys.argv[3])" "$env:GITHUB_WORKSPACE\.github\scripts\manage_e2e.py" "$env:RUNNER_TEMP\manage-edge" "$env:RUNNER_TEMP\manage-e2e"
+          python -I "$env:GITHUB_WORKSPACE\.github\scripts\manage_e2e.py" prepare-edge "$env:RUNNER_TEMP\manage-edge" "$env:RUNNER_TEMP\manage-e2e"
 
       - name: Drive the installed app and shell
         run: |
@@ -931,7 +931,7 @@ jobs:
         run: |
           cargo install tauri-driver --locked --version 2.1.0
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          python -I -c "import runpy,sys; runpy.run_path(sys.argv[1])['prepare_edge'](sys.argv[2],sys.argv[3])" "$env:GITHUB_WORKSPACE\.github\scripts\manage_e2e.py" "$env:RUNNER_TEMP\update-edge" "$env:RUNNER_TEMP\update-e2e"
+          python -I "$env:GITHUB_WORKSPACE\.github\scripts\manage_e2e.py" prepare-edge "$env:RUNNER_TEMP\update-edge" "$env:RUNNER_TEMP\update-e2e"
 
       - name: Install the old build and let it update itself
         run: |
