@@ -45,6 +45,52 @@ impl ExportResult {
     }
 }
 
+struct BeforeAfterMdatWriter {
+    destination: std::path::PathBuf,
+    bytes: Vec<u8>,
+}
+
+impl BeforeAfterMdatWriter {
+    #[allow(clippy::too_many_arguments)]
+    fn prepare(
+        run: Option<&ExportRun<'_>>,
+        scope: secs_export::MdatScope,
+        originals: &[secs_export::Original],
+        folder: &Path,
+        mimo: Option<&secs_export::MimoResponses>,
+        sources: Option<&secs_export::Sources>,
+        spl_offset: Option<f64>,
+        now_ms: i64,
+        uuid: &crate::UuidSource,
+    ) -> Result<Self, IpcError> {
+        let items = secs_export::rew_mdat_items(run, scope, originals, mimo, sources)
+            .map_err(rew_export_error)?;
+        let label = run.map(|run| run.settings.label()).unwrap_or_default();
+        let mut uuid = lock(uuid);
+        let uuids = (0..items.len())
+            .map(|_| uuid.as_mut()())
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(export_error)?;
+        let mut uuids = uuids.into_iter();
+        let bytes = secs_mdat::build(&items, secs_mdat::TEMPLATE, spl_offset, now_ms, &mut || {
+            uuids.next().expect("one UUID per before-after mdat item")
+        })
+        .map_err(export_error)?;
+        Ok(Self {
+            destination: folder.join(secs_export::rew_mdat_filename(scope, &label)),
+            bytes,
+        })
+    }
+
+    fn write(self) -> Result<std::path::PathBuf, IpcError> {
+        if let Some(parent) = self.destination.parent() {
+            std::fs::create_dir_all(parent).map_err(export_error)?;
+        }
+        secs_types::fs::write_atomic_bytes(&self.destination, &self.bytes).map_err(export_error)?;
+        Ok(self.destination)
+    }
+}
+
 struct StagedMdatWriter {
     destination: std::path::PathBuf,
     bytes: Vec<u8>,
@@ -706,10 +752,8 @@ impl Service {
                     )
                     .with_param("reason", "no_measurements"));
                 }
-                job.begin_commit()?;
                 let folder = destination.staging.as_path();
-                let mut uuid = lock(&uuid);
-                let destination = secs_export::export_rew_mdat_using(
+                let writer = BeforeAfterMdatWriter::prepare(
                     None,
                     mdat_scope,
                     &originals.values,
@@ -718,10 +762,10 @@ impl Service {
                     None,
                     None,
                     now_ms,
-                    uuid.as_mut(),
-                )
-                .map_err(rew_export_error)?;
-                let mut paths = vec![destination];
+                    &uuid,
+                )?;
+                job.begin_commit()?;
+                let mut paths = vec![writer.write()?];
                 if let Some(path) = write_compute_provenance(folder, None)? {
                     paths.push(path);
                 }
@@ -1016,22 +1060,19 @@ impl Service {
                         job.begin_commit()?;
                         vec![writer.write()?]
                     } else {
+                        let writer = BeforeAfterMdatWriter::prepare(
+                            Some(&run),
+                            mdat_scope,
+                            original_values,
+                            folder,
+                            mimo.as_ref(),
+                            Some(&sources.values),
+                            spl_offset,
+                            now_ms,
+                            &uuid,
+                        )?;
                         job.begin_commit()?;
-                        let mut uuid = lock(&uuid);
-                        vec![
-                            secs_export::export_rew_mdat_using(
-                                Some(&run),
-                                mdat_scope,
-                                original_values,
-                                folder,
-                                mimo.as_ref(),
-                                Some(&sources.values),
-                                spl_offset,
-                                now_ms,
-                                uuid.as_mut(),
-                            )
-                            .map_err(rew_export_error)?,
-                        ]
+                        vec![writer.write()?]
                     }
                 }
             };
@@ -1313,6 +1354,20 @@ mod tests {
                 fail,
             })
         })
+    }
+
+    #[test]
+    fn before_after_mdat_writer_stores_the_same_files_main_config_and_design_id() {
+        let folder =
+            std::env::temp_dir().join(format!("secs-before-after-writer-{}", std::process::id()));
+        let destination = folder.join("SECS 원 측정.mdat");
+        let writer = BeforeAfterMdatWriter {
+            destination: destination.clone(),
+            bytes: vec![4, 5, 6],
+        };
+        assert_eq!(writer.write().unwrap(), destination);
+        assert_eq!(std::fs::read(&destination).unwrap(), [4, 5, 6]);
+        std::fs::remove_dir_all(folder).unwrap();
     }
 
     #[test]
