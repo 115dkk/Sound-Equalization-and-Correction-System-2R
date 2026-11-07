@@ -26,7 +26,19 @@ kind = "service"
 milestone = "M6"
 status = "implemented"
 upstream = "new; ADR 0020, ADR 0058"
-tests = ["secs-service::download_past_the_cap_cancels_and_fails_before_buffering_td204"]
+tests = [
+  "secs-service::auto_policy_downloads_a_found_release_at_once",
+  "secs-service::notify_policy_only_announces_a_found_release",
+  "secs-service::portable_build_reports_the_release_url",
+  "secs-service::tick_is_ignored_while_checking_downloading_ready_or_installing",
+  "secs-service::late_check_result_with_an_old_generation_is_ignored",
+  "secs-service::set_policy_off_cancels_removes_pending_and_goes_off",
+  "secs-service::notify_while_downloading_cancels_back_to_available",
+  "secs-service::auto_while_available_starts_the_download",
+  "secs-service::exit_installs_only_a_ready_on_exit_release",
+  "secs-service::failures_keep_the_user_sentence_and_log_the_cause_td164",
+  "secs-service::download_past_the_cap_cancels_and_fails_before_buffering_td204",
+]
 
 [[feature]]
 id = "ipc.update_status"
