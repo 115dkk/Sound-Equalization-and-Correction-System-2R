@@ -218,7 +218,6 @@ impl Service {
         };
         let mut params = params;
         params.extra_rates = extra_rates_for(&params.extra_rates, output_rate, output_rate_auto)?;
-        let memory = self.deps.memory.available_bytes();
         if params.kind == ExportKind::BeforeAfterMdat
             && mdat_scope == secs_export::MdatScope::Measurements
         {
@@ -248,8 +247,8 @@ impl Service {
             } else {
                 Path::new(&params.folder).to_path_buf()
             };
-            return self.jobs.start(JobKind::Export, events, move |job| {
-                let ctx = super::calibration::compute_context(&job, memory, false);
+            return self.start_job(JobKind::Export, events, move |job| {
+                let ctx = super::calibration::compute_context(&job, false);
                 let originals = originals.load_originals(&job, ctx.budget())?;
                 if originals.values.is_empty() {
                     return Err(IpcError::new(
@@ -499,7 +498,7 @@ impl Service {
         } else {
             None
         };
-        self.jobs.start(job_kind, events, move |job| {
+        self.start_job(job_kind, events, move |job| {
             job.cancel()
                 .check()
                 .map_err(|_| IpcError::new(ErrorCode::Cancelled, "cancelled"))?;
@@ -509,7 +508,7 @@ impl Service {
                     params: [("entry".into(), warning.entry.clone())].into(),
                 });
             }
-            let ctx = super::calibration::compute_context(&job, memory, false);
+            let ctx = super::calibration::compute_context(&job, false);
             let folder = destination.as_path();
             let mut paths = match params.kind {
                 ExportKind::CamillaDsp => {

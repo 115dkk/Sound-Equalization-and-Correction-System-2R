@@ -83,7 +83,7 @@ impl Service {
         let state = self.level.inner.clone();
         let session = self.session.clone();
         let rew = self.rew.clone();
-        let started = self.jobs.start(JobKind::LevelMonitor, events, move |job| {
+        let started = self.start_job(JobKind::LevelMonitor, events, move |job| {
             lock(&state).job = Some(job.id());
             let outcome = monitor_loop(
                 &deps, &session, &state, &project, ticket, settings, plan, &job, &rew,

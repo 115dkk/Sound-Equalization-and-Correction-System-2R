@@ -19,7 +19,7 @@ impl Service {
         let jobs = self.jobs.clone();
         let state = self.status_watch.job.clone();
         let rew = self.rew.clone();
-        let started = self.jobs.start(JobKind::StatusWatch, events, move |job| {
+        let started = self.start_job(JobKind::StatusWatch, events, move |job| {
             *lock(&state) = Some(job.id());
             let mut previous = None;
             while !job.cancel().is_cancelled() {

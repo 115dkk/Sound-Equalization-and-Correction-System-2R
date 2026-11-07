@@ -63,10 +63,9 @@ impl Service {
         }
         let subs_only = params.subs_only;
         let session = self.session.clone();
-        let memory = self.deps.memory.available_bytes();
-        self.jobs.start(JobKind::Calibrate, events, move |job| {
+        self.start_job(JobKind::Calibrate, events, move |job| {
             job.log(settings_notice(&snapshot.settings, background));
-            let ctx = compute_context(&job, memory, background);
+            let ctx = compute_context(&job, background);
             let prepared = snapshot.load(&job, ctx.budget())?;
             let groups = project_groups(&prepared.project);
             let inverted = prepared.project.config.inverted_mains();
@@ -142,7 +141,6 @@ impl Service {
                     &session,
                     ticket,
                     &job,
-                    memory,
                     design,
                     prepared.settings,
                     selection,
@@ -161,11 +159,10 @@ impl Service {
     ) -> Result<JobStarted, IpcError> {
         let snapshot = self.snapshot(None)?;
         let recommendation_key = xo_rec_key(&snapshot.project.project, &snapshot.settings);
-        let memory = self.deps.memory.available_bytes();
         let session = self.session.clone();
-        self.jobs.start(JobKind::RecommendXo, events, move |job| {
+        self.start_job(JobKind::RecommendXo, events, move |job| {
             job.log(settings_notice(&snapshot.settings, background));
-            let ctx = compute_context(&job, memory, background);
+            let ctx = compute_context(&job, background);
             let prepared = snapshot.load(&job, ctx.budget())?;
             let groups = project_groups(&prepared.project);
             let inverted = prepared.project.config.inverted_mains();
@@ -246,15 +243,13 @@ impl Service {
         let calibration_key = calibration.run_key.clone();
         let design = calibration.shared_design();
         drop(session_guard);
-        let memory = self.deps.memory.available_bytes();
         let session = self.session.clone();
-        self.jobs.start(JobKind::Mimo, events, move |job| {
+        self.start_job(JobKind::Mimo, events, move |job| {
             job.log(settings_notice(&settings, false));
             compute_and_commit_mimo(
                 &session,
                 ticket,
                 &job,
-                memory,
                 design,
                 settings,
                 selection,
@@ -313,7 +308,6 @@ fn compute_and_commit_mimo(
     session: &Arc<std::sync::Mutex<session::Session>>,
     ticket: ProjectTicket,
     job: &JobContext,
-    memory: u64,
     design: Arc<Design>,
     settings: CalibrationSettings,
     selection: secs_engine::mimo::AccelerationSelection,
@@ -321,7 +315,7 @@ fn compute_and_commit_mimo(
     background: bool,
 ) -> Result<(), IpcError> {
     let compute_key = crate::compute::ComputeIdentity::from(&selection.status);
-    let ctx = compute_context(job, memory, background);
+    let ctx = compute_context(job, background);
     let run = secs_engine::mimo::compute_with_acceleration(
         &design,
         design.measurements(),
@@ -501,7 +495,7 @@ fn background_threads(available: usize, background: bool) -> (usize, bool) {
     }
 }
 
-pub(crate) fn compute_context(job: &JobContext, available: u64, background: bool) -> Context {
+pub(crate) fn compute_context(job: &JobContext, background: bool) -> Context {
     let parallelism = std::thread::available_parallelism().map_or(1, |value| value.get());
     let (threads, paced) = background_threads(parallelism, background);
     let cancel = if paced {
@@ -511,7 +505,7 @@ pub(crate) fn compute_context(job: &JobContext, available: u64, background: bool
     };
     Context::new(
         threads,
-        MemoryBudget::from_probe(&FixedMemory(available), 0.5, 64 * 1024 * 1024),
+        MemoryBudget::from_probe(&FixedMemory(job.available_memory()), 0.5, 64 * 1024 * 1024),
         job.progress_sink(),
         cancel,
     )

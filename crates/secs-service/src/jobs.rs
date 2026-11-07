@@ -13,7 +13,7 @@ use secs_types::ipc::{
     JobStatus,
 };
 
-use crate::EventSink;
+use crate::{EventSink, Service};
 
 const TERMINAL_HISTORY_LIMIT: usize = secs_types::rules::JOB_HISTORY_MAX;
 
@@ -72,6 +72,7 @@ pub(crate) struct JobContext {
     events: Arc<dyn EventSink>,
     cancel: CancelToken,
     measurement_cancel: crate::measure::CancelToken,
+    available_memory: u64,
 }
 impl JobContext {
     pub fn cancel(&self) -> &CancelToken {
@@ -92,6 +93,10 @@ impl JobContext {
 
     pub fn measurement_cancel(&self) -> &crate::measure::CancelToken {
         &self.measurement_cancel
+    }
+
+    pub fn available_memory(&self) -> u64 {
+        self.available_memory
     }
 
     pub fn role_progress(&self, stage: &str, done: u64, total: u64) {
@@ -139,6 +144,27 @@ impl JobContext {
         Ok(())
     }
 }
+impl Service {
+    pub(crate) fn start_job(
+        &self,
+        kind: JobKind,
+        events: Arc<dyn EventSink>,
+        body: impl FnOnce(JobContext) -> Result<JobResult, IpcError> + Send + 'static,
+    ) -> Result<JobStarted, IpcError> {
+        self.jobs
+            .start(kind, events, self.deps.memory.clone(), body)
+    }
+
+    pub(crate) fn start_side_mdat_job(
+        &self,
+        events: Arc<dyn EventSink>,
+        body: impl FnOnce(JobContext) -> Result<JobResult, IpcError> + Send + 'static,
+    ) -> Result<JobStarted, IpcError> {
+        self.jobs
+            .start_side_mdat(events, self.deps.memory.clone(), body)
+    }
+}
+
 struct JobProgressSink(JobContext);
 impl std::fmt::Debug for JobProgressSink {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -167,17 +193,25 @@ impl JobRegistry {
         &self,
         kind: JobKind,
         events: Arc<dyn EventSink>,
+        memory: Arc<dyn secs_compute::MemoryProbe>,
         body: impl FnOnce(JobContext) -> Result<JobResult, IpcError> + Send + 'static,
     ) -> Result<JobStarted, IpcError> {
-        self.start_in_group(kind, group(kind), events, body)
+        self.start_in_group(kind, group(kind), events, memory.available_bytes(), body)
     }
 
     pub fn start_side_mdat(
         &self,
         events: Arc<dyn EventSink>,
+        memory: Arc<dyn secs_compute::MemoryProbe>,
         body: impl FnOnce(JobContext) -> Result<JobResult, IpcError> + Send + 'static,
     ) -> Result<JobStarted, IpcError> {
-        self.start_in_group(JobKind::Export, JobGroup::SideMdat, events, body)
+        self.start_in_group(
+            JobKind::Export,
+            JobGroup::SideMdat,
+            events,
+            memory.available_bytes(),
+            body,
+        )
     }
 
     fn start_in_group(
@@ -185,6 +219,7 @@ impl JobRegistry {
         kind: JobKind,
         job_group: JobGroup,
         events: Arc<dyn EventSink>,
+        available_memory: u64,
         body: impl FnOnce(JobContext) -> Result<JobResult, IpcError> + Send + 'static,
     ) -> Result<JobStarted, IpcError> {
         let id = JobId(self.next_id.fetch_add(1, Ordering::Relaxed));
@@ -225,6 +260,7 @@ impl JobRegistry {
             events: events.clone(),
             cancel,
             measurement_cancel,
+            available_memory,
         };
         let registry = self.clone();
         let worker_events = events.clone();
@@ -409,6 +445,10 @@ mod tests {
             self.changed.notify_all();
         }
     }
+    fn memory() -> Arc<dyn secs_compute::MemoryProbe> {
+        Arc::new(secs_compute::FixedMemory(u64::MAX))
+    }
+
     impl Events {
         fn wait_finished(&self, timeout: Duration) -> Vec<JobEvent> {
             let deadline = Instant::now() + timeout;
@@ -428,13 +468,38 @@ mod tests {
     }
 
     #[test]
+    fn job_context_reports_the_memory_available_at_start() {
+        let registry = JobRegistry::default();
+        let events = Arc::new(Events::default());
+        registry
+            .start(
+                JobKind::Export,
+                events.clone(),
+                Arc::new(secs_compute::FixedMemory(123)),
+                |job| {
+                    assert_eq!(job.available_memory(), 123);
+                    Ok(JobResult::Stopped)
+                },
+            )
+            .unwrap();
+        let values = events.wait_finished(Duration::from_secs(2));
+        assert!(matches!(
+            values.last(),
+            Some(JobEvent::Finished {
+                status: JobStatus::Succeeded,
+                ..
+            })
+        ));
+    }
+
+    #[test]
     fn jobs_push_ordered_events_and_exclude_the_same_group() {
         let registry = JobRegistry::default();
         let events = Arc::new(Events::default());
         let gate = Arc::new((Mutex::new(false), Condvar::new()));
         let worker_gate = gate.clone();
         registry
-            .start(JobKind::Calibrate, events.clone(), move |ctx| {
+            .start(JobKind::Calibrate, events.clone(), memory(), move |ctx| {
                 ctx.progress_sink().report(&Progress {
                     stage: "test",
                     done: 1,
@@ -456,7 +521,7 @@ mod tests {
             })
             .unwrap();
         let error = registry
-            .start(JobKind::Mimo, events.clone(), |_| {
+            .start(JobKind::Mimo, events.clone(), memory(), |_| {
                 unreachable!("busy jobs do not start")
             })
             .unwrap_err();
@@ -482,13 +547,18 @@ mod tests {
         let gate = Arc::new((Mutex::new(false), Condvar::new()));
         let worker_gate = gate.clone();
         let active = registry
-            .start(JobKind::Calibrate, active_events.clone(), move |_| {
-                let mut ready = lock(&worker_gate.0);
-                while !*ready {
-                    ready = worker_gate.1.wait(ready).unwrap();
-                }
-                Ok(JobResult::Calibration)
-            })
+            .start(
+                JobKind::Calibrate,
+                active_events.clone(),
+                memory(),
+                move |_| {
+                    let mut ready = lock(&worker_gate.0);
+                    while !*ready {
+                        ready = worker_gate.1.wait(ready).unwrap();
+                    }
+                    Ok(JobResult::Calibration)
+                },
+            )
             .unwrap();
         let mut completed = Vec::new();
         for index in 0..96 {
@@ -496,7 +566,7 @@ mod tests {
             let folder = format!("export-{index}");
             let expected = folder.clone();
             let job = registry
-                .start(JobKind::Export, events.clone(), move |_| {
+                .start(JobKind::Export, events.clone(), memory(), move |_| {
                     Ok(JobResult::Export(ExportResult {
                         folder,
                         files: vec!["filter.wav".into()],
@@ -584,19 +654,24 @@ mod tests {
         let registry = JobRegistry::default();
         let external_events = Arc::new(Events::default());
         let external = registry
-            .start(JobKind::Calibrate, external_events.clone(), |ctx| {
-                while !ctx.cancel().is_cancelled() {
-                    std::thread::yield_now();
-                }
-                Ok(JobResult::Calibration)
-            })
+            .start(
+                JobKind::Calibrate,
+                external_events.clone(),
+                memory(),
+                |ctx| {
+                    while !ctx.cancel().is_cancelled() {
+                        std::thread::yield_now();
+                    }
+                    Ok(JobResult::Calibration)
+                },
+            )
             .unwrap();
         registry.cancel(external.job).unwrap();
         let external_error = cancelled_error(&external_events);
 
         let body_events = Arc::new(Events::default());
         registry
-            .start(JobKind::Calibrate, body_events.clone(), |_| {
+            .start(JobKind::Calibrate, body_events.clone(), memory(), |_| {
                 Err(IpcError::new(ErrorCode::Cancelled, "cancelled"))
             })
             .unwrap();
@@ -609,7 +684,7 @@ mod tests {
         let registry = JobRegistry::default();
         let events = Arc::new(Events::default());
         let started = registry
-            .start(JobKind::Calibrate, events.clone(), |ctx| {
+            .start(JobKind::Calibrate, events.clone(), memory(), |ctx| {
                 loop {
                     ctx.cancel()
                         .check()

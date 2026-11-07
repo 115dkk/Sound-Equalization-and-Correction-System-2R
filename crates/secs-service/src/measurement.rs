@@ -453,7 +453,7 @@ impl Service {
         };
         let embedded = params.positions.is_none();
         let session = self.session.clone();
-        self.jobs.start(JobKind::SampleLoad, events, move |ctx| {
+        self.start_job(JobKind::SampleLoad, events, move |ctx| {
             let total = (roles.len() * positions.len()) as u64;
             let mut done = 0;
             let info = session::commit(&session, ticket, &ctx, session::Finality::Final, |open| {
@@ -557,7 +557,7 @@ impl Service {
         let commit_boundary = m.commit_boundary();
         let session = self.session.clone();
         let uuid = self.deps.uuid.clone();
-        self.jobs.start(JobKind::Measure, events, move |ctx| {
+        self.start_job(JobKind::Measure, events, move |ctx| {
             let countdown_started = std::time::Instant::now();
             let mut seconds_passed = 0;
             while seconds_passed < delay {
@@ -922,7 +922,7 @@ impl Service {
         let ticket = snapshot.ticket;
         let project = snapshot.project;
         let session = self.session.clone();
-        self.jobs.start(JobKind::MdatImport, events, move |ctx| {
+        self.start_job(JobKind::MdatImport, events, move |ctx| {
             // Read the file once here, without the session lock; the lock
             // is held only for the import below (TD-37).
             let path = Path::new(&params.path);

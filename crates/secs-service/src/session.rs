@@ -453,7 +453,6 @@ impl Service {
             destination: destination.clone(),
             uuid: self.deps.uuid.clone(),
             now_ms: (self.deps.unix_ms)(),
-            memory: self.deps.memory.available_bytes(),
         };
         drop(session);
 
@@ -473,8 +472,7 @@ impl Service {
         if start {
             let worker_queue = queue.clone();
             if let Err(error) = self
-                .jobs
-                .start_side_mdat(events, move |job| write_side_mdat_queue(worker_queue, job))
+                .start_side_mdat_job(events, move |job| write_side_mdat_queue(worker_queue, job))
             {
                 lock(&queue).running = false;
                 return Err(error);
@@ -980,7 +978,6 @@ struct SideMdatWork {
     destination: PathBuf,
     uuid: crate::UuidSource,
     now_ms: i64,
-    memory: u64,
 }
 
 #[derive(Default)]
@@ -1083,7 +1080,7 @@ fn write_side_mdat_entry(
     work: &SideMdatWork,
     job: &JobContext,
 ) -> Result<Option<secs_types::ipc::JobResult>, IpcError> {
-    let context = super::calibration::compute_context(job, work.memory, false);
+    let context = super::calibration::compute_context(job, false);
     let originals = work.originals.load_originals(job, context.budget())?;
     let LoadedOriginals { values, _permit } = originals;
     let inputs = values
@@ -1486,12 +1483,17 @@ mod commit_tests {
         let registry = JobRegistry::default();
         let finished = Arc::new(Finished::default());
         let started = registry
-            .start(JobKind::Export, finished.clone(), move |job| {
-                let budget = secs_compute::MemoryBudget::new(u64::MAX);
-                let loaded = snapshot.load_originals(&job, &budget)?;
-                *lock(&captured) = loaded.values.into_iter().map(|value| value.role).collect();
-                Ok(JobResult::Stopped)
-            })
+            .start(
+                JobKind::Export,
+                finished.clone(),
+                Arc::new(secs_compute::FixedMemory(u64::MAX)),
+                move |job| {
+                    let budget = secs_compute::MemoryBudget::new(u64::MAX);
+                    let loaded = snapshot.load_originals(&job, &budget)?;
+                    *lock(&captured) = loaded.values.into_iter().map(|value| value.role).collect();
+                    Ok(JobResult::Stopped)
+                },
+            )
             .unwrap();
         assert_eq!(finished.wait(started.job), (JobStatus::Succeeded, None));
         assert_eq!(&*lock(&roles), &["L", "R", "A"]);
@@ -1504,11 +1506,16 @@ mod commit_tests {
             reads: AtomicU64::new(0),
         });
         let started = registry
-            .start(JobKind::Export, events.clone(), move |job| {
-                let budget = secs_compute::MemoryBudget::new(u64::MAX);
-                snapshot.load_originals(&job, &budget)?;
-                Ok(JobResult::Stopped)
-            })
+            .start(
+                JobKind::Export,
+                events.clone(),
+                Arc::new(secs_compute::FixedMemory(u64::MAX)),
+                move |job| {
+                    let budget = secs_compute::MemoryBudget::new(u64::MAX);
+                    snapshot.load_originals(&job, &budget)?;
+                    Ok(JobResult::Stopped)
+                },
+            )
             .unwrap();
         let (status, error) = events.finished.wait(started.job);
         assert_eq!(status, JobStatus::Cancelled);
@@ -1563,10 +1570,15 @@ mod commit_tests {
         let events = Arc::new(Finished::default());
         let (release, gate) = mpsc::channel::<()>();
         let started = registry
-            .start(JobKind::Calibrate, events.clone(), move |job| {
-                gate.recv().expect("the test releases the job");
-                body(job)
-            })
+            .start(
+                JobKind::Calibrate,
+                events.clone(),
+                Arc::new(secs_compute::FixedMemory(u64::MAX)),
+                move |job| {
+                    gate.recv().expect("the test releases the job");
+                    body(job)
+                },
+            )
             .unwrap();
         before_commit(started.job);
         release.send(()).unwrap();
