@@ -64,8 +64,12 @@ const REPAIR_DELAYS: [Duration; MAX_REPAIR_ATTEMPTS as usize - 1] =
 pub enum SessionEvent {
     Logon,
     Logoff,
-    ConsoleConnect,
-    ConsoleDisconnect,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConsoleEvent {
+    Connect,
+    Disconnect,
 }
 
 #[derive(Debug, Clone)]
@@ -79,6 +83,11 @@ pub enum Input {
     StopManaging,
     Session {
         event: SessionEvent,
+        session_id: u32,
+        owner_matches: bool,
+    },
+    Console {
+        event: ConsoleEvent,
         session_id: u32,
         owner_matches: bool,
     },
@@ -343,14 +352,12 @@ pub fn decide(state: &State, input: Input) -> (State, Vec<Effect>) {
                 event: match event {
                     SessionEvent::Logon => "session_logon",
                     SessionEvent::Logoff => "session_logoff",
-                    SessionEvent::ConsoleConnect => "console_connect",
-                    SessionEvent::ConsoleDisconnect => "console_disconnect",
                 }
                 .into(),
                 fields: BTreeMap::from([("session".into(), session_id.to_string())]),
             }));
             match event {
-                SessionEvent::Logon | SessionEvent::ConsoleConnect if owner_matches => {
+                SessionEvent::Logon if owner_matches => {
                     next.other_user = false;
                     next.restart.on_stable();
                     if next.managed.owner_session_id != Some(session_id) {
@@ -368,7 +375,7 @@ pub fn decide(state: &State, input: Input) -> (State, Vec<Effect>) {
                         });
                     }
                 }
-                SessionEvent::Logon | SessionEvent::ConsoleConnect => {
+                SessionEvent::Logon => {
                     next.other_user = true;
                     if next.running_child_session.is_some() || next.pending_takeover.is_some() {
                         effects.push(Effect::StopChild);
@@ -377,7 +384,7 @@ pub fn decide(state: &State, input: Input) -> (State, Vec<Effect>) {
                     next.restart_due = None;
                     effects.push(Effect::SetCamillaState(ManagedProcessState::OtherUser));
                 }
-                SessionEvent::Logoff | SessionEvent::ConsoleDisconnect if owner_matches => {
+                SessionEvent::Logoff if owner_matches => {
                     next.other_user = false;
                     if next.running_child_session.is_some()
                         || next.restart_due.is_some()
@@ -389,10 +396,7 @@ pub fn decide(state: &State, input: Input) -> (State, Vec<Effect>) {
                     next.restart_due = None;
                     effects.push(Effect::SetCamillaState(ManagedProcessState::NoSession));
                 }
-                SessionEvent::Logoff | SessionEvent::ConsoleDisconnect => {
-                    if event == SessionEvent::ConsoleDisconnect {
-                        next.other_user = false;
-                    }
+                SessionEvent::Logoff => {
                     let child_ended = next.running_child_session == Some(session_id)
                         || next.pending_takeover.as_ref().map(|work| work.session)
                             == Some(session_id);
@@ -401,9 +405,78 @@ pub fn decide(state: &State, input: Input) -> (State, Vec<Effect>) {
                         next.pending_takeover = None;
                         next.restart_due = None;
                     }
-                    if child_ended || event == SessionEvent::ConsoleDisconnect {
+                    if child_ended {
                         effects.push(Effect::SetCamillaState(ManagedProcessState::NoSession));
                     }
+                }
+            }
+        }
+        Input::Console {
+            event,
+            session_id,
+            owner_matches,
+        } => {
+            effects.push(Effect::Log(event_line(
+                match event {
+                    ConsoleEvent::Connect => "console_connect",
+                    ConsoleEvent::Disconnect => "console_disconnect",
+                },
+                [("session".into(), session_id.to_string())],
+            )));
+            match event {
+                ConsoleEvent::Connect if owner_matches => {
+                    next.other_user = false;
+                    next.restart.on_stable();
+                    if next.managed.owner_session_id != Some(session_id) {
+                        next.managed.owner_session_id = Some(session_id);
+                        effects.push(Effect::SaveState(next.managed.clone()));
+                    }
+                    if let Some(target) = next.managed.camilla.clone()
+                        && next.running_child_session.is_none()
+                    {
+                        schedule_takeover(&mut next, &mut effects, session_id, target);
+                    }
+                    if next.managed.eqapo.is_some() {
+                        effects.push(Effect::RepairEqapo {
+                            session: session_id,
+                        });
+                    }
+                }
+                ConsoleEvent::Connect => {
+                    next.other_user = true;
+                    if next.running_child_session.take().is_some()
+                        || next.pending_takeover.is_some()
+                    {
+                        effects.push(Effect::StopChild);
+                    }
+                    next.pending_takeover = None;
+                    next.restart_due = None;
+                    effects.push(Effect::SetCamillaState(ManagedProcessState::OtherUser));
+                }
+                ConsoleEvent::Disconnect if owner_matches => {
+                    next.other_user = false;
+                    if next.running_child_session.take().is_some()
+                        || next.restart_due.is_some()
+                        || next.pending_takeover.is_some()
+                    {
+                        effects.push(Effect::StopChild);
+                    }
+                    next.pending_takeover = None;
+                    next.restart_due = None;
+                    effects.push(Effect::SetCamillaState(ManagedProcessState::NoSession));
+                }
+                ConsoleEvent::Disconnect => {
+                    next.other_user = false;
+                    if next.running_child_session == Some(session_id)
+                        || next.pending_takeover.as_ref().map(|work| work.session)
+                            == Some(session_id)
+                    {
+                        next.running_child_session = None;
+                        next.pending_takeover = None;
+                        next.restart_due = None;
+                        effects.push(Effect::StopChild);
+                    }
+                    effects.push(Effect::SetCamillaState(ManagedProcessState::NoSession));
                 }
             }
         }
@@ -1089,56 +1162,87 @@ mod tests {
     }
 
     #[test]
-    fn console_switch_stops_for_another_user_and_resumes_for_the_owner() {
-        let mut state = State::new(
-            HostManaged {
-                camilla: Some(camilla("camilladsp.exe")),
-                owner_session_id: Some(7),
-                owner_user_sid: Some("sid-a".into()),
-                ..HostManaged::default()
-            },
-            Some(7),
-        );
-        let mut platform = FakePlatform::default();
+    fn owner_console_disconnect_stops_the_child_and_marks_no_session() {
+        let state = State::new(managed_camilla(), Some(7));
 
         let (next, effects) = decide(
             &state,
-            Input::Session {
-                event: SessionEvent::ConsoleConnect,
-                session_id: 8,
-                owner_matches: false,
+            Input::Console {
+                event: ConsoleEvent::Disconnect,
+                session_id: 7,
+                owner_matches: true,
             },
         );
-        state = next;
-        assert!(state.other_user);
+
+        assert_eq!(next.running_child_session(), None);
         assert!(
             effects
                 .iter()
                 .any(|effect| matches!(effect, Effect::StopChild))
         );
-        drive(&mut state, effects, &mut platform).unwrap();
+        assert!(effects.iter().any(|effect| matches!(
+            effect,
+            Effect::SetCamillaState(ManagedProcessState::NoSession)
+        )));
+    }
 
-        let (owner_again, effects) = decide(
+    #[test]
+    fn owner_console_connect_launches_and_repairs() {
+        let state = State::new(
+            HostManaged {
+                camilla: Some(camilla("camilladsp.exe")),
+                eqapo: Some(eqapo()),
+                owner_session_id: Some(7),
+                owner_user_sid: Some("sid-a".into()),
+            },
+            None,
+        );
+
+        let (next, effects) = decide(
             &state,
-            Input::Session {
-                event: SessionEvent::ConsoleConnect,
+            Input::Console {
+                event: ConsoleEvent::Connect,
                 session_id: 7,
                 owner_matches: true,
             },
         );
-        assert!(!owner_again.other_user);
-        assert_eq!(
-            owner_again
-                .pending_takeover
-                .as_ref()
-                .map(|work| work.session),
-            Some(7)
-        );
+
+        assert!(!next.other_user);
         assert!(
             effects
                 .iter()
                 .any(|effect| matches!(effect, Effect::LaunchChild { session: 7, .. }))
         );
+        assert!(
+            effects
+                .iter()
+                .any(|effect| matches!(effect, Effect::RepairEqapo { session: 7 }))
+        );
+    }
+
+    #[test]
+    fn other_users_console_connect_marks_other_user() {
+        let state = State::new(managed_camilla(), Some(7));
+
+        let (next, effects) = decide(
+            &state,
+            Input::Console {
+                event: ConsoleEvent::Connect,
+                session_id: 8,
+                owner_matches: false,
+            },
+        );
+
+        assert!(next.other_user);
+        assert!(
+            effects
+                .iter()
+                .any(|effect| matches!(effect, Effect::StopChild))
+        );
+        assert!(effects.iter().any(|effect| matches!(
+            effect,
+            Effect::SetCamillaState(ManagedProcessState::OtherUser)
+        )));
     }
 
     #[test]

@@ -28,8 +28,9 @@ use secs_types::ipc::{
 };
 #[cfg(target_os = "windows")]
 use transitions::{
-    Input as TransitionInput, Platform as TransitionPlatform,
-    SessionEvent as TransitionSessionEvent, State as TransitionState,
+    ConsoleEvent as TransitionConsoleEvent, Input as TransitionInput,
+    Platform as TransitionPlatform, SessionEvent as TransitionSessionEvent,
+    State as TransitionState,
 };
 
 #[derive(Debug, Parser)]
@@ -471,8 +472,8 @@ fn service_loop(
     {
         let (next, effects) = transitions::decide(
             &transition_state,
-            TransitionInput::Session {
-                event: TransitionSessionEvent::ConsoleConnect,
+            TransitionInput::Console {
+                event: TransitionConsoleEvent::Connect,
                 session_id: session,
                 owner_matches: false,
             },
@@ -556,22 +557,12 @@ fn service_loop(
                     }
                     return Ok(());
                 }
-                event @ (secs_sys::host::ServiceEvent::SessionLogon(session)
-                | secs_sys::host::ServiceEvent::ConsoleConnect(session)) => {
-                    let transition_event = match event {
-                        secs_sys::host::ServiceEvent::SessionLogon(_) => {
-                            TransitionSessionEvent::Logon
-                        }
-                        secs_sys::host::ServiceEvent::ConsoleConnect(_) => {
-                            TransitionSessionEvent::ConsoleConnect
-                        }
-                        _ => unreachable!("matched a console connection event"),
-                    };
+                secs_sys::host::ServiceEvent::SessionLogon(session) => {
                     let owner_matches = managing_session_or_none(&mut core, paths) == Some(session);
                     let (next, effects) = transitions::decide(
                         &transition_state,
                         TransitionInput::Session {
-                            event: transition_event,
+                            event: TransitionSessionEvent::Logon,
                             session_id: session,
                             owner_matches,
                         },
@@ -588,25 +579,58 @@ fn service_loop(
                         paths,
                     )?;
                 }
-                event @ (secs_sys::host::ServiceEvent::SessionLogoff(session)
-                | secs_sys::host::ServiceEvent::ConsoleDisconnect(session)) => {
-                    let transition_event = match event {
-                        secs_sys::host::ServiceEvent::SessionLogoff(_) => {
-                            TransitionSessionEvent::Logoff
-                        }
-                        secs_sys::host::ServiceEvent::ConsoleDisconnect(_) => {
-                            TransitionSessionEvent::ConsoleDisconnect
-                        }
-                        _ => unreachable!("matched a console disconnection event"),
-                    };
-                    let owner_session_ended =
-                        transition_state.managed.owner_session_id == Some(session);
+                secs_sys::host::ServiceEvent::SessionLogoff(session) => {
+                    let owner_matches = transition_state.managed.owner_session_id == Some(session);
                     let (next, effects) = transitions::decide(
                         &transition_state,
                         TransitionInput::Session {
-                            event: transition_event,
+                            event: TransitionSessionEvent::Logoff,
                             session_id: session,
-                            owner_matches: owner_session_ended,
+                            owner_matches,
+                        },
+                    );
+                    transition_state = next;
+                    drive_transition(
+                        &mut transition_state,
+                        effects,
+                        &mut core,
+                        &mut child,
+                        &mut watcher,
+                        &config_sender,
+                        &work_sender,
+                        paths,
+                    )?;
+                }
+                secs_sys::host::ServiceEvent::ConsoleConnect(session) => {
+                    let owner_matches = managing_session_or_none(&mut core, paths) == Some(session);
+                    let (next, effects) = transitions::decide(
+                        &transition_state,
+                        TransitionInput::Console {
+                            event: TransitionConsoleEvent::Connect,
+                            session_id: session,
+                            owner_matches,
+                        },
+                    );
+                    transition_state = next;
+                    drive_transition(
+                        &mut transition_state,
+                        effects,
+                        &mut core,
+                        &mut child,
+                        &mut watcher,
+                        &config_sender,
+                        &work_sender,
+                        paths,
+                    )?;
+                }
+                secs_sys::host::ServiceEvent::ConsoleDisconnect(session) => {
+                    let owner_matches = transition_state.managed.owner_session_id == Some(session);
+                    let (next, effects) = transitions::decide(
+                        &transition_state,
+                        TransitionInput::Console {
+                            event: TransitionConsoleEvent::Disconnect,
+                            session_id: session,
+                            owner_matches,
                         },
                     );
                     transition_state = next;
