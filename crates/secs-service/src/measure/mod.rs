@@ -1,11 +1,12 @@
 //! Measurement adapters. This is a Rust service seam, not the IPC schema.
 pub(crate) mod json;
+#[allow(dead_code)]
 mod native;
 mod rew;
 pub mod sample;
 mod settings;
 
-pub use native::{BackendFactory, NativeMeasurer};
+pub(crate) use native::NativeMeasurer;
 pub(crate) use rew::RewLink;
 pub use rew::RewMeasurer;
 pub use sample::MockMeasurer;
@@ -142,7 +143,7 @@ pub enum CommitBoundary {
 /// A position's results use the canonical `.secs` record regardless of source.
 /// Native measures one duplex sequence; cancellation yields no partial sequence.
 /// REW returns completed roles on cancellation, as its upstream session does.
-pub trait Measurer: Send {
+pub(crate) trait Measurer: Send {
     /// How a position's results are committed: all roles at once (native,
     /// mock), or each role as it arrives (REW, which records role by role).
     fn commit_boundary(&self) -> CommitBoundary {
@@ -175,6 +176,44 @@ pub trait Measurer: Send {
             record(result)?;
         }
         Ok(())
+    }
+}
+
+impl MockMeasurer {
+    /// Measures one position without attaching a service job progress sink.
+    pub fn measure_position(
+        &mut self,
+        plan: &MeasurementPlan,
+        pos: i64,
+        cancel: &CancelToken,
+    ) -> Result<Vec<MeasurementResult>, MeasureError> {
+        Measurer::measure_position(self, plan, pos, None, cancel)
+    }
+}
+
+#[allow(private_bounds)]
+impl<R> RewMeasurer<R>
+where
+    Self: Measurer,
+{
+    /// Returns the adapter's current availability.
+    pub fn status(&mut self) -> Result<Status, MeasureError> {
+        Measurer::status(self)
+    }
+
+    /// Lists devices reported by the adapter.
+    pub fn devices(&mut self) -> Result<Vec<Device>, MeasureError> {
+        Measurer::devices(self)
+    }
+
+    /// Measures one position without attaching a service job progress sink.
+    pub fn measure_position(
+        &mut self,
+        plan: &MeasurementPlan,
+        pos: i64,
+        cancel: &CancelToken,
+    ) -> Result<Vec<MeasurementResult>, MeasureError> {
+        Measurer::measure_position(self, plan, pos, None, cancel)
     }
 }
 

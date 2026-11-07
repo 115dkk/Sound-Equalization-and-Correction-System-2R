@@ -27,7 +27,11 @@ mod host;
 mod ipc;
 mod jobs;
 pub mod mdat_import;
-pub mod measure;
+mod measure;
+pub use measure::{
+    CancelToken, Device, MeasureError, MeasurementSettings, MockMeasurer, RewMeasurer, Status,
+    plan_for, sample, store_devices, to_audio_plan, to_rew_plan,
+};
 mod measurement;
 mod measurement_file;
 mod mic_calibration;

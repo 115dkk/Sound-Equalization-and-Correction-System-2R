@@ -434,7 +434,7 @@ fn dirac_import_skips_unplanned_and_outside_rows_and_rejects_bad_files() {
     assert!(!direct_path.with_extension("irs").exists());
     assert!(matches!(
         dirac_import::import(&mut direct, &source, &assignments[..2]),
-        Err(secs_service::measure::MeasureError::Input(_))
+        Err(secs_service::MeasureError::Input(_))
     ));
     assert_eq!(direct.project().save_text(), before_direct);
 

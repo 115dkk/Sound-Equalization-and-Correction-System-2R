@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
 
-use secs_service::{Deps, EventSink, NoEvents, Service, measure};
+use secs_service::{Deps, EventSink, MockMeasurer, NoEvents, Service, plan_for, sample};
 use secs_types::ipc::*;
 use serde_json::json;
 use std::{
@@ -161,9 +161,9 @@ fn sample_load_embedded_keeps_only_position_one() {
     let project = secs_project::MeasurementStore::open(&path).unwrap();
     let record = project.entry_for(1).unwrap();
     assert_eq!(record.ir.len(), 14);
-    for entry in measure::sample::index().entries.iter() {
+    for entry in sample::index().entries.iter() {
         let (actual, rate) = secs_project::load_ir(&path, &entry.role, 1).unwrap();
-        let (expected, expected_rate, expected_t0) = measure::sample::ir(&entry.role, 1).unwrap();
+        let (expected, expected_rate, expected_t0) = sample::ir(&entry.role, 1).unwrap();
         assert_eq!(rate, expected_rate, "{}", entry.role);
         assert_eq!(actual, expected, "{}", entry.role);
         assert_eq!(
@@ -224,10 +224,10 @@ fn sample_load_synthetic_structure_and_determinism() {
             assert!(values[direct].abs() > 0.8, "{role} position {position}");
         }
     }
-    let main = measure::sample::fallback_ir("L");
-    let sub = measure::sample::fallback_ir("SW4");
-    assert_eq!(main, measure::sample::fallback_ir("L"));
-    assert_eq!(sub, measure::sample::fallback_ir("SW4"));
+    let main = sample::fallback_ir("L");
+    let sub = sample::fallback_ir("SW4");
+    assert_eq!(main, sample::fallback_ir("L"));
+    assert_eq!(sub, sample::fallback_ir("SW4"));
     let high_energy = |values: &[f32]| {
         values
             .windows(2)
@@ -478,10 +478,7 @@ fn repetitions_accept_supported_values_and_acoustic_forces_one() {
         Request::ProjectSave(ProjectSaveParams { path: None }),
     );
     let project = secs_project::Project::load_text(&fs::read_to_string(&path).unwrap()).unwrap();
-    assert_eq!(
-        measure::plan_for(&project, &Default::default()).repetitions,
-        1
-    );
+    assert_eq!(plan_for(&project, &Default::default()).repetitions, 1);
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -551,8 +548,8 @@ fn position_clear_undo_is_byte_exact_and_single_use() {
 }
 fn rooms() -> BTreeMap<i64, secs_audio::SimRoom> {
     let project = secs_project::Project::from_preset("2.0").unwrap();
-    let plan = measure::plan_for(&project, &Default::default());
-    let (room, _) = measure::sample::room(&plan, 1).unwrap();
+    let plan = plan_for(&project, &Default::default());
+    let (room, _) = sample::room(&plan, 1).unwrap();
     BTreeMap::from([(1, room.clone()), (2, room)])
 }
 #[test]
@@ -568,7 +565,7 @@ fn device_group_exclusion_and_cancel_preserve_project() {
                 } else {
                     Duration::from_secs(5)
                 };
-                measure::MockMeasurer::with_rooms(rooms()).with_delay(delay)
+                MockMeasurer::with_rooms(rooms()).with_delay(delay)
             })
         },
         ..Default::default()
@@ -619,7 +616,7 @@ fn measuring_another_position_marks_calibration_stale() {
     let root = root("stale");
     let path = root.join("room.secs");
     let service = Service::new(Deps {
-        mock_measurer: Arc::new(|| measure::MockMeasurer::with_rooms(rooms())),
+        mock_measurer: Arc::new(|| MockMeasurer::with_rooms(rooms())),
         ..Default::default()
     });
     new(&service, &path);

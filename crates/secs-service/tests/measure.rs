@@ -1,7 +1,9 @@
 #![forbid(unsafe_code)]
 use secs_project::{MeasurementStore, Project, PyJson};
-use secs_service::measure::*;
-use secs_service::{Deps, EventSink, NoEvents, Service};
+use secs_service::{
+    CancelToken, Deps, EventSink, MeasurementSettings, MockMeasurer, NoEvents, RewMeasurer,
+    Service, plan_for, sample, store_devices, to_audio_plan, to_rew_plan,
+};
 use secs_types::ipc::{
     Envelope, JobCancelParams, JobEvent, JobStatus, MeasureConfigureParams, MeasurePositionParams,
     ProjectNewParams, Request, Response,
@@ -103,7 +105,7 @@ fn test_measure_two_positions_then_redo_last() {
     let mut store = MeasurementStore::new(&path, project());
     for pos in [1, 2] {
         let results = mock
-            .measure_position(&p, pos, None, &CancelToken::default())
+            .measure_position(&p, pos, &CancelToken::default())
             .unwrap();
         store.start_position(pos);
         for r in results {
@@ -143,7 +145,7 @@ fn test_sample_mode_refuses_position_2() {
     let p = plan();
     let mut mock = MockMeasurer::new();
     assert!(
-        mock.measure_position(&p, 2, None, &CancelToken::default())
+        mock.measure_position(&p, 2, &CancelToken::default())
             .is_err()
     );
     assert!(sample::ir("L:LF", 1).is_err());
@@ -167,7 +169,7 @@ fn test_sample_mode_keeps_the_real_inter_channel_t0_differences() {
     p.sweep_length = "64k".into();
     let mut mock = MockMeasurer::new();
     let got = mock
-        .measure_position(&p, 1, None, &CancelToken::default())
+        .measure_position(&p, 1, &CancelToken::default())
         .unwrap();
     let mut arrivals = vec![];
     for r in got {
@@ -218,7 +220,7 @@ fn test_measurements_follow_contract_shape() {
     let dir = temp("rew");
     let mut store = MeasurementStore::new(dir.join("room.secs"), project());
     for r in rew
-        .measure_position(&p, 1, None, &CancelToken::default())
+        .measure_position(&p, 1, &CancelToken::default())
         .unwrap()
     {
         let (ir, rate, t0) = sample::ir(&r.role, 1).unwrap();
@@ -256,7 +258,7 @@ fn rew_measurements_capture_calibration_and_keep_bad_sensitivity_measurements() 
         }),
     );
     let results = rew
-        .measure_position(&p, 1, None, &CancelToken::default())
+        .measure_position(&p, 1, &CancelToken::default())
         .unwrap();
     assert_eq!(
         clock_calls.load(std::sync::atomic::Ordering::Relaxed),
@@ -314,7 +316,7 @@ fn rew_measurements_capture_calibration_and_keep_bad_sensitivity_measurements() 
 
     std::fs::write(&cal, b"Sens Factor = 1.2.3 dB\n20 -1.0\n").unwrap();
     let bad = rew
-        .measure_position(&p, 1, None, &CancelToken::default())
+        .measure_position(&p, 1, &CancelToken::default())
         .unwrap();
     assert_eq!(bad.len(), p.roles.len());
     assert!(bad.iter().all(|result| result.source_info.is_none()));
@@ -332,7 +334,7 @@ fn rew_source_devices_fall_back_only_to_names_in_rew_lists() {
     fake.options.current_audio = secs_rew::CurrentAudio::default();
     let mut rew = RewMeasurer::new(fake, Arc::new(|| 0));
     let result = rew
-        .measure_position(&p, 1, None, &CancelToken::default())
+        .measure_position(&p, 1, &CancelToken::default())
         .unwrap();
     let source = result[0].source_info.as_ref().unwrap();
     assert!(source.strings.iter().any(|(key, value)| {
@@ -348,7 +350,7 @@ fn rew_source_devices_fall_back_only_to_names_in_rew_lists() {
     p.output_device = "wasapi:{not-rew-output}".into();
     p.input_device = "wasapi:{not-rew-input}".into();
     let result = rew
-        .measure_position(&p, 1, None, &CancelToken::default())
+        .measure_position(&p, 1, &CancelToken::default())
         .unwrap();
     assert!(result[0].source_info.is_none());
 }
