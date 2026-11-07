@@ -14,22 +14,22 @@ mod rules;
 #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 mod transitions;
 
-#[cfg(target_os = "windows")]
+#[cfg(windows)]
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
-#[cfg(target_os = "windows")]
+#[cfg(windows)]
 use std::sync::mpsc;
-#[cfg(target_os = "windows")]
+#[cfg(windows)]
 use std::time::{Duration, Instant};
 
 use clap::{Parser, Subcommand};
-#[cfg(target_os = "windows")]
+#[cfg(windows)]
 use rules::Core;
-#[cfg(target_os = "windows")]
+#[cfg(windows)]
 use secs_types::ipc::{
     ErrorCode, HostManaged, HostRequest, HostResponse, IncludeState, IpcError, ManagedProcessState,
 };
-#[cfg(target_os = "windows")]
+#[cfg(windows)]
 use transitions::{
     ConsoleEvent as TransitionConsoleEvent, Input as TransitionInput,
     Platform as TransitionPlatform, SessionEvent as TransitionSessionEvent,
@@ -61,7 +61,7 @@ enum Action {
     FinishUpdate,
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(windows)]
 #[derive(Debug, Clone)]
 struct Paths {
     state: PathBuf,
@@ -70,7 +70,7 @@ struct Paths {
     program_data_root: Option<PathBuf>,
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(windows)]
 impl Paths {
     fn from_env() -> Self {
         let base = program_data_root();
@@ -87,7 +87,7 @@ impl Paths {
     }
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(windows)]
 fn program_data_root() -> PathBuf {
     std::env::var_os("ProgramData")
         .map(PathBuf::from)
@@ -95,7 +95,7 @@ fn program_data_root() -> PathBuf {
         .join("SECS2R")
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(windows)]
 fn program_files_root() -> Result<PathBuf, IpcError> {
     std::env::var_os("ProgramW6432")
         .or_else(|| std::env::var_os("ProgramFiles"))
@@ -115,7 +115,7 @@ fn main() -> ExitCode {
     ExitCode::from(2)
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(windows)]
 fn main() -> ExitCode {
     match run(Cli::parse()) {
         Ok(()) => ExitCode::SUCCESS,
@@ -126,7 +126,7 @@ fn main() -> ExitCode {
     }
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(windows)]
 fn run(cli: Cli) -> Result<(), IpcError> {
     match cli.action {
         Action::Install => {
@@ -214,7 +214,7 @@ fn run(cli: Cli) -> Result<(), IpcError> {
     }
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(windows)]
 fn finish_update() -> Result<(), IpcError> {
     let current = std::env::current_exe().map_err(|error| {
         IpcError::new(
@@ -279,7 +279,7 @@ fn finish_update() -> Result<(), IpcError> {
     result
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(windows)]
 fn prepare_state_directory(path: &Path) -> Result<(), IpcError> {
     match std::fs::create_dir(path) {
         Ok(()) => {}
@@ -308,7 +308,7 @@ fn prepare_state_directory(path: &Path) -> Result<(), IpcError> {
     secs_sys::host::secure_state_directory(path)
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(windows)]
 fn prepare_service_directory(path: &Path) -> Result<(), IpcError> {
     match std::fs::create_dir(path) {
         Ok(()) => {}
@@ -323,7 +323,7 @@ fn prepare_service_directory(path: &Path) -> Result<(), IpcError> {
     validate_service_directory(path)
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(windows)]
 fn validate_service_directory_if_present(path: &Path) -> Result<(), IpcError> {
     match std::fs::symlink_metadata(path) {
         Ok(_) => validate_service_directory(path),
@@ -335,7 +335,7 @@ fn validate_service_directory_if_present(path: &Path) -> Result<(), IpcError> {
     }
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(windows)]
 fn validate_service_directory(path: &Path) -> Result<(), IpcError> {
     let facts = secs_sys::host::inspect_service_directory(path)?;
     if rules::service_directory_allowed(
@@ -355,7 +355,7 @@ fn validate_service_directory(path: &Path) -> Result<(), IpcError> {
     }
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(windows)]
 fn append_log_nonfatal(path: &Path, line: &secs_types::ipc::HostLogLine) {
     if let Err(error) = files::append_log(path, line, files::LOG_LIMIT) {
         static LAST_REPORT: std::sync::OnceLock<std::sync::Mutex<Option<Instant>>> =
@@ -370,7 +370,7 @@ fn append_log_nonfatal(path: &Path, line: &secs_types::ipc::HostLogLine) {
     }
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(windows)]
 fn remove_old_host_copy(paths: &Paths) {
     let old = std::env::current_exe()
         .ok()
@@ -395,7 +395,7 @@ fn remove_old_host_copy(paths: &Paths) {
     }
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(windows)]
 #[derive(Debug)]
 enum HostWorkResult {
     Takeover {
@@ -408,7 +408,7 @@ enum HostWorkResult {
     },
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(windows)]
 #[derive(Debug)]
 enum TakeoverWorkResult {
     Started {
@@ -423,14 +423,14 @@ enum TakeoverWorkResult {
     NoSession,
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(windows)]
 #[derive(Debug)]
 struct RepairWorkResult {
     include_state: IncludeState,
     repaired: Option<RepairRecord>,
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(windows)]
 #[derive(Debug)]
 struct RepairRecord {
     path: String,
@@ -439,7 +439,7 @@ struct RepairRecord {
     helper_pid: u32,
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(windows)]
 fn service_loop(
     paths: &Paths,
     service_events: &mpsc::Receiver<secs_sys::host::ServiceEvent>,
@@ -823,7 +823,7 @@ fn service_loop(
     }
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(windows)]
 struct RealTransitionPlatform<'a> {
     core: &'a mut Core,
     child: &'a mut Option<secs_sys::host::ManagedChild>,
@@ -833,7 +833,7 @@ struct RealTransitionPlatform<'a> {
     paths: &'a Paths,
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(windows)]
 impl TransitionPlatform for RealTransitionPlatform<'_> {
     fn save_state(&mut self, managed: &HostManaged) -> Result<(), IpcError> {
         files::save_state(&self.paths.state, managed)
@@ -908,7 +908,7 @@ impl TransitionPlatform for RealTransitionPlatform<'_> {
     }
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(windows)]
 #[allow(clippy::too_many_arguments)]
 fn drive_transition(
     state: &mut TransitionState,
@@ -936,7 +936,7 @@ fn drive_transition(
     Ok(outcome)
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(windows)]
 #[allow(clippy::too_many_arguments)]
 fn handle_request(
     identity: secs_sys::host::PipeClientIdentity,
@@ -1037,7 +1037,7 @@ fn handle_request(
     }
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(windows)]
 fn stage_host_update(
     from_dir: &Path,
     staged_executable: &Path,
@@ -1068,13 +1068,13 @@ fn stage_host_update(
     Ok(manifest)
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(windows)]
 fn update_rejection_error(rejection: &rules::UpdateReject) -> IpcError {
     IpcError::new(ErrorCode::ApplyFailed, rejection.detail())
         .with_param("reason", rejection.log_reason())
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(windows)]
 fn record_update_rejection(core: &mut Core, paths: &Paths, rejection: &rules::UpdateReject) {
     let line = rules::log_line(
         "update_rejected",
@@ -1086,7 +1086,7 @@ fn record_update_rejection(core: &mut Core, paths: &Paths, rejection: &rules::Up
     let _ = record(core, paths, line);
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(windows)]
 fn authorize_mutation(identity: secs_sys::host::PipeClientIdentity) -> Result<(), IpcError> {
     if rules::client_session_allowed(
         secs_sys::host::active_console_session(),
@@ -1103,7 +1103,7 @@ fn authorize_mutation(identity: secs_sys::host::PipeClientIdentity) -> Result<()
     }
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(windows)]
 fn managing_session_for(managed: &HostManaged) -> Result<Option<u32>, IpcError> {
     let Some(active) = secs_sys::host::active_console_session() else {
         return Ok(None);
@@ -1112,12 +1112,12 @@ fn managing_session_for(managed: &HostManaged) -> Result<Option<u32>, IpcError> 
     Ok(rules::managed_user_allowed(managed.owner_user_sid.as_deref(), &sid).then_some(active))
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(windows)]
 fn managing_session(core: &Core) -> Result<Option<u32>, IpcError> {
     managing_session_for(&core.managed)
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(windows)]
 fn managing_session_or_none(core: &mut Core, paths: &Paths) -> Option<u32> {
     match managing_session(core) {
         Ok(session) => session,
@@ -1135,7 +1135,7 @@ fn managing_session_or_none(core: &mut Core, paths: &Paths) -> Option<u32> {
     }
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(windows)]
 fn validate_eqapo_path(requested: &Path) -> Result<PathBuf, IpcError> {
     let detected = secs_sys::eqapo_install().ok_or_else(|| {
         IpcError::new(
@@ -1165,7 +1165,7 @@ fn validate_eqapo_path(requested: &Path) -> Result<PathBuf, IpcError> {
     }
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(windows)]
 fn configure_watcher(
     core: &Core,
     sender: &mpsc::Sender<()>,
@@ -1183,7 +1183,7 @@ fn configure_watcher(
         .transpose()
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(windows)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum PortTakeover {
     Free,
@@ -1194,7 +1194,7 @@ enum PortTakeover {
     Busy(&'static str, String),
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(windows)]
 fn takeover_port(port: u16) -> PortTakeover {
     // netstat, not a connect probe, says whether anything listens (see
     // `tcp_listener_pid`: a free loopback port times out a short connect).
@@ -1276,7 +1276,7 @@ fn takeover_port(port: u16) -> PortTakeover {
 }
 
 /// Whether netstat stops showing a listener on `port` within `within`.
-#[cfg(target_os = "windows")]
+#[cfg(windows)]
 fn port_closes(port: u16, within: Duration) -> bool {
     let deadline = Instant::now() + within;
     loop {
@@ -1288,7 +1288,7 @@ fn port_closes(port: u16, within: Duration) -> bool {
     }
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(windows)]
 fn spawn_host_work(name: &str, work: impl FnOnce() + Send + 'static) -> Result<(), IpcError> {
     std::thread::Builder::new()
         .name(name.to_owned())
@@ -1302,7 +1302,7 @@ fn spawn_host_work(name: &str, work: impl FnOnce() + Send + 'static) -> Result<(
         })
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(windows)]
 fn takeover_work(pending: &transitions::PendingTakeover) -> Result<TakeoverWorkResult, IpcError> {
     let takeover = takeover_port(pending.target.port);
     if let PortTakeover::Busy(reason, detail) = takeover {
@@ -1334,7 +1334,7 @@ fn takeover_work(pending: &transitions::PendingTakeover) -> Result<TakeoverWorkR
     }
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(windows)]
 #[allow(clippy::too_many_arguments)]
 fn finish_takeover_work(
     pending: transitions::PendingTakeover,
@@ -1487,7 +1487,7 @@ fn finish_takeover_work(
     }
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(windows)]
 #[allow(clippy::too_many_arguments)]
 fn finish_host_work(
     work: HostWorkResult,
@@ -1549,7 +1549,7 @@ fn finish_host_work(
     }
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(windows)]
 fn repair_eqapo_work(
     managed: Option<secs_types::ipc::ManagedEqApo>,
     session: u32,
@@ -1617,7 +1617,7 @@ fn repair_eqapo_work(
     })
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(windows)]
 fn include_state(text: &str) -> IncludeState {
     match secs_apply::eqapo::include_state(text) {
         secs_apply::eqapo::IncludeState::Absent => IncludeState::Absent,
@@ -1626,7 +1626,7 @@ fn include_state(text: &str) -> IncludeState {
     }
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(windows)]
 fn repair_eqapo_as_user(config_folder: &Path) -> Result<(), IpcError> {
     let config_root = validate_eqapo_path(config_folder)?;
     let config = config_root.join("config.txt");
@@ -1653,7 +1653,7 @@ fn repair_eqapo_as_user(config_folder: &Path) -> Result<(), IpcError> {
     })
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(windows)]
 fn record(
     core: &mut Core,
     paths: &Paths,
@@ -1664,7 +1664,7 @@ fn record(
     Ok(())
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(windows)]
 fn println_json(value: &impl serde::Serialize) {
     match serde_json::to_string(value) {
         Ok(json) => println!("{json}"),

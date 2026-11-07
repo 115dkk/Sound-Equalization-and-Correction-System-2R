@@ -10,7 +10,7 @@ use crate::rules::{HostInstallPaths, HostUpdatePaths, UpdateReject};
 pub const LOG_LIMIT: u64 = 256 * 1024;
 
 fn metadata_is_link_or_reparse(metadata: &fs::Metadata) -> bool {
-    #[cfg(target_os = "windows")]
+    #[cfg(windows)]
     {
         use std::os::windows::fs::MetadataExt;
 
@@ -464,7 +464,7 @@ mod tests {
         }
     }
 
-    #[cfg(target_os = "windows")]
+    #[cfg(windows)]
     #[test]
     fn update_source_refuses_an_existing_system_junction() {
         use std::os::windows::fs::MetadataExt;
@@ -490,7 +490,7 @@ mod tests {
         ));
     }
 
-    #[cfg(target_os = "windows")]
+    #[cfg(windows)]
     #[test]
     fn update_source_refuses_an_existing_directory_symlink() {
         use std::os::windows::fs::symlink_dir;

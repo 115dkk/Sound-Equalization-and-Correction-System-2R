@@ -23,7 +23,7 @@ pub mod host;
 pub mod memory;
 pub mod process;
 pub mod rew;
-#[cfg(target_os = "windows")]
+#[cfg(windows)]
 mod taskbar;
 
 use std::path::Path;
@@ -56,7 +56,7 @@ fn eqapo_variant(install_path: &str) -> EqApoVariant {
 /// non-string values mean that no usable installation was detected.
 #[must_use]
 pub fn eqapo_install() -> Option<EqApoInstall> {
-    #[cfg(target_os = "windows")]
+    #[cfg(windows)]
     {
         let key = windows_registry::LOCAL_MACHINE
             .open(r"SOFTWARE\EqualizerAPO")
@@ -175,7 +175,7 @@ fn camilla_connect(
 /// Windows retries a refused loopback SYN for about two seconds, so a short
 /// connect to a free port times out instead of being refused; netstat
 /// settles it, as the managed host does (`host::tcp_listener_pid`).
-#[cfg(target_os = "windows")]
+#[cfg(windows)]
 fn loopback_port_is_free(address: &str, error: &secs_apply::ApplyError) -> bool {
     use std::net::ToSocketAddrs;
 
@@ -269,7 +269,7 @@ pub fn set_large_icon(
         });
     }
 
-    #[cfg(target_os = "windows")]
+    #[cfg(windows)]
     {
         taskbar::set_large_icon(window, rgba, width, height)
     }
@@ -307,7 +307,7 @@ pub mod audio {
     /// Returns the sole supported native audio backend for this operating system.
     #[must_use]
     pub fn default_backend() -> Box<dyn AudioBackend> {
-        #[cfg(target_os = "windows")]
+        #[cfg(windows)]
         {
             Box::new(crate::wasapi::WasapiBackend::new())
         }

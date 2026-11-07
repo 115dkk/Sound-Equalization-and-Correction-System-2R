@@ -45,7 +45,7 @@ fn launch_path(exe: &Path, platform: Platform) -> Result<(), RewLaunchError> {
     if let Some(cwd) = spec.cwd {
         command.current_dir(cwd);
     }
-    #[cfg(target_os = "windows")]
+    #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
         command.creation_flags(0x0800_0000);
