@@ -36,8 +36,13 @@ type LayoutEdit = Pick<LayoutSetParams, "start_delay" | "timing">;
 /** UI completion policy stays in the job ledger, never in the IPC payload. */
 type SessionCall = <M extends Request["method"]>(
   request: Extract<Request, { method: M }>,
-  context?: Pick<JobRequestContext, "calibrateOnFailure">,
+  context?: CallContext,
 ) => Promise<ResponseOf<M>>;
+/**
+ * `ownsFailure`: the caller shows this request's typed failure where it was
+ * asked (the open project dialog), so it is not also a global notice.
+ */
+export type CallContext = Pick<JobRequestContext, "calibrateOnFailure"> & { ownsFailure?: boolean };
 
 type HostState = Pick<MeasureView, "selected" | "graphHidden" | "plotRange" | "mdat" | "warnings"> & {
   computeLoading: boolean; computeSaving: boolean; computeError: import("../ipc/bindings/IpcError").IpcError | null;
@@ -289,7 +294,7 @@ export function createSession(ipc: Ipc) {
           // The range card shows a refused edge or extra band at its input (ADR 0024).
           const rangeEdit = request.method === "calibration_settings_edit" && error instanceof IpcFailure
             && rangeRejection((request as Extract<Request, { method: "calibration_settings_edit" }>).params.edit, error.error) !== null;
-          if (!(micCalAction || hostAction || rangeEdit) || !(error instanceof IpcFailure)) report(error);
+          if (!(micCalAction || hostAction || rangeEdit || context?.ownsFailure) || !(error instanceof IpcFailure)) report(error);
         }
         throw error;
       } finally {

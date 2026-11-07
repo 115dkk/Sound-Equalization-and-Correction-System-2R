@@ -176,3 +176,42 @@ it("does not close when save picker is cancelled and starts tutorial with both f
     expect(session.stores.config.getSnapshot()?.speakers.find((speaker) => speaker.role === "SW3")?.bands[0]?.out).toBe(16);
   } finally { hook.unmount(); session.dispose(); mock.dispose(); }
 });
+
+it("project_dialog_failures_are_not_published_as_a_global_notice_td234", async () => {
+  const mock = createMockService({ tickMs: 0 });
+  const session = createSession(mock);
+  await session.start(); await session.settled();
+  await session.call({ method: "project_save", params: { path: "C:/room.secs" } });
+  const close = vi.fn(async () => {});
+  const hook = renderHook(() => useProjectScreen(close), { wrapper: ({ children }: { children: ReactNode }) => createElement(SessionProvider, { value: session, children }) });
+  try {
+    // The open dialog shows a failing project_open; the global notice stays empty.
+    act(() => hook.result.current.menu.onOpen());
+    mock.failNext("project_open", "project_io", "missing file");
+    act(() => hook.result.current.actions.openRecent("C:/gone.secs"));
+    await waitFor(() => expect(hook.result.current.view.busy).toBe(false));
+    expect(hook.result.current.view.dialog?.kind).toBe("open");
+    expect(hook.result.current.view.error).toMatchObject({ code: "project_io", detail: "missing file" });
+    expect(session.errors.getSnapshot()).toBeNull();
+    // The new project dialog owns project_new's failure the same way.
+    act(() => hook.result.current.menu.onNew());
+    mock.queueDialog("dialog_save_project", "C:/new.secs");
+    mock.failNext("project_new", "project_io", "read only");
+    act(() => hook.result.current.actions.createProject({ preset: "2.0", subCount: 0, sample: false }));
+    await waitFor(() => expect(hook.result.current.view.busy).toBe(false));
+    expect(hook.result.current.view.error).toMatchObject({ code: "project_io", detail: "read only" });
+    expect(session.errors.getSnapshot()).toBeNull();
+    // A save from the menu has no dialog to show it: the global notice does.
+    act(() => hook.result.current.actions.cancel());
+    mock.failNext("project_save", "project_io", "disk full");
+    act(() => hook.result.current.menu.onSave());
+    await waitFor(() => expect(hook.result.current.view.busy).toBe(false));
+    expect(session.errors.getSnapshot()?.error).toMatchObject({ code: "project_io", detail: "disk full" });
+    // A failing calculation request is still a global notice.
+    await act(async () => { await session.call({ method: "project_save", params: { path: "C:/room.secs" } }); });
+    expect(session.errors.getSnapshot()).toBeNull();
+    mock.failNext("calibrate", "engine_input", "no curves");
+    await act(async () => { await session.call({ method: "calibrate", params: { settings: null, subs_only: false } }).catch(() => {}); });
+    expect(session.errors.getSnapshot()?.error).toMatchObject({ code: "engine_input" });
+  } finally { hook.unmount(); session.dispose(); await session.settled(); mock.dispose(); }
+});
