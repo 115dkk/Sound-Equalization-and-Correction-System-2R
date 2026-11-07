@@ -82,6 +82,8 @@ SHIP = (
 # Shipped although they match NOT_SHIPPED.
 SHIP_ALWAYS: tuple[str, ...] = ()
 NOT_SHIPPED = (
+    # Published crate READMEs are packaged, but API publication is tied to an
+    # app release below; a README-only change waits for that release.
     "*.md",
     "crates/secs-policy/*",
     "crates/secs-oracle/*",
@@ -504,8 +506,8 @@ def main(argv=None) -> int:
     print(f"shipped changes: {shipped[:20]}")
     print(f"decision: {action} {new_version}")
 
-    # The crates.io crates publish only with an app release: a packaged file
-    # of theirs is always a shipped file of the app.
+    # The crates.io crates publish only with an app release. Most packaged
+    # files ship in the app too; packaged README files wait for that release.
     api_action, api_version, api_manifests = "none", None, {}
     if API_MANIFEST.exists():
         api_version = package_field(_read(API_MANIFEST), "version")
