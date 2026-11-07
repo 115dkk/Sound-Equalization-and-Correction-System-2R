@@ -53,6 +53,7 @@ struct JobRecord {
     group: JobGroup,
     cancel: CancelToken,
     measurement_cancel: crate::measure::CancelToken,
+    attached: Option<crate::measure::CancelToken>,
 }
 
 impl Default for JobRegistry {
@@ -97,6 +98,17 @@ impl JobContext {
 
     pub fn available_memory(&self) -> u64 {
         self.available_memory
+    }
+
+    #[allow(dead_code)]
+    pub fn attach_cancel(&self, token: crate::measure::CancelToken) {
+        if let Some(job) = lock(&self.registry.inner)
+            .jobs
+            .iter_mut()
+            .find(|job| job.snapshot.job == self.id && !job.snapshot.status.is_terminal())
+        {
+            job.attached = Some(token);
+        }
     }
 
     pub fn role_progress(&self, stage: &str, done: u64, total: u64) {
@@ -251,6 +263,7 @@ impl JobRegistry {
                 group: job_group,
                 cancel: cancel.clone(),
                 measurement_cancel: measurement_cancel.clone(),
+                attached: None,
             });
         }
         events.send(JobEvent::Started { job: id, kind });
@@ -300,6 +313,9 @@ impl JobRegistry {
             job.snapshot.status = JobStatus::CancelRequested;
             job.cancel.cancel();
             job.measurement_cancel.cancel();
+            if let Some(attached) = &job.attached {
+                attached.cancel();
+            }
         }
         Ok(job.snapshot.clone())
     }
@@ -312,6 +328,14 @@ impl JobRegistry {
             .collect()
     }
 
+    pub fn running(&self, kind: JobKind) -> Option<JobId> {
+        lock(&self.inner)
+            .jobs
+            .iter()
+            .find(|job| job.snapshot.kind == kind && !job.snapshot.status.is_terminal())
+            .map(|job| job.snapshot.job)
+    }
+
     pub fn running_in_device_group(&self) -> bool {
         lock(&self.inner)
             .jobs
@@ -322,15 +346,9 @@ impl JobRegistry {
     /// The kind of a running measurement-group job other than the level
     /// monitor, which the screen restarts itself (TD-91).
     pub fn running_measurement(&self) -> Option<JobKind> {
-        lock(&self.inner)
-            .jobs
-            .iter()
-            .find(|job| {
-                job.group == JobGroup::Device
-                    && job.snapshot.kind != JobKind::LevelMonitor
-                    && !job.snapshot.status.is_terminal()
-            })
-            .map(|job| job.snapshot.kind)
+        [JobKind::Measure, JobKind::SampleLoad, JobKind::MdatImport]
+            .into_iter()
+            .find(|kind| self.running(*kind).is_some())
     }
 
     pub fn cancel_all(&self) {
@@ -343,6 +361,9 @@ impl JobRegistry {
                 job.snapshot.status = JobStatus::CancelRequested;
                 job.cancel.cancel();
                 job.measurement_cancel.cancel();
+                if let Some(attached) = &job.attached {
+                    attached.cancel();
+                }
             }
         }
     }
@@ -428,7 +449,7 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Condvar;
+    use std::sync::{Condvar, mpsc};
     use std::time::{Duration, Instant};
 
     use super::*;
@@ -490,6 +511,61 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn running_answers_the_live_job_of_a_kind_and_none_after_it_ends() {
+        let registry = JobRegistry::default();
+        let events = Arc::new(Events::default());
+        let gate = Arc::new((Mutex::new(false), Condvar::new()));
+        let worker_gate = gate.clone();
+        let started = registry
+            .start(JobKind::Export, events.clone(), memory(), move |_| {
+                let mut released = lock(&worker_gate.0);
+                while !*released {
+                    released = worker_gate.1.wait(released).unwrap();
+                }
+                Ok(JobResult::Stopped)
+            })
+            .unwrap();
+        assert_eq!(registry.running(JobKind::Export), Some(started.job));
+        assert_eq!(registry.running(JobKind::Calibrate), None);
+        *lock(&gate.0) = true;
+        gate.1.notify_all();
+        events.wait_finished(Duration::from_secs(2));
+        assert_eq!(registry.running(JobKind::Export), None);
+    }
+
+    #[test]
+    fn attach_cancel_is_cancelled_with_the_job_and_only_the_last_attached_token_counts() {
+        let registry = JobRegistry::default();
+        let events = Arc::new(Events::default());
+        let first = crate::measure::CancelToken::default();
+        let second = crate::measure::CancelToken::default();
+        let worker_first = first.clone();
+        let worker_second = second.clone();
+        let (ready, waiting) = mpsc::channel();
+        let started = registry
+            .start(
+                JobKind::LevelMonitor,
+                events.clone(),
+                memory(),
+                move |job| {
+                    job.attach_cancel(worker_first);
+                    job.attach_cancel(worker_second);
+                    ready.send(()).unwrap();
+                    while !job.cancel().is_cancelled() {
+                        std::thread::yield_now();
+                    }
+                    Ok(JobResult::Stopped)
+                },
+            )
+            .unwrap();
+        waiting.recv_timeout(Duration::from_secs(2)).unwrap();
+        registry.cancel(started.job).unwrap();
+        events.wait_finished(Duration::from_secs(2));
+        assert!(!first.is_cancelled());
+        assert!(second.is_cancelled());
     }
 
     #[test]
