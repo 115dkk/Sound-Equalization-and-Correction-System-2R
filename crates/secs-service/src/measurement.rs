@@ -25,6 +25,11 @@ pub(crate) fn measure_error(
     use secs_rew::RewError as R;
     let detail = error.to_string();
     match error {
+        MeasureError::RewAfterSubscribeFailure {
+            source,
+            subscribe_error,
+        } => measure_error(MeasureError::Rew(source), field, share)
+            .with_param("subscribe_error", subscribe_error),
         MeasureError::Input(_) => input(field, detail),
         MeasureError::InputField { field, .. } => input(field, detail),
         MeasureError::InvalidSamples { row, reason } => input(field, detail)

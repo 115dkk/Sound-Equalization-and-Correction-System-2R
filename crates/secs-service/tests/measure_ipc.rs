@@ -1100,6 +1100,62 @@ fn late_progress_from_the_previous_role_is_ignored_td172() {
 }
 
 #[test]
+fn subscribe_failure_is_kept_when_the_role_then_fails_td215() {
+    let root = root("rew-subscribe-and-sweep-failure");
+    let path = root.join("room.secs");
+    let mut script = rew_script();
+    let subscribe = script
+        .iter()
+        .position(|exchange| exchange.request.path == "/measure/subscribe")
+        .unwrap();
+    script[subscribe].response = Ok(secs_rew::Response {
+        status: 500,
+        body: json!({"message":"subscribe failed"}),
+    });
+    let sweep = script
+        .iter()
+        .enumerate()
+        .skip(subscribe + 1)
+        .find(|(_, exchange)| exchange.request.path == "/measure/command")
+        .unwrap()
+        .0;
+    script[sweep].response = Ok(secs_rew::Response {
+        status: 500,
+        body: json!({"message":"sweep failed"}),
+    });
+    script.truncate(sweep + 1);
+    let transport = secs_rew::RecordedTransport::new(script);
+    let copy = transport.clone();
+    let service = Service::new(Deps {
+        rew_transport: Arc::new(move || Box::new(StableCallbackTransport(copy.clone()))),
+        ..Deps::default()
+    });
+    new(&service, &path);
+    configure(&service, "rew");
+    call(&service, Request::MeasureMethods);
+    let events = Arc::new(Events::default());
+    let job = measure(&service, 1, events.clone());
+
+    let JobEvent::Finished {
+        status: JobStatus::Failed,
+        error: Some(error),
+        ..
+    } = events.wait(job, Duration::from_secs(5))
+    else {
+        panic!("measurement must fail after the rejected sweep")
+    };
+    assert!(error.detail.contains("sweep failed"));
+    assert!(
+        error
+            .params
+            .get("subscribe_error")
+            .is_some_and(|detail| detail.contains("subscribe failed"))
+    );
+    transport.assert_finished();
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn subscribe_failure_is_noticed_td215() {
     let root = root("rew-subscribe-failure");
     let path = root.join("room.secs");

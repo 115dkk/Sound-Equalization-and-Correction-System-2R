@@ -19,10 +19,20 @@ use std::{fmt, sync::Arc};
 #[derive(Debug)]
 pub enum MeasureError {
     Input(String),
-    InputField { field: &'static str, detail: String },
-    InvalidSamples { row: String, reason: &'static str },
+    InputField {
+        field: &'static str,
+        detail: String,
+    },
+    InvalidSamples {
+        row: String,
+        reason: &'static str,
+    },
     Audio(secs_audio::AudioError),
     Rew(secs_rew::RewError),
+    RewAfterSubscribeFailure {
+        source: secs_rew::RewError,
+        subscribe_error: String,
+    },
     Project(secs_project::ProjectError),
 }
 impl fmt::Display for MeasureError {
@@ -34,7 +44,7 @@ impl fmt::Display for MeasureError {
                 write!(f, "measurement row {row} has {reason} samples")
             }
             Self::Audio(e) => e.fmt(f),
-            Self::Rew(e) => e.fmt(f),
+            Self::Rew(e) | Self::RewAfterSubscribeFailure { source: e, .. } => e.fmt(f),
             Self::Project(e) => e.fmt(f),
         }
     }

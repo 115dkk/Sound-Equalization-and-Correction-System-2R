@@ -233,7 +233,7 @@ trait RoleRecorder {
         progress: Option<secs_rew::ProgressCallback>,
         current_role: SyncArc<Mutex<Option<String>>>,
         cancel: &secs_rew::CancelToken,
-    ) -> Result<RecordedRole, secs_rew::RewError>;
+    ) -> Result<RecordedRole, MeasureError>;
 }
 
 impl RoleRecorder for secs_rew::RewClient<Transport> {
@@ -252,7 +252,7 @@ impl RoleRecorder for secs_rew::RewClient<Transport> {
         progress: Option<secs_rew::ProgressCallback>,
         current_role: SyncArc<Mutex<Option<String>>>,
         cancel: &secs_rew::CancelToken,
-    ) -> Result<RecordedRole, secs_rew::RewError> {
+    ) -> Result<RecordedRole, MeasureError> {
         if cancel.is_cancelled() {
             if let Some(callback) = &progress {
                 callback(secs_rew::progress(
@@ -395,10 +395,19 @@ impl RoleRecorder for secs_rew::RewClient<Transport> {
             self.unsubscribe_progress();
         }
         *lock(&current_role) = None;
-        result.map(|result| RecordedRole {
-            result,
-            subscribe_error,
-        })
+        match result {
+            Ok(result) => Ok(RecordedRole {
+                result,
+                subscribe_error,
+            }),
+            Err(source) => Err(match subscribe_error {
+                Some(subscribe_error) => MeasureError::RewAfterSubscribeFailure {
+                    source,
+                    subscribe_error,
+                },
+                None => MeasureError::Rew(source),
+            }),
+        }
     }
 }
 
@@ -418,7 +427,7 @@ impl<S: secs_rew::IrSource> RoleRecorder for secs_rew::FakeRew<S> {
         progress: Option<secs_rew::ProgressCallback>,
         current_role: SyncArc<Mutex<Option<String>>>,
         cancel: &secs_rew::CancelToken,
-    ) -> Result<RecordedRole, secs_rew::RewError> {
+    ) -> Result<RecordedRole, MeasureError> {
         let mut single = plan.clone();
         single.roles = vec![role.to_owned()];
         *lock(&current_role) = Some(role.to_owned());
@@ -605,6 +614,7 @@ where
                     })
                 }) as secs_rew::ProgressCallback
             });
+            // TD-215: this direct path uses the client's position-wide subscription.
             let results = self.client.run_position(
                 &to_rew_plan(plan)?,
                 positive(pos, "position")?,
