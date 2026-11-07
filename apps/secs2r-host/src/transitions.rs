@@ -525,7 +525,20 @@ pub fn drive(
     while let Some(effect) = effects.pop_front() {
         match effect {
             Effect::SaveState(managed) => platform.save_state(&managed)?,
-            Effect::ReplaceWatcher(target) => platform.replace_watcher(target.as_ref())?,
+            Effect::ReplaceWatcher(target) => {
+                if let Err(error) = platform.replace_watcher(target.as_ref()) {
+                    let (next, follow_up) = decide(
+                        state,
+                        Input::WatcherFailed {
+                            detail: error.detail,
+                        },
+                    );
+                    *state = next;
+                    for effect in follow_up.into_iter().rev() {
+                        effects.push_front(effect);
+                    }
+                }
+            }
             Effect::RepairEqapo { session } => platform.repair_eqapo(session)?,
             Effect::SetCamillaState(state) => platform.set_camilla_state(state),
             Effect::CountRestart => platform.count_restart(),
@@ -560,6 +573,8 @@ mod tests {
         repair_sessions: Vec<u32>,
         stops: usize,
         fail_stop: bool,
+        fail_watcher: bool,
+        logs: Vec<HostLogLine>,
         camilla_states: Vec<ManagedProcessState>,
         restart_counts: usize,
         camilla_status_clears: usize,
@@ -573,7 +588,11 @@ mod tests {
         }
 
         fn replace_watcher(&mut self, _target: Option<&ManagedEqApo>) -> Result<(), IpcError> {
-            Ok(())
+            if self.fail_watcher {
+                Err(IpcError::new(ErrorCode::ApplyFailed, "watcher failed"))
+            } else {
+                Ok(())
+            }
         }
 
         fn repair_eqapo(&mut self, session: u32) -> Result<(), IpcError> {
@@ -612,7 +631,8 @@ mod tests {
             Ok(())
         }
 
-        fn log(&mut self, _line: &HostLogLine) -> Result<(), IpcError> {
+        fn log(&mut self, line: &HostLogLine) -> Result<(), IpcError> {
+            self.logs.push(line.clone());
             Ok(())
         }
     }
@@ -1220,6 +1240,41 @@ mod tests {
         assert_eq!(state.managed.owner_session_id, Some(9));
         assert_eq!(platform.saved_states.len(), 1);
         assert_eq!(platform.saved_states[0].owner_session_id, Some(9));
+    }
+
+    #[test]
+    fn watcher_failure_keeps_the_loop_and_later_effects() {
+        let mut state = State::new(
+            HostManaged {
+                camilla: Some(camilla("camilladsp.exe")),
+                eqapo: Some(eqapo()),
+                ..HostManaged::default()
+            },
+            None,
+        );
+        let mut platform = FakePlatform {
+            fail_watcher: true,
+            ..FakePlatform::default()
+        };
+        let effects = vec![
+            Effect::ReplaceWatcher(state.managed.eqapo.clone()),
+            Effect::LaunchChild {
+                session: 7,
+                target: state.managed.camilla.clone().unwrap(),
+            },
+        ];
+
+        let result = drive(&mut state, effects, &mut platform);
+
+        assert!(result.is_ok(), "watcher failure ended drive: {result:?}");
+        assert_eq!(state.eqapo_error.as_deref(), Some("watcher failed"));
+        assert!(
+            platform
+                .logs
+                .iter()
+                .any(|line| line.event == "watcher_failed")
+        );
+        assert_eq!(platform.launches.len(), 1);
     }
 
     #[test]
