@@ -17,8 +17,8 @@ kind = "app"
 milestone = "M6"
 status = "implemented"
 upstream = "new; ADR 0020"
-tests = ["secs-service::update_policy_and_portable_decisions", "secs2r::update_endpoint_override_preserves_nonempty_address", "secs-service::update_notice_matches_running_version_and_tracks_skipped_releases", "secs-service::update_actions_reject_wrong_phases", "secs2r::updater_config_requires_signed_version", "secs2r::check_failure_logs_its_cause_td164", "secs2r::update_transitions_match_the_recorded_table"]
-note = "The managed service refuses an update source that is a link or junction (audit #155 TD-135); apps/secs2r-host/src/rules.rs pins it with Windows-only tests, update_source_refuses_an_existing_system_junction and update_source_refuses_an_existing_directory_symlink, that the Linux registry check cannot list."
+tests = ["secs-service::update_policy_and_portable_decisions", "secs2r::update_endpoint_override_preserves_nonempty_address", "secs-service::update_notice_matches_running_version_and_tracks_skipped_releases", "secs-service::update_actions_reject_wrong_phases", "secs2r::updater_config_requires_signed_version", "secs2r::check_failure_logs_its_cause_td164", "secs2r::update_transitions_match_the_recorded_table", "secs2r-host::update_source_refuses_an_existing_system_junction", "secs2r-host::update_source_refuses_an_existing_directory_symlink"]
+note = "The managed service refuses an update source that is a link or junction (audit #155 TD-135); apps/secs2r-host/src/rules.rs pins it with Windows-only tests, update_source_refuses_an_existing_system_junction and update_source_refuses_an_existing_directory_symlink, which the Windows leg of the registry check lists (the three OS listings are merged, audit #186 TD-239)."
 
 [[feature]]
 id = "update.machine"

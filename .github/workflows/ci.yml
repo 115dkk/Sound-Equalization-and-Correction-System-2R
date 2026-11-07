@@ -247,11 +247,32 @@ jobs:
           SECS_ORACLE_FOREIGN_LIBM: "1"
         run: cargo test -p secs-engine --release --locked
 
-      # secs-policy only sees `#[test] fn` in source; this asks Cargo that each
-      # test features.toml names is compiled and run (an orphan file is not).
-      - name: features.toml names tests Cargo runs
-        if: runner.os == 'Linux'
-        run: python3 .github/scripts/check_feature_tests.py
+      # secs-policy only sees `#[test] fn` in source; this asks Cargo which
+      # tests it compiles on this OS. The three legs' listings are merged by
+      # the feature-registry job below, so a `cfg(windows)` or `cfg(unix)`
+      # test can stand as a feature's evidence (audit #186 TD-239).
+      - name: List the tests Cargo compiles for features.toml
+        run: ${{ runner.os == 'Windows' && 'python' || 'python3' }} .github/scripts/check_feature_tests.py --emit-listing "${{ runner.temp }}/feature-tests.json"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: feature-tests-${{ runner.os }}
+          path: ${{ runner.temp }}/feature-tests.json
+          retention-days: 3
+
+  feature-registry:
+    name: feature registry (all OSes)
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: feature-tests-*
+          path: ${{ runner.temp }}/feature-tests
+      # Every test features.toml names must be listed by at least one OS leg,
+      # and ignored ones only with a CI job that runs them (--ignored).
+      - name: features.toml names tests Cargo runs on some OS
+        run: python3 .github/scripts/check_feature_tests.py --union "${{ runner.temp }}"/feature-tests/*/feature-tests.json
 
   python-changes:
     name: Python package changes

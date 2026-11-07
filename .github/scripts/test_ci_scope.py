@@ -72,8 +72,8 @@ class HeavyInputsTest(unittest.TestCase):
     def test_the_gated_jobs_are_the_heavy_ones_and_those_after_them(self):
         self.assertEqual(
             set(s.gated_jobs(WORKFLOW)),
-            {"test", "integrity", "eqapo-playback", "camilla-playback", "reaper-playback",
-             "bundle", "manage-e2e", "update-e2e", "gallery", "miri", "fuzz"})
+            {"test", "feature-registry", "integrity", "eqapo-playback", "camilla-playback",
+             "reaper-playback", "bundle", "manage-e2e", "update-e2e", "gallery", "miri", "fuzz"})
 
     def test_needs_in_any_form_carries_the_gate(self):
         workflow = (
