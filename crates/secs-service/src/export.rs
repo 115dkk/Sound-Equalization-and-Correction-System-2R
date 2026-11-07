@@ -81,6 +81,49 @@ impl Drop for PreparedFolder {
     }
 }
 
+struct EqapoWriter {
+    prepared: PreparedFolder,
+}
+
+impl EqapoWriter {
+    fn prepare(
+        run: &secs_filters::FilterRun<'_>,
+        destination: &Path,
+        options: &secs_filters::Options,
+        job: &crate::jobs::JobContext,
+    ) -> Result<Self, IpcError> {
+        let prepared = PreparedFolder::path_for(destination, job.id());
+        match std::fs::remove_dir_all(&prepared) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(export_error(error)),
+        }
+        let installed = secs_filters::export_eqapo_observed_with_options(run, &prepared, options)
+            .map_err(filter_error)?;
+        let relative_files = installed
+            .files
+            .iter()
+            .map(|path| {
+                path.strip_prefix(&prepared)
+                    .expect("prepared Equalizer APO files stay below their folder")
+                    .to_owned()
+            })
+            .collect();
+        Ok(Self {
+            prepared: PreparedFolder {
+                prepared,
+                destination: destination.to_owned(),
+                relative_files,
+                moved: false,
+            },
+        })
+    }
+
+    fn write(self, log: &crate::LogSink) -> Result<Vec<std::path::PathBuf>, IpcError> {
+        self.prepared.write(log)
+    }
+}
+
 struct FilterTextWriter {
     prepared: PreparedFolder,
 }
@@ -1028,13 +1071,9 @@ impl Service {
                             writer.write(&log)?
                         }
                         ExportKind::EqualizerApo => {
+                            let writer = EqapoWriter::prepare(&run, folder, &options, &job)?;
                             job.begin_commit()?;
-                            let installed = secs_filters::export_eqapo_observed_with_options(
-                                &run, folder, &options,
-                            )
-                            .map_err(filter_error)?;
-                            log_leftover_backup(&log, installed.leftover_backup);
-                            installed.files
+                            writer.write(&log)?
                         }
                         ExportKind::Convolution => {
                             let prepared = secs_filters::prepare_convolution_named_with_options(
@@ -1438,6 +1477,28 @@ mod tests {
                 fail,
             })
         })
+    }
+
+    #[test]
+    fn eqapo_writer_stores_the_same_files_main_config_and_design_id() {
+        let root = std::env::temp_dir().join(format!("secs-eqapo-writer-{}", std::process::id()));
+        let prepared = root.join("prepared");
+        let destination = root.join("destination");
+        std::fs::create_dir_all(&prepared).unwrap();
+        std::fs::write(prepared.join("config.txt"), b"config").unwrap();
+        let writer = EqapoWriter {
+            prepared: PreparedFolder {
+                prepared,
+                destination: destination.clone(),
+                relative_files: vec![std::path::PathBuf::from("config.txt")],
+                moved: false,
+            },
+        };
+        let log: crate::LogSink = Arc::new(|_, _, _| {});
+        let files = writer.write(&log).unwrap();
+        assert_eq!(files, [destination.join("config.txt")]);
+        assert_eq!(std::fs::read(&files[0]).unwrap(), b"config");
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
