@@ -1541,7 +1541,7 @@ id = "ipc.measure_configure"
 kind = "ipc"
 milestone = "M4"
 status = "implemented"
-tests = ["secs-service::configure_validates_fields_and_host_stub_reports_its_error", "secs-service::measure_configure_opens_selected_rew_device_after_project_update", "secs-service::rew_driver_and_devices_stay_while_a_measurement_runs"]
+tests = ["secs-service::configure_validates_fields_and_host_stub_reports_its_error", "secs-service::measure_configure_opens_selected_rew_device_after_project_update", "secs-service::rew_driver_and_devices_stay_while_a_measurement_runs", "secs-service::rew_launch_tries_the_configured_executable_first_td221"]
 
 [[feature]]
 id = "ipc.measure_config_get"
@@ -1610,7 +1610,7 @@ id = "ipc.rew_launch"
 kind = "ipc"
 milestone = "M4"
 status = "implemented"
-tests = ["secs-service::rew_launch_classifies_reasons_and_returns_after_spawn", "secs-service::configure_validates_fields_and_host_stub_reports_its_error"]
+tests = ["secs-service::rew_launch_classifies_reasons_and_returns_after_spawn", "secs-service::configure_validates_fields_and_host_stub_reports_its_error", "secs-service::rew_launch_tries_the_configured_executable_first_td221", "secs-sys::a_configured_executable_that_is_missing_is_reported_with_its_path_td221"]
 
 [[feature]]
 id = "ipc.mdat_scan"

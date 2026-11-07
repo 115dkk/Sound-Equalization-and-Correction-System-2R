@@ -116,6 +116,15 @@ fn devices(project: &Project) -> Option<&PyJson> {
         .find(|(k, _)| k == "devices")
         .map(|(_, v)| v)
 }
+/// The REW executable the project names (`devices.rew_executable`), when the
+/// value is not empty (audit #186 TD-221).
+pub fn rew_executable(project: &Project) -> Option<std::path::PathBuf> {
+    devices(project)
+        .and_then(|d| d.get("rew_executable"))
+        .and_then(PyJson::str)
+        .filter(|path| !path.is_empty())
+        .map(std::path::PathBuf::from)
+}
 fn number(value: Option<&PyJson>, default: f64) -> f64 {
     match value {
         Some(PyJson::Float(v)) => *v,

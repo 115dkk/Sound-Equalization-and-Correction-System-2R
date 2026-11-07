@@ -169,8 +169,9 @@ pub trait Host: Send + Sync + Debug {
     fn home_dir(&self) -> Result<std::path::PathBuf, IpcError> {
         not_implemented("home directory")
     }
-    /// Starts REW in API mode without a shell.
-    fn launch_rew(&self) -> Result<(), RewLaunchError> {
+    /// Starts REW in API mode without a shell. `executable` is the path the
+    /// project names (TD-221); without one the host finds the installed REW.
+    fn launch_rew(&self, _executable: Option<&Path>) -> Result<(), RewLaunchError> {
         Err(RewLaunchError::CannotLaunch(
             "host REW launch is not implemented".into(),
         ))

@@ -7,7 +7,9 @@ use secs_types::ipc::SampleLoadParams;
 use secs_types::ipc::*;
 
 use crate::measure::json::JsonExt;
-use crate::measure::{self, MeasureError, MeasurementSettings, Measurer, plan_for, store_devices};
+use crate::measure::{
+    self, MeasureError, MeasurementSettings, Measurer, plan_for, rew_executable, store_devices,
+};
 use crate::{Deps, EventSink, Service, lock, mdat_import, measurement_file, session};
 use secs_types::role::ROLES;
 
@@ -153,6 +155,7 @@ fn settings(project: &Project) -> Result<MeasureConfigResult, IpcError> {
         loopback_input_channel: s.loopback_input_channel,
         timing_ref_output: p.timing_ref_output.map(channel).transpose()?,
         share_mode: share_name(s.share).into(),
+        rew_executable: rew_executable(project).map(|path| path.to_string_lossy().into_owned()),
     })
 }
 fn measurer(
@@ -333,6 +336,12 @@ impl Service {
                 return Err(input("share_mode", "unknown share mode"));
             }
             values.push(("share".into(), PyJson::Str(share)));
+        }
+        if let Some(path) = params.rew_executable {
+            if !path.is_empty() && !Path::new(&path).is_absolute() {
+                return Err(input("rew_executable", "executable path must be absolute"));
+            }
+            values.push(("rew_executable".into(), PyJson::Str(path)));
         }
         store_devices(&mut project, values);
         if plan_for(&project, &Default::default()).timing_reference
@@ -843,14 +852,27 @@ impl Service {
         if status.running {
             return Ok(status);
         }
-        self.deps.host.launch_rew().map_err(|error| {
-            let reason = match &error {
-                crate::RewLaunchError::ExeNotFound(_) => "exe_not_found",
-                crate::RewLaunchError::CannotLaunch(_) => "cannot_launch",
-                crate::RewLaunchError::LaunchFailed(_) => "launch_failed",
-            };
-            IpcError::new(ErrorCode::RewFailed, error.to_string()).with_param("reason", reason)
-        })?;
+        // The project's own executable (TD-221) is tried before the fixed install paths.
+        let executable = lock(&self.session)
+            .require()
+            .ok()
+            .and_then(|open| rew_executable(open.project()));
+        self.deps
+            .host
+            .launch_rew(executable.as_deref())
+            .map_err(|error| {
+                let reason = match &error {
+                    crate::RewLaunchError::ExeNotFound(_) => "exe_not_found",
+                    crate::RewLaunchError::CannotLaunch(_) => "cannot_launch",
+                    crate::RewLaunchError::LaunchFailed(_) => "launch_failed",
+                };
+                let error = IpcError::new(ErrorCode::RewFailed, error.to_string())
+                    .with_param("reason", reason);
+                match &executable {
+                    Some(path) => error.with_param("path", path.to_string_lossy()),
+                    None => error,
+                }
+            })?;
         Ok(RewStatusResult {
             running: true,
             reachable: false,

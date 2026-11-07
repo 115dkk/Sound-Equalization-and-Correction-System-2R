@@ -139,9 +139,10 @@ impl Host for TauriHost {
         self.app.path().home_dir().map_err(host_error)
     }
 
-    fn launch_rew(&self) -> Result<(), RewLaunchError> {
-        secs_sys::rew::launch().map_err(|error| match error {
-            secs_sys::rew::RewLaunchError::ExeNotFound => {
+    fn launch_rew(&self, executable: Option<&Path>) -> Result<(), RewLaunchError> {
+        secs_sys::rew::launch_with(executable).map_err(|error| match error {
+            secs_sys::rew::RewLaunchError::ExeNotFound
+            | secs_sys::rew::RewLaunchError::ConfiguredExeMissing(_) => {
                 RewLaunchError::ExeNotFound(error.to_string())
             }
             secs_sys::rew::RewLaunchError::CannotLaunch(_) => {

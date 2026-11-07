@@ -11,7 +11,8 @@ pub(crate) use rew::RewLink;
 pub use rew::RewMeasurer;
 pub use sample::MockMeasurer;
 pub use settings::{
-    MeasurementSettings, plan_for, position_count, store_devices, to_audio_plan, to_rew_plan,
+    MeasurementSettings, plan_for, position_count, rew_executable, store_devices, to_audio_plan,
+    to_rew_plan,
 };
 
 use secs_project::{MeasurementPlan, MeasurementResult};

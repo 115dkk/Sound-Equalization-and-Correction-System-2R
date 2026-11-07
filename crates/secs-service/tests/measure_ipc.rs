@@ -6,7 +6,7 @@ use serde_json::json;
 use std::{
     collections::BTreeMap,
     fs,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{Arc, Condvar, Mutex},
     time::{Duration, Instant},
 };
@@ -1477,9 +1477,81 @@ fn undo_retains_only_last_sixteen_tokens_and_original_order() {
 struct LaunchHost(Result<(), secs_service::RewLaunchError>);
 
 impl secs_service::Host for LaunchHost {
-    fn launch_rew(&self) -> Result<(), secs_service::RewLaunchError> {
+    fn launch_rew(&self, _executable: Option<&Path>) -> Result<(), secs_service::RewLaunchError> {
         self.0.clone()
     }
+}
+
+#[derive(Debug, Default)]
+struct RecordingLaunchHost(Mutex<Vec<Option<PathBuf>>>);
+
+impl secs_service::Host for RecordingLaunchHost {
+    fn launch_rew(&self, executable: Option<&Path>) -> Result<(), secs_service::RewLaunchError> {
+        self.0
+            .lock()
+            .unwrap()
+            .push(executable.map(Path::to_path_buf));
+        Ok(())
+    }
+}
+
+/// TD-221: a project may name the REW executable. The launch hands that path
+/// to the host instead of the fixed install paths, an empty value clears it,
+/// and a relative path is refused before it is stored.
+#[test]
+fn rew_launch_tries_the_configured_executable_first_td221() {
+    let root = root("rew-executable");
+    let host = Arc::new(RecordingLaunchHost::default());
+    let service = Service::new(Deps {
+        host: host.clone(),
+        ..Default::default()
+    });
+    new(&service, &root.join("room.secs"));
+    call(&service, Request::RewLaunch);
+
+    let exe = root.join("tools").join("roomeqwizard.exe");
+    let exe_text = exe.to_string_lossy().into_owned();
+    let Response::MeasureConfigure(result) = call(
+        &service,
+        Request::MeasureConfigure(MeasureConfigureParams {
+            method: "rew".into(),
+            rew_executable: Some(exe_text.clone()),
+            ..Default::default()
+        }),
+    ) else {
+        panic!()
+    };
+    assert_eq!(result.rew_executable.as_deref(), Some(exe_text.as_str()));
+    call(&service, Request::RewLaunch);
+
+    let Envelope::Err(error) = service.call(
+        Request::MeasureConfigure(MeasureConfigureParams {
+            method: "rew".into(),
+            rew_executable: Some("tools/roomeqwizard.exe".into()),
+            ..Default::default()
+        }),
+        Arc::new(NoEvents),
+    ) else {
+        panic!()
+    };
+    assert_eq!(error.code, ErrorCode::MeasurementInput);
+    assert_eq!(error.params["field"], "rew_executable");
+
+    let Response::MeasureConfigure(result) = call(
+        &service,
+        Request::MeasureConfigure(MeasureConfigureParams {
+            method: "rew".into(),
+            rew_executable: Some(String::new()),
+            ..Default::default()
+        }),
+    ) else {
+        panic!()
+    };
+    assert_eq!(result.rew_executable, None);
+    call(&service, Request::RewLaunch);
+
+    assert_eq!(*host.0.lock().unwrap(), vec![None, Some(exe), None]);
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]

@@ -2257,6 +2257,11 @@ pub struct MeasureConfigureParams {
     pub timing_ref_output: Option<u16>,
     /// Optional share preference: auto, exclusive, or shared.
     pub share_mode: Option<String>,
+    /// Optional absolute path of the REW executable to start instead of the
+    /// installed one; an empty string clears it (audit #186 TD-221).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub rew_executable: Option<String>,
 }
 /// The active measurement settings.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS, Default)]
@@ -2292,6 +2297,10 @@ pub struct MeasureConfigResult {
     pub timing_ref_output: Option<u16>,
     /// Share preference: auto, exclusive, or shared.
     pub share_mode: String,
+    /// The REW executable the project names, when it names one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub rew_executable: Option<String>,
 }
 /// Recording status and upstream source values for one arranged position.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
