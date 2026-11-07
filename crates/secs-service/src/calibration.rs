@@ -132,16 +132,28 @@ impl Service {
                 ))
             };
             let (path, cached) = if run_mimo {
-                session::commit_phase(&session, ticket, &job, commit_calibration)?
+                session::commit(
+                    &session,
+                    ticket,
+                    &job,
+                    session::Finality::Phase,
+                    commit_calibration,
+                )?
             } else {
-                session::commit(&session, ticket, &job, commit_calibration)?
+                session::commit(
+                    &session,
+                    ticket,
+                    &job,
+                    session::Finality::Final,
+                    commit_calibration,
+                )?
             };
             let owner = if subs_only {
                 CacheOwner::Subs
             } else {
                 CacheOwner::Calibration
             };
-            persist_cache(cached, &path, ticket, &session, owner);
+            persist_cache(cached, &path, ticket, &session, &job, owner);
             if let Some(selection) = selection {
                 compute_and_commit_mimo(
                     &session,
@@ -193,23 +205,29 @@ impl Service {
                 best: result.best,
                 candidates: result.candidates,
             };
-            session::commit(&session, prepared.ticket, &job, |open| {
-                let mut settings = calibration_from_project(open.project());
-                let xo_unchanged = settings.xo == prepared.settings.xo
-                    && settings.xo_rec_include == prepared.settings.xo_rec_include;
-                if xo_unchanged {
-                    for (group, hz) in &recommendation.best {
-                        match settings.xo.iter_mut().find(|(name, _)| name == group) {
-                            Some((_, current)) => *current = *hz,
-                            None => settings.xo.push((group.clone(), *hz)),
+            session::commit(
+                &session,
+                prepared.ticket,
+                &job,
+                session::Finality::Final,
+                |open| {
+                    let mut settings = calibration_from_project(open.project());
+                    let xo_unchanged = settings.xo == prepared.settings.xo
+                        && settings.xo_rec_include == prepared.settings.xo_rec_include;
+                    if xo_unchanged {
+                        for (group, hz) in &recommendation.best {
+                            match settings.xo.iter_mut().find(|(name, _)| name == group) {
+                                Some((_, current)) => *current = *hz,
+                                None => settings.xo.push((group.clone(), *hz)),
+                            }
                         }
                     }
-                }
-                settings.xo_rec = recommendation.best.clone();
-                settings.xo_rec_key.clone_from(&recommendation_key);
-                open.edit(|project| store_calibration(project, &settings));
-                Ok(((), true))
-            })?;
+                    settings.xo_rec = recommendation.best.clone();
+                    settings.xo_rec_key.clone_from(&recommendation_key);
+                    open.edit(|project| store_calibration(project, &settings));
+                    Ok(((), true))
+                },
+            )?;
             Ok(JobResult::Xo(recommendation))
         })
     }
@@ -334,7 +352,7 @@ fn compute_and_commit_mimo(
         &selection,
     )
     .map_err(|error| engine_error(error).with_param("stage", "mimo"))?;
-    let (path, cached) = session::commit(session, ticket, job, |open| {
+    let (path, cached) = session::commit(session, ticket, job, session::Finality::Final, |open| {
         let summary = summarize_mimo(&run);
         open.results.commit_mimo(MimoResult {
             summary,
@@ -345,7 +363,7 @@ fn compute_and_commit_mimo(
         });
         Ok(((open.path.clone(), open.results.cache_snapshot()), false))
     })?;
-    persist_cache(cached, &path, ticket, session, CacheOwner::Mimo);
+    persist_cache(cached, &path, ticket, session, job, CacheOwner::Mimo);
     Ok(())
 }
 
@@ -812,6 +830,7 @@ fn persist_cache(
     path: &std::path::Path,
     ticket: ProjectTicket,
     session: &Arc<std::sync::Mutex<crate::session::Session>>,
+    job: &JobContext,
     owner: CacheOwner,
 ) {
     let Some(cached) = cached else {
@@ -822,7 +841,7 @@ fn persist_cache(
             // Another project opened since the commit, or this one saved
             // under another path, keeps its own cache: only the in-memory
             // copy is skipped.
-            let _ = session::apply(session, ticket, |open| {
+            let _ = session::commit(session, ticket, job, session::Finality::Streaming, |open| {
                 if open.path == path {
                     open.results.replace_cache(cached);
                     for notes in open.results.all_notes_mut() {
@@ -833,7 +852,7 @@ fn persist_cache(
             });
         }
         Err(error) => {
-            let _ = session::apply(session, ticket, |open| {
+            let _ = session::commit(session, ticket, job, session::Finality::Streaming, |open| {
                 if open.path == path
                     && let Some(notes) = open.results.owner_notes_mut(owner)
                 {

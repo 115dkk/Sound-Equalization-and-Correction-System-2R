@@ -616,7 +616,12 @@ impl Service {
                         job.cancel()
                             .check()
                             .map_err(|_| IpcError::new(ErrorCode::Cancelled, "cancelled"))?;
-                        session::apply(&session_for_design, ticket, |open| {
+                        session::commit(
+                            &session_for_design,
+                            ticket,
+                            &job,
+                            session::Finality::Streaming,
+                            |open| {
                             let project = open.project();
                             let settings = secs_project::calibration_from_project(project);
                             let current_input_key = super::calibration::run_key(

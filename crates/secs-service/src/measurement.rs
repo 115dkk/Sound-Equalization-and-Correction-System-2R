@@ -456,7 +456,7 @@ impl Service {
         self.jobs.start(JobKind::SampleLoad, events, move |ctx| {
             let total = (roles.len() * positions.len()) as u64;
             let mut done = 0;
-            let info = session::commit(&session, ticket, &ctx, |open| {
+            let info = session::commit(&session, ticket, &ctx, session::Finality::Final, |open| {
                 let existing = secs_project::measured_positions(open.project());
                 let was_dirty = open.is_dirty();
                 let mut store = open.store_mut();
@@ -632,9 +632,21 @@ impl Service {
                         // An atomic method's position becomes non-cancellable
                         // with its first record; REW keeps every role it recorded.
                         if first && commit_boundary == measure::CommitBoundary::Position {
-                            session::commit(&session, ticket, &ctx, record)?;
+                            session::commit(
+                                &session,
+                                ticket,
+                                &ctx,
+                                session::Finality::Final,
+                                record,
+                            )?;
                         } else {
-                            session::apply(&session, ticket, record)?;
+                            session::commit(
+                                &session,
+                                ticket,
+                                &ctx,
+                                session::Finality::Streaming,
+                                record,
+                            )?;
                         }
                         count += 1;
                         ctx.role_progress(&role, count, p.roles.len() as u64);
@@ -668,7 +680,13 @@ impl Service {
             if ctx.cancel().is_cancelled() {
                 return Err(IpcError::new(ErrorCode::Cancelled, "cancelled"));
             }
-            let info = session::apply(&session, ticket, |open| Ok((session::info(open), false)))?;
+            let info = session::commit(
+                &session,
+                ticket,
+                &ctx,
+                session::Finality::Streaming,
+                |open| Ok((session::info(open), false)),
+            )?;
             Ok(JobResult::Measurement(info))
         })
     }
@@ -976,17 +994,18 @@ impl Service {
                 return Err(error);
             }
             let file_name = measurement_file::file_name(path);
-            let (count, info) = session::commit(&session, ticket, &ctx, |open| {
-                let count = open
-                    .store_mut()
-                    .write_result(|store| {
-                        measurement_file::import(store, &*reader, &file_name, &assignments)
-                    })
-                    .map_err(path_error)?;
-                // The import writes its records to disk.
-                open.mark_saved();
-                Ok(((count, session::info(open)), false))
-            })?;
+            let (count, info) =
+                session::commit(&session, ticket, &ctx, session::Finality::Final, |open| {
+                    let count = open
+                        .store_mut()
+                        .write_result(|store| {
+                            measurement_file::import(store, &*reader, &file_name, &assignments)
+                        })
+                        .map_err(path_error)?;
+                    // The import writes its records to disk.
+                    open.mark_saved();
+                    Ok(((count, session::info(open)), false))
+                })?;
             ctx.report_progress("mdat_import", count as u64, count as u64);
             Ok(JobResult::MdatImport(info))
         })

@@ -8,6 +8,7 @@ use secs_types::ipc::{
     LevelMonitorStartParams, LevelPlayParams, LevelsResult,
 };
 
+use crate::jobs::JobContext;
 use crate::measure::json::JsonExt;
 use crate::measure::{MeasurementSettings, plan_for};
 use crate::session::{self, ProjectTicket};
@@ -265,6 +266,7 @@ fn sampled_loop(
             store_level(
                 session,
                 ticket,
+                job,
                 &play.role,
                 report.input_dbfs,
                 report.spl_db,
@@ -421,7 +423,14 @@ fn rew_loop(
                 secs_rew::LevelMonitor::stop_generator(&mut rew);
                 if let Some((play, _, settled)) = active.take() {
                     if let Some(level) = settled {
-                        store_level(session, ticket, &play.role, level.input_dbfs, level.spl_db)?;
+                        store_level(
+                            session,
+                            ticket,
+                            job,
+                            &play.role,
+                            level.input_dbfs,
+                            level.spl_db,
+                        )?;
                     }
                     send_play_end(job, &play.role, "done", None);
                     handled_generation = play.generation;
@@ -445,11 +454,12 @@ fn rew_loop(
 fn store_level(
     session: &Arc<Mutex<crate::session::Session>>,
     ticket: ProjectTicket,
+    job: &JobContext,
     role: &str,
     dbfs: f64,
     spl_db: Option<f64>,
 ) -> Result<(), IpcError> {
-    let stored = session::apply(session, ticket, |open| {
+    let stored = session::commit(session, ticket, job, session::Finality::Streaming, |open| {
         open.edit(|project| {
             put_extra_map(project, "levels", role, dbfs);
             if let Some(spl) = spl_db {

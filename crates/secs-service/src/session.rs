@@ -29,7 +29,7 @@ pub(crate) struct OpenProject {
     pub tutorial_folder: Option<TutorialFolder>,
     pub results: crate::results::ResultBook,
     /// Read only through [`Session::ticket`] and compared only by
-    /// [`commit`] and [`apply`] (ADR 0009).
+    /// [`commit`] (ADR 0009).
     identity: u64,
     undo: std::collections::VecDeque<UndoEntry>,
 }
@@ -480,56 +480,37 @@ impl Service {
 }
 
 /// The open project a request started from (ADR 0009). A job takes one when
-/// its handler starts and changes the project only through [`commit`] or
-/// [`apply`], so a late result of an earlier project never lands in a newer one.
+/// its handler starts and changes the project only through [`commit`], so a
+/// late result of an earlier project never lands in a newer one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct ProjectTicket(u64);
 
-/// Commits a finishing job's change (ADR 0009). Under the session lock: a
-/// different open project fails with `StaleInputs` ("project changed while
-/// computing"), then `job.begin_commit()` fails with `Cancelled` if the job
-/// was cancelled; only then `change` runs. `change` returns its value and
-/// whether it changed the project; `commit` sets `dirty` when it did.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Finality {
+    Final,
+    Phase,
+    Streaming,
+}
+
+/// Commits a job change after checking the project ticket and the selected
+/// cancellation policy. Only a final commit makes the job non-cancellable.
 pub(crate) fn commit<T>(
     session: &Mutex<Session>,
     ticket: ProjectTicket,
     job: &JobContext,
+    finality: Finality,
     change: impl FnOnce(&mut OpenProject) -> Result<(T, bool), IpcError>,
 ) -> Result<T, IpcError> {
     let mut session = lock(session);
     let open = session.holding(ticket)?;
-    job.begin_commit()?;
-    run_change(open, change)
-}
-
-/// Commits one completed phase while leaving a multi-phase job cancellable.
-/// The project ticket and cancellation token are checked under the session
-/// lock before `change` runs. A cancellation after this commit stops the next
-/// phase without undoing this one.
-pub(crate) fn commit_phase<T>(
-    session: &Mutex<Session>,
-    ticket: ProjectTicket,
-    job: &JobContext,
-    change: impl FnOnce(&mut OpenProject) -> Result<(T, bool), IpcError>,
-) -> Result<T, IpcError> {
-    let mut session = lock(session);
-    let open = session.holding(ticket)?;
-    if job.cancel().is_cancelled() {
-        return Err(IpcError::new(ErrorCode::Cancelled, "cancelled"));
+    match finality {
+        Finality::Final => job.begin_commit()?,
+        Finality::Phase => job
+            .cancel()
+            .check()
+            .map_err(|_| IpcError::new(ErrorCode::Cancelled, "cancelled"))?,
+        Finality::Streaming => {}
     }
-    run_change(open, change)
-}
-
-/// The same check for a job that keeps running and writes as it goes (the
-/// level monitor): the ticket check only, no `begin_commit`, so the job
-/// stays cancellable.
-pub(crate) fn apply<T>(
-    session: &Mutex<Session>,
-    ticket: ProjectTicket,
-    change: impl FnOnce(&mut OpenProject) -> Result<(T, bool), IpcError>,
-) -> Result<T, IpcError> {
-    let mut session = lock(session);
-    let open = session.holding(ticket)?;
     run_change(open, change)
 }
 
@@ -1457,7 +1438,7 @@ mod commit_tests {
     }
 
     #[test]
-    fn commit_with_a_stale_ticket_fails_before_begin_commit_and_change() {
+    fn final_commit_refuses_a_stale_ticket_before_begin_commit() {
         let registry = JobRegistry::default();
         let session = opened();
         let ticket = lock(&session).ticket().unwrap();
@@ -1473,7 +1454,7 @@ mod commit_tests {
             &registry,
             |_| replace(&session),
             move |job| {
-                let outcome = commit(&job_session, ticket, &job, |_| {
+                let outcome = commit(&job_session, ticket, &job, Finality::Final, |_| {
                     job_ran.store(true, Ordering::SeqCst);
                     Ok(((), true))
                 });
@@ -1491,7 +1472,7 @@ mod commit_tests {
     }
 
     #[test]
-    fn commit_of_a_cancelled_job_fails_with_cancelled_before_change() {
+    fn final_commit_reports_cancelled_before_running_the_change() {
         let registry = JobRegistry::default();
         let session = opened();
         let ticket = lock(&session).ticket().unwrap();
@@ -1503,7 +1484,7 @@ mod commit_tests {
                 registry.cancel(job).unwrap();
             },
             move |job| {
-                commit(&job_session, ticket, &job, |_| {
+                commit(&job_session, ticket, &job, Finality::Final, |_| {
                     job_ran.store(true, Ordering::SeqCst);
                     Ok(((), true))
                 })
@@ -1520,37 +1501,7 @@ mod commit_tests {
     }
 
     #[test]
-    fn a_cancelled_stale_ticket_finishes_with_the_canonical_cancelled_error() {
-        let registry = JobRegistry::default();
-        let session = opened();
-        let ticket = lock(&session).ticket().unwrap();
-        let job_session = session.clone();
-        let (_, error) = run(
-            &registry,
-            |job| {
-                registry.cancel(job).unwrap();
-                replace(&session);
-            },
-            move |job| {
-                commit(
-                    &job_session,
-                    ticket,
-                    &job,
-                    |_| -> Result<((), bool), IpcError> {
-                        unreachable!("change runs only for the current project")
-                    },
-                )
-                .map(|()| JobResult::Stopped)
-            },
-        );
-        assert_eq!(
-            error.expect("the cancelled job has one error shape").code,
-            ErrorCode::Cancelled
-        );
-    }
-
-    #[test]
-    fn commit_with_a_valid_ticket_runs_change_after_begin_commit_and_dirty_follows_it() {
+    fn final_commit_runs_the_change_after_begin_commit_and_dirty_follows_the_return_value() {
         for changed in [false, true] {
             let registry = JobRegistry::default();
             let session = opened();
@@ -1563,7 +1514,7 @@ mod commit_tests {
                 |_| {},
                 move |job| {
                     let id = job.id();
-                    let value = commit(&job_session, ticket, &job, |open| {
+                    let value = commit(&job_session, ticket, &job, Finality::Final, |open| {
                         // `begin_commit` already made the job non-cancellable.
                         let cancellable = cancellable(&job_registry, id);
                         Ok(((open.path.clone(), cancellable), changed))
@@ -1582,7 +1533,34 @@ mod commit_tests {
     }
 
     #[test]
-    fn a_failing_change_leaves_dirty_alone() {
+    fn phase_commit_after_cancel_is_cancelled_and_leaves_the_job_cancellable() {
+        let registry = JobRegistry::default();
+        let session = opened();
+        let ticket = lock(&session).ticket().unwrap();
+        let still_cancellable = Arc::new(AtomicBool::new(false));
+        let (job_session, job_cancellable, job_registry) =
+            (session.clone(), still_cancellable.clone(), registry.clone());
+        let (status, error) = run(
+            &registry,
+            |job| {
+                registry.cancel(job).unwrap();
+            },
+            move |job| {
+                let outcome = commit(&job_session, ticket, &job, Finality::Phase, |_| {
+                    Ok(((), true))
+                });
+                job_cancellable.store(cancellable(&job_registry, job.id()), Ordering::SeqCst);
+                outcome.map(|()| JobResult::Stopped)
+            },
+        );
+        assert_eq!(status, JobStatus::Cancelled);
+        assert_eq!(error.unwrap().code, ErrorCode::Cancelled);
+        assert!(still_cancellable.load(Ordering::SeqCst));
+        assert!(!dirty(&session));
+    }
+
+    #[test]
+    fn phase_commit_survives_a_later_cancel_and_the_next_phase_fails() {
         let registry = JobRegistry::default();
         let session = opened();
         let ticket = lock(&session).ticket().unwrap();
@@ -1591,60 +1569,68 @@ mod commit_tests {
             &registry,
             |_| {},
             move |job| {
-                commit(
-                    &job_session,
-                    ticket,
-                    &job,
-                    |_| -> Result<((), bool), IpcError> {
-                        Err(IpcError::new(ErrorCode::ProjectIo, "disk full"))
-                    },
-                )
-                .map(|()| JobResult::Stopped)
-            },
-        );
-        assert_eq!(status, JobStatus::Failed);
-        assert_eq!(error.unwrap().code, ErrorCode::ProjectIo);
-        assert!(!dirty(&session));
-    }
-
-    #[test]
-    fn apply_checks_the_ticket_without_begin_commit() {
-        let session = opened();
-        let stale = lock(&session).ticket().unwrap();
-        replace(&session);
-        let mut ran = false;
-        let error = apply(&session, stale, |_| {
-            ran = true;
-            Ok(((), true))
-        })
-        .unwrap_err();
-        assert_eq!(error.code, ErrorCode::StaleInputs);
-        assert_eq!(error.detail, "project changed while computing");
-        assert!(!ran);
-        assert!(!dirty(&session));
-
-        let ticket = lock(&session).ticket().unwrap();
-        assert_eq!(apply(&session, ticket, |_| Ok((7, false))).unwrap(), 7);
-        assert!(!dirty(&session));
-        apply(&session, ticket, |_| Ok(((), true))).unwrap();
-        assert!(dirty(&session));
-
-        // A job that writes as it goes stays cancellable.
-        let registry = JobRegistry::default();
-        let still_cancellable = Arc::new(AtomicBool::new(false));
-        let (job_session, job_cancellable, job_registry) =
-            (session.clone(), still_cancellable.clone(), registry.clone());
-        let (status, error) = run(
-            &registry,
-            |_| {},
-            move |job| {
-                apply(&job_session, ticket, |_| Ok(((), false)))?;
-                job_cancellable.store(cancellable(&job_registry, job.id()), Ordering::SeqCst);
+                commit(&job_session, ticket, &job, Finality::Phase, |open| {
+                    open.edit(|project| project.name = "phase one".into());
+                    Ok(((), true))
+                })?;
+                job.cancel().cancel();
+                commit(&job_session, ticket, &job, Finality::Phase, |_| {
+                    Ok(((), true))
+                })?;
                 Ok(JobResult::Stopped)
             },
         );
-        assert_eq!((status, error), (JobStatus::Succeeded, None));
-        assert!(still_cancellable.load(Ordering::SeqCst));
+        assert_eq!(status, JobStatus::Cancelled);
+        assert_eq!(error.unwrap().code, ErrorCode::Cancelled);
+        assert_eq!(
+            lock(&session).require().unwrap().project().name,
+            "phase one"
+        );
+        assert!(dirty(&session));
+    }
+
+    #[test]
+    fn streaming_commit_checks_only_the_ticket_even_when_cancelled() {
+        let registry = JobRegistry::default();
+        let stale_session = opened();
+        let stale = lock(&stale_session).ticket().unwrap();
+        let stale_ran = Arc::new(AtomicBool::new(false));
+        let (job_session, job_ran) = (stale_session.clone(), stale_ran.clone());
+        let (_, error) = run(
+            &registry,
+            |_| replace(&stale_session),
+            move |job| {
+                commit(&job_session, stale, &job, Finality::Streaming, |_| {
+                    job_ran.store(true, Ordering::SeqCst);
+                    Ok(((), true))
+                })
+                .map(|()| JobResult::Stopped)
+            },
+        );
+        assert_eq!(error.unwrap().code, ErrorCode::StaleInputs);
+        assert!(!stale_ran.load(Ordering::SeqCst));
+
+        let registry = JobRegistry::default();
+        let session = opened();
+        let ticket = lock(&session).ticket().unwrap();
+        let ran = Arc::new(AtomicBool::new(false));
+        let (job_session, job_ran) = (session.clone(), ran.clone());
+        let (status, error) = run(
+            &registry,
+            |job| {
+                registry.cancel(job).unwrap();
+            },
+            move |job| {
+                commit(&job_session, ticket, &job, Finality::Streaming, |_| {
+                    job_ran.store(true, Ordering::SeqCst);
+                    Ok(((), true))
+                })
+                .map(|()| JobResult::Stopped)
+            },
+        );
+        assert_eq!(status, JobStatus::Cancelled);
+        assert_eq!(error.unwrap().code, ErrorCode::Cancelled);
+        assert!(ran.load(Ordering::SeqCst));
         assert!(dirty(&session));
     }
 }
