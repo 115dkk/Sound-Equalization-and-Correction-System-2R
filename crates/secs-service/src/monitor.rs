@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use secs_project::{Project, PyJson};
 use secs_types::ipc::{
-    ErrorCode, IpcError, JobEvent, JobId, JobKind, JobResult, JobSnapshot, JobStarted,
+    ErrorCode, IpcError, JobEvent, JobKind, JobResult, JobSnapshot, JobStarted,
     LevelMonitorStartParams, LevelPlayParams, LevelsResult,
 };
 
@@ -21,7 +21,6 @@ pub(crate) struct LevelState {
 
 #[derive(Debug, Default)]
 struct LevelInner {
-    job: Option<JobId>,
     play: Option<PlayRequest>,
     next_generation: u64,
 }
@@ -83,43 +82,20 @@ impl Service {
         let state = self.level.inner.clone();
         let session = self.session.clone();
         let rew = self.rew.clone();
-        let started = self.start_job(JobKind::LevelMonitor, events, move |job| {
-            lock(&state).job = Some(job.id());
+        self.start_job(JobKind::LevelMonitor, events, move |job| {
             let outcome = monitor_loop(
                 &deps, &session, &state, &project, ticket, settings, plan, &job, &rew,
             );
-            let mut state = lock(&state);
-            if state.job == Some(job.id()) {
-                state.job = None;
-                state.play = None;
-            }
+            lock(&state).play = None;
             outcome
-        })?;
-        lock(&self.level.inner).job = Some(started.job);
-        Ok(started)
+        })
     }
 
     pub(crate) fn stop_level_monitor(&self) -> Result<Option<JobSnapshot>, IpcError> {
-        let (job, play) = {
-            let state = lock(&self.level.inner);
-            (state.job, state.play.clone())
-        };
-        if let Some(play) = play {
-            play.cancel.cancel();
-        }
-        job.map(|job| self.jobs.cancel(job)).transpose()
-    }
-
-    pub(crate) fn cancel_level_monitor_job(&self, job: JobId) {
-        let play = {
-            let state = lock(&self.level.inner);
-            (state.job == Some(job))
-                .then(|| state.play.clone())
-                .flatten()
-        };
-        if let Some(play) = play {
-            play.cancel.cancel();
-        }
+        self.jobs
+            .running(JobKind::LevelMonitor)
+            .map(|job| self.jobs.cancel(job))
+            .transpose()
     }
 
     pub(crate) fn level_stop(&self) -> Result<(), IpcError> {
@@ -158,13 +134,13 @@ impl Service {
         if !params.master_dbfs.is_finite() || !(-120.0..=0.0).contains(&params.master_dbfs) {
             return Err(input("master_dbfs", "level outside -120..0 dBFS"));
         }
-        let mut state = lock(&self.level.inner);
-        if state.job.is_none() {
+        if self.jobs.running(JobKind::LevelMonitor).is_none() {
             return Err(IpcError::new(
                 ErrorCode::JobNotFound,
                 "level monitor is not running",
             ));
         }
+        let mut state = lock(&self.level.inner);
         state.next_generation = state.next_generation.wrapping_add(1);
         let generation = state.next_generation;
         if let Some(play) = state.play.take() {
@@ -247,6 +223,7 @@ fn sampled_loop(
             }
             continue;
         };
+        job.attach_cancel(play.cancel.clone());
         let mut play_plan = plan.clone();
         play_plan.sweep_level_db = play.master_dbfs;
         let report = match measurer.level_check_streaming(
@@ -386,6 +363,7 @@ fn rew_loop(
                     .ok()
                     .filter(|value| *value > 0)
                     .ok_or_else(|| input("role", "role has no output"))?;
+                job.attach_cancel(play.cancel.clone());
                 match secs_rew::LevelMonitor::play_pink(
                     &mut rew,
                     &play.role,

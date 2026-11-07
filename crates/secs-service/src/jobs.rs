@@ -100,7 +100,6 @@ impl JobContext {
         self.available_memory
     }
 
-    #[allow(dead_code)]
     pub fn attach_cancel(&self, token: crate::measure::CancelToken) {
         if let Some(job) = lock(&self.registry.inner)
             .jobs

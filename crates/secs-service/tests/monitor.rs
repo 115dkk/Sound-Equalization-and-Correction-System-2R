@@ -448,7 +448,7 @@ fn monitor_started_in_another_project_does_not_store_late_level() {
 }
 
 #[test]
-fn level_stop_cancels_only_the_active_burst_and_is_idempotent() {
+fn level_stop_stops_only_the_play_and_keeps_the_monitor() {
     let root = root();
     let service = Service::new(Default::default());
     configure_mock(&service, &root.join("room.secs"));
@@ -871,7 +871,7 @@ fn levels_methods_fill_only_missing_defaults() {
 }
 
 #[test]
-fn generic_cancel_ends_monitor_during_an_active_burst() {
+fn job_cancel_alone_stops_a_playing_level_monitor() {
     let root = root();
     let service = Service::new(Default::default());
     configure_mock(&service, &root.join("room.secs"));
@@ -897,6 +897,7 @@ fn generic_cancel_ends_monitor_during_an_active_burst() {
         Request::JobCancel(JobCancelParams { job: started.job }),
         Arc::new(NoEvents),
     );
+    events.wait_play_end(started.job, "L", "stopped", Duration::from_secs(1));
     assert_eq!(
         events.wait_finished(started.job, Duration::from_secs(1)),
         JobStatus::Cancelled

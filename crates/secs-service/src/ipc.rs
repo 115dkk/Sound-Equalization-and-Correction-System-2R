@@ -37,10 +37,7 @@ pub(crate) fn dispatch(
         Request::SampleLoad(params) => service
             .start_sample_load(params, events)
             .map(Response::SampleLoad),
-        Request::JobCancel(params) => {
-            service.cancel_level_monitor_job(params.job);
-            service.jobs.cancel(params.job).map(Response::JobCancel)
-        }
+        Request::JobCancel(params) => service.jobs.cancel(params.job).map(Response::JobCancel),
         Request::Jobs => Ok(Response::Jobs(service.jobs.snapshots())),
         Request::Calibrate(params) => service
             .start_calibration(params, events)
