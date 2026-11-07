@@ -30,7 +30,7 @@ platform: Platform,
 /**
  * App log directory, when the caller supplied application data storage.
  */
-log_dir?: string,
+log_dir?: string, 
 /**
  * Application-settings load warning, when defaults replaced an unreadable file.
  */
