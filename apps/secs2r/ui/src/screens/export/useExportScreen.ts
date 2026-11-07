@@ -38,15 +38,19 @@ export function useExportScreen(): { view: ExportView | null; actions: ExportAct
   // 적용's status is read only while a target is set to 적용 (it probes
   // CamillaDSP's websocket and Equalizer APO's install): when the screen
   // opens, when a target turns to 적용, when the address changes, and for a
-  // new result (CamillaDSP may now run this design or another).
+  // new result (CamillaDSP may now run this design or another). The effect
+  // reads scalars, not the results object, which is read again on every edit.
   const statusWanted = applyWanted({ tutorial, apply: { settings: applySettings, windows } });
   const managing = statusWanted && (applySettings.camilla.level === "manage" || applySettings.eqapo.level === "manage");
-  const calibration = results?.calibration;
+  const stale = results?.calibration?.stale ?? null;
+  const lastResult = ledger.jobs.reduce((last, job) => (job.kind === "calibrate" || job.kind === "mimo") && job.status === "succeeded" ? Math.max(last, job.job) : last, 0);
+  const visible = host.current === "export";
   useEffect(() => {
     if (statusWanted && (!managing || (document.visibilityState === "visible" && !session.host.getSnapshot().applyChecking))) void session.stores.applyStatus.load();
-  }, [session, statusWanted, managing, applySettings.camilla.address, calibration]);
+  }, [session, statusWanted, managing, applySettings.camilla.address, stale, lastResult]);
   useEffect(() => {
-    if (!managing) return;
+    // 관리 is polled only while 내보내기 is the screen on show.
+    if (!managing || !visible) return;
     let timer: ReturnType<typeof setInterval> | undefined;
     const refresh = () => {
       // Other refreshes share this busy flag; a slow read never adds polling requests.
@@ -65,7 +69,7 @@ export function useExportScreen(): { view: ExportView | null; actions: ExportAct
       clearInterval(timer);
       document.removeEventListener("visibilitychange", restart);
     };
-  }, [session, managing]);
+  }, [session, managing, visible]);
   const actions = useMemo<ExportActions>(() => {
     // The last ApplySettings save: an apply waits for it, so the service applies with the level and address on screen.
     let saving: Promise<boolean> = Promise.resolve(true);

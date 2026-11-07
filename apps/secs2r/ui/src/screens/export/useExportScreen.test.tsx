@@ -523,6 +523,8 @@ describe("useExportScreen 관리 갱신", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+    // 관리 is polled only while 내보내기 is on show.
+    session.host.set({ current: "export" });
   });
   afterEach(() => vi.useRealTimers());
   const tick = (ms = 3000) => act(async () => { await vi.advanceTimersByTimeAsync(ms); });
@@ -537,9 +539,16 @@ describe("useExportScreen 관리 갱신", () => {
     expect(reads()).toBe(initial + 1);
     await tick();
     expect(reads()).toBe(initial + 2);
-    unmount();
+    // Another screen on show: no polling until 내보내기 is back.
+    await act(async () => session.host.set({ current: "calibrate" }));
     await tick(9000);
     expect(reads()).toBe(initial + 2);
+    await act(async () => session.host.set({ current: "export" }));
+    await tick();
+    expect(reads()).toBe(initial + 3);
+    unmount();
+    await tick(9000);
+    expect(reads()).toBe(initial + 3);
   });
 
   it("pauses while hidden and refreshes immediately when visible again", async () => {
