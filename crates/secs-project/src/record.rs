@@ -257,19 +257,19 @@ impl MeasurementStore {
         })?;
         let (mut project, mut warnings) = Project::from_json_with_warnings(loads(&text)?)?;
         let loaded = load_project_sources_within(&project, &path, source_budget);
-        let mut sources = BTreeMap::new();
-        for (pos, roles) in loaded.values {
-            for (role, info) in roles {
-                let key = (i64::from(pos), role);
-                if let Some(fingerprint) = calibration_fingerprint(&info) {
-                    project
-                        .measurement_calibration
-                        .insert(key.clone(), fingerprint);
-                }
-                sources.insert(key, Arc::new(info));
+        let LoadedSources {
+            by_entry: sources,
+            exhausted: _,
+            skipped,
+        } = loaded;
+        for (key, info) in &sources {
+            if let Some(fingerprint) = calibration_fingerprint(info) {
+                project
+                    .measurement_calibration
+                    .insert(key.clone(), fingerprint);
             }
         }
-        warnings.extend(loaded.warnings);
+        warnings.extend(skipped.iter().map(source_warning));
         let mut store = Self::new(path, project);
         store.sources = sources;
         store.warnings.extend(warnings);
@@ -800,7 +800,7 @@ fn source_info_bytes(info: &SourceInfo) -> usize {
 
 /// Source sidecars loaded for a project and warnings for entries that were skipped.
 pub fn load_project_sources(project: &Project, project_path: &Path) -> LoadedProjectSources {
-    load_project_sources_within(project, project_path, MAX_PROJECT_SOURCE_BYTES)
+    load_project_sources_legacy_within(project, project_path, MAX_PROJECT_SOURCE_BYTES)
 }
 
 /// Source sidecars and non-fatal load warnings.
@@ -810,28 +810,109 @@ pub struct LoadedProjectSources {
     pub warnings: Vec<MigrationWarning>,
 }
 
-fn source_warning(code: &'static str, path: &Path) -> MigrationWarning {
-    MigrationWarning {
-        code,
-        entry: path
-            .components()
-            .collect::<PathBuf>()
-            .to_string_lossy()
-            .into_owned(),
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SourceSkipReason {
+    TooLarge,
+    Unreadable,
+    Invalid,
+    Budget,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct SourceSkip {
+    pub(crate) pos: u32,
+    pub(crate) role: String,
+    pub(crate) path: PathBuf,
+    pub(crate) reason: SourceSkipReason,
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct LoadedSources {
+    pub(crate) by_entry: BTreeMap<(i64, String), Arc<SourceInfo>>,
+    pub(crate) exhausted: bool,
+    pub(crate) skipped: Vec<SourceSkip>,
+}
+
+#[derive(Debug)]
+struct SourceBudget {
+    remaining: usize,
+    exhausted: bool,
+}
+
+impl SourceBudget {
+    fn new(bytes: usize) -> Self {
+        Self {
+            remaining: bytes,
+            exhausted: false,
+        }
+    }
+
+    fn spend(&mut self, bytes: usize) -> bool {
+        if bytes > self.remaining {
+            self.exhausted = true;
+            false
+        } else {
+            self.remaining -= bytes;
+            true
+        }
     }
 }
 
-fn load_project_sources_within(
+fn source_error_reason(error: &ProjectError) -> SourceSkipReason {
+    match error {
+        ProjectError::Io(_) => SourceSkipReason::Unreadable,
+        ProjectError::Invalid(detail) if detail.contains(" exceeds ") => SourceSkipReason::TooLarge,
+        ProjectError::Json(_)
+        | ProjectError::Invalid(_)
+        | ProjectError::Wav(_)
+        | ProjectError::IrPath { .. } => SourceSkipReason::Invalid,
+    }
+}
+
+fn source_warning(skip: &SourceSkip) -> MigrationWarning {
+    let code = match skip.reason {
+        SourceSkipReason::Budget => "measurement.source.budget",
+        SourceSkipReason::TooLarge | SourceSkipReason::Unreadable | SourceSkipReason::Invalid => {
+            "measurement.source.skipped"
+        }
+    };
+    let entry = if skip.path.as_os_str().is_empty() {
+        format!("position {}, role {}", skip.pos, skip.role)
+    } else {
+        skip.path
+            .components()
+            .collect::<PathBuf>()
+            .to_string_lossy()
+            .into_owned()
+    };
+    MigrationWarning { code, entry }
+}
+
+fn skip(
+    skipped: &mut Vec<SourceSkip>,
+    pos: u32,
+    role: &str,
+    path: &Path,
+    reason: SourceSkipReason,
+) {
+    skipped.push(SourceSkip {
+        pos,
+        role: role.to_owned(),
+        path: path.to_owned(),
+        reason,
+    });
+}
+
+pub(crate) fn load_project_sources_within(
     project: &Project,
     project_path: &Path,
     budget: usize,
-) -> LoadedProjectSources {
+) -> LoadedSources {
     let base = project_path.parent().unwrap_or_else(|| Path::new("."));
     let mut loaded: HashMap<PathBuf, Option<(Arc<SourceInfo>, usize)>> = HashMap::new();
-    let mut remaining = budget;
-    let mut exhausted = false;
-    let mut values = BTreeMap::new();
-    let mut warnings = Vec::new();
+    let mut budget = SourceBudget::new(budget);
+    let mut by_entry = BTreeMap::new();
+    let mut skipped = Vec::new();
     for record in measurement_values(project)
         .iter()
         .filter_map(MeasurementRecord::from_json)
@@ -840,7 +921,7 @@ fn load_project_sources_within(
             continue;
         };
         for (role, raw) in record.ir {
-            if raw.is_empty() || exhausted {
+            if raw.is_empty() || budget.exhausted {
                 continue;
             }
             let path = PathBuf::from(raw);
@@ -854,20 +935,48 @@ fn load_project_sources_within(
             if !path.is_file() || confined_ir_path(project_path, &path).is_err() {
                 continue;
             }
-            match fs::symlink_metadata(&sidecar) {
+            let metadata = match fs::symlink_metadata(&sidecar) {
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
                 Err(_) => {
-                    warnings.push(source_warning("measurement.source.skipped", &sidecar));
+                    skip(
+                        &mut skipped,
+                        pos,
+                        &role,
+                        &sidecar,
+                        SourceSkipReason::Unreadable,
+                    );
                     continue;
                 }
-                Ok(metadata) if !metadata.file_type().is_file() => {
-                    warnings.push(source_warning("measurement.source.skipped", &sidecar));
-                    continue;
-                }
-                Ok(_) => {}
+                Ok(metadata) => metadata,
+            };
+            if !metadata.file_type().is_file() {
+                skip(
+                    &mut skipped,
+                    pos,
+                    &role,
+                    &sidecar,
+                    SourceSkipReason::Invalid,
+                );
+                continue;
+            }
+            if metadata.len() > MAX_SOURCE_BYTES {
+                skip(
+                    &mut skipped,
+                    pos,
+                    &role,
+                    &sidecar,
+                    SourceSkipReason::TooLarge,
+                );
+                continue;
             }
             if confined_ir_path(project_path, &sidecar).is_err() {
-                warnings.push(source_warning("measurement.source.skipped", &sidecar));
+                skip(
+                    &mut skipped,
+                    pos,
+                    &role,
+                    &sidecar,
+                    SourceSkipReason::Invalid,
+                );
                 continue;
             }
             let key = sidecar.canonicalize().unwrap_or_else(|_| sidecar.clone());
@@ -880,28 +989,29 @@ fn load_project_sources_within(
                     let entry_bytes =
                         std::mem::size_of::<(PathBuf, Option<(Arc<SourceInfo>, usize)>)>()
                             .saturating_add(key.as_os_str().len());
-                    if entry_bytes > remaining {
-                        exhausted = true;
-                        warnings.push(source_warning("measurement.source.budget", &sidecar));
+                    if !budget.spend(entry_bytes) {
+                        skip(&mut skipped, pos, &role, &sidecar, SourceSkipReason::Budget);
                         continue;
                     }
-                    remaining -= entry_bytes;
                     let info = match load_source_checked(&path) {
                         Ok(Some(info)) => {
                             let bytes = source_info_bytes(&info);
-                            if bytes > remaining {
-                                exhausted = true;
-                                warnings
-                                    .push(source_warning("measurement.source.budget", &sidecar));
+                            if !budget.spend(bytes) {
+                                skip(&mut skipped, pos, &role, &sidecar, SourceSkipReason::Budget);
                                 None
                             } else {
-                                remaining -= bytes;
                                 Some((Arc::new(info), bytes))
                             }
                         }
                         Ok(None) => None,
-                        Err(_) => {
-                            warnings.push(source_warning("measurement.source.skipped", &sidecar));
+                        Err(error) => {
+                            skip(
+                                &mut skipped,
+                                pos,
+                                &role,
+                                &sidecar,
+                                source_error_reason(&error),
+                            );
                             None
                         }
                     };
@@ -910,19 +1020,48 @@ fn load_project_sources_within(
                 }
             };
             if let Some((info, bytes)) = info {
-                if bytes > remaining {
-                    exhausted = true;
-                    warnings.push(source_warning("measurement.source.budget", &sidecar));
+                if !budget.spend(bytes) {
+                    skip(&mut skipped, pos, &role, &sidecar, SourceSkipReason::Budget);
                     continue;
                 }
-                remaining -= bytes;
-                values
-                    .entry(pos)
-                    .or_insert_with(BTreeMap::new)
-                    .insert(role, info.as_ref().clone());
+                by_entry.insert((i64::from(pos), role), info);
             }
         }
     }
+    LoadedSources {
+        by_entry,
+        exhausted: budget.exhausted,
+        skipped,
+    }
+}
+
+fn load_project_sources_legacy_within(
+    project: &Project,
+    project_path: &Path,
+    budget: usize,
+) -> LoadedProjectSources {
+    let LoadedSources {
+        by_entry,
+        exhausted,
+        skipped,
+    } = load_project_sources_within(project, project_path, budget);
+    debug_assert_eq!(
+        exhausted,
+        skipped
+            .iter()
+            .any(|skip| skip.reason == SourceSkipReason::Budget)
+    );
+    let mut values = BTreeMap::<u32, BTreeMap<String, SourceInfo>>::new();
+    for ((position, role), info) in by_entry {
+        let Ok(position) = u32::try_from(position) else {
+            continue;
+        };
+        values
+            .entry(position)
+            .or_default()
+            .insert(role, info.as_ref().clone());
+    }
+    let warnings = skipped.iter().map(source_warning).collect();
     LoadedProjectSources { values, warnings }
 }
 
@@ -1755,6 +1894,14 @@ mod source_budget_tests {
         let (root, project_path, sidecar) = sidecar_project("malformed", b"{not json");
 
         let store = MeasurementStore::open(&project_path).unwrap();
+        let loaded =
+            load_project_sources_within(store.project(), &project_path, MAX_PROJECT_SOURCE_BYTES);
+        assert!(loaded.skipped.iter().any(|skip| {
+            skip.pos == 1
+                && skip.role == "L"
+                && skip.path == sidecar
+                && skip.reason == SourceSkipReason::Invalid
+        }));
 
         assert!(
             store.warnings().iter().any(|warning| {
@@ -1865,7 +2012,7 @@ mod source_budget_tests {
         project.measurements = PyJson::Array(entries);
 
         reset_local_source_parse_count();
-        let sources = load_project_sources_within(&project, &project_path, 4096).values;
+        let sources = load_project_sources_legacy_within(&project, &project_path, 4096).values;
         let parsed = local_source_parse_count();
         assert!(sources.is_empty());
         assert!(parsed > 0);
