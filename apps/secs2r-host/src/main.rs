@@ -3,6 +3,9 @@
 //! `secs2r-host`: the Windows service for ADR 0018's managed apply level.
 
 #[cfg(any(target_os = "windows", test))]
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+mod files;
+#[cfg(any(target_os = "windows", test))]
 // The service runs only on Windows; elsewhere main is a stub and only the
 // rules' unit tests use this module.
 #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
@@ -138,7 +141,7 @@ fn run(cli: Cli) -> Result<(), IpcError> {
             prepare_service_directory(&paths.directory)?;
             let existed = secs_sys::host::stop_service_for_update()?;
             let action = rules::install_action(existed);
-            rules::replace_host_executable(&source, &paths).map_err(|error| {
+            files::replace_host_executable(&source, &paths).map_err(|error| {
                 IpcError::new(
                     ErrorCode::ApplyFailed,
                     format!("install {}: {error}", paths.executable.display()),
@@ -156,7 +159,7 @@ fn run(cli: Cli) -> Result<(), IpcError> {
             // A scanner or the exiting service can hold the file briefly.
             let deadline = Instant::now() + Duration::from_secs(10);
             loop {
-                match rules::remove_host_copy(&paths) {
+                match files::remove_host_copy(&paths) {
                     Ok(()) => return Ok(()),
                     Err(error)
                         if error.kind() == std::io::ErrorKind::PermissionDenied
@@ -246,7 +249,7 @@ fn finish_update() -> Result<(), IpcError> {
         std::thread::sleep(Duration::from_millis(100));
     }
 
-    let replace_result = rules::replace_staged_update(&mut rules::RealUpdateFileOps, &update_paths)
+    let replace_result = files::replace_staged_update(&mut files::RealUpdateFileOps, &update_paths)
         .map_err(|error| {
             IpcError::new(
                 ErrorCode::ApplyFailed,
@@ -354,7 +357,7 @@ fn validate_service_directory(path: &Path) -> Result<(), IpcError> {
 
 #[cfg(target_os = "windows")]
 fn append_log_nonfatal(path: &Path, line: &secs_types::ipc::HostLogLine) {
-    if let Err(error) = rules::append_log(path, line, rules::LOG_LIMIT) {
+    if let Err(error) = files::append_log(path, line, files::LOG_LIMIT) {
         static LAST_REPORT: std::sync::OnceLock<std::sync::Mutex<Option<Instant>>> =
             std::sync::OnceLock::new();
         let reports = LAST_REPORT.get_or_init(|| std::sync::Mutex::new(None));
@@ -442,7 +445,7 @@ fn service_loop(
     service_events: &mpsc::Receiver<secs_sys::host::ServiceEvent>,
 ) -> Result<(), IpcError> {
     remove_old_host_copy(paths);
-    let managed = match rules::load_state(&paths.state) {
+    let managed = match files::load_state(&paths.state) {
         Ok(managed) => managed,
         Err(error) => {
             let line = rules::log_line(
@@ -454,7 +457,7 @@ fn service_loop(
         }
     };
     let mut core = Core::new(env!("CARGO_PKG_VERSION"), managed);
-    for line in rules::load_logs(&paths.log, 1000) {
+    for line in files::load_logs(&paths.log, 1000) {
         core.record(line);
     }
     let (config_sender, config_events) = mpsc::channel();
@@ -833,7 +836,7 @@ struct RealTransitionPlatform<'a> {
 #[cfg(target_os = "windows")]
 impl TransitionPlatform for RealTransitionPlatform<'_> {
     fn save_state(&mut self, managed: &HostManaged) -> Result<(), IpcError> {
-        rules::save_state(&self.paths.state, managed)
+        files::save_state(&self.paths.state, managed)
     }
 
     fn replace_watcher(
@@ -1039,12 +1042,12 @@ fn stage_host_update(
     from_dir: &Path,
     staged_executable: &Path,
 ) -> Result<rules::HostManifest, rules::UpdateReject> {
-    rules::validate_update_source(from_dir)?;
-    let manifest_bytes = rules::read_bounded(
+    files::validate_update_source(from_dir)?;
+    let manifest_bytes = files::read_bounded(
         &from_dir.join(rules::UPDATE_MANIFEST),
         rules::MANIFEST_LIMIT,
     )?;
-    let signature_bytes = rules::read_bounded(
+    let signature_bytes = files::read_bounded(
         &from_dir.join(rules::UPDATE_SIGNATURE),
         rules::MANIFEST_LIMIT,
     )?;
@@ -1055,13 +1058,13 @@ fn stage_host_update(
     // Read, then check the version and hash, then write: the protected folder
     // must never hold bytes the signed manifest does not name.
     let executable =
-        rules::read_bounded(&from_dir.join(&manifest.file), rules::HOST_EXECUTABLE_LIMIT)?;
+        files::read_bounded(&from_dir.join(&manifest.file), rules::HOST_EXECUTABLE_LIMIT)?;
     rules::accept_update(
         env!("CARGO_PKG_VERSION"),
         &manifest,
         &rules::sha256_hex(&executable),
     )?;
-    rules::write_staged(staged_executable, &executable)?;
+    files::write_staged(staged_executable, &executable)?;
     Ok(manifest)
 }
 
@@ -1384,12 +1387,16 @@ fn finish_takeover_work(
             if let Some(previous) = child.replace(running) {
                 let _ = previous.stop();
             }
-            transition_state.running_child_session = Some(pending.session);
+            let (next, effects) = transitions::decide(
+                transition_state,
+                TransitionInput::TakeoverFinished {
+                    session: Some(pending.session),
+                },
+            );
+            *transition_state = next;
             drive_transition(
                 transition_state,
-                vec![transitions::Effect::SetCamillaState(
-                    ManagedProcessState::Running,
-                )],
+                effects,
                 core,
                 child,
                 watcher,
@@ -1432,12 +1439,14 @@ fn finish_takeover_work(
             Ok(())
         }
         Ok(TakeoverWorkResult::NoSession) => {
-            transition_state.running_child_session = None;
+            let (next, effects) = transitions::decide(
+                transition_state,
+                TransitionInput::TakeoverFinished { session: None },
+            );
+            *transition_state = next;
             drive_transition(
                 transition_state,
-                vec![transitions::Effect::SetCamillaState(
-                    ManagedProcessState::NoSession,
-                )],
+                effects,
                 core,
                 child,
                 watcher,

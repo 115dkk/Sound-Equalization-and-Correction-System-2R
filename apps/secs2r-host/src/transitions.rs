@@ -104,6 +104,9 @@ pub enum Input {
         detail: String,
         now: Instant,
     },
+    TakeoverFinished {
+        session: Option<u32>,
+    },
     WatcherFailed {
         detail: String,
     },
@@ -143,7 +146,7 @@ pub struct PendingTakeover {
 #[derive(Debug, Clone)]
 pub struct State {
     pub managed: HostManaged,
-    pub running_child_session: Option<u32>,
+    running_child_session: Option<u32>,
     pub restart_due: Option<Instant>,
     restart: Supervisor,
     pub eqapo_error: Option<String>,
@@ -514,6 +517,15 @@ pub fn decide(state: &State, input: Input) -> (State, Vec<Effect>) {
             if next.managed.camilla.is_some() {
                 schedule_restart(&mut next, &mut effects, now);
             }
+        }
+        Input::TakeoverFinished { session } => {
+            next.pending_takeover = None;
+            next.running_child_session = session;
+            effects.push(Effect::SetCamillaState(if session.is_some() {
+                ManagedProcessState::Running
+            } else {
+                ManagedProcessState::NoSession
+            }));
         }
         Input::ConfigChanged { owner_session } => {
             next.repair_attempts = 0;
@@ -1140,10 +1152,20 @@ mod tests {
 
         drive(&mut state, effects, &mut platform).unwrap();
 
-        assert_eq!(state.running_child_session, None);
+        assert_eq!(state.running_child_session(), None);
         assert_eq!(
             state.pending_takeover.as_ref().map(|work| work.session),
             Some(7)
+        );
+
+        let (next, effects) = decide(&state, Input::TakeoverFinished { session: Some(7) });
+        state = next;
+        drive(&mut state, effects, &mut platform).unwrap();
+        assert_eq!(state.running_child_session(), Some(7));
+        assert!(
+            platform
+                .camilla_states
+                .contains(&ManagedProcessState::Running)
         );
     }
 
