@@ -231,6 +231,7 @@ trait RoleRecorder {
         role: &str,
         pos: u32,
         progress: Option<secs_rew::ProgressCallback>,
+        current_role: SyncArc<Mutex<Option<String>>>,
         cancel: &secs_rew::CancelToken,
     ) -> Result<RecordedRole, secs_rew::RewError>;
 }
@@ -249,6 +250,7 @@ impl RoleRecorder for secs_rew::RewClient<Transport> {
         role: &str,
         pos: u32,
         progress: Option<secs_rew::ProgressCallback>,
+        current_role: SyncArc<Mutex<Option<String>>>,
         cancel: &secs_rew::CancelToken,
     ) -> Result<RecordedRole, secs_rew::RewError> {
         if cancel.is_cancelled() {
@@ -266,9 +268,14 @@ impl RoleRecorder for secs_rew::RewClient<Transport> {
                 subscribe_error: None,
             });
         }
+        *lock(&current_role) = Some(role.to_owned());
         let (own_progress, subscribe_error) = if let Some(callback) = progress.clone() {
             let role = role.to_owned();
+            let callback_current_role = current_role.clone();
             match self.subscribe_progress(SyncArc::new(move |body| {
+                if lock(&callback_current_role).as_deref() != Some(role.as_str()) {
+                    return;
+                }
                 let (percent, message) = secs_rew::parse_progress(&body);
                 if let Some(percent) = percent {
                     callback(secs_rew::progress(
@@ -387,6 +394,7 @@ impl RoleRecorder for secs_rew::RewClient<Transport> {
         if own_progress {
             self.unsubscribe_progress();
         }
+        *lock(&current_role) = None;
         result.map(|result| RecordedRole {
             result,
             subscribe_error,
@@ -408,15 +416,16 @@ impl<S: secs_rew::IrSource> RoleRecorder for secs_rew::FakeRew<S> {
         role: &str,
         pos: u32,
         progress: Option<secs_rew::ProgressCallback>,
+        current_role: SyncArc<Mutex<Option<String>>>,
         cancel: &secs_rew::CancelToken,
     ) -> Result<RecordedRole, secs_rew::RewError> {
         let mut single = plan.clone();
         single.roles = vec![role.to_owned()];
+        *lock(&current_role) = Some(role.to_owned());
+        let result = self.run_position(&single, pos, progress, cancel);
+        *lock(&current_role) = None;
         Ok(RecordedRole {
-            result: self
-                .run_position(&single, pos, progress, cancel)?
-                .into_iter()
-                .next(),
+            result: result?.into_iter().next(),
             subscribe_error: None,
         })
     }
@@ -509,12 +518,14 @@ where
             self.client.configure_position(&rew_plan)?;
             let mut calibration_loaded = false;
             let mut calibration = None;
+            let current_role = SyncArc::new(Mutex::new(None));
             for role in &plan.roles {
                 let recorded = self.client.record_role(
                     &rew_plan,
                     role,
                     position,
                     progress.clone(),
+                    current_role.clone(),
                     &cancel.rew,
                 )?;
                 if let Some(detail) = recorded.subscribe_error {

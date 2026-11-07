@@ -749,6 +749,140 @@ impl secs_rew::Transport for StableCallbackTransport {
     }
 }
 
+struct LateProgressState {
+    started: bool,
+    release: Option<std::sync::mpsc::SyncSender<()>>,
+    done: Option<std::sync::mpsc::Receiver<Result<(), String>>>,
+}
+
+#[derive(Clone)]
+struct LateProgressTransport {
+    recorded: secs_rew::RecordedTransport,
+    state: Arc<Mutex<LateProgressState>>,
+}
+
+fn read_http_response(stream: &mut std::net::TcpStream) -> Result<(), String> {
+    use std::io::Read as _;
+
+    let mut header = Vec::new();
+    while !header.ends_with(b"\r\n\r\n") {
+        let mut byte = [0_u8; 1];
+        stream
+            .read_exact(&mut byte)
+            .map_err(|error| error.to_string())?;
+        header.push(byte[0]);
+    }
+    let header = String::from_utf8(header).map_err(|error| error.to_string())?;
+    let length = header
+        .lines()
+        .find_map(|line| {
+            let (name, value) = line.split_once(':')?;
+            name.eq_ignore_ascii_case("content-length")
+                .then(|| value.trim().parse::<usize>().ok())
+                .flatten()
+        })
+        .unwrap_or(0);
+    let mut body = vec![0; length];
+    stream
+        .read_exact(&mut body)
+        .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+fn delayed_progress(
+    url: String,
+    headers_sent: std::sync::mpsc::SyncSender<()>,
+    release: std::sync::mpsc::Receiver<()>,
+) -> Result<(), String> {
+    use std::io::Write as _;
+
+    let target = url
+        .strip_prefix("http://")
+        .ok_or_else(|| format!("unexpected callback URL: {url}"))?;
+    let (address, path) = target
+        .split_once('/')
+        .ok_or_else(|| format!("callback URL has no path: {url}"))?;
+    let mut stream = std::net::TcpStream::connect(address).map_err(|error| error.to_string())?;
+    stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .map_err(|error| error.to_string())?;
+    let payload = serde_json::to_vec(&json!("50% late L")).unwrap();
+    write!(
+        stream,
+        "POST /{path} HTTP/1.1\r\nHost: {address}\r\nContent-Length: {}\r\n\r\n",
+        payload.len()
+    )
+    .map_err(|error| error.to_string())?;
+    stream.flush().map_err(|error| error.to_string())?;
+    headers_sent.send(()).map_err(|error| error.to_string())?;
+    release.recv().map_err(|error| error.to_string())?;
+    stream
+        .write_all(&payload)
+        .map_err(|error| error.to_string())?;
+    stream.flush().map_err(|error| error.to_string())?;
+    read_http_response(&mut stream)?;
+    write!(
+        stream,
+        "GET /{path} HTTP/1.1\r\nHost: {address}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+    )
+    .map_err(|error| error.to_string())?;
+    stream.flush().map_err(|error| error.to_string())?;
+    read_http_response(&mut stream)
+}
+
+impl secs_rew::Transport for LateProgressTransport {
+    fn request(
+        &self,
+        request: &secs_rew::Request,
+    ) -> Result<secs_rew::Response, secs_rew::RewError> {
+        let mut request = request.clone();
+        if request.path == "/measure/subscribe" {
+            let url = request
+                .body
+                .as_ref()
+                .and_then(|body| body["url"].as_str())
+                .expect("subscribe URL")
+                .to_owned();
+            let mut state = self.state.lock().unwrap();
+            if !state.started {
+                state.started = true;
+                let (headers_tx, headers_rx) = std::sync::mpsc::sync_channel(1);
+                let (release_tx, release_rx) = std::sync::mpsc::sync_channel(1);
+                let (done_tx, done_rx) = std::sync::mpsc::sync_channel(1);
+                std::thread::spawn(move || {
+                    let _ = done_tx.send(delayed_progress(url, headers_tx, release_rx));
+                });
+                headers_rx
+                    .recv_timeout(Duration::from_secs(5))
+                    .expect("late callback did not send headers");
+                std::thread::sleep(Duration::from_millis(100));
+                state.release = Some(release_tx);
+                state.done = Some(done_rx);
+            }
+            request.body.as_mut().unwrap()["url"] = json!("callback");
+        } else if request.path == "/measure/unsubscribe" {
+            request.body.as_mut().unwrap()["url"] = json!("callback");
+        } else if request.path == "/audio/java/output-channel"
+            && request
+                .body
+                .as_ref()
+                .is_some_and(|body| body["channel"] == "R")
+        {
+            let (release, done) = {
+                let mut state = self.state.lock().unwrap();
+                (state.release.take(), state.done.take())
+            };
+            if let (Some(release), Some(done)) = (release, done) {
+                release.send(()).unwrap();
+                done.recv_timeout(Duration::from_secs(5))
+                    .expect("late callback did not finish")
+                    .expect("late callback request failed");
+            }
+        }
+        self.recorded.request(&request)
+    }
+}
+
 fn get(path: &str, body: serde_json::Value, seconds: u64) -> secs_rew::RecordedExchange {
     secs_rew::RecordedExchange::new(
         secs_rew::Request::new("GET", path, None, Duration::from_secs(seconds)),
@@ -914,6 +1048,54 @@ fn rew_configures_once_per_position_td172() {
         })
         .collect::<Vec<_>>();
     assert_eq!(low_snr_roles, ["L", "R"]);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn late_progress_from_the_previous_role_is_ignored_td172() {
+    let root = root("rew-late-progress");
+    let path = root.join("room.secs");
+    let transport = secs_rew::RecordedTransport::new(rew_script());
+    let state = Arc::new(Mutex::new(LateProgressState {
+        started: false,
+        release: None,
+        done: None,
+    }));
+    let copy = transport.clone();
+    let state_copy = state.clone();
+    let service = Service::new(Deps {
+        rew_transport: Arc::new(move || {
+            Box::new(LateProgressTransport {
+                recorded: copy.clone(),
+                state: state_copy.clone(),
+            })
+        }),
+        ..Deps::default()
+    });
+    new(&service, &path);
+    configure(&service, "rew");
+    call(&service, Request::MeasureMethods);
+    let events = Arc::new(Events::default());
+    let job = measure(&service, 1, events.clone());
+    succeeded(&events, job);
+    transport.assert_finished();
+
+    let values = events.values.lock().unwrap();
+    let first_role_finished = values
+        .iter()
+        .position(|event| matches!(event, JobEvent::Progress { stage, .. } if stage == "L"))
+        .expect("L role completion");
+    assert!(
+        values[first_role_finished + 1..]
+            .iter()
+            .any(|event| matches!(event, JobEvent::Progress { stage, .. } if stage == "R"))
+    );
+    assert!(
+        !values[first_role_finished + 1..]
+            .iter()
+            .any(|event| matches!(event, JobEvent::Progress { stage, .. } if stage == "running"))
+    );
+    drop(values);
     fs::remove_dir_all(root).unwrap();
 }
 
