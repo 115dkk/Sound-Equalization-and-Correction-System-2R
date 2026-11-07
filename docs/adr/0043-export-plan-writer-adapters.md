@@ -81,6 +81,8 @@ pub(crate) fn writer_for(kind: ExportKind) -> Box<dyn ExportWriter>;
 - 완료 클로저는 `FnOnce(ExportResult) -> Result<JobResult, IpcError>`입니다. `apply.rs`는 `result.main_config`와 `result.design_id`를 읽고, 파일 목록을 훑거나 `Option`을 다시 확인하지 않습니다. 필터 종류의 작성기만 `design_id`에 `Some`을 넣으며, 그것은 작성기가 보장하는 사후 조건입니다.
 - 설치(`deploy::install`), manifest, 색인은 작성기 뒤의 공용 단계 `install_bundle(&plan, result)`에 있고 호출자는 보지 않습니다.
 
+구현 메모(P189, 2026-11-08): 작성기 여섯은 공통 trait 없이 각자 `prepare`와 `write`를 가진 구체 타입으로 들어왔습니다. 준비에 드는 입력(UUID 출처, 로그, 재생용 세션과 컴퓨트 상태)이 종류마다 달라 위 서명 하나로는 받을 자리가 없었고, 그 값을 `ExportPlan`에 넣거나 숨은 전역 상태로 만들지 않기로 했습니다. 종류별 분기(`writer_for`에 해당)는 `start_export` 안의 `match kind` 하나이고, 설치와 manifest, 색인, 마지막 내보내기 기록은 그 뒤의 공용 구간에 있습니다(별도 `install_bundle` 함수는 없습니다). `begin_commit`은 `commit_write` 한 자리에서만 불립니다. IPC, 공개 API, 적용의 세 입구는 모두 `plan_export` 뒤 `start_export(plan, …)`을 거칩니다. `tests/service.rs`의 긴 내보내기 시험을 `tests/export.rs`로 옮기는 일은 B-3(TD-167)에서 합니다.
+
 ### 결과 장부가 키를 만들어 갖습니다
 
 `crates/secs-service/src/results.rs`에 둡니다.
@@ -119,7 +121,7 @@ impl ResultBook {
 
 ## 결과
 
-- 파일 묶음, 세대 설치, manifest, 색인이 작성기 adapter 뒤로 들어가고, 내보내기 한 번이 만드는 것은 `ExportPlan` 하나와 `writer_for` 하나를 읽으면 알 수 있습니다.
+- 파일 묶음, 세대 설치, manifest, 색인이 작성기 adapter 뒤로 들어가고, 내보내기 한 번이 만드는 것은 `ExportPlan` 하나와 `start_export`의 종류별 분기 하나를 읽으면 알 수 있습니다.
 - 공개 API와 CLI가 같은 계획을 받으므로 세 입구의 동작이 같아집니다.
 - 내보낸 바이트는 바뀌지 않으므로 편차 항목은 없습니다.
 - 위험: 작성기로 옮기는 동안 커밋 시점이 뒤로 가므로(리샘플링 뒤) 취소 시험이 반드시 있어야 하고, `apply.rs`가 `design_id`를 작성기의 사후 조건으로 믿으므로 필터 작성기 셋의 시험이 `design_id.is_some()`을 단언해야 합니다.

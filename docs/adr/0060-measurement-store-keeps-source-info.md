@@ -34,18 +34,19 @@ impl MeasurementStore {
 ```
 
 - `open`이 지금의 `load_project_sources_within`으로 맵을 채웁니다. 그 함수는 `pub(crate)`가 되고, 결과로 `LoadedSources { by_entry, exhausted, skipped: Vec<SourceSkip> }`를 돌려줍니다. `SourceSkip { pos, role, reason: TooLarge | Unreadable | Invalid | Budget }`는 `open`이 `MigrationWarning { code: "measurement.source.skipped" | "measurement.source.budget", entry: "position N, role R" }`로 바꿔 `warnings()`에 넣습니다. `session.rs:655, 733`이 열 때의 경고를 지금처럼 `ProjectInfo`의 알림으로 전달하므로 사용자가 봅니다(TD-183). `load_source_checked`의 `Result`가 그 재료이고, `load_source`는 지웁니다.
-- 맵을 유지하는 곳은 저장소의 쓰기 세 군데뿐입니다. `record`는 저장한 `source_info`를 넣거나 지우고, `replace_source`는 바꾸고, `remove_position`은 그 위치의 항목을 `RemovedPosition`에 넣어 두었다가 `restore_position`이 되돌립니다. 지문(`measurement_calibration`)을 갱신하는 자리와 같은 자리라 둘이 어긋날 수 없습니다. 디스크의 사이드카를 바깥 프로그램이 바꾸는 경우는 지금도 다음 열기까지 모르는 것과 같습니다.
+- 맵을 유지하는 곳은 저장소의 쓰기뿐입니다. `record`는 저장한 `source_info`를 넣거나 지우고, `replace_source`는 바꾸고, `remove_position`은 그 위치의 항목을 `RemovedPosition`에 넣어 두었다가 `restore_position`이 되돌리며, `start_position`과 `clear_position`은 그 위치의 항목을 지웁니다. 지문(`measurement_calibration`)을 갱신하는 자리와 같은 자리라 둘이 어긋날 수 없습니다. `source_of`와 `sources_by_position`은 프로젝트의 측정 항목에 지금 IR이 기록된 (위치, 역할)에 대해서만 값을 돌려주므로, `edit`로 측정 목록을 비운 뒤에도 옛 출처가 새어 나오지 않습니다(P203). 디스크의 사이드카를 바깥 프로그램이 바꾸는 경우는 지금도 다음 열기까지 모르는 것과 같습니다.
+- 다른 이름으로 저장할 때 세션은 `MeasurementStore::relocated(path, project)`로 새 저장소를 만들어 맵을 그대로 가져갑니다. `new`로 만들면 맵이 비어 다시 열기 전까지 모든 출처 조회가 `None`이 되기 때문입니다(P203).
 - `source_of`는 `&self`가 되고 `Option<Arc<SourceInfo>>`를 돌려줍니다. `mic_calibration.rs`의 두 자리와 `calibration.rs:554`는 복제 없이 참조 수만 올립니다. `attached_calibration(&info)`의 서명은 그대로입니다.
 - `sources_by_position`이 지금 `load_project_sources`가 돌려주던 모양(`BTreeMap<u32, BTreeMap<String, _>>`)을 `Arc`로 돌려주므로 `original_measurements`(`session.rs:726-769`)와 `export.rs:336`은 호출만 바꿉니다. `OriginalSnapshot`은 잠금 아래에서 `sources_by_position()`을 함께 잡고 `load`에서 다시 읽지 않습니다(TD-149가 곁 mdat을 잡으로 옮길 때 이 스냅샷을 씁니다).
 - `load_project_sources`(pub)와 `load_project_irs`, `LoadedIr`은 지웁니다. `secs-project`는 게시 크레이트이지만 0.x의 minor 판은 호환이 깨질 수 있고(ADR 0016) 바깥 호출자가 없으므로 `#[deprecated]` 한 판을 두지 않습니다. 변경 기록에 밝힙니다.
 
 ### 메모리
 
-맵은 열린 프로젝트와 같이 삽니다. 크기는 지금도 `open`이 한 번 쓰는 64 MiB 예산 안이고, 세 흐름이 각자 64 MiB까지 쓰던 것이 하나로 줄어듭니다. `OriginalSnapshot`과 내보내기는 `Arc`만 복제합니다. 예산이 바닥나면 지금처럼 나머지 사이드카를 건너뛰되 경고로 보이게 합니다.
+맵은 열린 프로젝트와 같이 삽니다. 크기는 지금도 `open`이 한 번 쓰는 64 MiB 예산 안이고, 세 흐름이 각자 64 MiB까지 쓰던 것이 하나로 줄어듭니다. `OriginalSnapshot`과 내보내기는 `Arc`만 복제합니다. 예산이 바닥나면 지금처럼 나머지 사이드카를 건너뛰되 경고로 보이게 합니다. 예산은 저장소의 상태이므로 열 때만이 아니라 `record`와 `replace_source`에도 적용됩니다. 예산을 넘는 출처는 사이드카 파일에는 저장하되 맵에는 두지 않고 같은 `measurement.source.budget` 경고를 남기며, 항목을 지우면 그 크기만큼 예산이 다시 비워집니다(P203).
 
 ## 시험
 
-깊어진 interface인 저장소에서 먼저 씁니다. `record.rs`의 `SOURCE_PARSE_COUNT` 시험 훅이 파싱 횟수를 셉니다.
+깊어진 interface인 저장소에서 먼저 씁니다. 파싱 횟수는 저장소 인스턴스의 진단값 `source_parse_count()`로 확인할 수 있습니다. 처음에는 프로세스 전역 카운터를 공개 항목으로 내보냈는데, 병렬 시험끼리 간섭하고 시험 계측이 출하 API에 들어가므로 P203에서 인스턴스 값으로 바꿨습니다.
 
 - 사이드카 셋이 있는 프로젝트를 `open`하면 파싱이 세 번이고, 그 뒤 `source_of`를 몇 번 불러도 더 늘지 않습니다. `sources_by_position`이 `open` 전의 `load_project_sources` 결과와 같은 값을 돌려줍니다(골든 `service_mdat`의 입력이 바뀌지 않음).
 - `record`로 사이드카가 있는 측정을 넣으면 `source_of`가 그것을 돌려주고 디스크의 파일과 같습니다. `replace_source(.., None)`은 맵과 파일에서 함께 사라집니다. `remove_position` 뒤 `source_of`는 `None`이고 `restore_position` 뒤 돌아옵니다.
