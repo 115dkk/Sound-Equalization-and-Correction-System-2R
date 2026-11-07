@@ -675,7 +675,7 @@ fn prepare_save_as(open: &OpenProject, destination: &Path) -> Result<PreparedSav
             return Err(error.into());
         }
         Ok(PreparedSaveAs {
-            store: MeasurementStore::new(destination, project),
+            store: open.store().relocated(destination.to_path_buf(), project),
             old_project,
             old_irs,
         })
@@ -1275,9 +1275,16 @@ mod tests {
             }
         }
         open.dirty = true;
+        let sources_before_save_as = session.require().unwrap().store().sources_by_position();
+        assert!(!sources_before_save_as.is_empty());
         let saved = session.save(Some(target.clone())).unwrap();
         assert_eq!(saved.path, target.to_string_lossy());
         assert!(!saved.dirty);
+        assert_eq!(
+            session.require().unwrap().store().sources_by_position(),
+            sources_before_save_as
+        );
+        assert_eq!(session.snapshot().unwrap().sources, sources_before_save_as);
         assert!(target.exists());
         assert!(target.with_extension("irs").is_dir());
         assert!(target.with_extension("irs").join("L_P1.src.json").exists());

@@ -294,6 +294,13 @@ impl MeasurementStore {
         }
     }
 
+    /// Moves an open store to another project path without reparsing source sidecars.
+    pub fn relocated(&self, path: PathBuf, project: Project) -> Self {
+        let mut relocated = Self::new(path, project);
+        relocated.sources = self.sources.clone();
+        relocated
+    }
+
     pub fn project(&self) -> &Project {
         &self.project
     }
