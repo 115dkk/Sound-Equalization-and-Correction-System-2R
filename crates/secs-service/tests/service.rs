@@ -153,6 +153,70 @@ fn call_ok(service: &Service, request: Request, events: Arc<dyn EventSink>) -> R
 }
 
 #[test]
+fn status_project_and_results_come_from_the_same_open_project() {
+    let root = temp_root("status-session-snapshot");
+    fs::create_dir_all(&root).unwrap();
+    let (without_subs, settings) = case_project::write(&root.join("without-subs.secs"), "room");
+    let mut store = MeasurementStore::open(&without_subs).unwrap();
+    store
+        .project_mut()
+        .config
+        .speakers
+        .retain(|speaker| speaker.size != "sub");
+    store.project_mut().config.renumber();
+    store.save().unwrap();
+    let (with_subs, with_subs_settings) = case_project::write(&root.join("with-subs.secs"), "room");
+
+    for (path, settings) in [(&without_subs, settings), (&with_subs, with_subs_settings)] {
+        let service = service();
+        open(&service, path);
+        let events = Arc::new(Events::default());
+        let job = start_calibration(&service, events.clone(), settings);
+        finished_result(events.wait(job, Duration::from_secs(120)));
+    }
+
+    let service = Arc::new(service());
+    open(&service, &without_subs);
+    let barrier = Arc::new(std::sync::Barrier::new(2));
+    let opener_service = service.clone();
+    let opener_barrier = barrier.clone();
+    let first = without_subs.clone();
+    let second = with_subs.clone();
+    let opener = std::thread::spawn(move || {
+        opener_barrier.wait();
+        for index in 0..50 {
+            open(
+                &opener_service,
+                if index % 2 == 0 { &second } else { &first },
+            );
+        }
+    });
+    barrier.wait();
+    for _ in 0..50 {
+        let status = service.status();
+        assert_eq!(status.project.is_some(), status.results.is_some());
+        if let (Some(project), Some(results)) = (status.project, status.results)
+            && let Some(calibration) = results.calibration
+        {
+            let expected_subs = if project.path == without_subs.to_string_lossy() {
+                0
+            } else {
+                2
+            };
+            assert_eq!(
+                calibration.sub_roles.len(),
+                expected_subs,
+                "{}",
+                project.path
+            );
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    opener.join().unwrap();
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn opening_a_missing_project_names_the_path_td208() {
     let root = temp_root("missing-project-open");
     fs::create_dir_all(&root).unwrap();
