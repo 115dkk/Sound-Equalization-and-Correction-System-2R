@@ -7,6 +7,7 @@ use secs_types::compute::ComputeReport;
 use secs_types::ipc::{CamillaDevices, ExportKind, Notice};
 
 use crate::export_run::ExportDescription;
+use crate::results::ProjectKeys;
 use crate::session::{ProjectSnapshot, ProjectTicket};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -104,6 +105,7 @@ pub(crate) struct ExportPlan {
     pub mdat_scope: secs_export::MdatScope,
     pub originals: Option<ProjectSnapshot>,
     pub source_sidecars: Option<ProjectSnapshot>,
+    pub project_keys: ProjectKeys,
     pub ticket: ProjectTicket,
     pub stale: bool,
     pub spl_offset: Option<f64>,

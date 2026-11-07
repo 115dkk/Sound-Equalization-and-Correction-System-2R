@@ -563,6 +563,7 @@ impl Service {
                 extra_rates_for(&params.extra_rates, output_rate, output_rate_auto)?;
             let mdat_scope = params.mdat_scope.unwrap_or_default();
             let project = open.project();
+            let project_keys = ProjectKeys::of(project);
             let project_mode = secs_types::calibration::mode_tag(
                 secs_project::calibration_from_project(project).mode,
             )
@@ -629,6 +630,7 @@ impl Service {
                     mdat_scope,
                     originals: None,
                     source_sidecars: None,
+                    project_keys,
                     ticket,
                     stale: false,
                     spl_offset: None,
@@ -841,6 +843,7 @@ impl Service {
                     && mdat_scope == secs_export::MdatScope::All)
                     .then(|| session::ProjectSnapshot::of(ticket, open)),
                 source_sidecars: snapshot,
+                project_keys,
                 ticket,
                 stale,
                 spl_offset: secs_project::project_spl_offset(project),
@@ -880,6 +883,7 @@ impl Service {
                 mdat_scope,
                 originals,
                 source_sidecars,
+                project_keys,
                 ticket,
                 stale,
                 spl_offset,
@@ -1136,8 +1140,12 @@ impl Service {
                             |open| {
                                 let project = open.project();
                                 let settings = secs_project::calibration_from_project(project);
-                                let keys = ProjectKeys::of(project);
-                                if !open.results.inputs_unchanged_since(&keys, &settings) {
+                                let current_keys = ProjectKeys::of(project);
+                                if project_keys != current_keys
+                                    || !open
+                                        .results
+                                        .inputs_unchanged_since(&current_keys, &settings)
+                                {
                                     return Err(IpcError::new(
                                         ErrorCode::StaleInputs,
                                         "project changed while computing",

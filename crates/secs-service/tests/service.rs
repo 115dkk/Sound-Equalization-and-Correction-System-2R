@@ -5527,6 +5527,58 @@ fn cached_mdat_export_rejects_changed_calibration_inputs_before_writing() {
 }
 
 #[test]
+fn a_cached_mdat_export_rejects_inputs_changed_after_planning_td155() {
+    let root = temp_root("planned-cached-export");
+    fs::create_dir_all(&root).unwrap();
+    let (source, settings) = write_case(&root, "dolby");
+    let running = service();
+    open(&running, &source);
+    let calibration_events = Arc::new(Events::default());
+    let calibration = start_calibration(&running, calibration_events.clone(), settings.clone());
+    finished_result(calibration_events.wait(calibration, Duration::from_secs(120)));
+
+    let reopened = service();
+    open(&reopened, &source);
+    let folder = root.join("export-replanned");
+    let events = Arc::new(PausedProgress::default());
+    let Response::Export(started) = call_ok(
+        &reopened,
+        Request::Export(ExportParams {
+            kind: ExportKind::StagedMdat,
+            folder: folder.to_string_lossy().into_owned(),
+            mdat_scope: None,
+            design_name: None,
+            camilla_devices: None,
+            extra_rates: Vec::new(),
+        }),
+        events.clone(),
+    ) else {
+        panic!()
+    };
+    events.wait_until_paused();
+
+    call_ok(
+        &reopened,
+        Request::TargetApplyPreset(TargetPresetParams {
+            preset: "harman".into(),
+        }),
+        Arc::new(NoEvents),
+    );
+    let recalibration_events = Arc::new(Events::default());
+    let recalibration = start_calibration(&reopened, recalibration_events.clone(), settings);
+    finished_result(recalibration_events.wait(recalibration, Duration::from_secs(120)));
+
+    events.release();
+    let finished = events.events.wait(started.job, Duration::from_secs(120));
+    assert!(
+        matches!(finished, JobEvent::Finished { status: JobStatus::Failed, error: Some(ref error), .. }
+            if error.code == ErrorCode::StaleInputs)
+    );
+    assert!(!folder.exists());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn cached_mdat_export_rejects_changed_sample_rate_policy_td116() {
     let root = temp_root("policy-cached-export");
     fs::create_dir_all(&root).unwrap();
