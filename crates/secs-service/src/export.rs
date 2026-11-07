@@ -45,6 +45,86 @@ impl ExportResult {
     }
 }
 
+struct PreparedFolder {
+    prepared: std::path::PathBuf,
+    destination: std::path::PathBuf,
+    relative_files: Vec<std::path::PathBuf>,
+    moved: bool,
+}
+
+impl PreparedFolder {
+    fn path_for(destination: &Path, job: secs_types::ipc::JobId) -> std::path::PathBuf {
+        let name = destination
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "export".into());
+        destination.with_file_name(format!(".{name}.prepare-{}", job.0))
+    }
+
+    fn write(mut self, log: &crate::LogSink) -> Result<Vec<std::path::PathBuf>, IpcError> {
+        crate::design_export::replace_folder_with_log(&self.prepared, &self.destination, log)
+            .map_err(export_error)?;
+        self.moved = true;
+        Ok(self
+            .relative_files
+            .iter()
+            .map(|relative| self.destination.join(relative))
+            .collect())
+    }
+}
+
+impl Drop for PreparedFolder {
+    fn drop(&mut self) {
+        if !self.moved {
+            let _ = std::fs::remove_dir_all(&self.prepared);
+        }
+    }
+}
+
+struct FilterTextWriter {
+    prepared: PreparedFolder,
+}
+
+impl FilterTextWriter {
+    fn prepare(
+        run: &secs_filters::FilterRun<'_>,
+        destination: &Path,
+        options: &secs_filters::Options,
+        job: &crate::jobs::JobContext,
+    ) -> Result<Self, IpcError> {
+        let prepared = PreparedFolder::path_for(destination, job.id());
+        match std::fs::remove_dir_all(&prepared) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(export_error(error)),
+        }
+        let installed =
+            secs_filters::export_filter_text_observed_with_options(run, &prepared, options)
+                .map_err(filter_error)?;
+        let relative_files = installed
+            .files
+            .iter()
+            .map(|path| {
+                path.strip_prefix(&prepared)
+                    .expect("prepared filter text stays below its folder")
+                    .to_owned()
+            })
+            .collect();
+        Ok(Self {
+            prepared: PreparedFolder {
+                prepared,
+                destination: destination.to_owned(),
+                relative_files,
+                moved: false,
+            },
+        })
+    }
+
+    fn write(self, log: &crate::LogSink) -> Result<Vec<std::path::PathBuf>, IpcError> {
+        self.prepared.write(log)
+    }
+}
+
 struct BeforeAfterMdatWriter {
     destination: std::path::PathBuf,
     bytes: Vec<u8>,
@@ -941,16 +1021,20 @@ impl Service {
                         output_rate,
                         extra_rates,
                     };
-                    let installed = match kind {
+                    match kind {
                         ExportKind::FilterText => {
+                            let writer = FilterTextWriter::prepare(&run, folder, &options, &job)?;
                             job.begin_commit()?;
-                            secs_filters::export_filter_text_observed_with_options(
-                                &run, folder, &options,
-                            )
+                            writer.write(&log)?
                         }
                         ExportKind::EqualizerApo => {
                             job.begin_commit()?;
-                            secs_filters::export_eqapo_observed_with_options(&run, folder, &options)
+                            let installed = secs_filters::export_eqapo_observed_with_options(
+                                &run, folder, &options,
+                            )
+                            .map_err(filter_error)?;
+                            log_leftover_backup(&log, installed.leftover_backup);
+                            installed.files
                         }
                         ExportKind::Convolution => {
                             let prepared = secs_filters::prepare_convolution_named_with_options(
@@ -961,13 +1045,13 @@ impl Service {
                             )
                             .map_err(filter_error)?;
                             job.begin_commit()?;
-                            prepared.install_observed(folder)
+                            let installed =
+                                prepared.install_observed(folder).map_err(filter_error)?;
+                            log_leftover_backup(&log, installed.leftover_backup);
+                            installed.files
                         }
                         _ => unreachable!(),
                     }
-                    .map_err(filter_error)?;
-                    log_leftover_backup(&log, installed.leftover_backup);
-                    installed.files
                 }
                 kind => {
                     let (design, settings) = if let Some(values) = live_values.take() {
@@ -1354,6 +1438,29 @@ mod tests {
                 fail,
             })
         })
+    }
+
+    #[test]
+    fn filter_text_writer_stores_the_same_files_main_config_and_design_id() {
+        let root =
+            std::env::temp_dir().join(format!("secs-filter-text-writer-{}", std::process::id()));
+        let prepared = root.join("prepared");
+        let destination = root.join("destination");
+        std::fs::create_dir_all(&prepared).unwrap();
+        std::fs::write(prepared.join("filters.txt"), b"filters").unwrap();
+        let writer = FilterTextWriter {
+            prepared: PreparedFolder {
+                prepared,
+                destination: destination.clone(),
+                relative_files: vec![std::path::PathBuf::from("filters.txt")],
+                moved: false,
+            },
+        };
+        let log: crate::LogSink = Arc::new(|_, _, _| {});
+        let files = writer.write(&log).unwrap();
+        assert_eq!(files, [destination.join("filters.txt")]);
+        assert_eq!(std::fs::read(&files[0]).unwrap(), b"filters");
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
