@@ -277,6 +277,10 @@ impl MeasurementReader for DiracReader {
 
 /// Imports the assigned rows of the Dirac project at `path`, one
 /// assignment per row, through the measurement-file import flow.
+#[deprecated(
+    since = "0.23.0",
+    note = "no caller; removed in the next minor (audit #186 TD-219)"
+)]
 pub fn import(
     store: &mut MeasurementStore,
     path: &Path,

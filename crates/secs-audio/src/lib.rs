@@ -25,6 +25,7 @@ pub use calibration::{
     CalibrationError, CalibrationIssue, CalibrationPoint, MAX_CORRECTION_BOOST_DB, MicCalibration,
     ResponseCorrection, SplReference, c_weighting_db,
 };
+#[allow(deprecated)]
 pub use level::{LevelInput, LevelOutput, LevelReport, LevelSignal, input_meter, level_check};
 pub use measurement::{
     MeasuredRole, MeasurementPlan, MeasurementWindow, PositionMeasurement, RoleOutput,

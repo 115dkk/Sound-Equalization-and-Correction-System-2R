@@ -17,6 +17,10 @@ pub fn ir_file(project: &Path, role: &str, pos: i64) -> PathBuf {
 /// For values that Python's `struct.pack('<I', ...)` cannot represent, the
 /// legacy infallible API returns an empty vector instead of panicking. Call
 /// [`try_write_wav_float32`] when the error must be reported.
+#[deprecated(
+    since = "0.23.0",
+    note = "no caller; removed in the next minor (audit #186 TD-219)"
+)]
 pub fn write_wav_float32(samples: &[f32], sample_rate: u32) -> Vec<u8> {
     try_write_wav_float32(samples, sample_rate).unwrap_or_default()
 }
@@ -173,6 +177,10 @@ fn wav_chunks(data: &[u8], default_format: Option<WavFormat>) -> Result<WavChunk
         payload.ok_or_else(|| ProjectError::Wav("missing data chunk".into()))?,
     ))
 }
+#[deprecated(
+    since = "0.23.0",
+    note = "no caller; removed in the next minor (audit #186 TD-219)"
+)]
 pub fn read_wav_float32(data: &[u8]) -> Result<(Vec<f32>, u32), ProjectError> {
     let default = WavFormat {
         tag: 3,

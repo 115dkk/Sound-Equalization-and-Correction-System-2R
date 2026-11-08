@@ -1,3 +1,4 @@
+#![allow(deprecated)]
 #![forbid(unsafe_code)]
 use secs_audio::level::{analyse_level, level_signal};
 use secs_audio::*;

@@ -1,3 +1,4 @@
+#![allow(deprecated)]
 #![forbid(unsafe_code)]
 
 use secs_service::{Deps, EventSink, MockMeasurer, NoEvents, Service, plan_for, sample};

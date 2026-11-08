@@ -1,3 +1,4 @@
+#![allow(deprecated)]
 #![forbid(unsafe_code)]
 
 use secs_oracle::{Fixture, assert_same, number};

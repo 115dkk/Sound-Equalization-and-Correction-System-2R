@@ -237,6 +237,7 @@ impl RemovedPosition {
     }
 }
 
+#[allow(deprecated)]
 impl MeasurementStore {
     pub fn open(path: impl Into<PathBuf>) -> Result<Self, ProjectError> {
         Self::open_with_source_budget(path, MAX_PROJECT_SOURCE_BYTES)
@@ -390,6 +391,7 @@ impl MeasurementStore {
             .collect()
     }
 
+#[deprecated(since = "0.23.0", note = "no caller; removed in the next minor (audit #186 TD-219)")]
     pub fn label_for(&self, pos: i64) -> String {
         format!("위치 {pos}")
     }
@@ -741,6 +743,7 @@ impl MeasurementStore {
             .unwrap_or(0.0)
     }
 
+#[deprecated(since = "0.23.0", note = "no caller; removed in the next minor (audit #186 TD-219)")]
     pub fn t0_by_role(&self, pos: i64) -> BTreeMap<String, f64> {
         self.entry_for(pos).map_or_else(BTreeMap::new, |entry| {
             entry
@@ -752,6 +755,7 @@ impl MeasurementStore {
         })
     }
 
+#[deprecated(since = "0.23.0", note = "no caller; removed in the next minor (audit #186 TD-219)")]
     pub fn irs_by_role(
         &mut self,
         pos: i64,

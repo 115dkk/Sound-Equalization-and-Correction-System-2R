@@ -1,3 +1,4 @@
+#![allow(deprecated)]
 #![forbid(unsafe_code)]
 
 use std::fs;

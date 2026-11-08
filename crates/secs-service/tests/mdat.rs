@@ -1,3 +1,4 @@
+#![allow(deprecated)]
 #![forbid(unsafe_code)]
 use secs_mdat::{Boxed, SourceDate};
 use secs_project::{

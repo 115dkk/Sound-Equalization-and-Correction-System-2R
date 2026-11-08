@@ -1,3 +1,4 @@
+#![allow(deprecated)]
 #![forbid(unsafe_code)]
 // Protocol parity with tests/test_rewapi_real.py (GPL-3.0-only); replies are
 // recorded protocol data, not a second implementation of the client.

@@ -18,6 +18,7 @@ pub use calibration::{calibration_from_project, store_calibration};
 pub use config::{Band, Speaker, SpeakerConfig, default_bands, ordered_speakers};
 pub use dsp_profile::DspProfile;
 pub use error::ProjectError;
+#[allow(deprecated)]
 pub use irs::{
     MAX_IR_BYTES, ir_directory, ir_file, load_ir, read_bounded, read_mono_float_wav,
     read_wav_float32, save_ir, try_write_wav_float32, write_wav_float32,

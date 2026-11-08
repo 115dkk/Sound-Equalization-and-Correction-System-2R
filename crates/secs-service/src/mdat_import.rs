@@ -164,6 +164,10 @@ pub fn looks_like_sub(samples: &[f64], sample_rate: i64) -> bool {
         && 10.0 * ((high / f64::from(nh) + 1e-30) / (low / f64::from(nl) + 1e-30)).log10() < -30.0
 }
 
+#[deprecated(
+    since = "0.23.0",
+    note = "no caller; removed in the next minor (audit #186 TD-219)"
+)]
 pub fn problems(assignment: &[Option<String>], positions: &[i64]) -> String {
     let chosen = assignment
         .iter()
@@ -258,6 +262,7 @@ pub fn scan_for(
 type MdatIr = Option<(Vec<f64>, i64)>;
 pub(crate) type ScannedMdat = (PathBuf, u64, SystemTime, Arc<MdatReader>);
 
+#[allow(deprecated)]
 fn scan_loaded(
     loaded: &secs_mdat::LoadedMdatProject,
     roles: &[String],
@@ -404,6 +409,10 @@ impl MeasurementReader for MdatReader {
 /// `assignment` is per row in file order (missing rows are skipped, as
 /// upstream pads it with `None`); without one every row takes its
 /// suggested role and position.
+#[deprecated(
+    since = "0.23.0",
+    note = "no caller; removed in the next minor (audit #186 TD-219)"
+)]
 pub fn import(
     store: &mut MeasurementStore,
     path: &Path,
@@ -440,6 +449,10 @@ pub fn import(
     )
 }
 
+#[deprecated(
+    since = "0.23.0",
+    note = "no caller; removed in the next minor (audit #186 TD-219)"
+)]
 pub fn mdat_sources(store: &MeasurementStore) -> std::collections::BTreeMap<i64, String> {
     let mut out = std::collections::BTreeMap::new();
     if let PyJson::Array(entries) = &store.project().measurements {

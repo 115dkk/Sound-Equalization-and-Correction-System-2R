@@ -452,6 +452,10 @@ impl SplReference {
     }
     /// Only for a device whose USB sensitivity convention and input gain have
     /// been independently established. No vendor mapping is guessed here.
+    #[deprecated(
+        since = "0.23.0",
+        note = "no caller; removed in the next minor (audit #186 TD-219)"
+    )]
     pub fn from_usb(calibration: &MicCalibration, input_gain_db: f64) -> Result<Self, AudioError> {
         let sensitivity = calibration
             .usb_sens_factor_db

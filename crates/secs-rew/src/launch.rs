@@ -73,6 +73,10 @@ pub fn find_rew_exe_for(platform: Platform, exists: impl Fn(&Path) -> bool) -> O
 }
 /// Rust is not a PyInstaller bundle and never changes SetDllDirectory. This
 /// pure helper supports hosts which deliberately supply a bundled environment.
+#[deprecated(
+    since = "0.23.0",
+    note = "no caller; removed in the next minor (audit #186 TD-219)"
+)]
 pub fn clean_env(
     env: &BTreeMap<OsString, OsString>,
     bundle: Option<&Path>,
