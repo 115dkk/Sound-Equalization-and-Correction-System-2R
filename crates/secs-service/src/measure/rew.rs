@@ -10,16 +10,6 @@ use std::{
 
 const MAX_CALIBRATION_BYTES: u64 = 4 * 1024 * 1024;
 
-pub(crate) struct Transport(Box<dyn secs_rew::Transport>);
-impl secs_rew::Transport for Transport {
-    fn request(
-        &self,
-        request: &secs_rew::Request,
-    ) -> Result<secs_rew::Response, secs_rew::RewError> {
-        self.0.request(request)
-    }
-}
-
 /// The service's one link to REW: it builds clients on the configured
 /// transport and keeps what REW said about the Pro license.
 #[derive(Clone)]
@@ -46,8 +36,8 @@ impl RewLink {
         }
     }
 
-    pub(crate) fn client(&self) -> secs_rew::RewClient<Transport> {
-        secs_rew::RewClient::new(Transport((self.transport)()))
+    pub(crate) fn client(&self) -> secs_rew::RewClient<Box<dyn secs_rew::Transport>> {
+        secs_rew::RewClient::new((self.transport)())
     }
 
     /// Records what an error says about the license (ProRequired → not Pro).
@@ -236,7 +226,7 @@ trait RoleRecorder {
     ) -> Result<RecordedRole, MeasureError>;
 }
 
-impl RoleRecorder for secs_rew::RewClient<Transport> {
+impl RoleRecorder for secs_rew::RewClient<Box<dyn secs_rew::Transport>> {
     fn configure_position(
         &mut self,
         plan: &secs_rew::MeasurementPlan,

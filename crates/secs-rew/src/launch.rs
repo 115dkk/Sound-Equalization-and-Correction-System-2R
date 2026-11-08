@@ -19,7 +19,13 @@ pub const REW_PROCESS_NAMES: [&str; 2] = ["roomeqwizard.exe", "rew.exe"];
 pub trait ProcessProbe {
     fn process_names(&self) -> Result<Vec<String>, RewError>;
 }
-pub fn rew_process_running(probe: &impl ProcessProbe) -> bool {
+
+impl<T: crate::Transport + ?Sized> crate::Transport for Box<T> {
+    fn request(&self, request: &crate::Request) -> Result<crate::Response, RewError> {
+        (**self).request(request)
+    }
+}
+pub fn rew_process_running(probe: &(impl ProcessProbe + ?Sized)) -> bool {
     probe
         .process_names()
         .unwrap_or_default()

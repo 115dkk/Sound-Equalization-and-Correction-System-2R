@@ -179,16 +179,7 @@ fn measurer(
     }
 }
 fn rew_status(deps: &Deps, rew: &measure::RewLink) -> RewStatusResult {
-    let running = deps
-        .process
-        .process_names()
-        .unwrap_or_default()
-        .iter()
-        .any(|name| {
-            secs_rew::launch::REW_PROCESS_NAMES
-                .iter()
-                .any(|r| name.eq_ignore_ascii_case(r))
-        });
+    let running = secs_rew::launch::rew_process_running(deps.process.as_ref());
     let mut client = rew.client();
     let reachable = client.is_running();
     if !reachable {
