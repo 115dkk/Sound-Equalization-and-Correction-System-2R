@@ -18,6 +18,7 @@ import type { PlotScale } from "../../ui";
 import { CalibrateScreen, calibrateHeader } from "./CalibrateScreen";
 import { LOADING_DELAY_MS } from "./ResultGraph";
 import * as fx from "./fixtures";
+import { SETTING_ROWS } from "./settingRows";
 import { rangeRejection, type RangeRejection } from "./settingsView";
 import { calibrateStepState, type CalibrateActions, type CalibrateView } from "./types";
 
@@ -1217,7 +1218,10 @@ describe("RC upper limit basis", () => {
 
 /* ── Reach table (docs/M5-reach.md §6–8, P31b rows) ─────────────────────── */
 
-// Every id the reach rows cite, with <role>, <n> and <key> filled in.
+// Every id the reach rows cite, with <role>, <n> and <key> filled in, and
+// every row of the settings table with its choices (ADR 0055). The ids
+// written out are the rest of the screen and the structured editors'.
+const ROW_IDS = SETTING_ROWS.flatMap((row) => [row.id, ...(row.control === "segmented" ? row.choices.map((choice) => `${row.id}.${choice.value}`) : [])]);
 const REACH_IDS = [
   "calibrate.compute",
   "calibrate.running",
@@ -1259,21 +1263,12 @@ const REACH_IDS = [
   "calibrate.ba.filters",
   "calibrate.ba.warnings",
   "calibrate.ba.subs_only",
-  "calibrate.mode.zero",
-  "calibrate.mode.mixed",
-  "calibrate.mode.linear",
-  "calibrate.mode.ultra",
-  "calibrate.mode.ultra_ms",
+  ...ROW_IDS,
   "calibrate.mode.spec",
-  "calibrate.range.lower",
   ...["", ".strict", ".lenient", ".agreement", ".manual"].map((option) => `calibrate.range.basis${option}`),
-  ...["", ".1", ".2", ".4"].map((option) => `calibrate.range.transition${option}`),
-  "calibrate.range.upper",
-  "calibrate.range.volume",
   "calibrate.range.dims.w",
   "calibrate.range.dims.d",
   "calibrate.range.dims.h",
-  "calibrate.range.boost",
   "calibrate.range.notes",
   "calibrate.range.extra.add",
   ...["", ".lower", ".upper", ".remove"].map((part) => `calibrate.range.extra.1${part}`),
@@ -1289,7 +1284,6 @@ const REACH_IDS = [
   "calibrate.ba.infra",
   "calibrate.ba.infra_hz",
   "calibrate.ba.infra_type",
-  "calibrate.ba.infra_boost",
   "calibrate.ba.infra_note",
   "calibrate.ba.mode.SW1",
   "calibrate.ba.subs",
@@ -1309,19 +1303,11 @@ const REACH_IDS = [
   "calibrate.ba.peq.1.hz",
   "calibrate.ba.peq.1.q",
   "calibrate.ba.peq.1.gain",
-  "calibrate.ba.main_delay",
   "calibrate.ba.mimo_support",
   "calibrate.ba.compute_subs",
   "calibrate.ba.take_values",
   "calibrate.ba.settings_warnings",
   "calibrate.ba.none",
-  "calibrate.mimo.on",
-  "calibrate.mimo.fsiso",
-  "calibrate.mimo.low_auto",
-  "calibrate.mimo.low",
-  "calibrate.mimo.max",
-  "calibrate.mimo.fir",
-  "calibrate.mimo.seat_guard",
   "calibrate.mimo.compute",
   "calibrate.mimo.reason",
   "calibrate.mimo.state",
@@ -1804,6 +1790,8 @@ describe("reach table", () => {
     add(idsOf(screenOf({ ...fx.emptyView, settings: { ...fx.emptyView.settings, mimo_on: true } })));
     // Extra correction bands (ADR 0024): their rows and the graph's labels.
     add(idsOf(screenOf(fx.extraBandViews.two)));
+    // The input cut on (ADR 0031): its frequency row.
+    add(idsOf(screenOf(fx.inputHpViews.on)));
     // The header's pills, and the job tray's cancels and history (U8).
     for (const view of [fx.splView, fx.staleView, fx.runningMimoView]) add(idsOf(<>{calibrateHeader(view, t).status}</>));
     const jobs = (["calibrate", "recommend_xo", "mimo"] as const).map((kind, i) => ({ type: "event" as const, at: T0 + i, event: { event: "started" as const, job: i + 1, kind } }));
