@@ -573,7 +573,22 @@ fn responses_match_the_recorded_copies() {
     ];
     let failures: Vec<String> = cases
         .into_iter()
-        .filter_map(|(name, entries)| check(name, entries()))
+        .filter_map(|(name, entries)| {
+            let entries = entries();
+            if PLATFORM_RESULTS.contains(&name) && !cfg!(windows) {
+                eprintln!(
+                    "SKIP {name}: recorded on Windows; calibration results differ by platform"
+                );
+                return None;
+            }
+            check(name, entries)
+        })
         .collect();
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
+
+/// Calibration summaries and their note lines depend on the platform's libm: the last
+/// bits steer the engine's differential-evolution choices, so glibc gives other values
+/// and even other notes than Windows (PR #189). These copies are recorded on Windows,
+/// where the screen's mock replays them, and compared only there (ADR 0052).
+const PLATFORM_RESULTS: [&str; 2] = ["results", "result_lines"];
