@@ -128,7 +128,7 @@ fn test_measure_two_positions_then_redo_last() {
             let role = r.role.clone();
             let samples = r.ir.clone();
             store.record(r, Some(&p.roles)).unwrap();
-            assert_eq!(store.ir_of(&role, pos).unwrap().0, samples);
+            assert_eq!(&*store.ir_of(&role, pos).unwrap().0, samples.as_slice());
         }
     }
     assert_eq!(store.done_positions(Some(&p.roles)), vec![1, 2]);

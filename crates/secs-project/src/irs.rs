@@ -1,6 +1,7 @@
 use crate::{ProjectError, record::atomic_write};
 use std::fs;
 use std::io::Read;
+use std::ops::Range;
 use std::path::{Path, PathBuf};
 
 pub const MAX_IR_BYTES: u64 = 256 * 1024 * 1024;
@@ -68,7 +69,7 @@ struct WavFormat {
     bits: u16,
     valid_bits: u16,
 }
-type WavChunks = (WavFormat, Vec<u8>);
+type WavChunks = (WavFormat, Range<usize>);
 
 fn le_u16(bytes: &[u8], offset: usize) -> Result<u16, ProjectError> {
     let value = bytes
@@ -153,7 +154,7 @@ fn wav_chunks(data: &[u8], default_format: Option<WavFormat>) -> Result<WavChunk
         let end = declared_end.min(data.len());
         match &data[pos..pos + 4] {
             b"fmt " => format = Some(parse_wav_format(&data[header_end..end])?),
-            b"data" => payload = Some(data[header_end..end].to_vec()),
+            b"data" => payload = Some(header_end..end),
             _ => {}
         }
         if declared_end >= data.len() {
@@ -191,6 +192,7 @@ pub fn read_wav_float32(data: &[u8]) -> Result<(Vec<f32>, u32), ProjectError> {
         valid_bits: 32,
     };
     let (format, payload) = wav_chunks(data, Some(default))?;
+    let payload = &data[payload];
     if format.channels != 1 {
         return Err(ProjectError::Wav(format!(
             "float32 WAV has {} channels (expected 1)",
@@ -225,6 +227,7 @@ pub fn read_wav_float32(data: &[u8]) -> Result<(Vec<f32>, u32), ProjectError> {
 /// RF64, endian-swapped RIFX, multichannel audio, or containers other than WAV.
 pub fn read_mono_float_wav(data: &[u8]) -> Result<(Vec<f32>, u32), ProjectError> {
     let (format, payload) = wav_chunks(data, None)?;
+    let payload = &data[payload];
     if format.channels != 1 {
         return Err(ProjectError::Wav("WAV is not mono".into()));
     }

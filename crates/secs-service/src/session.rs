@@ -981,7 +981,7 @@ impl ProjectSnapshot {
                         title: format!("{role}_P{}", record.pos),
                         notes: format!("SECS · 위치 {} · 원 측정", record.pos),
                         sample_rate_hz: sample_rate,
-                        samples: samples.into_iter().map(f64::from).collect(),
+                        samples: samples.iter().copied().map(f64::from).collect(),
                         start_time_s: record.t0.get(&role).copied().unwrap_or(0.0),
                         spl_offset_db: record.spl_offset.get(&role).copied(),
                         source_info,

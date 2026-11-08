@@ -634,7 +634,7 @@ impl MeasurementStore {
         Ok(candidate)
     }
 
-    pub fn ir_of(&mut self, role: &str, pos: i64) -> Result<(Vec<f32>, u32), ProjectError> {
+    pub fn ir_of(&mut self, role: &str, pos: i64) -> Result<(Arc<[f32]>, u32), ProjectError> {
         let path = self.ir_path_of(role, pos)?;
         self.cache.load(&path)
     }
@@ -759,7 +759,7 @@ impl MeasurementStore {
     pub fn irs_by_role(
         &mut self,
         pos: i64,
-    ) -> Result<BTreeMap<String, (Vec<f32>, u32)>, ProjectError> {
+    ) -> Result<BTreeMap<String, (Arc<[f32]>, u32)>, ProjectError> {
         let roles = self.entry_for(pos).map_or_else(Vec::new, |entry| {
             entry
                 .ir

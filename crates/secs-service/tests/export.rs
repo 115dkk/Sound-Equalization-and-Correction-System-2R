@@ -278,7 +278,8 @@ fn saves_while_a_side_mdat_job_runs_coalesce_into_one_job_td149() {
     } else {
         path.parent().unwrap().join(raw)
     };
-    let (mut samples, sample_rate) = store.ir_of(&role, record.pos).unwrap();
+    let (samples, sample_rate) = store.ir_of(&role, record.pos).unwrap();
+    let mut samples = samples.to_vec();
     let changed_sample = if samples[0] == 0.25 { 0.5 } else { 0.25 };
 
     let (blocked_tx, blocked_rx) = std::sync::mpsc::sync_channel(1);

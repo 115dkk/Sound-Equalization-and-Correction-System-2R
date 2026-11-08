@@ -10,6 +10,7 @@ use secs_project::{
 };
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 static NEXT: AtomicU64 = AtomicU64::new(0);
@@ -219,7 +220,7 @@ fn test_saved_ir_matches_measured_ir_and_ir_saver_paths_and_round_trip() {
         .record(result("L:LF", 3, "one"), Some(&["L:LF".into()]))
         .unwrap();
     let (samples, rate) = store.ir_of("L:LF", 3).unwrap();
-    assert_eq!(samples, result("L:LF", 3, "one").ir);
+    assert_eq!(&*samples, result("L:LF", 3, "one").ir.as_slice());
     assert_eq!(rate, 48_000);
     assert_eq!(
         store.ir_path_of("L:LF", 3).unwrap().file_name().unwrap(),
@@ -227,6 +228,19 @@ fn test_saved_ir_matches_measured_ir_and_ir_saver_paths_and_round_trip() {
     );
     assert!(path.with_extension("irs").join("L_LF_P3.wav").is_file());
     assert_eq!(roles.len(), 3);
+}
+
+#[test]
+fn ir_cache_hit_returns_the_same_allocation_td187() {
+    let (_directory, _path, mut store, _roles) = setup();
+    store
+        .record(result("L", 1, "one"), Some(&["L".into()]))
+        .unwrap();
+
+    let first = store.ir_of("L", 1).unwrap().0;
+    let second = store.ir_of("L", 1).unwrap().0;
+
+    assert!(Arc::ptr_eq(&first, &second));
 }
 
 #[test]
@@ -851,7 +865,7 @@ fn f5_absolute_parent_and_symlink_escapes_are_rejected_but_in_tree_reads() {
         project.measurements = PyJson::Array(vec![entry_with_path(&raw)]);
         let mut store = MeasurementStore::new(&path, project);
         if raw.ends_with("good.wav") {
-            assert_eq!(store.ir_of("L", 1).unwrap().0, vec![0.25]);
+            assert_eq!(&*store.ir_of("L", 1).unwrap().0, &[0.25]);
         } else {
             assert!(matches!(
                 store.ir_of("L", 1),
@@ -1077,15 +1091,15 @@ fn ir_cache_rereads_changed_file_and_evicts_to_cap() {
     fs::write(&a, write_wav_float32(&[1.0], 48_000)).unwrap();
     fs::write(&b, write_wav_float32(&[2.0, 2.0], 48_000)).unwrap();
     let mut cache = IrCache::new(8);
-    assert_eq!(cache.load(&a).unwrap().0, vec![1.0]);
+    assert_eq!(&*cache.load(&a).unwrap().0, &[1.0]);
     fs::write(&a, write_wav_float32(&[3.0, 4.0, 5.0], 48_000)).unwrap();
-    assert_eq!(cache.load(&a).unwrap().0, vec![3.0, 4.0, 5.0]);
+    assert_eq!(&*cache.load(&a).unwrap().0, &[3.0, 4.0, 5.0]);
     cache.load(&b).unwrap();
     assert_eq!(cache.len(), 1);
     let loaded = cache.load(&b).unwrap();
-    let mut caller_copy = loaded.0;
+    let mut caller_copy = loaded.0.to_vec();
     caller_copy[0] = 99.0;
-    assert_eq!(cache.load(&b).unwrap().0, vec![2.0, 2.0]);
+    assert_eq!(&*cache.load(&b).unwrap().0, &[2.0, 2.0]);
 }
 
 #[test]
@@ -1100,7 +1114,7 @@ fn ir_cache_keeps_its_byte_cap_and_evicts_least_recently_used_td44() {
     // 12 bytes of samples under an 8-byte cap: returned, not retained.
     let large = wav("large.wav", &[1.0, 2.0, 3.0]);
     let mut cache = IrCache::new(8);
-    assert_eq!(cache.load(&large).unwrap().0, vec![1.0, 2.0, 3.0]);
+    assert_eq!(&*cache.load(&large).unwrap().0, &[1.0, 2.0, 3.0]);
     assert_eq!(cache.retained_bytes(), 0);
     assert!(cache.is_empty());
     cache.remember(&large, &[1.0, 2.0, 3.0], 48_000).unwrap();

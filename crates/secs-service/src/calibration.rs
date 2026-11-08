@@ -619,17 +619,23 @@ fn measured_ir_with_curve_status_from_source(
     info: Option<&secs_mdat::SourceInfo>,
 ) -> Result<((Vec<f32>, u32), bool), crate::ServiceError> {
     let (samples, sample_rate) = store.ir_of(role, pos)?;
-    let Some(info) = info else {
-        return Ok(((samples, sample_rate), false));
+    let invalid_curve = if let Some(info) = info {
+        let (correction, invalid_curve) = response_correction(info);
+        if !correction.is_empty() {
+            let corrected = correction.apply(&samples, sample_rate).map_err(|error| {
+                crate::ServiceError::ProjectMessage(format!(
+                    "measurement response correction: {error}"
+                ))
+            })?;
+            return Ok(((corrected, sample_rate), invalid_curve));
+        }
+        invalid_curve
+    } else {
+        false
     };
-    let (correction, invalid_curve) = response_correction(info);
-    if correction.is_empty() {
-        return Ok(((samples, sample_rate), invalid_curve));
-    }
-    let corrected = correction.apply(&samples, sample_rate).map_err(|error| {
-        crate::ServiceError::ProjectMessage(format!("measurement response correction: {error}"))
-    })?;
-    Ok(((corrected, sample_rate), invalid_curve))
+    // The engine owns mutable measurement samples; copy only at this boundary
+    // when no microphone response correction has already made an owned buffer.
+    Ok(((samples.to_vec(), sample_rate), invalid_curve))
 }
 
 fn measured_ir_with_curve_status(

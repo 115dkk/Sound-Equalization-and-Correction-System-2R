@@ -1028,10 +1028,9 @@ fn rew_configures_once_per_position_td172() {
     );
     let mut store = secs_project::MeasurementStore::open(&path).unwrap();
     for role in ["L", "R"] {
-        assert_eq!(
-            store.ir_of(role, 1).unwrap(),
-            (vec![1.0, -0.25, 0.125], 48000)
-        );
+        let (samples, rate) = store.ir_of(role, 1).unwrap();
+        assert_eq!(&*samples, &[1.0, -0.25, 0.125]);
+        assert_eq!(rate, 48000);
         assert_eq!(store.t0_of(role, 1), -0.125);
     }
     let values = events.values.lock().unwrap();

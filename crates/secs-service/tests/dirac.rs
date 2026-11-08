@@ -304,12 +304,13 @@ fn dirac_import_records_irs_t0_and_source() {
         let role = roles[measured.channel];
         let (actual, sample_rate) = store.ir_of(role, position).unwrap();
         assert_eq!(
-            actual,
+            &*actual,
             measured
                 .samples
                 .iter()
                 .map(|sample| *sample as f32)
                 .collect::<Vec<_>>()
+                .as_slice()
         );
         assert_eq!(sample_rate, parsed.sample_rate);
         assert_eq!(store.t0_of(role, position), -0.25);

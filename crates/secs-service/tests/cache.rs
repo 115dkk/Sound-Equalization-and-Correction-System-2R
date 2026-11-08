@@ -518,7 +518,8 @@ fn stale_calibration_exports_with_flag_and_cache_survives_reopen() {
         let mut store = secs_project::MeasurementStore::open(&path).unwrap();
         let record = store.records().into_iter().next().unwrap();
         let role = record.ir.keys().next().unwrap().clone();
-        let (mut samples, sample_rate) = store.ir_of(&role, record.pos).unwrap();
+        let (samples, sample_rate) = store.ir_of(&role, record.pos).unwrap();
+        let mut samples = samples.to_vec();
         samples[0] += 0.25;
         store
             .record(
