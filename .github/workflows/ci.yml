@@ -1391,6 +1391,9 @@ jobs:
                 cp ../src/secs/rew_mdat/template_1.mdat "corpus/$target/template"
                 cp ../oracle/goldens/mdat/*.bin "corpus/$target/"
                 cp ../fuzz/corpus/mdat_load/*.mdat "corpus/$target/" 2>/dev/null || true ;;
+              cal_parse)
+                cp ../crates/secs-audio/tests/data/*.cal "corpus/$target/"
+                cp ../crates/secs-rew/tests/data/recorded.json "corpus/$target/" ;;
               liveproject_parse)
                 cp ../crates/secs-dirac/tests/data/*.liveproject "corpus/$target/" ;;
               project_load_text)

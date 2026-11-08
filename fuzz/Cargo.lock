@@ -594,6 +594,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "secs-audio"
+version = "0.22.0"
+dependencies = [
+ "secs-dsp",
+ "secs-types",
+ "serde",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "secs-dirac"
 version = "0.22.0"
 dependencies = [
@@ -656,6 +666,7 @@ name = "secs2r-fuzz"
 version = "0.0.0"
 dependencies = [
  "libfuzzer-sys",
+ "secs-audio",
  "secs-dirac",
  "secs-jos",
  "secs-mdat",
