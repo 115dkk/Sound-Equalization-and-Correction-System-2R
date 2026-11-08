@@ -18,7 +18,7 @@ import { STEPS } from "./model";
 let mock: ReturnType<typeof createMockService>;
 let session: ReturnType<typeof createSession>;
 const wrapper = ({ children }: { children: ReactNode }) => <SessionProvider value={session}>{children}</SessionProvider>;
-const useModel = () => useFrameModel({ system: useSystemScreen().view, connect: useConnectScreen(false).view, measure: useMeasureScreen().view, calibrate: null, export: null }).model;
+const useModel = () => useFrameModel({ system: useSystemScreen().view, connect: useConnectScreen(false).view, measure: useMeasureScreen(false).view, calibrate: null, export: null }).model;
 beforeEach(async () => {
   mock = createMockService({ tickMs: 0 }); session = createSession(mock); await session.start();
 });

@@ -46,7 +46,7 @@ describe("tray ledger view", () => {
     const wrapper = ({ children }: { children: ReactNode }) => <SessionProvider value={session}>{children}</SessionProvider>;
     try {
       await session.start(); await session.configure({ method: "mock" });
-      const first = renderHook(() => ({ tray: useJobs(), measure: useMeasureScreen() }), { wrapper });
+      const first = renderHook(() => ({ tray: useJobs(), measure: useMeasureScreen(false) }), { wrapper });
       const second = renderHook(() => useJobs(), { wrapper });
       let job = 0;
       await act(async () => { job = (await session.call({ method: "measure_position", params: { position: 4 } })).job; });

@@ -1,10 +1,11 @@
-import { useMemo } from "react";
+import { useLayoutEffect, useMemo, useSyncExternalStore } from "react";
 import { useHost, useLevelMonitor, useResource, useSession } from "../../state/react";
 import { useJobLedger } from "../../state/useJobLedger";
 import { MEASURING_KINDS, isActiveJob } from "../../state/jobRetention";
 import type { MeasureActions, MeasureView } from "./types";
 
-export function useMeasureScreen(): { view: MeasureView | null; actions: MeasureActions } {
+/** 측정·가져오기's view and actions; `active` while the screen is shown, the only time its curves are read (TD-237). */
+export function useMeasureScreen(active: boolean): { view: MeasureView | null; actions: MeasureActions } {
   const session = useSession();
   const host = useHost();
   const ledger = useJobLedger();
@@ -14,6 +15,9 @@ export function useMeasureScreen(): { view: MeasureView | null; actions: Measure
   const config = useResource("measurementSettings");
   const records = useResource("records");
   const curves = useResource("curves");
+  const curvesReading = useSyncExternalStore(session.stores.curves.reading.subscribe, session.stores.curves.reading.getSnapshot);
+  // Before paint, so a first read already shows as loading, never as the empty state.
+  useLayoutEffect(() => (active ? session.stores.curves.show() : undefined), [active, session]);
   // A level burst 연결·점검 plays; a boolean, so a Meter event does not run this hook again (TD-176).
   const playing = useLevelMonitor((level) => level.playing !== null || level.playingAll);
   const actions = useMemo<MeasureActions>(() => ({
@@ -54,7 +58,7 @@ export function useMeasureScreen(): { view: MeasureView | null; actions: Measure
   const request = running?.request;
   return { view: project && layout && config ? {
     project, layout, estimate, config, path: host.path === "mdat" ? "import" : host.path ? "measure" : "none",
-    records: records?.records ?? [], curves,
+    records: records?.records ?? [], curves, curvesLoading: curvesReading,
     sweepOptions: config.sweep_lengths.map((samples) => ({ samples, seconds: samples / config.sample_rate })),
     repetitions: config.repetitions,
     playing,

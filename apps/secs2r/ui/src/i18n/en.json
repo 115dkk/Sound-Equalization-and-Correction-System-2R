@@ -471,6 +471,8 @@
   "measure.graph.reference.sub": "0 dB = average of {code} at position {n} over 40–120 Hz",
   "measure.graph.empty.title": "No measurement curves",
   "measure.graph.empty.body": "Measure a position or import a measurement file to see a curve for each channel.",
+  "measure.graph.loading": "Loading measurement curves",
+  "measure.graph.refreshing": "Refreshing curves",
   "measure.run.title": "Measuring position {n}",
   "measure.run.label": "Position {n} measurement progress",
   "measure.run.channels": "Channels {done}/{total}",

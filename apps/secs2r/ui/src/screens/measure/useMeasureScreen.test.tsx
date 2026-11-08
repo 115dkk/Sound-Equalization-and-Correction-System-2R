@@ -24,7 +24,7 @@ afterEach(async () => { cleanup(); await session.monitor(false); session.dispose
 describe("useMeasureScreen", () => {
   it("stays ready while any job runs but blocks active monitor playback", async () => {
     await session.configure({ method: "mock" });
-    const { result } = renderHook(useMeasureScreen, { wrapper });
+    const { result } = renderHook(() => useMeasureScreen(false), { wrapper });
     let job = 99;
     for (const kind of ["level_monitor", "status_watch", "calibrate", "recommend_xo", "mimo", "export", "measure", "sample_load", "mdat_import"] as JobKind[]) {
       await perform(() => mock.events.emit({ event: "started", job, kind }));
@@ -47,7 +47,7 @@ describe("useMeasureScreen", () => {
   it("has no manufactured settings, and keeps host-only choices", async () => {
     // Before the session has read the stored settings the hook invents none.
     session.stores.measurementSettings.set(null);
-    const { result } = renderHook(useMeasureScreen, { wrapper });
+    const { result } = renderHook(() => useMeasureScreen(false), { wrapper });
     expect(result.current.view).toBeNull();
     await perform(() => session.configure({ method: "mdat" }));
     expect(result.current.view?.path).toBe("import");
@@ -68,7 +68,7 @@ describe("useMeasureScreen", () => {
   it("requires a successful save before measurement and clears selection only at finish", async () => {
     await session.configure({ method: "mock" });
     session.stores.project.set({ ...session.stores.project.getSnapshot()!, path: "" });
-    const { result } = renderHook(useMeasureScreen, { wrapper });
+    const { result } = renderHook(() => useMeasureScreen(false), { wrapper });
     await perform(() => result.current.actions.selectPosition(2));
     mock.queueDialog("dialog_save_project", null);
     await perform(() => result.current.actions.measurePosition(2));
@@ -90,7 +90,7 @@ describe("useMeasureScreen", () => {
 
   it("wires settings, destructive clear and undo, and demo loading", async () => {
     await session.configure({ method: "mock" });
-    const { result } = renderHook(useMeasureScreen, { wrapper });
+    const { result } = renderHook(() => useMeasureScreen(false), { wrapper });
     const a = result.current.actions;
     await perform(() => a.setStartDelay("5 초"));
     expect(mock.calls).toContainEqual({ method: "layout_set", params: { count: null, start_delay: "5 초", timing: null, confirm: false } });
@@ -109,7 +109,7 @@ describe("useMeasureScreen", () => {
 
   it("scans only picked files, closes only accepted imports and handles cancellation", async () => {
     await session.configure({ method: "mdat" });
-    const { result } = renderHook(useMeasureScreen, { wrapper });
+    const { result } = renderHook(() => useMeasureScreen(false), { wrapper });
     const a = result.current.actions;
     mock.queueDialog("dialog_pick_mdat", null);
     await perform(() => a.pickMdat(null));

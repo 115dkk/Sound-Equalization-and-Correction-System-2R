@@ -95,6 +95,8 @@ export type MeasureView = {
   records: PositionRecord[];
   /** `measurement_curves { positions: null, roles: null }`; null or no curves before anything is measured. */
   curves: MeasurementCurvesResult | null;
+  /** A `measurement_curves` read is in flight: with `curves` null the first one (drawn as loading, not as empty), else a reread while the held curves stay drawn. */
+  curvesLoading: boolean;
   /** Sweep length choices from `measure_configure`'s `sweep_lengths` at its sample rate. */
   sweepOptions: SweepOption[];
   /** Sweep repetitions 1/2/4/8 (`extra.devices.repetitions`), read from `measure_configure`'s result. */

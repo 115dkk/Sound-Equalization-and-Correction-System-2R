@@ -218,6 +218,29 @@ describe("측정·가져오기 screen", () => {
     expect(actions.setGraphHidden).toHaveBeenCalledWith(false);
   });
 
+  it("draws a loading state, not the empty one, during the first read of the curves, and keeps the curves with a status in the header during a reread (TD-237)", () => {
+    renderStep({ ...partialView, curves: null, curvesLoading: true });
+    expect(ui("measure.graph.loading").textContent).toBe(t("measure.graph.loading"));
+    expect(byUi("measure.graph.empty")).toBeNull();
+    expect(byUi("measure.plot")).toBeNull();
+    expect(ui("measure.graph.refreshing").textContent).toBe("");
+    cleanup();
+    renderStep({ ...partialView, curvesLoading: true });
+    expect(byUi("measure.plot")).not.toBeNull();
+    expect(byUi("measure.graph.loading")).toBeNull();
+    const status = ui("measure.graph.refreshing");
+    expect(status.textContent).toBe(t("measure.graph.refreshing"));
+    expect(status.getAttribute("role")).toBe("status");
+    expect(status.getAttribute("aria-live")).toBe("polite");
+    expect(ui("measure.graph").querySelector(".ui-card__header")?.contains(status)).toBe(true);
+    cleanup();
+    // A read that finished with no curves is the empty state, as before.
+    renderStep({ ...emptyView, curvesLoading: false });
+    expect(byUi("measure.graph.empty")).not.toBeNull();
+    expect(byUi("measure.graph.loading")).toBeNull();
+    expect(ui("measure.graph.refreshing").textContent).toBe("");
+  });
+
   it("says what 0 dB is: the reference measurement and its band, or nothing without one (U17)", () => {
     renderStep(referenceMidView);
     expect(ui("measure.plot.reference").textContent).toBe("0 dB = L 위치 1 곡선의 200~2000 Hz 평균");

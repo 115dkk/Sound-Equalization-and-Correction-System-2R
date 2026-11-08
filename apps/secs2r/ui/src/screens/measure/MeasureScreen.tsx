@@ -455,6 +455,9 @@ export function referenceText(t: Translate, reference: CurveReference | null): s
   return t(reference.band === "sub" ? "measure.graph.reference.sub" : "measure.graph.reference.mid", params);
 }
 
+/** The plot's height; a first read's loading state takes the same place. */
+const GRAPH_HEIGHT = 300;
+
 function GraphCard({ view, actions }: { view: MeasureView; actions: MeasureActions }) {
   const t = useT();
   const data = view.curves;
@@ -477,6 +480,11 @@ function GraphCard({ view, actions }: { view: MeasureView; actions: MeasureActio
   );
   const positions = useMemo(() => [...new Set(curves.map((curve) => curve.position ?? 1))].sort((a, b) => a - b), [curves]);
   const zero = referenceText(t, data?.reference ?? null);
+  // The curves are read when this screen is shown (TD-237). A first read
+  // takes the empty state's place with a loading state; a reread keeps the
+  // held curves drawn and says so in the header until it lands.
+  const firstRead = view.curvesLoading && !data;
+  const rereading = view.curvesLoading && !!data;
   return (
     <Card
       dense
@@ -485,6 +493,11 @@ function GraphCard({ view, actions }: { view: MeasureView; actions: MeasureActio
       hidden={view.graphHidden}
       title={t("plot.measurement.title")}
       help={curves.length > 0 ? t("measure.graph.description") : undefined}
+      actions={
+        <span className="measure-graph__refreshing" role="status" aria-live="polite" data-ui="measure.graph.refreshing">
+          {rereading && <StatusPill tone="busy">{t("measure.graph.refreshing")}</StatusPill>}
+        </span>
+      }
     >
       {data && curves.length > 0 ? (
         <>
@@ -500,7 +513,7 @@ function GraphCard({ view, actions }: { view: MeasureView; actions: MeasureActio
             yRange={data.axes.value}
             range={view.plotRange}
             onRangeChange={actions.setPlotRange}
-            height={300}
+            height={GRAPH_HEIGHT}
           />
           {zero && (
             <p className="measure-graph__reference" data-ui="measure.plot.reference">
@@ -508,6 +521,10 @@ function GraphCard({ view, actions }: { view: MeasureView; actions: MeasureActio
             </p>
           )}
         </>
+      ) : firstRead ? (
+        <div className="measure-graph__loading" style={{ height: GRAPH_HEIGHT }} role="status" data-ui="measure.graph.loading">
+          <StatusPill tone="busy">{t("measure.graph.loading")}</StatusPill>
+        </div>
       ) : (
         <EmptyState id="measure.graph.empty" title={t("measure.graph.empty.title")} description={t("measure.graph.empty.body")} />
       )}

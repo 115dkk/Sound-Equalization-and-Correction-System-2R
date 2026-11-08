@@ -96,7 +96,7 @@ function Shell({ tutorialStart }: { tutorialStart?: string | undefined }) {
       break;
     }
   }, [settingFocus, host.current]);
-  const measure = useMeasureScreen();
+  const measure = useMeasureScreen(host.current === "measure");
   const goToMeasurements = useCallback(() => navigateToSetting("measure", '[data-ui="measure.positions"] [aria-current="true"]', '[data-ui="measure.positions"] button'), [navigateToSetting]);
   // A project warning's 다시 측정: that position picked (never during a device
   // job) and its measure action focused; on the import path, the import.

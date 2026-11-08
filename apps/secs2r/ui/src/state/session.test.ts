@@ -112,6 +112,8 @@ it("starts status watch, reloads job dependencies and clears selection after mea
   try {
     await session.start(); await session.settled();
     expect(mock.calls.some((r) => r.method === "status_watch_start")).toBe(true);
+    // Measuring happens on 측정·가져오기, the screen that reads the curves (TD-237).
+    session.stores.curves.show();
     await session.configure({ method: "mock" });
     session.host.set({ selected: 4 });
     await session.call({ method: "measure_position", params: { position: 4 } });

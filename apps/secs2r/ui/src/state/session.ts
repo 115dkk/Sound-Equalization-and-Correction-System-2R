@@ -80,6 +80,43 @@ export function createSession(ipc: Ipc) {
     const store = resource(read, failed);
     return { ...store, load: () => track(() => store.load()) };
   }
+  /**
+   * A resource one screen alone draws, read only while that screen is shown
+   * (TD-237). A reload while it is hidden marks the held value stale and
+   * reads nothing; showing the screen reads a stale value again. `reading`
+   * says a read is in flight, so the screen can tell a first read from a
+   * reread of the value it still draws.
+   */
+  function createShownResource<T>(read: () => Promise<T>, failed: (error: unknown) => void) {
+    let shown = 0;
+    let stale = true;
+    let reads = 0;
+    const store = createResource(async () => {
+      try { return await read(); } catch (error) { stale = true; throw error; }
+    }, failed);
+    const reading = createStore(false);
+    async function readNow() {
+      stale = false;
+      const ticket = ++reads;
+      reading.set(true);
+      try { await store.load(); } finally { if (ticket === reads) reading.set(false); }
+    }
+    return { ...store, reading,
+      load: () => {
+        if (shown > 0) return readNow();
+        stale = true; store.invalidate();
+        return Promise.resolve();
+      },
+      set: (value: T | null) => { if (value === null) stale = true; store.set(value); },
+      invalidate: () => { stale = true; store.invalidate(); },
+      /** The screen is shown: a stale value is read again at once. The returned function hides it. */
+      show: () => {
+        shown++;
+        if (stale) void readNow();
+        return () => { shown--; };
+      },
+    };
+  }
   const host = createPatchStore<HostState>({
     computeLoading: true, computeSaving: false, computeError: null,
     current: "system", path: null, selected: null, graphHidden: false, plotRange: { x: null, y: null },
@@ -122,7 +159,9 @@ export function createSession(ipc: Ipc) {
     config: read({ method: "config_get" }), notices: read({ method: "config_validate" }), dsp: read({ method: "dsp_get" }),
     layout: read({ method: "layout_get" }), estimate: read({ method: "position_estimate" }), methods: read({ method: "measure_methods" }),
     measurementSettings: createStore<import("../ipc/bindings/MeasureConfigResult").MeasureConfigResult | null>(null),
-    records: read({ method: "measurement_records" }), curves: read({ method: "measurement_curves", params: { positions: null, roles: null } }),
+    records: read({ method: "measurement_records" }),
+    // 측정·가져오기 alone draws every position's curves (TD-237).
+    curves: createShownResource(() => ipc.request({ method: "measurement_curves", params: { positions: null, roles: null } }), report),
     levels: read({ method: "levels_get" }), settings: read({ method: "calibration_settings_get" }),
     micCalibration: read({ method: "mic_calibration_get" }),
     modeSpec: createResource(async (): Promise<import("../ipc/bindings/ModeSpecResult").ModeSpecResult> => {

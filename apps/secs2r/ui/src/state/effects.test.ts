@@ -37,12 +37,17 @@ it.each(reloadCases)("reload.%s refreshes its public store", async (key, request
   const session = createSession(mock);
   try {
     await session.start(); await session.settled();
-    const previous = session.stores[key].getSnapshot();
+    // A resource one screen alone draws is read while that screen is shown (TD-237).
+    const store = session.stores[key];
+    const hide = "show" in store ? store.show() : undefined;
+    await session.settled();
+    const previous = store.getSnapshot();
     mock.calls.length = 0;
     await session.call(request); await session.settled();
     expect(mock.calls.filter((call) => call.method === getter)).toHaveLength(1);
-    expect(session.stores[key].getSnapshot()).not.toBeNull();
-    expect(session.stores[key].getSnapshot()).not.toBe(previous);
+    expect(store.getSnapshot()).not.toBeNull();
+    expect(store.getSnapshot()).not.toBe(previous);
+    hide?.();
   } finally { session.dispose(); await session.settled(); mock.dispose(); }
 });
 
@@ -81,8 +86,13 @@ it("reloads attached counts and stale results without making the project dirty",
     expect(session.stores.results.getSnapshot()?.calibration).toMatchObject({ stale: true, stale_reason: "measurements" });
     expect(session.stores.lines.getSnapshot()?.stale).toBe(true);
     expect(session.stores.resultCurves.getSnapshot()?.curves?.stale).toBe(true);
-    expect(mock.calls.map((call) => call.method)).toEqual(expect.arrayContaining(["measurement_curves", "mic_calibration_get", "results", "result_curves", "result_lines"]));
+    expect(mock.calls.map((call) => call.method)).toEqual(expect.arrayContaining(["mic_calibration_get", "results", "result_curves", "result_lines"]));
     expect(session.stores.project.getSnapshot()?.dirty).toBe(false);
+    // The measurement curves change too; they are read once 측정·가져오기 is shown (TD-237).
+    expect(mock.calls.some((call) => call.method === "measurement_curves")).toBe(false);
+    const hide = session.stores.curves.show(); await session.settled();
+    expect(mock.calls.filter((call) => call.method === "measurement_curves")).toHaveLength(1);
+    hide();
   } finally { session.dispose(); await session.settled(); mock.dispose(); }
 });
 

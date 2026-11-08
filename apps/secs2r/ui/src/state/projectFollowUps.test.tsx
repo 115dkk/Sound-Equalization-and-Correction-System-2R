@@ -17,7 +17,7 @@ it.each(["dialog_pick_mdat", "dialog_open_file", "dialog_save_file", "dialog_pic
   let emit!: (method: string) => void;
   const session = createSession({ ...mock, externalChanges: { subscribe: async (next) => { emit = next; return () => {}; } } });
   await session.start(); await session.settled();
-  const hook = renderHook(() => ({ measure: useMeasureScreen(), calibrate: useCalibrateScreen(), exporter: useExportScreen() }), {
+  const hook = renderHook(() => ({ measure: useMeasureScreen(false), calibrate: useCalibrateScreen(), exporter: useExportScreen() }), {
     wrapper: ({ children }: { children: ReactNode }) => <SessionProvider value={session}>{children}</SessionProvider>,
   });
   const choose = () => {
@@ -67,7 +67,7 @@ it.each((["mdat_scan", "dialog_pick_mdat", "dialog_open_file", "dialog_save_file
     return response;
   } });
   await session.start(); await session.settled();
-  const hook = renderHook(() => ({ measure: useMeasureScreen(), calibrate: useCalibrateScreen(), exporter: useExportScreen() }), {
+  const hook = renderHook(() => ({ measure: useMeasureScreen(false), calibrate: useCalibrateScreen(), exporter: useExportScreen() }), {
     wrapper: ({ children }: { children: ReactNode }) => <SessionProvider value={session}>{children}</SessionProvider>,
   });
   try {

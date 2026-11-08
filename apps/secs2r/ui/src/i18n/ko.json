@@ -471,6 +471,8 @@
   "measure.graph.reference.sub": "0 dB = {code} 위치 {n} 곡선의 40~120 Hz 평균",
   "measure.graph.empty.title": "측정 곡선 없음",
   "measure.graph.empty.body": "위치를 측정하거나 측정 파일을 가져오면 채널마다 곡선이 나타납니다.",
+  "measure.graph.loading": "측정 곡선 불러오는 중",
+  "measure.graph.refreshing": "곡선 다시 불러오는 중",
   "measure.run.title": "위치 {n} 측정 중",
   "measure.run.label": "위치 {n} 측정 진행",
   "measure.run.channels": "채널 {done}/{total}",
