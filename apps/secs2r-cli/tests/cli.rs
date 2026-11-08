@@ -27,6 +27,16 @@ fn run(args: &[&str]) -> (Output, Duration) {
     (output, started.elapsed())
 }
 
+fn run_in(folder: &Path, args: &[&str]) -> (Output, Duration) {
+    let started = Instant::now();
+    let output = Command::new(env!("CARGO_BIN_EXE_secs2r-cli"))
+        .current_dir(folder)
+        .args(args)
+        .output()
+        .unwrap();
+    (output, started.elapsed())
+}
+
 fn lines(output: &Output) -> Vec<Value> {
     std::str::from_utf8(&output.stdout)
         .unwrap()
@@ -447,15 +457,19 @@ fn export_accepts_filter_kinds() {
 fn deterministic_run_and_sample_flow() {
     let root = root("deterministic");
     let run_root = root.join("run");
-    let run_arg = run_root.to_string_lossy();
-    let (first_run, first_time) = run(&[
+    // Both runs name the output folder relative to their working folder: the service refuses
+    // relative export folders (audit #186 TD-211), so the CLI resolves `--out` itself. The
+    // side mdat records the project path, so the two runs spell it the same way (a
+    // canonicalized root carries Windows' verbatim prefix and an absolute one does not).
+    let run_args = [
         "--deterministic-uuids",
         "run",
         "--out",
-        &run_arg,
+        "run",
         "--fill",
         "sample",
-    ]);
+    ];
+    let (first_run, first_time) = run_in(&root, &run_args);
     let first_lines = assert_success(&first_run);
     assert!(first_lines.iter().any(|value| {
         value["reply"]["data"]["skipped"] == "filter-text"
@@ -465,14 +479,7 @@ fn deterministic_run_and_sample_flow() {
     assert!(run_root.join("export/equalizer-apo").exists());
     let expected = files(&run_root);
     fs::remove_dir_all(&run_root).unwrap();
-    let (second_run, second_time) = run(&[
-        "--deterministic-uuids",
-        "run",
-        "--out",
-        &run_arg,
-        "--fill",
-        "sample",
-    ]);
+    let (second_run, second_time) = run_in(&root, &run_args);
     assert_success(&second_run);
     assert_eq!(expected, files(&run_root));
 

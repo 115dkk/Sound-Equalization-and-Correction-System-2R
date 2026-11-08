@@ -189,13 +189,23 @@ impl Runner {
     ) {
         self.call(Request::Export(ExportParams {
             kind,
-            folder: folder.to_string_lossy().into_owned(),
+            folder: absolute_folder(folder),
             mdat_scope,
             design_name,
             camilla_devices,
             extra_rates,
         }));
     }
+}
+
+/// The service refuses relative export folders (audit #186 TD-211), so the CLI resolves a
+/// relative `--out` against its own working folder, which is what a shell user means by it.
+/// A path `std::path::absolute` cannot resolve goes as given and the service names the field.
+fn absolute_folder(folder: &Path) -> String {
+    std::path::absolute(folder)
+        .unwrap_or_else(|_| folder.to_path_buf())
+        .to_string_lossy()
+        .into_owned()
 }
 
 fn response_job(response: &Response) -> Option<JobStarted> {
