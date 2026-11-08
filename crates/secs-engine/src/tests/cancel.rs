@@ -1,34 +1,21 @@
 //! Cancellation probes for the stage tests (TD-49).
 //!
-//! A stage polls `cancelled()` where a job's cancel token would be read. The
-//! probe stands in for the token: it reads false for its first `after` polls
-//! and true from then on, as a token cancelled in the middle of the stage
-//! does, and it counts every poll. Between two polls a stage does at most one
-//! unit of its work (an IR cell, a candidate delay, a phase position, a ladder
-//! step, a residual evaluation), so the polls that read true before the stage
-//! returns bound the work done after cancellation.
+//! A stage receives the same compute context as production. Its probe token
+//! reads false before the requested check, true from that check onward, and
+//! records every poll. Between polls a stage does at most one unit of work.
+
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::EngineError;
-use std::cell::Cell;
+use secs_compute::{CancelToken, Context, MemoryBudget, NoProgress};
 
-pub(crate) struct Probe {
-    after: usize,
-    polls: Cell<usize>,
-}
-
-impl Probe {
-    fn after(after: usize) -> Self {
-        Self {
-            after,
-            polls: Cell::new(0),
-        }
-    }
-
-    pub(crate) fn cancelled(&self) -> bool {
-        let k = self.polls.get();
-        self.polls.set(k + 1);
-        k >= self.after
-    }
+fn context(after: usize) -> (Context, Arc<AtomicUsize>) {
+    let (cancel, polls) = CancelToken::probe(after);
+    (
+        Context::new(1, MemoryBudget::new(u64::MAX), Arc::new(NoProgress), cancel),
+        polls,
+    )
 }
 
 /// Runs `stage` uncancelled and then cancelled after each poll it makes
@@ -38,11 +25,11 @@ impl Probe {
 pub(crate) fn assert_cancels<T>(
     name: &str,
     latency: usize,
-    stage: impl Fn(&dyn Fn() -> bool) -> Result<T, EngineError>,
+    stage: impl Fn(&Context) -> Result<T, EngineError>,
 ) -> (T, usize) {
-    let probe = Probe::after(usize::MAX);
-    let out = stage(&|| probe.cancelled()).unwrap_or_else(|e| panic!("{name}: {e}"));
-    let total = probe.polls.get();
+    let (ctx, polls) = context(usize::MAX);
+    let out = stage(&ctx).unwrap_or_else(|error| panic!("{name}: {error}"));
+    let total = polls.load(Ordering::SeqCst);
     let mut flips: Vec<_> = (0..total.min(64)).collect();
     let mut n = 64;
     while n < total {
@@ -53,14 +40,14 @@ pub(crate) fn assert_cancels<T>(
     flips.dedup();
     let mut worst = 0;
     for n in flips {
-        let probe = Probe::after(n);
-        let result = stage(&|| probe.cancelled());
+        let (ctx, polls) = context(n + 1);
+        let result = stage(&ctx);
         assert!(
             matches!(result, Err(EngineError::Cancelled)),
             "{name}: cancelled after {n} of {total} polls, got {:?}",
             result.err()
         );
-        let late = probe.polls.get() - n;
+        let late = polls.load(Ordering::SeqCst) - n;
         assert!(
             late <= latency,
             "{name}: {late} polls after cancelling at {n} of {total} (limit {latency})"

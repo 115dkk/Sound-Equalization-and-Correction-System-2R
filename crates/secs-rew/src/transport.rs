@@ -173,3 +173,47 @@ impl Transport for RecordedTransport {
         expected.response
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::{Read as _, Write as _};
+    use std::net::TcpListener;
+    use std::thread;
+
+    #[test]
+    fn transport_body_limit_is_128_mib_td220() {
+        const LIMIT: usize = 128 * 1024 * 1024;
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0_u8; 4096];
+            let _ = stream.read(&mut request).unwrap();
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                LIMIT + 1
+            )
+            .unwrap();
+            let chunk = [b' '; 64 * 1024];
+            let mut remaining = LIMIT + 1;
+            while remaining > 0 {
+                let length = remaining.min(chunk.len());
+                if stream.write_all(&chunk[..length]).is_err() {
+                    break;
+                }
+                remaining -= length;
+            }
+        });
+
+        let transport = HttpTransport::new(&format!("http://{address}")).unwrap();
+        let request = Request::new("GET", "/large", None, Duration::from_secs(10));
+        let error = transport.request(&request).unwrap_err();
+        assert!(matches!(
+            error,
+            RewError::Connection { ref path, .. } if path == "/large"
+        ));
+        server.join().unwrap();
+    }
+}

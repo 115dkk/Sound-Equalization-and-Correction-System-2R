@@ -35,8 +35,8 @@ fn values(s: XoScores) -> [f64; 3] {
 
 #[test]
 fn xo_scores_replayed_designs() {
-    for name in cases::names() {
-        let case = cases::load(&name);
+    for name in cases::names(&crate::tests::Oracle) {
+        let case = cases::load(&crate::tests::Oracle, &name);
         let design = replay(&name);
         let fx = Fixture::load("engine_xo", &format!("{name}_scores"));
         let expected: Vec<_> = cases::pairs(&fx.outputs()["scores"])
@@ -126,7 +126,7 @@ fn xo_parallel_order_progress_and_cancellation() {
             self.0.lock().unwrap().push(p.clone());
         }
     }
-    let case = cases::load("room");
+    let case = cases::load(&crate::tests::Oracle, "room");
     let settings = serde_json::from_value(case.settings.clone()).unwrap();
     let view = crate::ProjectView {
         groups: &case.config.groups,
@@ -228,7 +228,7 @@ fn xo_recommendation_reports_a_position_missing_a_sub() {
     // TD-48: BA and RC only use complete positions, so the candidate designs
     // succeed; scoring replays every position where a main was measured and
     // used to panic there instead of reporting the incomplete measurement.
-    let mut case = cases::load("room");
+    let mut case = cases::load(&crate::tests::Oracle, "room");
     let (_, roles) = case
         .measurements
         .positions
@@ -262,7 +262,7 @@ fn xo_recommendation_reports_a_position_missing_a_sub() {
 fn xo_candidates_share_the_job_budget() {
     use secs_compute::{CancelToken, MemoryBudget, NoProgress};
     use std::sync::Arc;
-    let case = cases::load("room");
+    let case = cases::load(&crate::tests::Oracle, "room");
     let settings: secs_types::calibration::CalibrationSettings =
         serde_json::from_value(case.settings.clone()).unwrap();
     let view = crate::ProjectView {
@@ -297,7 +297,7 @@ fn xo_candidates_share_the_job_budget() {
     let (tx, rx) = std::sync::mpsc::channel();
     let worker = {
         let ctx = Arc::clone(&ctx);
-        let (case, settings) = (cases::load("room"), settings.clone());
+        let (case, settings) = (cases::load(&crate::tests::Oracle, "room"), settings.clone());
         std::thread::spawn(move || {
             let view = crate::ProjectView {
                 groups: &case.config.groups,
@@ -337,8 +337,8 @@ fn xo_candidates_share_the_job_budget() {
         &ctx,
     );
     assert!(
-        matches!(&result, Err(crate::EngineError::Input(message))
-            if message.contains("exceeds memory budget")),
+        matches!(&result, Err(crate::EngineError::Memory { requested, total })
+            if requested > total),
         "{result:?}"
     );
     assert_eq!(
@@ -366,7 +366,7 @@ fn binomial_quantile(n: usize, p: f64) -> usize {
 fn xo_recommendation_production_envelope() {
     let mut failures = Vec::new();
     for name in ["room", "dolby"] {
-        let case = cases::load(name);
+        let case = cases::load(&crate::tests::Oracle, name);
         let settings: secs_types::calibration::CalibrationSettings =
             serde_json::from_value(case.settings.clone()).unwrap();
         let view = crate::ProjectView {

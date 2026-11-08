@@ -47,7 +47,7 @@ fn calibration_resamples_44100_ir_without_changing_the_source() {
     assert_eq!(result.measurements.positions[0].1[0].1.sample_rate, 48000);
     assert_eq!(irs.positions[0].1[0].1.sample_rate, 44100);
     assert_eq!(irs.positions[0].1[0].1.t0.to_bits(), 0.125_f64.to_bits());
-    assert!(result.design.mains.is_empty());
+    assert!(result.design.main_roles().next().is_none());
 }
 
 #[test]

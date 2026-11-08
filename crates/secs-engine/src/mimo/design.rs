@@ -4,6 +4,7 @@
 use secs_dsp::{
     fft,
     fir::firwin,
+    grid::geomspace,
     iir::{BType, Sos, butter, sosfilt},
     interp, pairwise_sum,
     response::hp2,
@@ -26,6 +27,7 @@ pub(crate) fn early_samples(mimo_early_ms: f64) -> usize {
 }
 
 use super::solve::solve;
+#[cfg(any(test, feature = "test-support"))]
 use crate::{EngineConfig, MeasurementSet};
 #[cfg(test)]
 use secs_compute::MapError;
@@ -86,16 +88,6 @@ impl Default for MimoDesign {
 
 pub fn lowpass_fir(fc: f64, taps: usize) -> Result<Vec<f64>, EngineError> {
     Ok(firwin(taps, fc, FS_LOW)?)
-}
-
-fn geomspace(start: f64, end: f64) -> Vec<f64> {
-    let step = (end.log10() - start.log10()) / 199.0;
-    let mut values: Vec<_> = (0..200)
-        .map(|k| 10f64.powf(start.log10() + k as f64 * step))
-        .collect();
-    values[0] = start;
-    values[199] = end;
-    values
 }
 
 /// Position-mean one-third-octave support ranges, in main then sub order.
@@ -174,12 +166,12 @@ pub fn support_ranges(
             reference = db[k];
             start = f[k];
         }
-        let low = geomspace(start, 15.0)
+        let low = geomspace(start, 15.0, 200)
             .into_iter()
             .find(|&v| interp(v, f, &db) < reference - 10.0)
             .unwrap_or(15.0)
             .max(if sub.is_some() { 20.0 } else { 50.0 });
-        let high = geomspace(start, fsiso)
+        let high = geomspace(start, fsiso, 200)
             .into_iter()
             .find(|&v| interp(v, f, &db) < reference - 10.0)
             .unwrap_or(fsiso);
@@ -533,6 +525,8 @@ impl BandGuard {
             .collect()
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn evaluate(&self, ys: &[Vec<f64>]) -> f64 {
         self.evaluate_band(ys).0
     }
@@ -584,6 +578,7 @@ impl BandGuard {
 
 /// Absolute modal-tail change, in the upstream 0.15 seconds-per-dB scale.
 /// Despite its name this guard does not compare fitted T60 slopes.
+#[cfg(any(test, feature = "test-support"))]
 pub fn worst_t60_change(
     xs: &[Vec<f64>],
     ys: &[Vec<f64>],
@@ -797,7 +792,6 @@ impl GuardStep {
     }
 }
 
-/// The last rejected guard step as a note's cause; `None` when every step
 /// One position's energy change in dB for the seat guard (ADR 0036). Energy
 /// that appears where the baseline had none is a violation, not a skipped
 /// position; only a position with no energy before and after says nothing.
@@ -815,6 +809,7 @@ pub(crate) fn seat_change(before: f64, after: f64) -> Option<f64> {
 /// The change reported when a position gains energy it had none of.
 pub(crate) const SEAT_VIOLATION_DB: f64 = 99.0;
 
+/// The last rejected guard step as a note's cause; `None` when every step
 /// passed (no reduction).
 pub(crate) fn guard_cause(
     guards: &[GuardStep],
@@ -833,13 +828,37 @@ pub(crate) fn guard_cause(
         band: (step.band_db > 1.0)
             .then_some(step.band_hz)
             .flatten()
-            .map(|(lo, hi)| (lo, hi, step.band_db)),
+            .map(|(lo_hz, hi_hz)| crate::notes::GuardBand {
+                lo_hz,
+                hi_hz,
+                db: step.band_db,
+            }),
         tail: (step.t60_change > 0.15)
             .then_some(step.mode_hz)
             .flatten()
-            .map(|hz| (hz, step.t60_change / 0.15)),
+            .map(|hz| crate::notes::GuardTail {
+                hz,
+                db: step.t60_change / 0.15,
+            }),
     })
 }
+
+fn mimo_note(note: crate::MimoNote) -> Note {
+    Note::Mimo { note }
+}
+
+fn support_ranges_note(ranges: &[(String, Option<(f64, f64)>)]) -> Note {
+    mimo_note(crate::MimoNote::SupportRanges {
+        ranges: ranges
+            .iter()
+            .map(|(role, range)| crate::notes::RoleNote {
+                role: role.clone(),
+                value: range.map(|(lo_hz, hi_hz)| crate::notes::Band { lo_hz, hi_hz }),
+            })
+            .collect(),
+    })
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct InputTrace {
     pub candidates: Vec<String>,
@@ -996,6 +1015,8 @@ pub(crate) fn rank_score_direct(
 
 /// The low-rate stage boundary used by the oracle: paths have lower-edge
 /// protection and arrival alignment, but not the common low-pass FIR yet.
+#[cfg(any(test, feature = "test-support"))]
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn design_input(
     xs: &[Vec<f64>],
     raw_paths: &[Vec<Vec<f64>>],
@@ -1007,6 +1028,8 @@ pub(crate) fn design_input(
     design_input_observed(xs, raw_paths, direct, candidates, req, ctx, &|_, _| {})
 }
 
+#[cfg(any(test, feature = "test-support"))]
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn design_input_observed(
     xs: &[Vec<f64>],
     raw_paths: &[Vec<Vec<f64>>],
@@ -1218,6 +1241,7 @@ fn design_selected(
     })
 }
 
+#[cfg(any(test, feature = "test-support"))]
 pub fn design_mimo(
     design: &Design,
     measurements: &MeasurementSet,
@@ -1228,6 +1252,7 @@ pub fn design_mimo(
     design_mimo_traced(design, measurements, config, req, ctx).map(|(out, _)| out)
 }
 
+#[cfg(any(test, feature = "test-support"))]
 pub(crate) fn design_mimo_traced(
     design: &Design,
     measurements: &MeasurementSet,
@@ -1238,6 +1263,7 @@ pub(crate) fn design_mimo_traced(
     design_mimo_inputs(design, measurements, config, req, ctx, None)
 }
 
+#[cfg(any(test, feature = "test-support"))]
 pub(crate) fn design_mimo_inputs(
     design: &Design,
     measurements: &MeasurementSet,
@@ -1250,6 +1276,7 @@ pub(crate) fn design_mimo_inputs(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[cfg(any(test, feature = "test-support"))]
 pub(crate) fn design_mimo_inputs_observed(
     design: &Design,
     measurements: &MeasurementSet,
@@ -1264,7 +1291,7 @@ pub(crate) fn design_mimo_inputs_observed(
     let positions = &design.spectra.positions;
     if positions.len() < 3 {
         out.notes
-            .push(Note::Mimo(crate::notes::MimoNote::InsufficientPositions {
+            .push(mimo_note(crate::MimoNote::InsufficientPositions {
                 measured: positions.len(),
             }));
         return Ok((out, Vec::new()));
@@ -1277,6 +1304,7 @@ pub(crate) fn design_mimo_inputs_observed(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[cfg(any(test, feature = "test-support"))]
 pub(crate) fn design_mimo_prepared(
     design: &Design,
     prepared: &super::prepared::Prepared<'_>,
@@ -1286,6 +1314,53 @@ pub(crate) fn design_mimo_prepared(
     observe: &(dyn Fn(&str, std::time::Duration) + Sync),
 ) -> Result<(MimoDesign, Vec<(String, InputTrace)>), EngineError> {
     design_mimo_prepared_accelerated(design, prepared, req, ctx, input, observe, None)
+}
+
+struct Prelude {
+    out: MimoDesign,
+    usable: Vec<String>,
+}
+
+fn prepare_prelude(
+    design: &Design,
+    spectra: &Spectra,
+    req: &MimoRequest,
+    positions: &[u32],
+) -> Result<Prelude, EngineError> {
+    let mut out = MimoDesign {
+        ranges: support_ranges(design, spectra, req.fsiso, positions)?,
+        ..MimoDesign::default()
+    };
+    if let Some(low) = req.f_low.filter(|value| *value != 0.0) {
+        for (_, range) in &mut out.ranges {
+            *range =
+                range.and_then(|(lo, hi)| (lo.max(low) < hi * 0.8).then_some((lo.max(low), hi)));
+        }
+    }
+    let usable = out
+        .ranges
+        .iter()
+        .filter(|(role, range)| {
+            range.is_some()
+                && !req.exclude.contains(role)
+                && req.groups.as_ref().is_none_or(|groups| {
+                    design
+                        .groups
+                        .iter()
+                        .any(|(group, roles)| groups.contains(group) && roles.contains(role))
+                })
+        })
+        .map(|(role, _)| role.clone())
+        .collect();
+    if !req.exclude.is_empty() {
+        let mut excluded = req.exclude.clone();
+        excluded.sort();
+        out.notes.push(mimo_note(crate::MimoNote::ExcludedSupports {
+            roles: excluded,
+        }));
+    }
+    out.notes.push(support_ranges_note(&out.ranges));
+    Ok(Prelude { out, usable })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1303,7 +1378,7 @@ pub(crate) fn design_mimo_prepared_accelerated(
     let positions = &design.spectra.positions;
     if positions.len() < 3 {
         out.notes
-            .push(Note::Mimo(crate::notes::MimoNote::InsufficientPositions {
+            .push(mimo_note(crate::MimoNote::InsufficientPositions {
                 measured: positions.len(),
             }));
         return Ok((out, Vec::new()));
@@ -1311,40 +1386,7 @@ pub(crate) fn design_mimo_prepared_accelerated(
     validate_request(req)?;
     let spectra = &prepared.spectra;
     let started = std::time::Instant::now();
-    out.ranges = support_ranges(design, spectra, req.fsiso, positions)?;
-    if let Some(low) = req.f_low.filter(|v| *v != 0.0) {
-        for (_, range) in &mut out.ranges {
-            *range =
-                range.and_then(|(lo, hi)| (lo.max(low) < hi * 0.8).then_some((lo.max(low), hi)));
-        }
-    }
-    let usable: Vec<_> = out
-        .ranges
-        .iter()
-        .filter(|(r, range)| {
-            range.is_some()
-                && !req.exclude.contains(r)
-                && req.groups.as_ref().is_none_or(|groups| {
-                    design
-                        .groups
-                        .iter()
-                        .any(|(g, roles)| groups.contains(g) && roles.contains(r))
-                })
-        })
-        .map(|(r, _)| r.clone())
-        .collect();
-    if !req.exclude.is_empty() {
-        let mut excluded = req.exclude.clone();
-        excluded.sort();
-        out.notes
-            .push(Note::Mimo(crate::notes::MimoNote::ExcludedSupports(
-                excluded,
-            )));
-    }
-    out.notes
-        .push(Note::Mimo(crate::notes::MimoNote::SupportRanges(
-            out.ranges.clone(),
-        )));
+    let Prelude { mut out, usable } = prepare_prelude(design, spectra, req, positions)?;
     observe("ranges", started.elapsed());
     let started = std::time::Instant::now();
     let mains: Vec<_> = design
@@ -1381,13 +1423,10 @@ pub(crate) fn design_mimo_prepared_accelerated(
     let retained = prepared.reserved.saturating_add(shared_bytes);
     let needed = retained.saturating_add(largest_input.max(scratch_bytes));
     if needed > ctx.budget().total() {
-        return Err(EngineError::Input(
-            MemoryError::TooLarge {
-                requested: needed,
-                total: ctx.budget().total(),
-            }
-            .to_string(),
-        ));
+        return Err(EngineError::Memory {
+            requested: needed,
+            total: ctx.budget().total(),
+        });
     }
     let _shared_permit = ctx
         .budget()
@@ -1465,7 +1504,7 @@ pub(crate) fn design_mimo_prepared_accelerated(
     for (role, result) in results {
         let scale = result.trace.guard_scale;
         if let Some(cause) = guard_cause(&result.trace.guards, positions) {
-            out.notes.push(Note::Mimo(if scale > 0.0 {
+            out.notes.push(mimo_note(if scale > 0.0 {
                 crate::notes::MimoNote::GuardReduced {
                     role: role.clone(),
                     gain_db: 20.0 * scale.max(1e-9).log10(),
@@ -1486,24 +1525,21 @@ pub(crate) fn design_mimo_prepared_accelerated(
 }
 
 fn validate_request(req: &MimoRequest) -> Result<(), EngineError> {
-    if !(0.0..300.0).contains(&req.fsiso)
-        || req.fsiso == 0.0
-        || !req.level_db.is_finite()
-        || req.taps_low == 0
-        || req.taps_low > 720
-        || req.f_low.is_some_and(|f| !f.is_finite())
-        || !req.mimo_early_ms.is_finite()
-        || !(5.0..=60.0).contains(&req.mimo_early_ms)
-    {
-        return Err(EngineError::Input("invalid MIMO request".into()));
-    }
+    super::validate_field(
+        "fsiso",
+        (0.0..300.0).contains(&req.fsiso) && req.fsiso != 0.0,
+    )?;
+    super::validate_field("level_db", req.level_db.is_finite())?;
+    super::validate_field("taps_low", (1..=720).contains(&req.taps_low))?;
+    super::validate_field("f_low", req.f_low.is_none_or(f64::is_finite))?;
+    super::validate_field("mimo_early_ms", (5.0..=60.0).contains(&req.mimo_early_ms))?;
     Ok(())
 }
 
 fn memory_error(error: MemoryError) -> EngineError {
     match error {
         MemoryError::Cancelled => EngineError::Cancelled,
-        other => EngineError::Input(other.to_string()),
+        MemoryError::TooLarge { requested, total } => EngineError::Memory { requested, total },
     }
 }
 
@@ -1532,61 +1568,17 @@ pub(crate) fn design_mimo_before(
     let positions = &design.spectra.positions;
     if positions.len() < 3 {
         out.notes
-            .push(Note::Mimo(crate::notes::MimoNote::InsufficientPositions {
+            .push(mimo_note(crate::MimoNote::InsufficientPositions {
                 measured: positions.len(),
             }));
         return Ok((out, Vec::new()));
     }
-    if !(0.0..300.0).contains(&req.fsiso)
-        || req.fsiso == 0.0
-        || !req.level_db.is_finite()
-        || req.taps_low == 0
-        || req.taps_low > 720
-        || req.f_low.is_some_and(|f| !f.is_finite())
-        || !req.mimo_early_ms.is_finite()
-        || !(5.0..=60.0).contains(&req.mimo_early_ms)
-    {
-        return Err(EngineError::Input("invalid MIMO request".into()));
-    }
+    validate_request(req)?;
     let prepared =
         crate::measurement::prepare(measurements, config, &crate::setup::Setup::new(config))?;
     let spectra =
-        crate::export_view::export_view_prepared(design, measurements, &prepared, &|| false)?
-            .spectra;
-    out.ranges = support_ranges(design, &spectra, req.fsiso, positions)?;
-    if let Some(low) = req.f_low.filter(|v| *v != 0.0) {
-        for (_, range) in &mut out.ranges {
-            *range =
-                range.and_then(|(lo, hi)| (lo.max(low) < hi * 0.8).then_some((lo.max(low), hi)));
-        }
-    }
-    let usable: Vec<_> = out
-        .ranges
-        .iter()
-        .filter(|(r, range)| {
-            range.is_some()
-                && !req.exclude.contains(r)
-                && req.groups.as_ref().is_none_or(|groups| {
-                    design
-                        .groups
-                        .iter()
-                        .any(|(g, roles)| groups.contains(g) && roles.contains(r))
-                })
-        })
-        .map(|(r, _)| r.clone())
-        .collect();
-    if !req.exclude.is_empty() {
-        let mut excluded = req.exclude.clone();
-        excluded.sort();
-        out.notes
-            .push(Note::Mimo(crate::notes::MimoNote::ExcludedSupports(
-                excluded,
-            )));
-    }
-    out.notes
-        .push(Note::Mimo(crate::notes::MimoNote::SupportRanges(
-            out.ranges.clone(),
-        )));
+        crate::export_view::export_view_prepared(design, measurements, &prepared, ctx)?.spectra;
+    let Prelude { mut out, usable } = prepare_prelude(design, &spectra, req, positions)?;
     let results = ctx
         .try_map(
             design
@@ -1616,7 +1608,9 @@ pub(crate) fn design_mimo_before(
                         .acquire(bytes as u64, ctx.cancel())
                         .map_err(|e| match e {
                             MemoryError::Cancelled => EngineError::Cancelled,
-                            other => EngineError::Input(other.to_string()),
+                            MemoryError::TooLarge { requested, total } => {
+                                EngineError::Memory { requested, total }
+                            }
                         })?;
                 let mut xs = Vec::new();
                 let mut paths = Vec::new();
@@ -1649,7 +1643,7 @@ pub(crate) fn design_mimo_before(
     for (role, result) in results {
         let scale = result.trace.guard_scale;
         if let Some(cause) = guard_cause(&result.trace.guards, positions) {
-            out.notes.push(Note::Mimo(if scale > 0.0 {
+            out.notes.push(mimo_note(if scale > 0.0 {
                 crate::notes::MimoNote::GuardReduced {
                     role: role.clone(),
                     gain_db: 20.0 * scale.max(1e-9).log10(),

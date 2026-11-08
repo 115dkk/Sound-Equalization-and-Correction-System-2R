@@ -11,16 +11,26 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
+/// Return the byte length of one float32 WAV data chunk.
+pub fn wav_data_len(samples: usize) -> Result<u32, GraphError> {
+    let bytes = samples
+        .checked_mul(4)
+        .and_then(|bytes| u32::try_from(bytes).ok())
+        .filter(|bytes| bytes.checked_add(36).is_some())
+        .ok_or_else(|| GraphError::Invalid("FIR WAV exceeds RIFF limit".into()))?;
+    Ok(bytes)
+}
+
 /// Serialize an IEEE-float, mono, 32-bit WAV exactly like upstream `write_wav`.
 ///
 /// Fails when a tap is not finite once narrowed to `f32` (`1e100` is a finite
 /// `f64` but an infinite `f32`), so every writer that shares it rejects the
 /// coefficients before its first file.
 pub fn wav_bytes(data: &[f64], rate: u32) -> Result<Vec<u8>, GraphError> {
+    let data_len = wav_data_len(data.len())?;
     if let Some(index) = data.iter().position(|value| !(*value as f32).is_finite()) {
         return Err(GraphError::NonFinite(format!("fir[{index}] as f32")));
     }
-    let data_len = u32::try_from(data.len() * 4).expect("FIR WAV fits u32");
     let mut out = Vec::with_capacity(44 + data.len() * 4);
     out.extend_from_slice(b"RIFF");
     out.extend_from_slice(&(36 + data_len).to_le_bytes());
@@ -66,6 +76,60 @@ fn safe_bundle_path(path: &Path) -> bool {
             .all(|component| matches!(component, Component::Normal(_)))
 }
 
+fn is_link_or_reparse(metadata: &fs::Metadata) -> bool {
+    if metadata.file_type().is_symlink() {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt as _;
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+        metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
+}
+
+fn reject_linked_parents(root: &Path, destination: &Path) -> Result<(), std::io::Error> {
+    let relative = destination.strip_prefix(root).map_err(|_| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!(
+                "bundle destination is outside its root: {}",
+                destination.display()
+            ),
+        )
+    })?;
+    let Some(parent) = relative.parent() else {
+        return Ok(());
+    };
+    let mut current = root.to_path_buf();
+    for component in parent.components() {
+        current.push(component);
+        match fs::symlink_metadata(&current) {
+            Ok(metadata) if is_link_or_reparse(&metadata) => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    format!("bundle parent is a link: {}", current.display()),
+                ));
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => break,
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(())
+}
+
+/// Outcome of installing one staged file bundle.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BundleInstall {
+    /// A backup folder that could not be removed after a successful install.
+    pub leftover_backup: Option<(PathBuf, String)>,
+}
+
 /// Stage a complete bundle beside its destination, then install its entry file last.
 #[doc(hidden)]
 pub fn write_bundle_observed(
@@ -74,7 +138,7 @@ pub fn write_bundle_observed(
     entry: &Path,
     after_stage_write: &dyn Fn(usize, &Path) -> std::io::Result<()>,
     before_install: &dyn Fn(usize, &Path) -> std::io::Result<()>,
-) -> Result<(), std::io::Error> {
+) -> Result<BundleInstall, std::io::Error> {
     if !safe_bundle_path(entry)
         || !files.iter().any(|(path, _)| path == entry)
         || files.iter().any(|(path, _)| !safe_bundle_path(path))
@@ -137,6 +201,10 @@ pub fn write_bundle_observed(
     }
     for (relative, _) in files {
         let destination = root.join(relative);
+        if let Err(error) = reject_linked_parents(root, &destination) {
+            let _ = fs::remove_dir_all(&staging);
+            return Err(error);
+        }
         match fs::symlink_metadata(&destination) {
             Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {
                 let _ = fs::remove_dir_all(&staging);
@@ -189,6 +257,7 @@ pub fn write_bundle_observed(
     let result = (|| {
         for (index, relative) in install_order.enumerate() {
             let destination = root.join(relative);
+            reject_linked_parents(root, &destination)?;
             if let Some(parent) = destination.parent() {
                 fs::create_dir_all(parent)?;
             }
@@ -236,15 +305,19 @@ pub fn write_bundle_observed(
             return Err(error);
         }
         return Err(std::io::Error::other(format!(
-            "install failed ({error}); rollback failed ({})",
-            rollback_errors.join("; ")
+            "install failed ({error}); restoring the previous files failed ({}); they are kept in {}",
+            rollback_errors.join("; "),
+            backup.display()
         )));
     }
 
     // Every destination now has its new bytes. Cleanup cannot undo the commit.
     let _ = fs::remove_dir_all(&staging);
-    let _ = fs::remove_dir_all(&backup);
-    Ok(())
+    let leftover_backup = match fs::remove_dir_all(&backup) {
+        Ok(()) => None,
+        Err(error) => Some((backup, error.to_string())),
+    };
+    Ok(BundleInstall { leftover_backup })
 }
 
 #[cfg(test)]
@@ -270,7 +343,16 @@ mod tests {
     }
 
     #[test]
-    fn rollback_failure_keeps_backup_and_restores_remaining_entries() {
+    fn wav_data_len_refuses_riff_overflow_td225() {
+        let samples = ((u32::MAX - 36) / 4 + 1) as usize;
+        assert_eq!(
+            wav_data_len(samples),
+            Err(GraphError::Invalid("FIR WAV exceeds RIFF limit".into()))
+        );
+    }
+
+    #[test]
+    fn bundle_install_names_the_backup_when_restore_fails_td198() {
         let parent = temp_dir("rollback-failure");
         let root = parent.join("bundle");
         fs::create_dir_all(&root).unwrap();
@@ -299,11 +381,59 @@ mod tests {
         )
         .unwrap_err();
 
-        assert!(error.to_string().contains("rollback failed"));
         assert_eq!(fs::read(root.join("config.txt")).unwrap(), b"old config");
         let backups = leftovers(&parent, ".backup-");
         assert_eq!(backups.len(), 1);
         assert_eq!(fs::read(backups[0].join("a.txt")).unwrap(), b"old a");
+        assert!(error.to_string().contains(
+            "install failed (injected install failure); restoring the previous files failed"
+        ));
+        assert!(
+            error
+                .to_string()
+                .contains(&format!("they are kept in {}", backups[0].display()))
+        );
+        fs::remove_dir_all(parent).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn leftover_backup_is_reported_when_it_cannot_be_removed_td198() {
+        use std::os::windows::fs::OpenOptionsExt as _;
+
+        let parent = temp_dir("backup-removal-failure");
+        let root = parent.join("bundle");
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("config.txt"), b"old config").unwrap();
+        let files = vec![(PathBuf::from("config.txt"), b"new config".to_vec())];
+        let held = std::sync::Mutex::new(None);
+
+        let installed = write_bundle_observed(
+            &root,
+            &files,
+            Path::new("config.txt"),
+            &|_, _| Ok(()),
+            &|_, _| {
+                let backup = leftovers(&parent, ".backup-")
+                    .into_iter()
+                    .next()
+                    .expect("backup exists before install");
+                let file = fs::OpenOptions::new()
+                    .read(true)
+                    .share_mode(1)
+                    .open(backup.join("config.txt"))?;
+                *held.lock().unwrap() = Some(file);
+                Ok(())
+            },
+        )
+        .unwrap();
+
+        let (backup, error) = installed
+            .leftover_backup
+            .expect("an undeletable backup must be reported");
+        assert!(backup.exists());
+        assert!(!error.is_empty());
+        drop(held.into_inner().unwrap());
         fs::remove_dir_all(parent).unwrap();
     }
 

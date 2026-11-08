@@ -1,34 +1,53 @@
 //! Measurement adapters. This is a Rust service seam, not the IPC schema.
-pub(crate) mod json;
+#[allow(dead_code)]
 mod native;
 mod rew;
 pub mod sample;
 mod settings;
 
-pub use native::{BackendFactory, NativeMeasurer};
+pub(crate) use native::NativeMeasurer;
 pub(crate) use rew::RewLink;
 pub use rew::RewMeasurer;
 pub use sample::MockMeasurer;
 pub use settings::{
-    MeasurementSettings, plan_for, position_count, store_devices, to_audio_plan, to_rew_plan,
+    MeasurementSettings, plan_for, position_count, rew_executable, store_devices, to_audio_plan,
+    to_rew_plan,
 };
 
 use secs_project::{MeasurementPlan, MeasurementResult};
-use std::{fmt, sync::Arc};
+use std::fmt;
+
+use crate::jobs::JobContext;
 
 #[derive(Debug)]
 pub enum MeasureError {
     Input(String),
+    InputField {
+        field: &'static str,
+        detail: String,
+    },
+    InvalidSamples {
+        row: String,
+        reason: &'static str,
+    },
     Audio(secs_audio::AudioError),
     Rew(secs_rew::RewError),
+    RewAfterSubscribeFailure {
+        source: secs_rew::RewError,
+        subscribe_error: String,
+    },
     Project(secs_project::ProjectError),
 }
 impl fmt::Display for MeasureError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Input(s) => f.write_str(s),
+            Self::InputField { detail, .. } => f.write_str(detail),
+            Self::InvalidSamples { row, reason } => {
+                write!(f, "measurement row {row} has {reason} samples")
+            }
             Self::Audio(e) => e.fmt(f),
-            Self::Rew(e) => e.fmt(f),
+            Self::Rew(e) | Self::RewAfterSubscribeFailure { source: e, .. } => e.fmt(f),
             Self::Project(e) => e.fmt(f),
         }
     }
@@ -47,6 +66,31 @@ impl From<secs_rew::RewError> for MeasureError {
 impl From<secs_project::ProjectError> for MeasureError {
     fn from(e: secs_project::ProjectError) -> Self {
         Self::Project(e)
+    }
+}
+impl From<secs_project::RecordError> for MeasureError {
+    fn from(error: secs_project::RecordError) -> Self {
+        Self::Project(error.into())
+    }
+}
+
+pub(crate) fn validate_samples(
+    samples: &[f32],
+    row: impl Into<String>,
+) -> Result<(), MeasureError> {
+    let reason = if samples.is_empty() {
+        Some("empty")
+    } else if samples.iter().any(|sample| !sample.is_finite()) {
+        Some("non_finite")
+    } else {
+        None
+    };
+    match reason {
+        Some(reason) => Err(MeasureError::InvalidSamples {
+            row: row.into(),
+            reason,
+        }),
+        None => Ok(()),
     }
 }
 
@@ -86,7 +130,6 @@ pub struct Progress {
     pub phase: String,
     pub percent: f64,
 }
-pub type ProgressSink = Arc<dyn Fn(Progress) + Send + Sync>;
 
 /// How a measurement method commits a position's results.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -100,7 +143,7 @@ pub enum CommitBoundary {
 /// A position's results use the canonical `.secs` record regardless of source.
 /// Native measures one duplex sequence; cancellation yields no partial sequence.
 /// REW returns completed roles on cancellation, as its upstream session does.
-pub trait Measurer: Send {
+pub(crate) trait Measurer: Send {
     /// How a position's results are committed: all roles at once (native,
     /// mock), or each role as it arrives (REW, which records role by role).
     fn commit_boundary(&self) -> CommitBoundary {
@@ -109,11 +152,14 @@ pub trait Measurer: Send {
 
     fn devices(&mut self) -> Result<Vec<Device>, MeasureError>;
     fn status(&mut self) -> Result<Status, MeasureError>;
+    fn take_notices(&mut self) -> Vec<secs_types::ipc::Notice> {
+        Vec::new()
+    }
     fn measure_position(
         &mut self,
         plan: &MeasurementPlan,
         pos: i64,
-        progress: Option<ProgressSink>,
+        progress: Option<&JobContext>,
         cancel: &CancelToken,
     ) -> Result<Vec<MeasurementResult>, MeasureError>;
 
@@ -122,13 +168,52 @@ pub trait Measurer: Send {
         &mut self,
         plan: &MeasurementPlan,
         pos: i64,
+        progress: Option<&JobContext>,
         cancel: &CancelToken,
         record: &mut dyn FnMut(MeasurementResult) -> Result<(), MeasureError>,
     ) -> Result<(), MeasureError> {
-        for result in self.measure_position(plan, pos, None, cancel)? {
+        for result in self.measure_position(plan, pos, progress, cancel)? {
             record(result)?;
         }
         Ok(())
+    }
+}
+
+impl MockMeasurer {
+    /// Measures one position without attaching a service job progress sink.
+    pub fn measure_position(
+        &mut self,
+        plan: &MeasurementPlan,
+        pos: i64,
+        cancel: &CancelToken,
+    ) -> Result<Vec<MeasurementResult>, MeasureError> {
+        Measurer::measure_position(self, plan, pos, None, cancel)
+    }
+}
+
+#[allow(private_bounds)]
+impl<R> RewMeasurer<R>
+where
+    Self: Measurer,
+{
+    /// Returns the adapter's current availability.
+    pub fn status(&mut self) -> Result<Status, MeasureError> {
+        Measurer::status(self)
+    }
+
+    /// Lists devices reported by the adapter.
+    pub fn devices(&mut self) -> Result<Vec<Device>, MeasureError> {
+        Measurer::devices(self)
+    }
+
+    /// Measures one position without attaching a service job progress sink.
+    pub fn measure_position(
+        &mut self,
+        plan: &MeasurementPlan,
+        pos: i64,
+        cancel: &CancelToken,
+    ) -> Result<Vec<MeasurementResult>, MeasureError> {
+        Measurer::measure_position(self, plan, pos, None, cancel)
     }
 }
 
@@ -138,13 +223,21 @@ pub(crate) fn positive(value: i64, name: &str) -> Result<u32, MeasureError> {
         .filter(|v| *v > 0)
         .ok_or_else(|| MeasureError::Input(format!("{name} must be a positive u32")))
 }
-pub(crate) fn emit(sink: &Option<ProgressSink>, role: &str, pos: i64, phase: &str, percent: f64) {
-    if let Some(sink) = sink {
-        sink(Progress {
-            role: role.into(),
-            pos,
-            phase: phase.into(),
-            percent,
-        });
+pub(crate) fn emit(context: Option<&JobContext>, role: &str, pos: i64, phase: &str, percent: f64) {
+    if let Some(context) = context {
+        report(
+            context,
+            Progress {
+                role: role.into(),
+                pos,
+                phase: phase.into(),
+                percent,
+            },
+        );
     }
+}
+
+pub(crate) fn report(context: &JobContext, progress: Progress) {
+    let done = progress.percent.clamp(0.0, 100.0).round() as u64;
+    context.role_progress(&progress.phase, done, 100);
 }

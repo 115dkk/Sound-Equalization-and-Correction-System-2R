@@ -9,7 +9,8 @@ use secs_types::ipc::ExportKind;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::APP_NAME;
+use crate::fs::is_link_or_junction;
+use crate::{APP_NAME, LogLevel, LogSink};
 
 pub(crate) const MANIFEST_NAME: &str = "secs-design.json";
 const INDEX_NAME: &str = "designs.json";
@@ -23,6 +24,14 @@ pub(crate) enum DesignExportError {
     Json(#[from] serde_json::Error),
     #[error(transparent)]
     Graph(#[from] secs_graph::GraphError),
+    #[error(
+        "could not install replacement: {install}; could not restore backup {backup}: {restore}"
+    )]
+    Rollback {
+        backup: PathBuf,
+        install: std::io::Error,
+        restore: std::io::Error,
+    },
     #[error("timestamp is outside the RFC 3339 range")]
     Timestamp,
 }
@@ -190,9 +199,38 @@ pub(crate) fn staging_folder(destination: &Path) -> PathBuf {
         .join(format!(".{name}.stage-{}-{id}", std::process::id()))
 }
 
+#[cfg(test)]
 pub(crate) fn replace_folder(staged: &Path, destination: &Path) -> Result<(), DesignExportError> {
+    replace_folder_with_log(staged, destination, &crate::Deps::default().log)
+}
+
+pub(crate) fn replace_folder_with_log(
+    staged: &Path,
+    destination: &Path,
+    log: &LogSink,
+) -> Result<(), DesignExportError> {
+    replace_folder_using(
+        staged,
+        destination,
+        log,
+        |from, to| fs::rename(from, to),
+        |path| fs::remove_dir_all(path),
+    )
+}
+
+fn replace_folder_using<R, D>(
+    staged: &Path,
+    destination: &Path,
+    log: &LogSink,
+    mut rename: R,
+    mut remove: D,
+) -> Result<(), DesignExportError>
+where
+    R: FnMut(&Path, &Path) -> std::io::Result<()>,
+    D: FnMut(&Path) -> std::io::Result<()>,
+{
     if !destination.exists() {
-        fs::rename(staged, destination)?;
+        rename(staged, destination)?;
         return Ok(());
     }
     let backup = destination.with_file_name(format!(
@@ -204,12 +242,27 @@ pub(crate) fn replace_folder(staged: &Path, destination: &Path) -> Result<(), De
         std::process::id(),
         TEMP_ID.fetch_add(1, Ordering::Relaxed)
     ));
-    fs::rename(destination, &backup)?;
-    if let Err(error) = fs::rename(staged, destination) {
-        let _ = fs::rename(&backup, destination);
-        return Err(error.into());
+    rename(destination, &backup)?;
+    if let Err(install) = rename(staged, destination) {
+        return match rename(&backup, destination) {
+            Ok(()) => Err(install.into()),
+            Err(restore) => Err(DesignExportError::Rollback {
+                backup,
+                install,
+                restore,
+            }),
+        };
     }
-    fs::remove_dir_all(backup)?;
+    if let Err(error) = remove(&backup) {
+        log(
+            LogLevel::Warn,
+            "export",
+            &format!(
+                "could not remove replaced design backup {}: {error}",
+                backup.display()
+            ),
+        );
+    }
     Ok(())
 }
 
@@ -316,32 +369,61 @@ fn collect_files(folder: &Path) -> Result<Vec<FileRecord>, DesignExportError> {
     Ok(out)
 }
 
+#[cfg(test)]
 pub(crate) fn rebuild_index(base: &Path) -> Result<PathBuf, DesignExportError> {
-    rebuild_index_from(base, None)
+    rebuild_index_with_log(base, &crate::Deps::default().log)
 }
 
+pub(crate) fn rebuild_index_with_log(
+    base: &Path,
+    log: &LogSink,
+) -> Result<PathBuf, DesignExportError> {
+    rebuild_index_from(base, None, log)
+}
+
+#[cfg(test)]
 pub(crate) fn rebuild_index_selected(
     base: &Path,
     selected: &Path,
 ) -> Result<PathBuf, DesignExportError> {
-    rebuild_index_from(base, Some(selected))
+    rebuild_index_selected_with_log(base, selected, &crate::Deps::default().log)
 }
 
-fn rebuild_index_from(base: &Path, selected: Option<&Path>) -> Result<PathBuf, DesignExportError> {
+pub(crate) fn rebuild_index_selected_with_log(
+    base: &Path,
+    selected: &Path,
+    log: &LogSink,
+) -> Result<PathBuf, DesignExportError> {
+    rebuild_index_from(base, Some(selected), log)
+}
+
+fn rebuild_index_from(
+    base: &Path,
+    selected: Option<&Path>,
+    log: &LogSink,
+) -> Result<PathBuf, DesignExportError> {
     const MAX_DEPTH: usize = 4;
+
+    fn warn(log: &LogSink, line: String) {
+        log(LogLevel::Warn, "export", &line);
+    }
 
     fn manifest_entry(
         base: &Path,
         at: &Path,
         skip_unreadable: bool,
+        log: &LogSink,
     ) -> Result<Option<DesignIndexEntry>, DesignExportError> {
         let metadata = match fs::symlink_metadata(at) {
             Ok(metadata) => metadata,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(error) if skip_unreadable => {
-                eprintln!(
-                    "could not inspect design index folder {}; skipping it: {error}",
-                    at.display()
+                warn(
+                    log,
+                    format!(
+                        "could not inspect design index folder {}; skipping it: {error}",
+                        at.display()
+                    ),
                 );
                 return Ok(None);
             }
@@ -355,9 +437,12 @@ fn rebuild_index_from(base: &Path, selected: Option<&Path>) -> Result<PathBuf, D
             Ok(metadata) => metadata,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(error) if skip_unreadable => {
-                eprintln!(
-                    "could not inspect design manifest {}; skipping it: {error}",
-                    manifest.display()
+                warn(
+                    log,
+                    format!(
+                        "could not inspect design manifest {}; skipping it: {error}",
+                        manifest.display()
+                    ),
                 );
                 return Ok(None);
             }
@@ -369,9 +454,12 @@ fn rebuild_index_from(base: &Path, selected: Option<&Path>) -> Result<PathBuf, D
         let bytes = match fs::read(&manifest) {
             Ok(bytes) => bytes,
             Err(error) if skip_unreadable => {
-                eprintln!(
-                    "could not read design manifest {}; skipping it: {error}",
-                    manifest.display()
+                warn(
+                    log,
+                    format!(
+                        "could not read design manifest {}; skipping it: {error}",
+                        manifest.display()
+                    ),
                 );
                 return Ok(None);
             }
@@ -380,9 +468,12 @@ fn rebuild_index_from(base: &Path, selected: Option<&Path>) -> Result<PathBuf, D
         let fields = match serde_json::from_slice::<ManifestIndexFields>(&bytes) {
             Ok(fields) => fields,
             Err(error) => {
-                eprintln!(
-                    "could not parse design manifest {}; skipping it: {error}",
-                    manifest.display()
+                warn(
+                    log,
+                    format!(
+                        "could not parse design manifest {}; skipping it: {error}",
+                        manifest.display()
+                    ),
                 );
                 return Ok(None);
             }
@@ -410,14 +501,18 @@ fn rebuild_index_from(base: &Path, selected: Option<&Path>) -> Result<PathBuf, D
         depth: usize,
         out: &mut Vec<DesignIndexEntry>,
         skip_unreadable: bool,
+        log: &LogSink,
     ) -> Result<(), DesignExportError> {
         let metadata = match fs::symlink_metadata(at) {
             Ok(metadata) => metadata,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
             Err(error) if skip_unreadable => {
-                eprintln!(
-                    "could not inspect design index folder {}; skipping it: {error}",
-                    at.display()
+                warn(
+                    log,
+                    format!(
+                        "could not inspect design index folder {}; skipping it: {error}",
+                        at.display()
+                    ),
                 );
                 return Ok(());
             }
@@ -426,7 +521,7 @@ fn rebuild_index_from(base: &Path, selected: Option<&Path>) -> Result<PathBuf, D
         if is_link_or_junction(&metadata) || !metadata.is_dir() {
             return Ok(());
         }
-        if let Some(entry) = manifest_entry(base, at, skip_unreadable)? {
+        if let Some(entry) = manifest_entry(base, at, skip_unreadable, log)? {
             out.push(entry);
             return Ok(());
         }
@@ -436,9 +531,12 @@ fn rebuild_index_from(base: &Path, selected: Option<&Path>) -> Result<PathBuf, D
         let children = match fs::read_dir(at) {
             Ok(children) => children,
             Err(error) if skip_unreadable => {
-                eprintln!(
-                    "could not read design index folder {}; skipping it: {error}",
-                    at.display()
+                warn(
+                    log,
+                    format!(
+                        "could not read design index folder {}; skipping it: {error}",
+                        at.display()
+                    ),
                 );
                 return Ok(());
             }
@@ -448,9 +546,12 @@ fn rebuild_index_from(base: &Path, selected: Option<&Path>) -> Result<PathBuf, D
             let child = match child {
                 Ok(child) => child,
                 Err(error) if skip_unreadable => {
-                    eprintln!(
-                        "could not read an entry under {}; skipping it: {error}",
-                        at.display()
+                    warn(
+                        log,
+                        format!(
+                            "could not read an entry under {}; skipping it: {error}",
+                            at.display()
+                        ),
                     );
                     continue;
                 }
@@ -464,26 +565,9 @@ fn rebuild_index_from(base: &Path, selected: Option<&Path>) -> Result<PathBuf, D
             {
                 continue;
             }
-            scan(base, &path, depth + 1, out, skip_unreadable)?;
+            scan(base, &path, depth + 1, out, skip_unreadable, log)?;
         }
         Ok(())
-    }
-
-    fn is_link_or_junction(metadata: &fs::Metadata) -> bool {
-        if metadata.file_type().is_symlink() {
-            return true;
-        }
-        #[cfg(windows)]
-        {
-            use std::os::windows::fs::MetadataExt as _;
-            // Win32 FILE_ATTRIBUTE_REPARSE_POINT (audit #155 TD-110).
-            const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
-            metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
-        }
-        #[cfg(not(windows))]
-        {
-            false
-        }
     }
 
     enum IndexedManifest {
@@ -585,9 +669,12 @@ fn rebuild_index_from(base: &Path, selected: Option<&Path>) -> Result<PathBuf, D
                 match indexed_manifest(base, &entry.folder) {
                     IndexedManifest::Current(current) => entries.push(current),
                     IndexedManifest::Unreadable(error) => {
-                        eprintln!(
-                            "could not refresh indexed design {}; keeping its existing entry: {error}",
-                            entry.folder
+                        warn(
+                            log,
+                            format!(
+                                "could not refresh indexed design {}; keeping its existing entry: {error}",
+                                entry.folder
+                            ),
                         );
                         entries.push(entry);
                     }
@@ -596,13 +683,13 @@ fn rebuild_index_from(base: &Path, selected: Option<&Path>) -> Result<PathBuf, D
             }
         }
         let mut selected_entries = Vec::new();
-        scan(base, selected, 0, &mut selected_entries, false)?;
+        scan(base, selected, 0, &mut selected_entries, false, log)?;
         for selected in selected_entries {
             entries.retain(|entry| entry.folder != selected.folder);
             entries.push(selected);
         }
     } else {
-        scan(base, base, 0, &mut entries, true)?;
+        scan(base, base, 0, &mut entries, true, log)?;
     }
     entries.sort_by(|left, right| {
         right
@@ -660,6 +747,93 @@ mod tests {
             mimo: None,
             bypass_config: None,
         }
+    }
+
+    #[test]
+    fn rollback_failure_names_the_backup_folder_td198() {
+        let root = std::env::temp_dir().join(format!(
+            "secs-design-rollback-{}-{}",
+            std::process::id(),
+            TEMP_ID.fetch_add(1, Ordering::Relaxed)
+        ));
+        let staged = root.join("staged");
+        let destination = root.join("bundle");
+        fs::create_dir_all(&staged).unwrap();
+        fs::create_dir_all(&destination).unwrap();
+        let mut calls = 0;
+        let mut rollback_from = None;
+
+        let result = replace_folder_using(
+            &staged,
+            &destination,
+            &crate::Deps::default().log,
+            |from, _to| {
+                calls += 1;
+                match calls {
+                    1 => Ok(()),
+                    2 => Err(std::io::Error::other("install failed")),
+                    3 => {
+                        rollback_from = Some(from.to_path_buf());
+                        Err(std::io::Error::other("restore failed"))
+                    }
+                    _ => unreachable!(),
+                }
+            },
+            |_| Ok(()),
+        );
+        let detail = result.err().map(|error| error.to_string());
+        let backup = rollback_from.clone();
+        let _ = fs::remove_dir_all(&root);
+
+        let backup = backup.expect("rollback must use the backup folder");
+        assert!(
+            detail
+                .unwrap()
+                .contains(backup.file_name().unwrap().to_string_lossy().as_ref())
+        );
+    }
+
+    #[test]
+    fn backup_removal_failure_is_a_warning_not_a_job_error_td198() {
+        let root = std::env::temp_dir().join(format!(
+            "secs-design-backup-warning-{}-{}",
+            std::process::id(),
+            TEMP_ID.fetch_add(1, Ordering::Relaxed)
+        ));
+        let staged = root.join("staged");
+        let destination = root.join("bundle");
+        fs::create_dir_all(&staged).unwrap();
+        fs::create_dir_all(&destination).unwrap();
+        let lines = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let sink = lines.clone();
+        let log: LogSink = std::sync::Arc::new(move |level, scope, line| {
+            sink.lock()
+                .unwrap()
+                .push((level, scope.to_owned(), line.to_owned()));
+        });
+        let mut removed = None;
+
+        let result = replace_folder_using(
+            &staged,
+            &destination,
+            &log,
+            |_, _| Ok(()),
+            |path| {
+                removed = Some(path.to_path_buf());
+                Err(std::io::Error::other("backup is busy"))
+            },
+        );
+        let lines = lines.lock().unwrap().clone();
+        let removed = removed.clone();
+        let _ = fs::remove_dir_all(&root);
+
+        assert!(result.is_ok());
+        assert_eq!(lines.len(), 1);
+        assert_eq!(
+            (lines[0].0, lines[0].1.as_str()),
+            (LogLevel::Warn, "export")
+        );
+        assert!(lines[0].2.contains(&removed.unwrap().display().to_string()));
     }
 
     #[test]

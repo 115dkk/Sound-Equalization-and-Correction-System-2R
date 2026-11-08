@@ -1,5 +1,5 @@
 import type { RequestFn } from "../ipc/context";
-import { IpcFailure } from "../ipc/client";
+import { IpcFailure, internalError } from "../ipc/client";
 import { isBackgroundRequest } from "../ipc/recommendXo";
 import { isVisibleLog } from "../app/jobs/jobText";
 import type { IpcError } from "../ipc/bindings/IpcError";
@@ -10,7 +10,7 @@ import type { JobSnapshot } from "../ipc/bindings/JobSnapshot";
 import type { JobStarted } from "../ipc/bindings/JobStarted";
 import type { JobStatus } from "../ipc/bindings/JobStatus";
 import type { Request } from "../ipc/bindings/Request";
-import { initialRetention, isActiveJob, retainJobs, TERMINAL_JOB_LIMIT, snapshotFence, observeSnapshotStart, retiredFromSnapshot, type SnapshotFence, type JobRetention } from "./jobRetention";
+import { initialRetention, isActiveJob, isMonitorJob, retainJobs, TERMINAL_JOB_LIMIT, snapshotFence, observeSnapshotStart, retiredFromSnapshot, type SnapshotFence, type JobRetention } from "./jobRetention";
 
 export type FinishedJob = Extract<JobEvent, { event: "finished" }>;
 /** Only the request fields that a screen or completion action actually needs. */
@@ -31,7 +31,7 @@ export type HistoryEntry =
   | { id: string; at: number; job: JobId; kind: JobKind; type: "finished"; status: JobStatus; error: IpcError | null }
   | { id: string; at: number; job: JobId | null; kind: JobKind | null; type: "request_failed"; error: IpcError };
 export type LedgerState = { jobs: LedgerJob[]; history: HistoryEntry[]; seq: number; observedOrder: number; retention: JobRetention };
-export type SnapshotFinish = { event: FinishedJob; at: number; order: number };
+type SnapshotFinish = { event: FinishedJob; at: number; order: number };
 export type LedgerAction =
   | { type: "snapshots"; jobs: readonly JobSnapshot[]; at: number; epoch: number; fence: SnapshotFence; finished: readonly SnapshotFinish[] }
   | { type: "event"; event: JobEvent; at: number; epoch?: number; order?: number }
@@ -75,7 +75,7 @@ export function ledgerReducer(state: LedgerState, action: LedgerAction): LedgerS
       cancellable: snapshot.cancellable, error: snapshot.error ?? job.error,
       finishedAt: terminal ? action.at : null, completionOrder: terminal ? order : null,
     } : job));
-    return terminal && !TRAY_HIDDEN.includes(known.kind)
+    return terminal && !isMonitorJob(known.kind)
       ? push(next, { at: action.at, job: known.job, kind: known.kind, type: "finished", status: snapshot.status, error: snapshot.error }) : next;
   }
   if (action.type === "request_failed") {
@@ -126,7 +126,7 @@ export function ledgerReducer(state: LedgerState, action: LedgerAction): LedgerS
     } : job) };
   }
   if (event.event === "log") {
-    if (TRAY_HIDDEN.includes(known.kind) || !isVisibleLog(event.code)) return state;
+    if (isMonitorJob(known.kind) || !isVisibleLog(event.code)) return state;
     return push({ ...state, observedOrder: order }, { at, job: event.job, kind: known.kind, type: "log", code: event.code, params: event.params });
   }
   if (event.event !== "finished") return state;
@@ -134,14 +134,13 @@ export function ledgerReducer(state: LedgerState, action: LedgerAction): LedgerS
     ...known, status: event.status, error: event.error, cancellable: false, request: null,
     completionHandled: true, completionOrder: known.completionOrder ?? order, finishedAt: known.finishedAt ?? at,
   }]);
-  return TRAY_HIDDEN.includes(known.kind) || !isActiveJob(known.status) ? next : push(next, { at, job: event.job, kind: known.kind, type: "finished", status: event.status, error: event.error });
+  return isMonitorJob(known.kind) || !isActiveJob(known.status) ? next : push(next, { at, job: event.job, kind: known.kind, type: "finished", status: event.status, error: event.error });
 }
 
 /** These jobs have their own screen state rather than a row in the tray. */
-export const TRAY_HIDDEN: readonly JobKind[] = ["level_monitor", "status_watch"];
 export const trayJobs = (state: LedgerState): LedgerState => ({ ...state,
-  jobs: state.jobs.filter((job) => !TRAY_HIDDEN.includes(job.kind)),
-  history: state.history.filter((entry) => entry.kind === null || !TRAY_HIDDEN.includes(entry.kind)),
+  jobs: state.jobs.filter((job) => !isMonitorJob(job.kind)),
+  history: state.history.filter((entry) => entry.kind === null || !isMonitorJob(entry.kind)),
 });
 export const activeJobs = (state: LedgerState): LedgerJob[] => state.jobs.filter((job) => isActiveJob(job.status));
 /** Milliseconds left at the current stage's rate, or null when unknown. */
@@ -157,7 +156,7 @@ export const errorCount = (state: LedgerState): number =>
   state.history.filter((entry) => (entry.type === "finished" && entry.status === "failed") || entry.type === "request_failed").length;
 
 type Observation = { job: JobId; kind: JobKind; finished: { event: FinishedJob; job: LedgerJob } | null };
-export type PendingStart = { context: JobRequestContext; kind: JobKind; observation: Observation | null; replied: boolean; afterId: number };
+type PendingStart = { context: JobRequestContext; kind: JobKind; observation: Observation | null; replied: boolean; afterId: number };
 const kindFor = (request: Request): JobKind | null => {
   switch (request.method) {
     case "measure_position": return "measure";
@@ -307,7 +306,7 @@ export function createJobLedger(deps: {
     catch (error) { requestFailed(job, error); }
   }
   function requestFailed(job: JobId | null, error: unknown) {
-    const value = error instanceof IpcFailure ? error.error : { code: "internal" as const, params: {}, retryable: false, detail: String(error) };
+    const value = error instanceof IpcFailure ? error.error : internalError(String(error));
     dispatch({ type: "request_failed", job, error: value, at: deps.now() });
   }
   function settle(item: PendingStart | null) {

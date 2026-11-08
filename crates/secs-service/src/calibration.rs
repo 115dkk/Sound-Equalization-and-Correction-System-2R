@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use secs_compute::{Context, FixedMemory, MemoryBudget};
@@ -5,9 +6,7 @@ use secs_engine::{
     CalibrationRequest, Design, Measurement, MeasurementSet, Metrics, ProjectView, Samples, Tuning,
     calibrate,
 };
-use secs_project::{
-    Project, calibration_from_project, measurement_signature, store_calibration, target_key,
-};
+use secs_project::{Project, calibration_from_project, store_calibration};
 use secs_types::calibration::CalibrationSettings;
 use secs_types::ipc::{
     CalibrateParams, CalibrationSummary, ChannelScore, ErrorCode, IpcError, JobKind, JobResult,
@@ -16,29 +15,32 @@ use secs_types::ipc::{
 };
 
 use crate::jobs::JobContext;
-use crate::measure::json::JsonExt;
-use crate::results::{CacheOwner, CalibrationRun, MimoResult, calibration_stale};
-use crate::session::{self, ProjectTicket};
+use crate::results::{CacheOwner, CalibrationRun, MimoResult, ProjectKeys, calibration_stale};
+use crate::session::{self, ProjectSnapshot, ProjectTicket};
 use crate::{EventSink, Service, lock};
 
 /// What loading the measurements needs, taken under the session lock
 /// without reading any WAV (TD-37).
 #[derive(Debug)]
 pub(crate) struct Snapshot {
-    ticket: ProjectTicket,
-    path: std::path::PathBuf,
-    project: Project,
+    project: ProjectSnapshot,
     project_settings: CalibrationSettings,
     settings: CalibrationSettings,
 }
 
 #[derive(Debug)]
+pub(crate) struct LoadedMeasurements {
+    pub measurements: MeasurementSet,
+    pub notices: Vec<Notice>,
+}
+
 pub(crate) struct Prepared {
     pub ticket: ProjectTicket,
     pub project: Project,
     pub project_settings: CalibrationSettings,
     pub settings: CalibrationSettings,
     pub measurements: MeasurementSet,
+    pub measurement_notices: Vec<Notice>,
     pub signature: String,
     pub target_key: String,
     pub config_key: String,
@@ -55,15 +57,14 @@ impl Service {
         let selection = run_mimo.then(|| self.require_acceleration()).transpose()?;
         let snapshot = self.snapshot(params.settings)?;
         if run_mimo {
-            check_mimo_preconditions(&snapshot.project, &snapshot.settings)?;
+            check_mimo_preconditions(&snapshot.project.project, &snapshot.settings)?;
         }
         let subs_only = params.subs_only;
         let session = self.session.clone();
-        let memory = self.deps.memory.available_bytes();
-        self.jobs.start(JobKind::Calibrate, events, move |job| {
+        self.start_job(JobKind::Calibrate, events, move |job| {
             job.log(settings_notice(&snapshot.settings, background));
-            let prepared = snapshot.load(&job)?;
-            let ctx = compute_context(&job, memory, background);
+            let ctx = compute_context(&job, background);
+            let prepared = snapshot.load(&job, ctx.budget())?;
             let groups = project_groups(&prepared.project);
             let inverted = prepared.project.config.inverted_mains();
             let view = ProjectView {
@@ -86,16 +87,17 @@ impl Service {
             // The 2 s export view is built outside the session lock.
             let late_energy = secs_engine::late_energy(&design).map_err(engine_error)?;
             let ticket = prepared.ticket;
-            let calibration_key = run_key(
-                &prepared.signature,
-                &prepared.target_key,
-                &prepared.settings.engine_key(),
-                &prepared.config_key,
-            );
+            let calibration_key = ProjectKeys {
+                config: prepared.config_key.clone(),
+                signature: prepared.signature.clone(),
+                target: prepared.target_key.clone(),
+            }
+            .run(&prepared.settings);
             let commit_calibration = |open: &mut session::OpenProject| {
                 let mut summary = summarize(&design, &prepared.settings, &late_energy);
+                let mut service_notices = prepared.measurement_notices.clone();
                 if calibration.resampled > 0 {
-                    summary.notes.push(Notice {
+                    service_notices.push(Notice {
                         code: "measurement_resampled".into(),
                         params: [
                             ("count".into(), calibration.resampled.to_string()),
@@ -104,6 +106,7 @@ impl Service {
                         .into(),
                     });
                 }
+                summary.notices.extend(service_notices);
                 let run = CalibrationRun::new(
                     summary,
                     prepared.settings.clone(),
@@ -115,37 +118,35 @@ impl Service {
                 );
                 open.results.commit_calibration(run, subs_only);
                 let stores_settings =
-                    calibration_from_project(open.store.project()) == prepared.project_settings;
+                    calibration_from_project(open.project()) == prepared.project_settings;
                 if stores_settings {
-                    store_calibration(open.store.project_mut(), &prepared.settings);
+                    open.edit(|project| store_calibration(project, &prepared.settings));
                 }
-                Ok((
-                    (open.path.clone(), open.results.cache_snapshot()),
-                    stores_settings,
-                ))
+                Ok(((), stores_settings))
             };
-            let (path, cached) = if run_mimo {
-                session::commit_phase(&session, ticket, &job, commit_calibration)?
+            let finality = if run_mimo {
+                session::Finality::Phase
             } else {
-                session::commit(&session, ticket, &job, commit_calibration)?
+                session::Finality::Final
             };
             let owner = if subs_only {
                 CacheOwner::Subs
             } else {
                 CacheOwner::Calibration
             };
-            persist_cache(cached, &path, ticket, &session, owner);
+            session::commit_results(&session, ticket, &job, finality, owner, commit_calibration)?;
             if let Some(selection) = selection {
                 compute_and_commit_mimo(
                     &session,
                     ticket,
                     &job,
-                    memory,
-                    design,
-                    prepared.settings,
-                    selection,
-                    calibration_key,
-                    background,
+                    MimoRun {
+                        design,
+                        settings: prepared.settings,
+                        selection,
+                        calibration_key,
+                        background,
+                    },
                 )?;
             }
             Ok(JobResult::Calibration)
@@ -158,12 +159,12 @@ impl Service {
         events: Arc<dyn EventSink>,
     ) -> Result<JobStarted, IpcError> {
         let snapshot = self.snapshot(None)?;
-        let recommendation_key = xo_rec_key(&snapshot.project, &snapshot.settings);
-        let memory = self.deps.memory.available_bytes();
+        let recommendation_key = xo_rec_key(&snapshot.project.project, &snapshot.settings);
         let session = self.session.clone();
-        self.jobs.start(JobKind::RecommendXo, events, move |job| {
+        self.start_job(JobKind::RecommendXo, events, move |job| {
             job.log(settings_notice(&snapshot.settings, background));
-            let prepared = snapshot.load(&job)?;
+            let ctx = compute_context(&job, background);
+            let prepared = snapshot.load(&job, ctx.budget())?;
             let groups = project_groups(&prepared.project);
             let inverted = prepared.project.config.inverted_mains();
             let view = ProjectView {
@@ -172,7 +173,6 @@ impl Service {
                 target: &prepared.project.target,
                 inverted: &inverted,
             };
-            let ctx = compute_context(&job, memory, background);
             let result = secs_engine::xo::recommend_xo(
                 &view,
                 &prepared.measurements,
@@ -186,23 +186,29 @@ impl Service {
                 best: result.best,
                 candidates: result.candidates,
             };
-            session::commit(&session, prepared.ticket, &job, |open| {
-                let mut settings = calibration_from_project(open.store.project());
-                let xo_unchanged = settings.xo == prepared.settings.xo
-                    && settings.xo_rec_include == prepared.settings.xo_rec_include;
-                if xo_unchanged {
-                    for (group, hz) in &recommendation.best {
-                        match settings.xo.iter_mut().find(|(name, _)| name == group) {
-                            Some((_, current)) => *current = *hz,
-                            None => settings.xo.push((group.clone(), *hz)),
+            session::commit(
+                &session,
+                prepared.ticket,
+                &job,
+                session::Finality::Final,
+                |open| {
+                    let mut settings = calibration_from_project(open.project());
+                    let xo_unchanged = settings.xo == prepared.settings.xo
+                        && settings.xo_rec_include == prepared.settings.xo_rec_include;
+                    if xo_unchanged {
+                        for (group, hz) in &recommendation.best {
+                            match settings.xo.iter_mut().find(|(name, _)| name == group) {
+                                Some((_, current)) => *current = *hz,
+                                None => settings.xo.push((group.clone(), *hz)),
+                            }
                         }
                     }
-                }
-                settings.xo_rec = recommendation.best.clone();
-                settings.xo_rec_key.clone_from(&recommendation_key);
-                store_calibration(open.store.project_mut(), &settings);
-                Ok(((), true))
-            })?;
+                    settings.xo_rec = recommendation.best.clone();
+                    settings.xo_rec_key.clone_from(&recommendation_key);
+                    open.edit(|project| store_calibration(project, &settings));
+                    Ok(((), true))
+                },
+            )?;
             Ok(JobResult::Xo(recommendation))
         })
     }
@@ -218,12 +224,12 @@ impl Service {
         let ticket = session_guard.ticket()?;
         let settings = params
             .settings
-            .unwrap_or_else(|| calibration_from_project(open.store.project()));
-        check_mimo_preconditions(open.store.project(), &settings)?;
+            .unwrap_or_else(|| calibration_from_project(open.project()));
+        check_mimo_preconditions(open.project(), &settings)?;
         let calibration = open.results.live_calibration().ok_or_else(|| {
             IpcError::new(ErrorCode::EngineInput, "calibration must run before MIMO")
         })?;
-        if calibration_stale(calibration, open.store.project()) {
+        if calibration_stale(calibration, open.project()) {
             return Err(IpcError::new(
                 ErrorCode::StaleInputs,
                 "calibration result is stale",
@@ -238,30 +244,27 @@ impl Service {
         let calibration_key = calibration.run_key.clone();
         let design = calibration.shared_design();
         drop(session_guard);
-        let memory = self.deps.memory.available_bytes();
         let session = self.session.clone();
-        self.jobs.start(JobKind::Mimo, events, move |job| {
+        self.start_job(JobKind::Mimo, events, move |job| {
             job.log(settings_notice(&settings, false));
             compute_and_commit_mimo(
                 &session,
                 ticket,
                 &job,
-                memory,
-                design,
-                settings,
-                selection,
-                calibration_key,
-                false,
+                MimoRun {
+                    design,
+                    settings,
+                    selection,
+                    calibration_key,
+                    background: false,
+                },
             )?;
             Ok(JobResult::Mimo)
         })
     }
 
     pub(crate) fn results(&self) -> Result<ResultsSummary, IpcError> {
-        let compute = crate::compute::ComputeIdentity::from(&self.acceleration().status);
-        let session = lock(&self.session);
-        let open = session.require().map_err(IpcError::from)?;
-        Ok(open.results.summary(open.store.project(), &compute))
+        self.read_open(|open, compute| open.results.summary(open.project(), compute))
     }
 
     /// Holds the session lock only to copy the project; the WAVs are read by
@@ -272,16 +275,17 @@ impl Service {
         override_settings: Option<CalibrationSettings>,
     ) -> Result<Snapshot, IpcError> {
         let session = lock(&self.session);
-        let open = session.require().map_err(IpcError::from)?;
-        let project = open.store.project().clone();
-        let project_settings = calibration_from_project(&project);
+        let project = session.snapshot().map_err(IpcError::from)?;
+        let project_settings = calibration_from_project(&project.project);
+        let is_override = override_settings.is_some();
         let mut settings = override_settings.unwrap_or_else(|| project_settings.clone());
         // A request may carry settings the edit checks never saw; the run, its
         // notes and its export use the bands the engine uses (ADR 0024).
         settings.rc_bands = secs_types::calibration::valid_rc_bands(&settings.rc_bands);
+        if is_override {
+            settings = settings.checked()?;
+        }
         Ok(Snapshot {
-            ticket: session.ticket()?,
-            path: open.path.clone(),
             project,
             project_settings,
             settings,
@@ -299,53 +303,76 @@ fn check_mimo_preconditions(
         )));
     }
     let positions = secs_project::measured_positions(project).len();
-    let (available, reason) = secs_engine::mimo::availability(positions);
+    let (available, reason) = secs_engine::availability(positions);
     if !available {
         return Err(engine_error(secs_engine::EngineError::Input(reason)));
     }
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
+struct MimoRun {
+    design: Arc<Design>,
+    settings: CalibrationSettings,
+    selection: secs_engine::AccelerationSelection,
+    calibration_key: String,
+    background: bool,
+}
+
 fn compute_and_commit_mimo(
     session: &Arc<std::sync::Mutex<session::Session>>,
     ticket: ProjectTicket,
     job: &JobContext,
-    memory: u64,
-    design: Arc<Design>,
-    settings: CalibrationSettings,
-    selection: secs_engine::mimo::AccelerationSelection,
-    calibration_key: String,
-    background: bool,
+    run: MimoRun,
 ) -> Result<(), IpcError> {
+    let MimoRun {
+        design,
+        settings,
+        selection,
+        calibration_key,
+        background,
+    } = run;
     let compute_key = crate::compute::ComputeIdentity::from(&selection.status);
-    let ctx = compute_context(job, memory, background);
-    let run = secs_engine::mimo::compute_with_acceleration(
+    let ctx = compute_context(job, background);
+    let run = secs_engine::compute_with_acceleration(
         &design,
-        design.replay.measurements(),
-        design.replay.config(),
+        design.measurements(),
+        design.config(),
         &settings,
         &Tuning::default(),
         &ctx,
         &selection,
     )
     .map_err(|error| engine_error(error).with_param("stage", "mimo"))?;
-    let (path, cached) = session::commit(session, ticket, job, |open| {
-        let summary = summarize_mimo(&run);
-        open.results.commit_mimo(MimoResult {
-            summary,
-            settings_key: settings.mimo_key(),
-            compute_key,
-            calibration_key,
-            run,
-        });
-        Ok(((open.path.clone(), open.results.cache_snapshot()), false))
-    })?;
-    persist_cache(cached, &path, ticket, session, CacheOwner::Mimo);
+    session::commit_results(
+        session,
+        ticket,
+        job,
+        session::Finality::Final,
+        CacheOwner::Mimo,
+        |open| {
+            let mut summary = summarize_mimo(&run);
+            let service_notices = (run.compute.fallbacks > 0)
+                .then(|| Notice {
+                    code: "compute_fallback".into(),
+                    params: [("count".into(), run.compute.fallbacks.to_string())].into(),
+                })
+                .into_iter()
+                .collect();
+            summary.notices = service_notices;
+            open.results.commit_mimo(MimoResult {
+                summary,
+                settings_key: settings.mimo_key(),
+                compute_key,
+                calibration_key,
+                run,
+            });
+            Ok(((), false))
+        },
+    )?;
     Ok(())
 }
 
-fn summarize_mimo(run: &secs_engine::mimo::MimoRun) -> MimoSummary {
+fn summarize_mimo(run: &secs_engine::MimoRun) -> MimoSummary {
     MimoSummary {
         stale: false,
         kind: if run.fir { "fir" } else { "iir" }.into(),
@@ -357,15 +384,8 @@ fn summarize_mimo(run: &secs_engine::mimo::MimoRun) -> MimoSummary {
             .iter()
             .map(|path| path.filter.fir_len_48k())
             .sum(),
-        notes: run
-            .notes
-            .iter()
-            .flat_map(notices)
-            .chain((run.compute.fallbacks > 0).then(|| Notice {
-                code: "compute_fallback".into(),
-                params: [("count".into(), run.compute.fallbacks.to_string())].into(),
-            }))
-            .collect(),
+        notes: run.notes.clone(),
+        notices: Vec::new(),
         input_count: run
             .paths
             .paths
@@ -397,20 +417,25 @@ fn summarize_mimo(run: &secs_engine::mimo::MimoRun) -> MimoSummary {
 impl Snapshot {
     /// Reads every IR of the snapshot without the session lock, checking for
     /// cancellation between files. The commit checks the ticket.
-    pub(crate) fn load(self, job: &JobContext) -> Result<Prepared, IpcError> {
-        let mut store = secs_project::MeasurementStore::new(&self.path, self.project.clone());
-        let measurements = load_measurements_cancellable(&mut store, job.cancel())?;
-        check_rc_agreement(&self.project, &self.settings, &measurements)?;
-        let project = self.project;
+    pub(crate) fn load(
+        self,
+        job: &JobContext,
+        budget: &secs_compute::MemoryBudget,
+    ) -> Result<Prepared, IpcError> {
+        let loaded = self.project.load_measurements(job, budget)?;
+        check_rc_agreement(&loaded.project, &self.settings, &loaded.values)?;
+        let project = loaded.project;
+        let keys = ProjectKeys::of(&project);
         Ok(Prepared {
-            ticket: self.ticket,
-            signature: signature_key(&project),
-            target_key: target_key_string(&project),
-            config_key: config_key(&project),
+            ticket: self.project.ticket,
+            signature: keys.signature,
+            target_key: keys.target,
+            config_key: keys.config,
             project,
             project_settings: self.project_settings,
             settings: self.settings,
-            measurements,
+            measurements: loaded.values,
+            measurement_notices: loaded.notices,
         })
     }
 }
@@ -465,10 +490,11 @@ fn settings_notice(settings: &CalibrationSettings, background: bool) -> Notice {
 pub(crate) fn xo_rec_key(project: &Project, settings: &CalibrationSettings) -> String {
     let mut settings = settings.clone();
     settings.xo.clear();
+    let keys = ProjectKeys::of(project);
     [
-        signature_key(project),
-        target_key_string(project),
-        config_key(project),
+        keys.signature,
+        keys.target,
+        keys.config,
         settings.engine_key(),
     ]
     .join("|")
@@ -485,7 +511,7 @@ fn background_threads(available: usize, background: bool) -> (usize, bool) {
     }
 }
 
-pub(crate) fn compute_context(job: &JobContext, available: u64, background: bool) -> Context {
+pub(crate) fn compute_context(job: &JobContext, background: bool) -> Context {
     let parallelism = std::thread::available_parallelism().map_or(1, |value| value.get());
     let (threads, paced) = background_threads(parallelism, background);
     let cancel = if paced {
@@ -495,7 +521,7 @@ pub(crate) fn compute_context(job: &JobContext, available: u64, background: bool
     };
     Context::new(
         threads,
-        MemoryBudget::from_probe(&FixedMemory(available), 0.5, 64 * 1024 * 1024),
+        MemoryBudget::from_probe(&FixedMemory(job.available_memory()), 0.5, 64 * 1024 * 1024),
         job.progress_sink(),
         cancel,
     )
@@ -543,6 +569,84 @@ fn mic_curve(cal: &secs_mdat::CalInfo) -> Option<secs_audio::MicCalibration> {
     secs_audio::MicCalibration::from_points(points).ok()
 }
 
+pub(crate) fn has_valid_meter_calibration(info: &secs_mdat::SourceInfo) -> bool {
+    secs_project::attached_calibration(info)
+        .meter
+        .and_then(mic_curve)
+        .is_some()
+}
+
+fn curve_arrays_present(cal: &secs_mdat::CalInfo) -> bool {
+    matches!(
+        (&cal.freq, &cal.gain),
+        (Some(frequencies), Some(gains))
+            if frequencies.len() >= 2 && frequencies.len() == gains.len()
+    )
+}
+
+fn response_correction(info: &secs_mdat::SourceInfo) -> (secs_audio::ResponseCorrection, bool) {
+    let attached = secs_project::attached_calibration(info);
+    let meter = attached.meter.and_then(mic_curve);
+    let invalid_meter = info
+        .cal
+        .iter()
+        .find(|(name, cal)| name == "meterCal" && curve_arrays_present(cal))
+        .is_some_and(|(_, cal)| mic_curve(cal).is_none());
+    let mut invalid_other = info
+        .cal
+        .iter()
+        .filter(|(name, cal)| name == "scCal" && curve_arrays_present(cal))
+        .any(|(_, cal)| mic_curve(cal).is_none());
+    let others = attached
+        .others
+        .into_iter()
+        .filter_map(|cal| {
+            let curve = mic_curve(cal);
+            invalid_other |= curve.is_none();
+            curve
+        })
+        .collect();
+    (
+        secs_audio::ResponseCorrection::new(meter, others, attached.c_weighted && !invalid_meter),
+        invalid_meter || invalid_other,
+    )
+}
+
+fn measured_ir_with_curve_status_from_source(
+    store: &mut secs_project::MeasurementStore,
+    role: &str,
+    pos: i64,
+    info: Option<&secs_mdat::SourceInfo>,
+) -> Result<((Vec<f32>, u32), bool), crate::ServiceError> {
+    let (samples, sample_rate) = store.ir_of(role, pos)?;
+    let invalid_curve = if let Some(info) = info {
+        let (correction, invalid_curve) = response_correction(info);
+        if !correction.is_empty() {
+            let corrected = correction.apply(&samples, sample_rate).map_err(|error| {
+                crate::ServiceError::ProjectMessage(format!(
+                    "measurement response correction: {error}"
+                ))
+            })?;
+            return Ok(((corrected, sample_rate), invalid_curve));
+        }
+        invalid_curve
+    } else {
+        false
+    };
+    // The engine owns mutable measurement samples; copy only at this boundary
+    // when no microphone response correction has already made an owned buffer.
+    Ok(((samples.to_vec(), sample_rate), invalid_curve))
+}
+
+fn measured_ir_with_curve_status(
+    store: &mut secs_project::MeasurementStore,
+    role: &str,
+    pos: i64,
+) -> Result<((Vec<f32>, u32), bool), crate::ServiceError> {
+    let source = store.source_of(role, pos);
+    measured_ir_with_curve_status_from_source(store, role, pos, source.as_deref())
+}
+
 /// Loads a stored IR and removes the response curves attached to its source
 /// sidecar without changing the stored waveform (ADR 0015).
 pub(crate) fn measured_ir(
@@ -550,30 +654,16 @@ pub(crate) fn measured_ir(
     role: &str,
     pos: i64,
 ) -> Result<(Vec<f32>, u32), crate::ServiceError> {
-    let (samples, sample_rate) = store.ir_of(role, pos)?;
-    let Some(info) = store.source_of(role, pos) else {
-        return Ok((samples, sample_rate));
-    };
-    let attached = secs_project::attached_calibration(&info);
-    let correction = secs_audio::ResponseCorrection::new(
-        attached.meter.and_then(mic_curve),
-        attached.others.into_iter().filter_map(mic_curve).collect(),
-        attached.c_weighted,
-    );
-    if correction.is_empty() {
-        return Ok((samples, sample_rate));
-    }
-    let corrected = correction.apply(&samples, sample_rate).map_err(|error| {
-        crate::ServiceError::Project(format!("measurement response correction: {error}"))
-    })?;
-    Ok((corrected, sample_rate))
+    measured_ir_with_curve_status(store, role, pos).map(|(measurement, _)| measurement)
 }
 
-pub(crate) fn load_measurements_cancellable(
+pub(crate) fn load_measurements_with_notices(
     store: &mut secs_project::MeasurementStore,
+    sources: &BTreeMap<u32, BTreeMap<String, Arc<secs_mdat::SourceInfo>>>,
     cancel: &secs_compute::CancelToken,
-) -> Result<MeasurementSet, IpcError> {
+) -> Result<LoadedMeasurements, IpcError> {
     let mut positions = Vec::new();
+    let mut notices = Vec::new();
     for record in store.records() {
         if record.pos < 0 {
             continue;
@@ -585,7 +675,27 @@ pub(crate) fn load_measurements_cancellable(
             if cancel.is_cancelled() {
                 return Err(IpcError::new(ErrorCode::Cancelled, "cancelled"));
             }
-            let (samples, sample_rate) = measured_ir(store, role, record.pos)?;
+            let source = u32::try_from(record.pos)
+                .ok()
+                .and_then(|position| sources.get(&position))
+                .and_then(|by_role| by_role.get(role));
+            let ((samples, sample_rate), invalid_curve) =
+                measured_ir_with_curve_status_from_source(
+                    store,
+                    role,
+                    record.pos,
+                    source.map(Arc::as_ref),
+                )?;
+            if invalid_curve {
+                notices.push(Notice {
+                    code: "calibration_curve_invalid".into(),
+                    params: [
+                        ("role".into(), role.clone()),
+                        ("position".into(), record.pos.to_string()),
+                    ]
+                    .into(),
+                });
+            }
             roles.push((
                 role.clone(),
                 Measurement {
@@ -603,7 +713,10 @@ pub(crate) fn load_measurements_cancellable(
         return Err(IpcError::new(ErrorCode::Cancelled, "cancelled"));
     }
     positions.sort_by_key(|(position, _)| *position);
-    Ok(MeasurementSet { positions })
+    Ok(LoadedMeasurements {
+        measurements: MeasurementSet { positions },
+        notices,
+    })
 }
 
 fn summarize(
@@ -648,450 +761,40 @@ fn summarize(
             within_1db_after_pct: average(|value| value.in1_20, true),
             low_band_time_spread_before_ms: average(|value| value.gd_20, false),
             low_band_time_spread_after_ms: average(|value| value.gd_20, true),
-            added_delay_ms: design.chain.latency_ms,
+            added_delay_ms: design.latency_ms(),
             position_spread_db: secs_engine::preview::sub_combine(design)
                 .and_then(|view| view.seat.map(|(_, after)| after))
                 .unwrap_or(0.0),
         },
         scorecard,
         late_energy,
-        latency_ms: design.chain.latency_ms,
-        notes: design.notes.iter().flat_map(notices).collect(),
-        main_roles: design
-            .chain
-            .mains
-            .iter()
-            .map(|main| main.role.clone())
-            .collect(),
-        sub_roles: design
-            .chain
-            .subs
-            .iter()
-            .map(|sub| sub.role.clone())
-            .collect(),
+        latency_ms: design.latency_ms(),
+        notes: design.notes.clone(),
+        notices: Vec::new(),
+        main_roles: design.main_roles().map(str::to_owned).collect(),
+        sub_roles: design.sub_roles().map(str::to_owned).collect(),
     }
 }
 
-// Collection notes expand in producer order: one record per role/filter/mode.
-// Every parameter is a scalar string; no JSON or translated prose crosses IPC.
-fn notices(note: &secs_engine::Note) -> Vec<Notice> {
-    use secs_engine::{MimoNote, Note};
-    let record = |code: &str, values: Vec<(&str, String)>| Notice {
-        code: code.into(),
-        params: values
+fn notice_from_record(record: secs_engine::NoteRecord) -> Notice {
+    Notice {
+        code: record.code.into(),
+        params: record
+            .params
             .into_iter()
             .map(|(key, value)| (key.into(), value))
             .collect(),
-    };
-    match note {
-        Note::SubFilters(filters) => {
-            filters
-                .iter()
-                .flat_map(|(role, filter)| {
-                    let mut records = vec![record(
-                        "sub_filters",
-                        vec![
-                            ("role", role.clone()),
-                            ("hp_hz", filter.hp_hz.to_string()),
-                            ("hp_type", filter.hp_type.name().into()),
-                            ("lp_hz", filter.lp_hz.to_string()),
-                            ("lp_type", filter.lp_type.name().into()),
-                            ("peq_count", filter.peq.len().to_string()),
-                        ],
-                    )];
-                    records.extend(filter.peq.iter().enumerate().map(
-                        |(index, (hz, q, gain_db))| {
-                            record(
-                                "sub_filter_peq",
-                                vec![
-                                    ("role", role.clone()),
-                                    ("index", index.to_string()),
-                                    ("hz", hz.to_string()),
-                                    ("q", q.to_string()),
-                                    ("gain_db", gain_db.to_string()),
-                                ],
-                            )
-                        },
-                    ));
-                    records
-                })
-                .collect()
-        }
-        Note::PhaseStrength(values) => values
-            .iter()
-            .map(|(role, strength)| {
-                record(
-                    "phase_strength",
-                    vec![("role", role.clone()), ("strength", strength.to_string())],
-                )
-            })
-            .collect(),
-        Note::PhaseBand(values) => values
-            .iter()
-            .map(|(role, hz)| {
-                let mut params = vec![
-                    ("role", role.clone()),
-                    ("enabled", hz.is_some().to_string()),
-                ];
-                if let Some(hz) = hz {
-                    params.push(("hz", hz.to_string()));
-                }
-                record("phase_band", params)
-            })
-            .collect(),
-        Note::LongModeBoost { cap_db, modes } => modes
-            .iter()
-            .map(|(hz, t60_s)| {
-                record(
-                    "long_mode_boost",
-                    vec![
-                        ("cap_db", cap_db.to_string()),
-                        ("hz", hz.to_string()),
-                        ("t60_s", t60_s.to_string()),
-                    ],
-                )
-            })
-            .collect(),
-        Note::ModeDecay {
-            role,
-            target_t60_s,
-            modes,
-        } if modes.is_empty() => vec![record(
-            "mode_decay_none",
-            vec![
-                ("role", role.clone()),
-                ("target_s", target_t60_s.to_string()),
-            ],
-        )],
-        Note::ModeDecay {
-            role,
-            target_t60_s,
-            modes,
-        } => modes
-            .iter()
-            .map(|(hz, t60_s, depth_db)| {
-                record(
-                    "mode_decay",
-                    vec![
-                        ("role", role.clone()),
-                        ("hz", hz.to_string()),
-                        ("t60_s", t60_s.to_string()),
-                        ("target_s", target_t60_s.to_string()),
-                        ("depth_db", depth_db.to_string()),
-                    ],
-                )
-            })
-            .collect(),
-        Note::GdCuts { role, cuts } => cuts
-            .iter()
-            .enumerate()
-            .map(|(index, (hz, q, gain_db))| {
-                record(
-                    "gd_cuts",
-                    vec![
-                        ("role", role.clone()),
-                        ("index", index.to_string()),
-                        ("hz", hz.to_string()),
-                        ("q", q.to_string()),
-                        ("gain_db", gain_db.to_string()),
-                    ],
-                )
-            })
-            .collect(),
-        Note::TwoWay {
-            roles,
-            gain_db,
-            xo_hz,
-        } => roles
-            .iter()
-            .map(|role| {
-                record(
-                    "two_way",
-                    vec![
-                        ("role", role.clone()),
-                        ("gain_db", gain_db.to_string()),
-                        ("xo_hz", xo_hz.to_string()),
-                    ],
-                )
-            })
-            .collect(),
-        Note::Mimo(note) => match note {
-            MimoNote::InsufficientPositions { measured } => vec![record(
-                "mimo_insufficient_positions",
-                vec![("measured", measured.to_string()), ("required", "3".into())],
-            )],
-            MimoNote::ExcludedSupports(roles) => roles
-                .iter()
-                .map(|role| record("mimo_support_excluded", vec![("role", role.clone())]))
-                .collect(),
-            MimoNote::SupportRanges(ranges) => ranges
-                .iter()
-                .map(|(role, range)| {
-                    let mut params = vec![
-                        ("role", role.clone()),
-                        ("enabled", range.is_some().to_string()),
-                    ];
-                    if let Some((lo, hi)) = range {
-                        params.extend([("lo_hz", lo.to_string()), ("hi_hz", hi.to_string())]);
-                    }
-                    record("mimo_support_range", params)
-                })
-                .collect(),
-            MimoNote::GuardReduced {
-                role,
-                gain_db,
-                cause,
-            } => {
-                let mut params = vec![("role", role.clone()), ("gain_db", gain_db.to_string())];
-                params.extend(guard_cause_params(cause));
-                vec![record("mimo_guard_reduced", params)]
-            }
-            MimoNote::GuardDisabled { role, cause } => {
-                let mut params = vec![("role", role.clone())];
-                params.extend(guard_cause_params(cause));
-                vec![record("mimo_guard_disabled", params)]
-            }
-            MimoNote::SupportLimit { max_supports } => vec![record(
-                "mimo_support_limit",
-                vec![("max_supports", max_supports.to_string())],
-            )],
-            MimoNote::FirBudget {
-                support_count,
-                taps_total,
-            } => vec![record(
-                "mimo_fir_budget",
-                vec![
-                    ("support_count", support_count.to_string()),
-                    ("taps_total", taps_total.to_string()),
-                    ("sample_rate_hz", "48000".into()),
-                ],
-            )],
-        },
-        _ => vec![scalar_notice(note)],
     }
 }
 
-/// The MIMO guard's last rejected level and the guards that broke their limit
-/// there; a band or tail key is present only for a guard that did.
-fn guard_cause_params(cause: &secs_engine::GuardCause) -> Vec<(&'static str, String)> {
-    let mut params = vec![("rejected_db", cause.rejected_db.to_string())];
-    if let Some(position) = cause.band_position {
-        params.push(("band_position", position.to_string()));
-    }
-    if let Some(position) = cause.tail_position {
-        params.push(("tail_position", position.to_string()));
-    }
-    if let Some((lo, hi, db)) = cause.band {
-        params.extend([
-            ("band_lo_hz", lo.to_string()),
-            ("band_hi_hz", hi.to_string()),
-            ("band_db", db.to_string()),
-        ]);
-    }
-    if let Some((hz, db)) = cause.tail {
-        params.extend([("mode_hz", hz.to_string()), ("tail_db", db.to_string())]);
-    }
-    params
-}
-
+// `curves.rs` is outside P188's allowed files and still calls this adapter.
 pub(crate) fn scalar_notice(note: &secs_engine::Note) -> Notice {
-    use secs_engine::Note;
-
-    let mut params = std::collections::BTreeMap::new();
-    let code = match note {
-        Note::PolarityReversed {
-            role,
-            confidence,
-            compared,
-            opposite,
-        } => {
-            params.insert("role".into(), role.clone());
-            params.insert("confidence".into(), confidence.to_string());
-            params.insert("compared".into(), compared.to_string());
-            params.insert("opposite".into(), opposite.to_string());
-            "polarity_reversed"
-        }
-        Note::PolaritySplit { groups, confidence } => {
-            params.insert("a".into(), groups.0.join(","));
-            params.insert("b".into(), groups.1.join(","));
-            params.insert("confidence".into(), confidence.to_string());
-            "polarity_split"
-        }
-        Note::PairPhase { a, b, bands } => {
-            params.insert("a".into(), a.clone());
-            params.insert("b".into(), b.clone());
-            params.insert(
-                "bands".into(),
-                bands
-                    .iter()
-                    .map(|(lo, hi, phase, loss)| format!("{lo:.0}:{hi:.0}:{phase:.1}:{loss:.1}"))
-                    .collect::<Vec<_>>()
-                    .join(","),
-            );
-            "pair_phase"
-        }
-        Note::LowProtect {
-            role,
-            rolloff_hz,
-            hp_hz,
-            limited,
-            reduced,
-            cuts,
-        } => {
-            params.insert("role".into(), role.clone());
-            params.insert("rolloff_hz".into(), rolloff_hz.to_string());
-            params.insert("reduced".into(), reduced.to_string());
-            params.insert("cuts".into(), cuts.to_string());
-            params.insert("limited".into(), limited.to_string());
-            if let Some(hz) = hp_hz {
-                params.insert("hp_hz".into(), hz.to_string());
-            }
-            "low_protect"
-        }
-        Note::DipLimit { role, dips } => {
-            params.insert("role".into(), role.clone());
-            params.insert("count".into(), dips.len().to_string());
-            params.insert(
-                "dips".into(),
-                dips.iter()
-                    .map(|(hz, depth, fill)| format!("{hz:.2}:{depth:.2}:{fill:.2}"))
-                    .collect::<Vec<_>>()
-                    .join(","),
-            );
-            "dip_limit"
-        }
-        Note::LfAlign {
-            role,
-            strength,
-            arrival_ms,
-            limited,
-        } => {
-            params.insert("role".into(), role.clone());
-            params.insert("strength".into(), strength.to_string());
-            params.insert("limited".into(), limited.to_string());
-            if let Some(value) = arrival_ms {
-                params.insert("arrival_ms".into(), value.to_string());
-            }
-            "lf_align"
-        }
-        Note::HfPhase {
-            role,
-            rotation_deg,
-            limited,
-        } => {
-            params.insert("role".into(), role.clone());
-            if let Some(value) = rotation_deg {
-                params.insert("rotation_deg".into(), value.to_string());
-                params.insert("limited".into(), limited.to_string());
-                "hf_phase"
-            } else {
-                "hf_phase_none"
-            }
-        }
-        Note::InputHp { hz } => {
-            params.insert("hz".into(), hz.to_string());
-            params.insert("order".into(), "8".into());
-            "input_hp"
-        }
-        Note::LiftCapped {
-            from_ms,
-            taps,
-            lift_ms,
-        } => {
-            params.insert("from_ms".into(), from_ms.to_string());
-            params.insert("taps".into(), taps.to_string());
-            params.insert("lift_ms".into(), lift_ms.to_string());
-            "lift_capped"
-        }
-        Note::RcLimit {
-            hz,
-            auto,
-            schroeder_hz,
-            basis,
-            factor,
-            band_hz,
-            band_t60_s,
-            positions,
-        } => {
-            params.insert("hz".into(), hz.to_string());
-            params.insert("auto".into(), auto.to_string());
-            if let Some(value) = schroeder_hz {
-                params.insert("schroeder_hz".into(), value.to_string());
-            }
-            params.insert("basis".into(), basis.as_str().into());
-            params.insert("factor".into(), factor.to_string());
-            if let Some(value) = band_hz {
-                params.insert("band_hz".into(), value.to_string());
-            }
-            if let Some(value) = band_t60_s {
-                params.insert("band_t60_s".into(), value.to_string());
-            }
-            if let Some(value) = positions {
-                params.insert("positions".into(), value.to_string());
-            }
-            "rc_limit"
-        }
-        Note::RcBands { bands } => {
-            params.insert(
-                "bands".into(),
-                bands
-                    .iter()
-                    .map(|(lo_hz, hi_hz)| format!("{lo_hz}-{hi_hz}"))
-                    .collect::<Vec<_>>()
-                    .join(","),
-            );
-            "rc_bands"
-        }
-        Note::Latency {
-            latency_ms,
-            lift_ms,
-            main_extra_ms,
-        } => {
-            params.insert("latency_ms".into(), latency_ms.to_string());
-            params.insert("lift_ms".into(), lift_ms.to_string());
-            params.insert("main_extra_ms".into(), main_extra_ms.to_string());
-            "latency"
-        }
-        Note::BaCost(value) => {
-            params.insert("value".into(), value.to_string());
-            "ba_cost"
-        }
-        Note::BaBusPass {
-            first,
-            second,
-            kept_first,
-        } => {
-            params.insert("first".into(), first.to_string());
-            params.insert("second".into(), second.to_string());
-            params.insert("kept_first".into(), kept_first.to_string());
-            "ba_bus_pass"
-        }
-        Note::BaManual => "ba_manual",
-        Note::LayoutFallback(value) => {
-            params.insert("value".into(), value.clone());
-            "layout_fallback"
-        }
-        Note::Layout(value) => {
-            params.insert("value".into(), value.clone());
-            "layout"
-        }
-        Note::BusGainAnchored(value) => {
-            params.insert("value".into(), value.to_string());
-            "bus_gain_anchored"
-        }
-        Note::SubFilters(_)
-        | Note::PhaseStrength(_)
-        | Note::PhaseBand(_)
-        | Note::LongModeBoost { .. }
-        | Note::ModeDecay { .. }
-        | Note::GdCuts { .. }
-        | Note::TwoWay { .. }
-        | Note::Mimo(_) => unreachable!("collection notes expand in notices"),
-    };
-    Notice {
-        code: code.into(),
-        params,
-    }
+    notice_from_record(
+        secs_engine::NoteRecords::record(note)
+            .into_iter()
+            .next()
+            .expect("scalar note records one notice"),
+    )
 }
 
 fn metrics(value: Metrics) -> MetricsSummary {
@@ -1114,129 +817,6 @@ fn metrics(value: Metrics) -> MetricsSummary {
         gd_30: value.gd_30,
         pre_db: value.pre_db,
     }
-}
-
-/// The notice a calculation carries when its results stay in memory but
-/// could not be written to the project folder (TD-38).
-const CACHE_SAVE_FAILED: &str = "cache_save_failed";
-
-/// Saves the cache after the results were committed in memory. A failure is
-/// not a failed calculation: the owner's summary carries a
-/// `cache_save_failed` notice until a later save succeeds (TD-38).
-fn persist_cache(
-    cached: Option<crate::cache::CachedResults>,
-    path: &std::path::Path,
-    ticket: ProjectTicket,
-    session: &Arc<std::sync::Mutex<crate::session::Session>>,
-    owner: CacheOwner,
-) {
-    let Some(cached) = cached else {
-        return;
-    };
-    match crate::cache::save(path, &cached) {
-        Ok(()) => {
-            // Another project opened since the commit, or this one saved
-            // under another path, keeps its own cache: only the in-memory
-            // copy is skipped.
-            let _ = session::apply(session, ticket, |open| {
-                if open.path == path {
-                    open.results.replace_cache(cached);
-                    for notes in open.results.all_notes_mut() {
-                        notes.retain(|notice| notice.code != CACHE_SAVE_FAILED);
-                    }
-                }
-                Ok(((), false))
-            });
-        }
-        Err(error) => {
-            let _ = session::apply(session, ticket, |open| {
-                if open.path == path
-                    && let Some(notes) = open.results.owner_notes_mut(owner)
-                {
-                    notes.retain(|notice| notice.code != CACHE_SAVE_FAILED);
-                    notes.push(Notice {
-                        code: CACHE_SAVE_FAILED.into(),
-                        params: [("error".into(), error.to_string())].into(),
-                    });
-                }
-                Ok(((), false))
-            });
-        }
-    }
-}
-
-pub(crate) fn config_key(project: &Project) -> String {
-    format!("{:?}:{:?}", project.config, project.xo)
-}
-
-pub(crate) fn run_key(
-    signature: &str,
-    target_key: &str,
-    engine_key: &str,
-    config_key: &str,
-) -> String {
-    format!("{signature}\u{1f}{target_key}\u{1f}{engine_key}\u{1f}{config_key}")
-}
-
-pub(crate) fn signature_key(project: &Project) -> String {
-    // The upstream signature omits UUIDs, so replacing a waveform at the same
-    // role, position and t0 otherwise leaves a completed design looking current.
-    let identities = match &project.measurements {
-        secs_project::PyJson::Array(entries) => entries
-            .iter()
-            .map(|entry| match entry {
-                secs_project::PyJson::Object(fields) => fields
-                    .iter()
-                    .find(|(key, _)| key == "uuid")
-                    .map(|(_, value)| value),
-                _ => None,
-            })
-            .collect::<Vec<_>>(),
-        _ => vec![],
-    };
-    let base = format!("{:?}:{identities:?}", measurement_signature(project));
-    let has_ir = |position: i64, role: &str| {
-        match &project.measurements {
-            secs_project::PyJson::Array(entries) => entries.as_slice(),
-            _ => &[],
-        }
-        .iter()
-        .any(|entry| {
-            let matches_position = match entry.get("pos") {
-                Some(secs_project::PyJson::Int(value) | secs_project::PyJson::Str(value)) => {
-                    value.parse() == Ok(position)
-                }
-                Some(secs_project::PyJson::Float(value)) => {
-                    value.is_finite() && value.trunc() == position as f64
-                }
-                Some(secs_project::PyJson::Bool(value)) => i64::from(*value) == position,
-                _ => false,
-            };
-            matches_position
-                    && entry
-                        .get("ir")
-                        .and_then(secs_project::PyJson::object)
-                        .and_then(|values| values.iter().find(|(name, _)| name == role))
-                        .is_some_and(|(_, value)| {
-                            matches!(value, secs_project::PyJson::Str(path) if !path.is_empty())
-                        })
-        })
-    };
-    let calibration = project
-        .measurement_calibration
-        .iter()
-        .filter_map(|((position, role), fingerprint)| {
-            has_ir(*position, role).then_some((*position, role.as_str(), *fingerprint))
-        })
-        .collect::<Vec<_>>();
-    if calibration.is_empty() {
-        base
-    } else {
-        format!("{base}:cal{calibration:?}")
-    }
-}
-pub(crate) fn target_key_string(project: &Project) -> String {
-    format!("{:?}", target_key(project))
 }
 
 pub(crate) fn engine_error(error: secs_engine::EngineError) -> IpcError {
@@ -1264,8 +844,8 @@ pub(crate) fn engine_error(error: secs_engine::EngineError) -> IpcError {
             .with_param("position", position.to_string())
             .with_param("role", role)
             .with_param("actual_hz", actual_hz.to_string())
-            .with_param("min_hz", secs_engine::MIN_RESAMPLE_RATE.to_string())
-            .with_param("max_hz", secs_engine::MAX_RESAMPLE_RATE.to_string()),
+            .with_param("min_hz", secs_dsp::resample::MIN_RESAMPLE_RATE.to_string())
+            .with_param("max_hz", secs_dsp::resample::MAX_RESAMPLE_RATE.to_string()),
         EngineError::InvalidMeasurement { position, role } => failure
             .with_param("reason", "invalid_measurement")
             .with_param("position", position.to_string())
@@ -1280,18 +860,107 @@ pub(crate) fn engine_error(error: secs_engine::EngineError) -> IpcError {
         EngineError::MissingMainMeasurement { position } => failure
             .with_param("reason", "missing_main_measurement")
             .with_param("position", position.to_string()),
-        EngineError::Input(_) | EngineError::Dsp(_) => failure,
+        EngineError::Dsp(detail) => {
+            IpcError::new(ErrorCode::Internal, detail.to_string()).with_param("reason", "dsp")
+        }
+        EngineError::Memory { requested, total } => failure
+            .with_param("reason", "memory_budget")
+            .with_param("requested", requested.to_string())
+            .with_param("total", total.to_string()),
+        EngineError::Solver(detail) => {
+            IpcError::new(ErrorCode::Internal, detail).with_param("reason", "solver")
+        }
+        EngineError::MissingSubMeasurement { position, role } => failure
+            .with_param("reason", "missing_sub_measurement")
+            .with_param("position", position.to_string())
+            .with_param("role", role),
+        EngineError::Input(_) => failure,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use secs_engine::Note;
-    use secs_engine::SubFilter;
     use secs_mdat::{CalInfo, SourceInfo};
     use secs_project::{MeasurementResult, MeasurementStore};
-    use secs_types::chain::BandType;
+
+    fn snapshot_service() -> (Service, std::path::PathBuf) {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let root = std::env::temp_dir().join(format!(
+            "secs-settings-snapshot-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("settings.secs");
+        let mut project = Project::default();
+        store_calibration(&mut project, &CalibrationSettings::default());
+        MeasurementStore::new(&path, project).save().unwrap();
+        let service = Service::new(crate::Deps::default());
+        lock(&service.session).open(path).unwrap();
+        (service, root)
+    }
+
+    #[test]
+    fn calibration_snapshot_clamps_override_boost_like_settings_edit() {
+        let (service, root) = snapshot_service();
+        let settings = CalibrationSettings {
+            boost_max_db: 1e6,
+            ..Default::default()
+        };
+        assert_eq!(
+            service
+                .snapshot(Some(settings))
+                .unwrap()
+                .settings
+                .boost_max_db,
+            10.0
+        );
+        drop(service);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn calibrate_params_settings_are_checked_like_edits() {
+        let (service, root) = snapshot_service();
+        let settings = CalibrationSettings {
+            rc_lo: 5.0,
+            ..Default::default()
+        };
+        let error = service.snapshot(Some(settings)).unwrap_err();
+        assert_eq!(error.code, ErrorCode::InvalidRequest);
+        assert_eq!(error.params["field"], "rc_lo");
+        assert_eq!(error.params["reason"], "rc_lo_range");
+        for m3 in [-1.0, f64::NAN, f64::INFINITY, 0.0] {
+            let settings = CalibrationSettings {
+                room_volume_m3: Some(m3),
+                ..Default::default()
+            };
+            assert_eq!(
+                service
+                    .snapshot(Some(settings))
+                    .unwrap()
+                    .settings
+                    .room_volume_m3,
+                None
+            );
+        }
+        lock(&service.session)
+            .require_mut()
+            .unwrap()
+            .edit(|project| {
+                store_calibration(
+                    project,
+                    &CalibrationSettings {
+                        rc_lo: 10.0,
+                        ..Default::default()
+                    },
+                );
+            });
+        assert_eq!(service.snapshot(None).unwrap().settings.rc_lo, 10.0);
+        drop(service);
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn background_thread_selection_halves_parallelism_and_paces_one_cpu() {
@@ -1334,92 +1003,6 @@ mod tests {
         settings.rc_hi = None;
         measurements.positions[2].1.push(("L".into(), measurement));
         assert!(check_rc_agreement(&project, &settings, &measurements).is_ok());
-    }
-
-    #[test]
-    fn polarity_notes_map_to_notices_with_role_confidence_and_groups() {
-        let reversed = scalar_notice(&Note::PolarityReversed {
-            role: "SR".into(),
-            confidence: 0.94,
-            compared: 3,
-            opposite: 3,
-        });
-        assert_eq!(reversed.code, "polarity_reversed");
-        assert_eq!(reversed.params["role"], "SR");
-        assert_eq!(reversed.params["confidence"], "0.94");
-        assert_eq!(reversed.params["compared"], "3");
-        assert_eq!(reversed.params["opposite"], "3");
-
-        let split = scalar_notice(&Note::PolaritySplit {
-            groups: (vec!["L".into(), "R".into()], vec!["C".into(), "Ls".into()]),
-            confidence: 0.91,
-        });
-        assert_eq!(split.code, "polarity_split");
-        assert_eq!(split.params["a"], "L,R");
-        assert_eq!(split.params["b"], "C,Ls");
-        assert_eq!(split.params["confidence"], "0.91");
-    }
-
-    #[test]
-    fn pair_phase_notes_map_to_notices_with_bands() {
-        let notice = scalar_notice(&Note::PairPhase {
-            a: "L".into(),
-            b: "Ls".into(),
-            bands: vec![(89.1, 112.2, 167.25, -20.04), (112.2, 141.4, 179.96, -30.0)],
-        });
-        assert_eq!(notice.code, "pair_phase");
-        assert_eq!(notice.params["a"], "L");
-        assert_eq!(notice.params["b"], "Ls");
-        assert_eq!(
-            notice.params["bands"],
-            "89:112:167.2:-20.0,112:141:180.0:-30.0"
-        );
-    }
-
-    #[test]
-    fn rc_limit_notices_keep_legacy_fields_and_add_basis_evidence() {
-        use secs_types::calibration::RcHiBasis;
-        let note = scalar_notice(&Note::RcLimit {
-            hz: 400.0,
-            auto: true,
-            schroeder_hz: Some(154.0),
-            basis: RcHiBasis::Lenient,
-            factor: 2,
-            band_hz: Some(200.0),
-            band_t60_s: Some(0.8),
-            positions: None,
-        });
-        assert_eq!(note.code, "rc_limit");
-        assert_eq!(note.params["hz"], "400");
-        assert_eq!(note.params["auto"], "true");
-        assert_eq!(note.params["schroeder_hz"], "154");
-        assert_eq!(note.params["basis"], "lenient");
-        assert_eq!(note.params["factor"], "2");
-        assert_eq!(note.params["band_hz"], "200");
-        assert_eq!(note.params["band_t60_s"], "0.8");
-        assert!(!note.params.contains_key("positions"));
-        let note = scalar_notice(&Note::RcLimit {
-            hz: 287.0,
-            auto: true,
-            schroeder_hz: None,
-            basis: RcHiBasis::Agreement,
-            factor: 1,
-            band_hz: None,
-            band_t60_s: None,
-            positions: Some(9),
-        });
-        assert_eq!(note.params["basis"], "agreement");
-        assert_eq!(note.params["positions"], "9");
-        assert!(!note.params.contains_key("band_hz"));
-    }
-
-    #[test]
-    fn rc_bands_notice_formats_the_merged_band_set() {
-        let note = scalar_notice(&Note::RcBands {
-            bands: vec![(20.0, 300.0), (15_000.5, 20_000.0)],
-        });
-        assert_eq!(note.code, "rc_bands");
-        assert_eq!(note.params["bands"], "20-300,15000.5-20000");
     }
 
     fn response_source(frequencies: Vec<f32>, gains: Vec<f32>) -> SourceInfo {
@@ -1566,6 +1149,14 @@ mod tests {
                 "invalid input: missing main position",
             ),
             (
+                EngineError::MissingSubMeasurement {
+                    position: 7,
+                    role: "SW2".into(),
+                },
+                json!({"reason":"missing_sub_measurement","position":"7","role":"SW2"}),
+                "invalid input: position 7: missing sub measurement SW2",
+            ),
+            (
                 EngineError::MissingMainMeasurement { position: 5 },
                 json!({"reason":"missing_main_measurement","position":"5"}),
                 "invalid input: no measured main",
@@ -1587,6 +1178,31 @@ mod tests {
         assert_eq!(
             legacy.detail,
             "invalid input: position 3 L: sample rate 44100 (expected 48000)"
+        );
+        let dsp = engine_error(EngineError::Dsp(secs_dsp::DspError::InvalidArgument(
+            "invalid FFT length".into(),
+        )));
+        assert_eq!(dsp.code, ErrorCode::Internal);
+        assert_eq!(dsp.detail, "invalid FFT length");
+        assert_eq!(
+            serde_json::to_value(dsp.params).unwrap(),
+            json!({"reason":"dsp"})
+        );
+        let memory = engine_error(EngineError::Memory {
+            requested: 2048,
+            total: 1024,
+        });
+        assert_eq!(memory.code, ErrorCode::EngineInput);
+        assert_eq!(
+            serde_json::to_value(memory.params).unwrap(),
+            json!({"reason":"memory_budget","requested":"2048","total":"1024"})
+        );
+        let solver = engine_error(EngineError::Solver("singular ridge system".into()));
+        assert_eq!(solver.code, ErrorCode::Internal);
+        assert_eq!(solver.detail, "singular ridge system");
+        assert_eq!(
+            serde_json::to_value(solver.params).unwrap(),
+            json!({"reason":"solver"})
         );
         let cancelled = engine_error(EngineError::Cancelled);
         assert_eq!(cancelled.code, ErrorCode::Cancelled);
@@ -1662,377 +1278,5 @@ mod tests {
             error.detail,
             "invalid input: position 3 L: sample rate 44100 (expected 48000)"
         );
-    }
-
-    #[test]
-    fn low_protect_notices_include_outcome_and_optional_highpass() {
-        let note = Note::LowProtect {
-            role: "SW1".into(),
-            rolloff_hz: 28.0,
-            hp_hz: Some(20.0),
-            limited: true,
-            reduced: 2,
-            cuts: 1,
-        };
-        assert_eq!(
-            serde_json::to_value(notices(&note)).unwrap(),
-            serde_json::json!([
-                {"code":"low_protect","params":{"role":"SW1","rolloff_hz":"28","hp_hz":"20","limited":"true","reduced":"2","cuts":"1"}}
-            ])
-        );
-        let note = Note::LowProtect {
-            role: "L".into(),
-            rolloff_hz: 30.0,
-            hp_hz: None,
-            limited: false,
-            reduced: 2,
-            cuts: 1,
-        };
-        assert_eq!(
-            serde_json::to_value(notices(&note)).unwrap(),
-            serde_json::json!([
-                {"code":"low_protect","params":{"role":"L","rolloff_hz":"30","limited":"false","reduced":"2","cuts":"1"}}
-            ])
-        );
-    }
-
-    #[test]
-    fn dip_limit_notices_list_dips() {
-        let note = Note::DipLimit {
-            role: "R".into(),
-            dips: vec![(94.123, 7.456, 4.728), (136.0, 9.2, 5.6)],
-        };
-        assert_eq!(
-            serde_json::to_value(notices(&note)).unwrap(),
-            serde_json::json!([
-                {"code":"dip_limit","params":{"role":"R","count":"2","dips":"94.12:7.46:4.73,136.00:9.20:5.60"}}
-            ])
-        );
-        let empty = Note::DipLimit {
-            role: "L".into(),
-            dips: Vec::new(),
-        };
-        assert_eq!(
-            serde_json::to_value(notices(&empty)).unwrap(),
-            serde_json::json!([
-                {"code":"dip_limit","params":{"role":"L","count":"0","dips":""}}
-            ])
-        );
-    }
-
-    #[test]
-    fn lf_align_notices_include_outcome_and_optional_arrival() {
-        let note = Note::LfAlign {
-            role: "L".into(),
-            strength: 0.75,
-            arrival_ms: Some(2.5),
-            limited: true,
-        };
-        assert_eq!(
-            serde_json::to_value(notices(&note)).unwrap(),
-            serde_json::json!([
-                {"code":"lf_align","params":{"role":"L","strength":"0.75","arrival_ms":"2.5","limited":"true"}}
-            ])
-        );
-        let note = Note::LfAlign {
-            role: "R".into(),
-            strength: 0.0,
-            arrival_ms: None,
-            limited: false,
-        };
-        assert_eq!(
-            serde_json::to_value(notices(&note)).unwrap(),
-            serde_json::json!([
-                {"code":"lf_align","params":{"role":"R","strength":"0","limited":"false"}}
-            ])
-        );
-    }
-
-    #[test]
-    fn hf_phase_notices_include_rotation_or_report_no_unwind_range() {
-        let note = Note::HfPhase {
-            role: "L".into(),
-            rotation_deg: Some(-114.5),
-            limited: true,
-        };
-        assert_eq!(
-            serde_json::to_value(notices(&note)).unwrap(),
-            serde_json::json!([
-                {"code":"hf_phase","params":{"role":"L","rotation_deg":"-114.5","limited":"true"}}
-            ])
-        );
-        let note = Note::HfPhase {
-            role: "R".into(),
-            rotation_deg: None,
-            limited: false,
-        };
-        assert_eq!(
-            serde_json::to_value(notices(&note)).unwrap(),
-            serde_json::json!([
-                {"code":"hf_phase_none","params":{"role":"R"}}
-            ])
-        );
-        assert_eq!(
-            serde_json::to_value(notices(&Note::InputHp { hz: 27.0 })).unwrap(),
-            serde_json::json!([
-                {"code":"input_hp","params":{"hz":"27","order":"8"}}
-            ])
-        );
-    }
-
-    #[test]
-    fn mode_decay_notices_expand_modes_and_report_empty_result() {
-        let note = Note::ModeDecay {
-            role: "L".into(),
-            target_t60_s: 0.25,
-            modes: vec![(63.0, 0.8, -6.5), (125.0, 0.5, -3.0)],
-        };
-        assert_eq!(
-            serde_json::to_value(notices(&note)).unwrap(),
-            serde_json::json!([
-                {"code":"mode_decay","params":{"role":"L","hz":"63","t60_s":"0.8","target_s":"0.25","depth_db":"-6.5"}},
-                {"code":"mode_decay","params":{"role":"L","hz":"125","t60_s":"0.5","target_s":"0.25","depth_db":"-3"}}
-            ])
-        );
-        let note = Note::ModeDecay {
-            role: "R".into(),
-            target_t60_s: 0.3,
-            modes: Vec::new(),
-        };
-        assert_eq!(
-            serde_json::to_value(notices(&note)).unwrap(),
-            serde_json::json!([
-                {"code":"mode_decay_none","params":{"role":"R","target_s":"0.3"}}
-            ])
-        );
-    }
-
-    #[test]
-    fn flat_notice_schemas_preserve_scalar_values_and_order() {
-        use secs_engine::MimoNote;
-        use serde_json::json;
-        let input = [
-            Note::PhaseStrength(vec![("L".into(), 0.5), ("R".into(), 1.0)]),
-            Note::PhaseBand(vec![("L".into(), Some(100.0)), ("R".into(), None)]),
-            Note::SubFilters(vec![(
-                "SW1".into(),
-                SubFilter {
-                    hp_hz: 10.0,
-                    hp_type: BandType::Lr12,
-                    lp_hz: 80.0,
-                    lp_type: BandType::Lr24,
-                    peq: vec![(40.0, 1.0, -2.0)],
-                },
-            )]),
-            Note::LongModeBoost {
-                cap_db: 3.0,
-                modes: vec![(40.0, 2.0)],
-            },
-            Note::GdCuts {
-                role: "L".into(),
-                cuts: vec![(50.0, 2.0, -3.0)],
-            },
-            Note::TwoWay {
-                roles: vec!["SW1".into(), "SW2".into()],
-                gain_db: -1.0,
-                xo_hz: 50.0,
-            },
-            Note::Mimo(MimoNote::InsufficientPositions { measured: 2 }),
-            Note::Mimo(MimoNote::ExcludedSupports(vec!["SW2".into()])),
-            Note::Mimo(MimoNote::SupportRanges(vec![
-                ("L".into(), Some((50.25, 150.0))),
-                ("R".into(), None),
-            ])),
-            Note::Mimo(MimoNote::GuardReduced {
-                role: "L".into(),
-                gain_db: -6.25,
-                cause: secs_engine::GuardCause {
-                    rejected_db: -3.25,
-                    band_position: Some(3),
-                    tail_position: Some(5),
-                    band: Some((40.0, 50.5, 1.5)),
-                    tail: None,
-                },
-            }),
-            Note::Mimo(MimoNote::GuardDisabled {
-                role: "R".into(),
-                cause: secs_engine::GuardCause {
-                    rejected_db: -12.0,
-                    band_position: None,
-                    tail_position: None,
-                    band: Some((46.5, 49.5, 2.0)),
-                    tail: Some((48.0, 1.25)),
-                },
-            }),
-            Note::Mimo(MimoNote::SupportLimit { max_supports: 2 }),
-            Note::Mimo(MimoNote::FirBudget {
-                support_count: 2,
-                taps_total: 16000,
-            }),
-        ];
-        assert_eq!(
-            serde_json::to_value(input.iter().flat_map(notices).collect::<Vec<_>>()).unwrap(),
-            json!([
-                {"code":"phase_strength","params":{"role":"L","strength":"0.5"}},
-                {"code":"phase_strength","params":{"role":"R","strength":"1"}},
-                {"code":"phase_band","params":{"role":"L","enabled":"true","hz":"100"}},
-                {"code":"phase_band","params":{"role":"R","enabled":"false"}},
-                {"code":"sub_filters","params":{"role":"SW1","hp_hz":"10","hp_type":"LR12","lp_hz":"80","lp_type":"LR24","peq_count":"1"}},
-                {"code":"sub_filter_peq","params":{"role":"SW1","index":"0","hz":"40","q":"1","gain_db":"-2"}},
-                {"code":"long_mode_boost","params":{"cap_db":"3","hz":"40","t60_s":"2"}},
-                {"code":"gd_cuts","params":{"role":"L","index":"0","hz":"50","q":"2","gain_db":"-3"}},
-                {"code":"two_way","params":{"role":"SW1","gain_db":"-1","xo_hz":"50"}},
-                {"code":"two_way","params":{"role":"SW2","gain_db":"-1","xo_hz":"50"}},
-                {"code":"mimo_insufficient_positions","params":{"measured":"2","required":"3"}},
-                {"code":"mimo_support_excluded","params":{"role":"SW2"}},
-                {"code":"mimo_support_range","params":{"role":"L","enabled":"true","lo_hz":"50.25","hi_hz":"150"}},
-                {"code":"mimo_support_range","params":{"role":"R","enabled":"false"}},
-                {"code":"mimo_guard_reduced","params":{"role":"L","gain_db":"-6.25","rejected_db":"-3.25","band_position":"3","tail_position":"5","band_lo_hz":"40","band_hi_hz":"50.5","band_db":"1.5"}},
-                {"code":"mimo_guard_disabled","params":{"role":"R","rejected_db":"-12","band_lo_hz":"46.5","band_hi_hz":"49.5","band_db":"2","mode_hz":"48","tail_db":"1.25"}},
-                {"code":"mimo_support_limit","params":{"max_supports":"2"}},
-                {"code":"mimo_fir_budget","params":{"support_count":"2","taps_total":"16000","sample_rate_hz":"48000"}}
-            ])
-        );
-    }
-
-    #[test]
-    fn every_engine_note_maps_to_a_notice_code_and_params() {
-        let notes = vec![
-            Note::LowProtect {
-                role: "SW1".into(),
-                rolloff_hz: 28.0,
-                hp_hz: Some(20.0),
-                limited: true,
-                reduced: 2,
-                cuts: 1,
-            },
-            Note::LiftCapped {
-                from_ms: 2.0,
-                taps: 3,
-                lift_ms: 1.0,
-            },
-            Note::SubFilters(vec![(
-                "SW1".into(),
-                SubFilter {
-                    hp_hz: 10.0,
-                    hp_type: BandType::Lr12,
-                    lp_hz: 80.0,
-                    lp_type: BandType::Lr24,
-                    peq: vec![(40.0, 1.0, -2.0)],
-                },
-            )]),
-            Note::RcLimit {
-                hz: 300.0,
-                auto: true,
-                schroeder_hz: Some(250.0),
-                basis: secs_types::calibration::RcHiBasis::Strict,
-                factor: 1,
-                band_hz: None,
-                band_t60_s: None,
-                positions: None,
-            },
-            Note::RcBands {
-                bands: vec![(20.0, 300.0), (15_000.0, 20_000.0)],
-            },
-            Note::Latency {
-                latency_ms: 10.0,
-                lift_ms: 2.0,
-                main_extra_ms: 1.0,
-            },
-            Note::PhaseStrength(vec![("L".into(), 0.5)]),
-            Note::PhaseBand(vec![("L".into(), Some(100.0))]),
-            Note::LongModeBoost {
-                cap_db: 3.0,
-                modes: vec![(40.0, 2.0)],
-            },
-            Note::GdCuts {
-                role: "L".into(),
-                cuts: vec![(50.0, 2.0, -3.0)],
-            },
-            Note::BaCost(1.5),
-            Note::BaBusPass {
-                first: 1.0,
-                second: 2.0,
-                kept_first: true,
-            },
-            Note::BaManual,
-            Note::LayoutFallback("fallback".into()),
-            Note::Layout("dba".into()),
-            Note::TwoWay {
-                roles: vec!["SW1".into(), "SW2".into()],
-                gain_db: -1.0,
-                xo_hz: 50.0,
-            },
-            Note::BusGainAnchored(-2.0),
-            Note::LfAlign {
-                role: "L".into(),
-                strength: 0.75,
-                arrival_ms: Some(2.5),
-                limited: false,
-            },
-            Note::HfPhase {
-                role: "L".into(),
-                rotation_deg: Some(-114.5),
-                limited: false,
-            },
-            Note::HfPhase {
-                role: "R".into(),
-                rotation_deg: None,
-                limited: false,
-            },
-            Note::DipLimit {
-                role: "R".into(),
-                dips: vec![(94.0, 7.5, 4.75)],
-            },
-            Note::ModeDecay {
-                role: "L".into(),
-                target_t60_s: 0.25,
-                modes: vec![(63.0, 0.8, -6.5)],
-            },
-            Note::PairPhase {
-                a: "L".into(),
-                b: "Ls".into(),
-                bands: vec![(89.0, 112.0, 170.0, -20.0)],
-            },
-            Note::Mimo(secs_engine::MimoNote::SupportLimit { max_supports: 2 }),
-        ];
-        let codes: Vec<_> = notes
-            .iter()
-            .flat_map(notices)
-            .map(|value| value.code)
-            .collect();
-        assert_eq!(
-            codes,
-            [
-                "low_protect",
-                "lift_capped",
-                "sub_filters",
-                "sub_filter_peq",
-                "rc_limit",
-                "rc_bands",
-                "latency",
-                "phase_strength",
-                "phase_band",
-                "long_mode_boost",
-                "gd_cuts",
-                "ba_cost",
-                "ba_bus_pass",
-                "ba_manual",
-                "layout_fallback",
-                "layout",
-                "two_way",
-                "two_way",
-                "bus_gain_anchored",
-                "lf_align",
-                "hf_phase",
-                "hf_phase_none",
-                "dip_limit",
-                "mode_decay",
-                "pair_phase",
-                "mimo_support_limit",
-            ]
-        );
-        assert_eq!(notices(&notes[1])[0].params["from_ms"], "2");
-        assert_eq!(notices(&notes[15])[0].params["role"], "SW1");
     }
 }

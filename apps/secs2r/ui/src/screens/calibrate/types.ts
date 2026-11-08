@@ -5,7 +5,6 @@
 import type { ComputePreference } from "../../ipc/bindings/ComputePreference";
 import type { ComputeStatus } from "../../ipc/bindings/ComputeStatus";
 import type { StepState } from "../../app/model";
-import type { BandType } from "../../ipc/bindings/BandType";
 import type { CalibrationSettings } from "../../ipc/bindings/CalibrationSettings";
 import type { ConfigResult } from "../../ipc/bindings/ConfigResult";
 import type { IpcError } from "../../ipc/bindings/IpcError";
@@ -17,7 +16,6 @@ import type { ResultTab } from "../../ipc/bindings/ResultTab";
 import type { Notice } from "../../ipc/bindings/Notice";
 import type { SettingEdit } from "../../ipc/bindings/SettingEdit";
 import type { ResultsSummary } from "../../ipc/bindings/ResultsSummary";
-import type { SubEntry } from "../../ipc/bindings/SubEntry";
 import type { TargetResult } from "../../ipc/bindings/TargetResult";
 import type { XoRecommendation } from "../../ipc/bindings/XoRecommendation";
 import type { RangeRejection } from "./settingsView";
@@ -52,7 +50,7 @@ export type CalibrateView = {
    * `curves` dimmed meanwhile instead of showing them as the new selection.
    */
   curvesLoading: boolean;
-  /** `calibration_settings_get`, and the reply of every `calibration_settings_set`. */
+  /** `calibration_settings_get`, and the reply of every `calibration_settings_edit`. */
   settings: CalibrationSettings;
   /** `mode_spec { mode: settings.mode, ultra_ms: settings.ultra_ms, mimo_fir: settings.mimo_fir }`. */
   modeSpec: ModeSpecResult;
@@ -66,8 +64,8 @@ export type CalibrateView = {
   positions: number[];
   /**
    * Roles measured at position 1, in configuration order: the channel list
-   * before the first run (upstream previewed position 1). P33 reads them from
-   * `measurement_curves { positions: [1] }` (service gap: no cheap list).
+   * before the first run (upstream previewed position 1), from
+   * `measurement_records()`'s position 1 entry.
    */
   measuredRoles: string[];
   /** `dsp_get().fields.fir_budget`: the FIR budget of the DSP being exported to (U2), in taps at its output rate; 0 when unknown. */

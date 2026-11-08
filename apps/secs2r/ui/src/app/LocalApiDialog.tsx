@@ -53,7 +53,7 @@ const STATE_TEXT: Record<Exclude<LocalApiState["kind"], "listening" | "port_busy
   failed: "frame.local_api.state.failed",
 };
 
-export function localApiStateText(t: Translate, state: LocalApiState): string {
+function localApiStateText(t: Translate, state: LocalApiState): string {
   if (state.kind === "listening") return t("frame.local_api.state.listening", { address: state.address });
   if (state.kind === "port_busy") return t("frame.local_api.state.port_busy", { port: state.port });
   return t(STATE_TEXT[state.kind]);
@@ -73,7 +73,7 @@ const GLYPH: Record<LocalApiState["kind"], Glyph> = {
 };
 
 /** The state in words with a glyph beside it: a filled dot (on, or dimmed off), a spinner, or a warning sign. */
-export function LocalApiStateLine({ view, id }: { view: LocalApiView; id?: string }) {
+function LocalApiStateLine({ view, id }: { view: LocalApiView; id?: string }) {
   const t = useT();
   const state = localApiState(view);
   const glyph = GLYPH[state.kind];

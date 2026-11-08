@@ -122,7 +122,9 @@ fn unsupported_rates_invalid_data_and_large_ratio_budgets_fail_before_conversion
         let input = set(Samples::F64(vec![1.0].into()), rate, 0.0);
         let error =
             normalize_measurements(&input, SampleRatePolicy::Resample, &context(1024)).unwrap_err();
-        assert!(matches!(error, EngineError::Input(_)));
+        assert!(
+            matches!(error, EngineError::Memory { requested, total: 1024 } if requested > 1024)
+        );
         assert!(error.to_string().contains("memory budget"));
     }
     for (samples, t0) in [

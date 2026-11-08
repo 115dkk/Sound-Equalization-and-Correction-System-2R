@@ -15,6 +15,7 @@ pub mod compute;
 pub mod fs;
 pub mod ipc;
 pub mod local_api;
+pub mod notes;
 pub mod role;
 pub mod rules;
 pub mod settings_edit;

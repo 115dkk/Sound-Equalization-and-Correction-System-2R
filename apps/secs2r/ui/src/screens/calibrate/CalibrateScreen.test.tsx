@@ -7,7 +7,8 @@ import { JobTray } from "../../app/jobs/JobTray";
 import { PrefsScope } from "../../app/prefs";
 import { T0, replay, staticApi } from "../../gallery/frameSpecimens";
 import { translate } from "../../i18n";
-import { createMockService, ipcError, rcEditRefusal } from "../../ipc/mock";
+import { createMockService, ipcError } from "../../ipc/mock";
+import { recordedRefusal } from "../../ipc/recorded";
 import { createSession } from "../../state/session";
 import type { RcBand } from "../../ipc/bindings/RcBand";
 import type { Translate } from "../../i18n/react";
@@ -17,6 +18,7 @@ import type { PlotScale } from "../../ui";
 import { CalibrateScreen, calibrateHeader } from "./CalibrateScreen";
 import { LOADING_DELAY_MS } from "./ResultGraph";
 import * as fx from "./fixtures";
+import { SETTING_ROWS } from "./settingRows";
 import { rangeRejection, type RangeRejection } from "./settingsView";
 import { calibrateStepState, type CalibrateActions, type CalibrateView } from "./types";
 
@@ -141,6 +143,7 @@ const STATES: Record<string, CalibrateView> = {
   mimoBehindCorrection: fx.mimoBehindCorrectionView,
   lowProtect: fx.lowProtectViews.on,
   lowProtectUnheld: fx.lowProtectViews.unheld,
+  polarityDip: fx.polarityDipView,
   lfOn: fx.lfViews.on,
   lfMixed: fx.lfViews.mixed,
   lfZero: fx.lfViews.zero,
@@ -171,13 +174,14 @@ describe("보정 screen", () => {
   });
 
   it("shows the verdict numbers and the plan before the first run", () => {
+    // The recorded verdict: 84.0 % within ±1 dB, 48.7 ms of low-band spread, 8.0 ms added.
     setup(fx.splView);
-    expect(must("calibrate.verdict.within").textContent).toContain("69");
-    expect(must("calibrate.verdict.gd").textContent).toContain("41.5");
-    expect(must("calibrate.verdict.delay").textContent).toContain("9.8 ms");
+    expect(must("calibrate.verdict.within").textContent).toContain("84");
+    expect(must("calibrate.verdict.gd").textContent).toContain("48.7");
+    expect(must("calibrate.verdict.delay").textContent).toContain("8.0 ms");
     cleanupAll();
     setup(fx.emptyView);
-    expect(must("calibrate.verdict.plan").textContent).toContain("3곳에서");
+    expect(must("calibrate.verdict.plan").textContent).toContain("9곳에서");
     expect(must("calibrate.plot.preview").textContent).toContain("위치 1");
     expect(ui("calibrate.scorecard.card")).toBeNull();
   });
@@ -190,13 +194,13 @@ describe("보정 screen", () => {
     expect(must("calibrate.verdict.delay").compareDocumentPosition(notes) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     // rc_limit is the RC card's line; the per-main phase records and the room modes read as one line each.
     const lines = [...notes.querySelectorAll("li")].map((li) => li.textContent ?? "");
-    expect(notes.querySelector("summary")?.textContent).toBe("계산 메모 5개");
+    // The recorded calculation's notes (results.json, the defaults' record).
+    expect(notes.querySelector("summary")?.textContent).toBe("계산 메모 4개");
     expect(lines).toEqual([
-      "FIR 2,048탭에 맞춰 위상 보정 여유를 8.0 ms에서 7.5 ms로 줄였습니다.",
-      "위상 보정 세기: L 0.90, R 0.90, C 0.90, Ls 0.90, Rs 0.90, Lrs 0.90, Rrs 0.90, Ltf 0.50, Rtf 0.50, Ltr 0.50, Rtr 0.50",
-      "울림이 오래 남는 룸 모드 2곳(34 Hz, 52 Hz)의 부스트를 4.0 dB로 제한했습니다.",
-      "BA 평가값 0.84 (낮을수록 좋음)",
-      "서브 버스 PEQ 반영 후 BA 평가값 0.84 → 0.80 (낮을수록 좋음)",
+      "BA 평가값 153.00 (낮을수록 좋음)",
+      "울림이 오래 남는 룸 모드 24곳(41 Hz, 113 Hz, 123 Hz, 34 Hz, 40 Hz, 113 Hz, 41 Hz, 113 Hz, 123 Hz, 113 Hz, 41 Hz, 113 Hz, 113 Hz, 123 Hz, 47 Hz, 113 Hz, 123 Hz, 47 Hz, 113 Hz, 41 Hz, 113 Hz, 22 Hz, 41 Hz, 113 Hz)의 부스트를 3.0 dB로 제한했습니다.",
+      "전체 지연 8.0 ms: 위상 보정 8.0 ms, 메인 추가 딜레이 0.0 ms",
+      "위상 보정 세기: L 0.70, R 0.50, C 0.70, Ls 0.50, Rs 0.50, Lrs 0.50, Rrs 0.50, Ltf 0.50, Rtf 0.50, Ltr 0.50, Rtr 0.70",
     ]);
     // No raw code or parameter list reaches the screen.
     for (const line of lines) expect(line).not.toMatch(/[a-z]+_[a-z]+|[{}[\]]/);
@@ -505,7 +509,7 @@ describe("보정 screen", () => {
     try {
       await session.start(); await session.settled();
       // Keep the screen mounted: both projects supply the same null dimensions.
-      renderWith(<CalibrateScreen view={fx.rangeViews.noVolume} actions={actions} />, { session });
+      renderWith(<CalibrateScreen view={fx.rangeViews.strict} actions={actions} />, { session });
       commitNumber("calibrate.range.dims.w", "5");
       expect(actions.changeSetting).not.toHaveBeenCalled();
       await act(async () => { await session.call({ method: "project_open", params: { path: "/B.secs" } }); });
@@ -524,10 +528,13 @@ describe("보정 screen", () => {
     expect(actions.changeSetting).toHaveBeenLastCalledWith({ kind: "mode", mode: "linear" });
     commitNumber("calibrate.range.lower", "30");
     expect(actions.changeSetting).toHaveBeenLastCalledWith({ kind: "rc_lo", hz: 30 });
+    // 직접 입력 starts from the recorded RC line's 500 Hz.
     fireEvent.click(must("calibrate.range.basis.manual"));
-    expect(actions.changeSetting).toHaveBeenLastCalledWith({ kind: "rc_hi", hz: 310 });
+    expect(actions.changeSetting).toHaveBeenLastCalledWith({ kind: "rc_hi", hz: 500 });
     commitNumber("calibrate.range.volume", "80");
     expect(actions.changeSetting).toHaveBeenLastCalledWith({ kind: "room_volume", m3: 80 });
+    commitNumber("calibrate.range.dims.w", "5.2");
+    commitNumber("calibrate.range.dims.d", "4.3");
     commitNumber("calibrate.range.dims.h", "3");
     expect(actions.changeSetting).toHaveBeenLastCalledWith({ kind: "room_dims", dims: [5.2, 4.3, 3] });
     commitNumber("calibrate.xo.hz", "90");
@@ -545,7 +552,7 @@ describe("보정 screen", () => {
     fireEvent.click(must("calibrate.xo.peq"));
     expect(actions.changeSetting).toHaveBeenLastCalledWith({ kind: "xo_peq", on: false });
     fireEvent.change(must("calibrate.ba.infra"), { target: { value: "SW1" } });
-    expect(actions.changeSetting).toHaveBeenLastCalledWith({ kind: "infra", role: "SW1", hz: 25, type: "LR24", subs: ["SW1", "SW2"] });
+    expect(actions.changeSetting).toHaveBeenLastCalledWith({ kind: "infra", role: "SW1", hz: 25, type: "LR24", subs: ["SW1", "SW2", "SW3"] });
     fireEvent.change(must("calibrate.ba.hp_type"), { target: { value: "BW12" } });
     expect(actions.changeSetting).toHaveBeenLastCalledWith({ kind: "sub_band_type", role: "SW1", band: "hp", type: "BW12" });
     commitNumber("calibrate.ba.peq.1.hz", "40");
@@ -700,7 +707,7 @@ describe("보정 screen", () => {
   it("runs the correction from the result card, beside what it computes from", () => {
     // Before a result: the plan sentence, then 보정 계산 right after it.
     let actions = setup(fx.emptyView);
-    expect(must("calibrate.verdict.plan").textContent).toContain("3곳에서 측정한 값으로 보정합니다.");
+    expect(must("calibrate.verdict.plan").textContent).toContain("9곳에서 측정한 값으로 보정합니다.");
     const compute = must("calibrate.compute") as HTMLButtonElement;
     expect(compute.textContent).toBe("보정 계산");
     expect(compute.disabled).toBe(false);
@@ -714,7 +721,7 @@ describe("보정 screen", () => {
     cleanupAll();
     // While it runs: a spinner and what it corrects from, in place of the button.
     setup(fx.computingView);
-    expect(must("calibrate.verdict.computing").textContent).toBe("3점 측정값을 기반으로 보정 중…");
+    expect(must("calibrate.verdict.computing").textContent).toBe("9점 측정값을 기반으로 보정 중…");
     expect(must("calibrate.verdict.computing").querySelector(".ui-spinner")).not.toBeNull();
     expect(ui("calibrate.compute")).toBeNull();
     cleanupAll();
@@ -799,14 +806,14 @@ describe("MIMO 함께 계산", () => {
     expect(toggle.closest(".calibrate-run__mimo")?.nextElementSibling).toBe(must("calibrate.compute"));
     expect(toggle.closest("[data-ui='calibrate.verdict.plan']")).not.toBeNull();
     expect(ui("calibrate.run.mimo.help")).not.toBeNull();
-    expect(must("calibrate.verdict.plan").querySelector("p")?.textContent).toBe("3곳에서 측정한 값으로 보정하고 MIMO를 함께 계산합니다.");
+    expect(must("calibrate.verdict.plan").querySelector("p")?.textContent).toBe("9곳에서 측정한 값으로 보정하고 MIMO를 함께 계산합니다.");
     fireEvent.click(toggle);
     expect(actions.changeSetting).toHaveBeenLastCalledWith({ kind: "mimo_on", on: false });
     cleanupAll();
     // Off: the plan is the correction's alone.
     setup(fx.emptyView);
     expect(must("calibrate.run.mimo").getAttribute("aria-checked")).toBe("false");
-    expect(must("calibrate.verdict.plan").querySelector("p")?.textContent).toBe("3곳에서 측정한 값으로 보정합니다.");
+    expect(must("calibrate.verdict.plan").querySelector("p")?.textContent).toBe("9곳에서 측정한 값으로 보정합니다.");
   });
 
   it("sits right before 다시 보정하기 after a result, after 다시 측정하기", () => {
@@ -874,7 +881,7 @@ describe("MIMO 함께 계산", () => {
 
   it("names MIMO in the busy line and the header pill while 보정 계산 computes it, in the controls' place", () => {
     setup(fx.computingMimoView);
-    expect(must("calibrate.verdict.computing").textContent).toBe("3곳의 측정값으로 보정과 MIMO 계산 중…");
+    expect(must("calibrate.verdict.computing").textContent).toBe("9곳의 측정값으로 보정과 MIMO 계산 중…");
     expect(must("calibrate.verdict.computing").className).toBe("calibrate-run__busy");
     expect(ui("calibrate.run.mimo")).toBeNull();
     // The button (the MIMO card's compute device block shares its data-ui).
@@ -987,31 +994,32 @@ function heard(table: string, role: string): string[] {
 }
 
 describe("scorecard after MIMO", () => {
+  // Before and after are the recorded calculation's figures; the MIMO ones are the fixture's, drawn on them.
   it("shows before → after → MIMO in all three figures with a current MIMO result, and a key that names the third", () => {
     setup(fx.mimoView);
     expect(heard("calibrate.scorecard", "L")).toEqual([
-      "보정 전 38, 보정 후 64, MIMO 후 54",
-      "보정 전 88.4, 보정 후 47.5, MIMO 후 41.1",
-      "보정 전 −23.9, 보정 후 −16.3, MIMO 후 −23.1",
+      "보정 전 14, 보정 후 86, MIMO 후 90",
+      "보정 전 39.7, 보정 후 50.2, MIMO 후 42.7",
+      "보정 전 −0.7, 보정 후 −14.4, MIMO 후 −16.9",
     ]);
-    expect(heard("calibrate.scorecard", "R")[2]).toBe("보정 전 −24.0, 보정 후 −17.0, MIMO 후 −21.6");
+    expect(heard("calibrate.scorecard", "R")[2]).toBe("보정 전 −0.7, 보정 후 −14.3, MIMO 후 −16.8");
     // The arrows and the MIMO mark are for the eye; the third value carries the MIMO curve's mark.
     const cell = must("calibrate.scorecard").querySelector('[data-row="C"]')!.querySelectorAll("td")[1]!;
-    expect(cell.querySelector('[aria-hidden="true"]')?.textContent).toBe("36 → 62→ 55");
-    expect(cell.querySelector(".calibrate-mimo")?.textContent).toBe("55");
+    expect(cell.querySelector('[aria-hidden="true"]')?.textContent).toBe("22 → 86→ 92");
+    expect(cell.querySelector(".calibrate-mimo")?.textContent).toBe("92");
     expect(must("calibrate.scorecard.key").textContent).toBe("보정 전 → 보정 후 → MIMO 후");
     expect(must("calibrate.scorecard.key").querySelector(".calibrate-mimo")?.textContent).toBe("MIMO 후");
     expect(must("calibrate.scorecard").querySelector("caption")?.textContent).toContain("MIMO 후");
     cleanupAll();
     setup(fx.mimoView, { locale: "en" });
-    expect(heard("calibrate.scorecard", "L")[0]).toBe("Before 38, after 64, after MIMO 54");
+    expect(heard("calibrate.scorecard", "L")[0]).toBe("Before 14, after 86, after MIMO 90");
     expect(must("calibrate.scorecard.key").textContent).toBe("Before → After → After MIMO");
   });
 
   it("keeps two values and does not mention MIMO when the MIMO result is stale or absent", () => {
     for (const view of [fx.mimoStaleView, fx.splView, { ...fx.mimoView, results: { ...fx.mimoView.results, mimo_export: "off" as const } }]) {
       setup(view);
-      expect(heard("calibrate.scorecard", "L")).toEqual(["보정 전 38, 보정 후 64", "보정 전 88.4, 보정 후 47.5", "보정 전 −23.9, 보정 후 −16.3"]);
+      expect(heard("calibrate.scorecard", "L")).toEqual(["보정 전 14, 보정 후 86", "보정 전 39.7, 보정 후 50.2", "보정 전 −0.7, 보정 후 −14.4"]);
       const card = must("calibrate.scorecard.card");
       expect(card.textContent).not.toContain("MIMO");
       expect(card.querySelector(".calibrate-mimo")).toBeNull();
@@ -1024,15 +1032,15 @@ describe("scorecard after MIMO", () => {
     setup(fx.mimoView);
     fireEvent.click(must("calibrate.scorecard.sort"));
     const order = [...must("calibrate.scorecard").querySelectorAll<HTMLElement>("tbody tr")].map((row) => row.dataset.row);
-    // After correction C 62 < L 64 < R 65; after MIMO L 54 would come first.
-    expect(order.slice(0, 3)).toEqual(["C", "L", "R"]);
+    // After correction Lb 63 < Ls 80 < Tfr 82; after MIMO Tfl 73 and R 78 would come before Ls.
+    expect(order.slice(0, 3)).toEqual(["Lb", "Ls", "Tfr"]);
   });
 
   it("adds the 늦은 저음 column at the main position, explained once under the table", () => {
     setup(fx.splView);
     const heads = [...must("calibrate.scorecard").querySelectorAll("th[scope=col]")].map((th) => th.textContent);
     expect(heads[3]).toBe("늦은 저음 (dB)20–150 Hz");
-    expect(heard("calibrate.scorecard", "C")[2]).toBe("보정 전 −17.0, 보정 후 −16.0");
+    expect(heard("calibrate.scorecard", "C")[2]).toBe("보정 전 −0.8, 보정 후 −11.9");
     expect(must("calibrate.scorecard.late").textContent).toContain("낮을수록 울림이 짧습니다.");
     cleanupAll();
     // A channel without an entry has an empty cell; without any entry there is no column.
@@ -1053,18 +1061,15 @@ describe("scorecard after MIMO", () => {
     expect(details.open).toBe(false);
     expect(details.querySelector("summary")?.textContent).toBe("위치별 늦은 저음");
     const heads = [...must("calibrate.scorecard.positions.table").querySelectorAll("th[scope=col]")].map((th) => th.textContent);
-    expect(heads).toEqual(["채널", "위치 1기준", "위치 2", "위치 3"]);
+    // The recorded calculation's nine positions.
+    expect(heads).toEqual(["채널", "위치 1기준", ...[2, 3, 4, 5, 6, 7, 8, 9].map((position) => `위치 ${position}`)]);
     // Rows in main_roles order; each position before → after → MIMO.
     const rows = [...must("calibrate.scorecard.positions.table").querySelectorAll<HTMLElement>("tbody tr")].map((row) => row.dataset.row);
     expect(rows).toEqual(fx.mimoView.results.calibration!.main_roles);
-    expect(heard("calibrate.scorecard.positions.table", "L")).toEqual([
-      "보정 전 −23.9, 보정 후 −16.3, MIMO 후 −23.1",
-      "보정 전 −22.2, 보정 후 −14.4, MIMO 후 −20.1",
-      "보정 전 −24.5, 보정 후 −15.8, MIMO 후 −22.0",
-    ]);
+    expect(heard("calibrate.scorecard.positions.table", "L")).toEqual(Array(9).fill("보정 전 −0.7, 보정 후 −14.4, MIMO 후 −16.9"));
     cleanupAll();
     setup(fx.mimoStaleView);
-    expect(heard("calibrate.scorecard.positions.table", "L")[1]).toBe("보정 전 −22.2, 보정 후 −14.4");
+    expect(heard("calibrate.scorecard.positions.table", "L")[1]).toBe("보정 전 −0.7, 보정 후 −14.4");
     cleanupAll();
     setup(fx.onePositionView);
     expect(ui("calibrate.scorecard.card")).not.toBeNull();
@@ -1097,9 +1102,9 @@ describe("RC upper limit basis", () => {
     expect(actions.changeSetting).toHaveBeenLastCalledWith({ kind: "rc_hi_basis", basis: "lenient" });
     fireEvent.click(must("calibrate.range.basis.agreement"));
     expect(actions.changeSetting).toHaveBeenLastCalledWith({ kind: "rc_hi_basis", basis: "agreement" });
-    // 직접 입력 starts from the limit in force, the RC line's 154 Hz.
+    // 직접 입력 starts from the limit in force, the recorded RC line's 500 Hz.
     fireEvent.click(must("calibrate.range.basis.manual"));
-    expect(actions.changeSetting).toHaveBeenLastCalledWith({ kind: "rc_hi", hz: 154 });
+    expect(actions.changeSetting).toHaveBeenLastCalledWith({ kind: "rc_hi", hz: 500 });
     // The current basis sends nothing.
     actions.changeSetting.mockClear();
     fireEvent.click(must("calibrate.range.basis.strict"));
@@ -1135,9 +1140,12 @@ describe("RC upper limit basis", () => {
     fireEvent.click(must("calibrate.range.transition.4"));
     expect(actions.changeSetting).toHaveBeenLastCalledWith({ kind: "rc_hi_transition", factor: 4 });
     cleanupAll();
-    setup(fx.rangeViews.lenientTimes2);
+    setup(fx.rangeViews.strictTimes2);
     expect(inert("calibrate.range.transition")).toBe(false);
     expect(checked("calibrate.range.transition.2")).toBe(true);
+    cleanupAll();
+    setup(fx.rangeViews.lenient);
+    expect(inert("calibrate.range.transition")).toBe(false);
     cleanupAll();
     setup(fx.rangeViews.strictTimes4);
     expect(checked("calibrate.range.transition.4")).toBe(true);
@@ -1190,30 +1198,30 @@ describe("RC upper limit basis", () => {
     expect(basisHint()).toBe("Measured positions: 2. Position agreement needs 3 or more.");
   });
 
-  it("states the evidence for each basis in the RC line, and keeps the lines of a manual limit, a missing volume and an older note", () => {
+  it("states the recorded RC line of each basis, the missing volume after an automatic one, and a manual limit alone", () => {
     const lines = (view: CalibrateView) => {
       setup(view);
       const text = [...must("calibrate.range.notes").querySelectorAll("li")].map((li) => li.textContent);
       cleanupAll();
       return text;
     };
-    const volume = t("notice.rc_room_volume", { volume_m3: "63" });
-    expect(lines(fx.rangeViews.strict)).toEqual(["RC 상한 154 Hz(엄격한 슈뢰더 154 Hz)", volume]);
-    expect(lines(fx.rangeViews.strictTimes2)).toEqual(["RC 상한 308 Hz(엄격한 슈뢰더 154 Hz × 2)", volume]);
-    expect(lines(fx.rangeViews.strictTimes4)[0]).toBe("RC 상한 616 Hz(엄격한 슈뢰더 154 Hz × 4)");
-    expect(lines(fx.rangeViews.lenient)[0]).toBe("RC 상한 200 Hz(너그러운 슈뢰더, 200 Hz 대역 T60 0.50초)");
-    expect(lines(fx.rangeViews.lenientTimes2)[0]).toBe("RC 상한 400 Hz(너그러운 슈뢰더 200 Hz × 2, 대역 T60 0.50초)");
+    // The recorded calculations ran without a room volume: the Schroeder bases stay at 500 Hz, the hint after them.
+    const noVolume = t("notice.rc_no_room_volume");
+    for (const view of [fx.rangeViews.strict, fx.rangeViews.strictTimes2, fx.rangeViews.strictTimes4, fx.rangeViews.lenient, fx.splView]) {
+      expect(lines(view)).toEqual(["RC 상한 500 Hz(자동)", noVolume]);
+    }
     // Agreement needs no room volume: no volume line follows it.
-    expect(lines(fx.rangeViews.agreement)).toEqual(["RC 상한 287 Hz(위치 9곳 일치도)"]);
-    expect(lines(fx.rangeViews.manual)).toEqual(["RC 상한 300 Hz(직접 입력)"]);
-    expect(lines(fx.rangeViews.noVolume)).toEqual(["RC 상한 500 Hz(자동)", t("notice.rc_no_room_volume")]);
-    expect(lines(fx.splView)[0]).toBe("RC 상한 310 Hz(자동, 슈뢰더 310 Hz)");
+    expect(lines(fx.rangeViews.agreement)).toEqual(["RC 상한 2,000 Hz(위치 9곳 일치도)"]);
+    expect(lines(fx.rangeViews.manual)).toEqual(["RC 상한 500 Hz(직접 입력)"]);
   });
 });
 
 /* ── Reach table (docs/M5-reach.md §6–8, P31b rows) ─────────────────────── */
 
-// Every id the reach rows cite, with <role>, <n> and <key> filled in.
+// Every id the reach rows cite, with <role>, <n> and <key> filled in, and
+// every row of the settings table with its choices (ADR 0055). The ids
+// written out are the rest of the screen and the structured editors'.
+const ROW_IDS = SETTING_ROWS.flatMap((row) => [row.id, ...(row.control === "segmented" ? row.choices.map((choice) => `${row.id}.${choice.value}`) : [])]);
 const REACH_IDS = [
   "calibrate.compute",
   "calibrate.running",
@@ -1255,21 +1263,12 @@ const REACH_IDS = [
   "calibrate.ba.filters",
   "calibrate.ba.warnings",
   "calibrate.ba.subs_only",
-  "calibrate.mode.zero",
-  "calibrate.mode.mixed",
-  "calibrate.mode.linear",
-  "calibrate.mode.ultra",
-  "calibrate.mode.ultra_ms",
+  ...ROW_IDS,
   "calibrate.mode.spec",
-  "calibrate.range.lower",
   ...["", ".strict", ".lenient", ".agreement", ".manual"].map((option) => `calibrate.range.basis${option}`),
-  ...["", ".1", ".2", ".4"].map((option) => `calibrate.range.transition${option}`),
-  "calibrate.range.upper",
-  "calibrate.range.volume",
   "calibrate.range.dims.w",
   "calibrate.range.dims.d",
   "calibrate.range.dims.h",
-  "calibrate.range.boost",
   "calibrate.range.notes",
   "calibrate.range.extra.add",
   ...["", ".lower", ".upper", ".remove"].map((part) => `calibrate.range.extra.1${part}`),
@@ -1285,7 +1284,6 @@ const REACH_IDS = [
   "calibrate.ba.infra",
   "calibrate.ba.infra_hz",
   "calibrate.ba.infra_type",
-  "calibrate.ba.infra_boost",
   "calibrate.ba.infra_note",
   "calibrate.ba.mode.SW1",
   "calibrate.ba.subs",
@@ -1305,19 +1303,11 @@ const REACH_IDS = [
   "calibrate.ba.peq.1.hz",
   "calibrate.ba.peq.1.q",
   "calibrate.ba.peq.1.gain",
-  "calibrate.ba.main_delay",
   "calibrate.ba.mimo_support",
   "calibrate.ba.compute_subs",
   "calibrate.ba.take_values",
   "calibrate.ba.settings_warnings",
   "calibrate.ba.none",
-  "calibrate.mimo.on",
-  "calibrate.mimo.fsiso",
-  "calibrate.mimo.low_auto",
-  "calibrate.mimo.low",
-  "calibrate.mimo.max",
-  "calibrate.mimo.fir",
-  "calibrate.mimo.seat_guard",
   "calibrate.mimo.compute",
   "calibrate.mimo.reason",
   "calibrate.mimo.state",
@@ -1372,19 +1362,19 @@ describe("극저역 보호 자동 설정 (ADR 0022)", () => {
     setup(fx.lowProtectViews.unheld);
     const warning = must("calibrate.verdict.low_protect");
     expect(warning.className).toContain("ui-error--warning");
-    expect(warning.textContent).toContain("극저역 보호: SW1 + SW2 채널의 22 Hz 아래 일부 주파수가 부스트 한도를 넘습니다.");
+    expect(warning.textContent).toContain("극저역 보호: SW1 + SW2 + SW3 채널의 22 Hz 아래 일부 주파수가 부스트 한도를 넘습니다.");
     expect(warning.textContent).toContain("부스트 상한을 낮추거나 RC 하한을 올린 뒤 '다시 보정하기'를 누르십시오.");
     const lines = [...must("calibrate.verdict.notes").querySelectorAll("li")].map((li) => li.textContent ?? "");
     expect(lines).toContain("극저역 보호(SW1): 22 Hz 아래 부스트 안 함, 16 Hz 하이패스");
     expect(lines).toContain("극저역 보호(L): 28 Hz 아래 부스트 안 함");
-    expect(lines.filter((line) => line.startsWith("극저역 보호"))).toHaveLength(13);
+    expect(lines.filter((line) => line.startsWith("극저역 보호"))).toHaveLength(14);
     // The warning is not repeated as a note.
     expect(lines.some((line) => line.includes("SW1 + SW2"))).toBe(false);
     cleanupAll();
-    // Every channel held: no warning.
+    // The recorded calculation with it on: no channel noted, no warning, the defaults' four notes.
     setup(fx.lowProtectViews.on);
     expect(ui("calibrate.verdict.low_protect")).toBeNull();
-    expect(must("calibrate.verdict.notes").querySelector("summary")?.textContent).toBe("계산 메모 18개");
+    expect(must("calibrate.verdict.notes").querySelector("summary")?.textContent).toBe("계산 메모 4개");
     cleanupAll();
     setup(fx.lowProtectViews.unheld, { locale: "en" });
     expect(must("calibrate.verdict.low_protect").textContent).toContain("Lower the boost limit or raise the RC lower limit, then press 'Correct again'.");
@@ -1394,6 +1384,17 @@ describe("극저역 보호 자동 설정 (ADR 0022)", () => {
     setup(fx.lowProtectViews.off, { initial: { rangeAdvanced: true, notesOpen: true } });
     expect(must("calibrate.range.low_protect").getAttribute("aria-checked")).toBe("false");
     expect((must("calibrate.verdict.notes") as HTMLDetailsElement).open).toBe(true);
+  });
+});
+
+describe("polarity warning and dip-limit line specimens (ADR 0033, 0034)", () => {
+  it("shows the reversed main as a warning with its flip button and the limited dips as one note line", () => {
+    setup(fx.polarityDipView, { initial: { notesOpen: true } });
+    expect(must("calibrate.verdict.polarity_reversed").textContent).toContain("Rs의 직접음이 비교한 스피커 3개 가운데 3개와 반대 부호입니다");
+    expect(must("calibrate.polarity.flip.Rs")).toBeTruthy();
+    const lines = [...must("calibrate.verdict.notes").querySelectorAll("li")].map((li) => li.textContent ?? "");
+    expect(lines).toContain("딥 보정 제한(L): 94 Hz 7.5 dB 딥을 4.8 dB까지, 137 Hz 9.2 dB 딥을 5.6 dB까지");
+    expect(lines.some((line) => line.includes("극성"))).toBe(false);
   });
 });
 
@@ -1414,7 +1415,7 @@ describe("극저역 보호 수동 설정, the input cut (ADR 0031)", () => {
   it("shows its frequency while on, sends a new one, and turns off", () => {
     const actions = setup(fx.inputHpViews.on);
     expect(must("calibrate.range.input_hp").getAttribute("aria-checked")).toBe("true");
-    expect((must("calibrate.range.input_hp.hz") as HTMLInputElement).value).toBe("27");
+    expect((must("calibrate.range.input_hp.hz") as HTMLInputElement).value).toBe("25");
     commitNumber("calibrate.range.input_hp.hz", "30");
     expect(actions.changeSetting).toHaveBeenLastCalledWith({ kind: "input_hp", hz: 30 });
     fireEvent.click(must("calibrate.range.input_hp"));
@@ -1422,9 +1423,10 @@ describe("극저역 보호 수동 설정, the input cut (ADR 0031)", () => {
   });
 
   it("lists the cut once in the calculation notes", () => {
+    // The recorded calculation with the cut at 25 Hz.
     setup(fx.inputHpViews.on, { initial: { notesOpen: true } });
     const lines = [...must("calibrate.verdict.notes").querySelectorAll("li")].map((li) => li.textContent ?? "");
-    expect(lines.filter((line) => line === t("notice.input_hp", { hz: "27" }))).toHaveLength(1);
+    expect(lines.filter((line) => line === t("notice.input_hp", { hz: "25" }))).toHaveLength(1);
   });
 });
 
@@ -1563,14 +1565,17 @@ describe("저음 도착 맞추기, 고역 위상 맞추기 and 방 울림 줄이
 
 /* ── Extra correction bands (ADR 0024) ──────────────────────────────────── */
 
-/** The screen with its settings held in state, as the service answers them: an rc_bands list stored sorted, a refusal kept in the view. */
+/**
+ * The screen with its settings held in state, as the service answers them: an rc_bands list stored sorted,
+ * and the service's recorded refusal of an edit it was recorded refusing kept in the view.
+ */
 function BandsHarness({ initial, actions }: { initial: CalibrateView; actions: MockActions }) {
   const [view, setView] = useState(initial);
   const changeSetting: CalibrateActions["changeSetting"] = async (change, accepted) => {
     const edit = settingEdit(change, view.settings);
     if (!edit) return false;
     await actions.changeSetting(edit);
-    const refusal = rcEditRefusal(view.settings, edit);
+    const refusal = recordedRefusal(edit);
     if (refusal) {
       setView((v) => ({ ...v, rangeRejection: rangeRejection(edit, refusal) }));
       return false;
@@ -1659,28 +1664,31 @@ describe("extra correction bands (ADR 0024)", () => {
   });
 
   it("shows a refused band edge's reason at that input, keeps the stored value there, and drops the reason on the next draft", async () => {
+    // The band the service was recorded refusing: 2 kHz up to 1 kHz.
+    const one = { ...fx.extraBandViews.one, settings: { ...fx.extraBandViews.one.settings, rc_bands: [band(2000, 4000)] } };
     const actions = mockActions();
-    renderWith(<BandsHarness initial={fx.extraBandViews.two} actions={actions} />, { locale: "ko" });
+    renderWith(<BandsHarness initial={one} actions={actions} />, { locale: "ko" });
     await act(async () => {
-      commitNumber("calibrate.range.extra.2.upper", "12000");
+      commitNumber("calibrate.range.extra.1.upper", "1000");
     });
-    expect(actions.changeSetting).toHaveBeenLastCalledWith({ kind: "rc_bands", bands: [band(2000, 4000), band(15000, 12000)] });
-    const input = must("calibrate.range.extra.2.upper") as HTMLInputElement;
-    expect(errorOf("calibrate.range.extra.2.upper")).toBe("하한 15,000 Hz보다 높은 값을 넣으십시오.");
+    expect(actions.changeSetting).toHaveBeenLastCalledWith({ kind: "rc_bands", bands: [band(2000, 1000)] });
+    const input = must("calibrate.range.extra.1.upper") as HTMLInputElement;
+    expect(errorOf("calibrate.range.extra.1.upper")).toBe("하한 2,000 Hz보다 높은 값을 넣으십시오.");
     expect(input.getAttribute("aria-invalid")).toBe("true");
-    expect(input.value).toBe("20000");
-    expect(input.getAttribute("aria-valuenow")).toBe("20000");
-    expect(errorOf("calibrate.range.extra.2.lower")).toBeNull();
+    expect(input.value).toBe("4000");
+    expect(input.getAttribute("aria-valuenow")).toBe("4000");
+    expect(errorOf("calibrate.range.extra.1.lower")).toBeNull();
+    fireEvent.change(input, { target: { value: "3000" } });
     expect(errorOf("calibrate.range.extra.1.upper")).toBeNull();
-    // A lower edge raised past its upper edge: the reason moves to that input.
-    await act(async () => {
-      commitNumber("calibrate.range.extra.1.lower", "4500");
-    });
+    cleanupAll();
+    // A lower edge raised past its upper edge: the reason is at that input.
+    setup({ ...fx.extraBandViews.two, rangeRejection: {
+      edit: { kind: "rc_bands", bands: [band(4500, 4000), band(15000, 20000)] },
+      error: ipcError("invalid_request", "", { field: "rc_bands", reason: "rc_band_range", index: "1", lo_hz: "4500", hi_hz: "4000" }),
+    } });
     expect(errorOf("calibrate.range.extra.1.lower")).toBe("상한 4,000 Hz보다 낮은 값을 넣으십시오.");
     expect(errorOf("calibrate.range.extra.2.upper")).toBeNull();
     expect((must("calibrate.range.extra.1.lower") as HTMLInputElement).value).toBe("2000");
-    fireEvent.change(must("calibrate.range.extra.1.lower"), { target: { value: "2500" } });
-    expect(errorOf("calibrate.range.extra.1.lower")).toBeNull();
   });
 
   it("shows each refusal of the primary edges at its input, the stored value kept", () => {
@@ -1689,8 +1697,8 @@ describe("extra correction bands (ADR 0024)", () => {
       rangeRejection: { edit, error: ipcError("invalid_request", "", { field: edit.kind, ...params }) },
     });
     const manual = fx.rangeViews.manual;
-    setup(refused(manual, { kind: "rc_lo", hz: 300 }, { reason: "rc_lo_above_hi", hi_hz: "300" }));
-    expect(errorOf("calibrate.range.lower")).toBe("상한 300 Hz보다 낮은 값을 넣으십시오.");
+    setup(refused(manual, { kind: "rc_lo", hz: 500 }, { reason: "rc_lo_above_hi", hi_hz: "500" }));
+    expect(errorOf("calibrate.range.lower")).toBe("상한 500 Hz보다 낮은 값을 넣으십시오.");
     expect((must("calibrate.range.lower") as HTMLInputElement).value).toBe("20");
     expect(errorOf("calibrate.range.upper")).toBeNull();
     cleanupAll();
@@ -1699,7 +1707,7 @@ describe("extra correction bands (ADR 0024)", () => {
     cleanupAll();
     setup(refused(manual, { kind: "rc_hi", hz: 20 }, { reason: "rc_hi_below_lo", lo_hz: "20" }));
     expect(errorOf("calibrate.range.upper")).toBe("하한 20 Hz보다 높은 값을 넣으십시오.");
-    expect((must("calibrate.range.upper") as HTMLInputElement).value).toBe("300");
+    expect((must("calibrate.range.upper") as HTMLInputElement).value).toBe("500");
     cleanupAll();
     setup(refused(manual, { kind: "rc_hi", hz: 30000 }, { reason: "rc_hi_range", min: "100", max: "20000" }));
     expect(errorOf("calibrate.range.upper")).toBe("100–20000 Hz 사이의 값을 넣으십시오.");
@@ -1722,28 +1730,29 @@ describe("extra correction bands (ADR 0024)", () => {
   });
 
   it("hands the graph the extra bands and labels each one where it fits, and leaves the band as before without them", () => {
+    // The RC band is the recorded calculation's, 20–500 Hz.
     setup(fx.extraBandViews.one);
-    expect(JSON.parse(must("calibrate.plot").getAttribute("data-band")!)).toEqual({ lo: 20, hi: 310, extra: [[15000, 20000]] });
+    expect(JSON.parse(must("calibrate.plot").getAttribute("data-band")!)).toEqual({ lo: 20, hi: 500, extra: [[15000, 20000]] });
     expect(must("calibrate.plot.band.lower").textContent).toBe("RC 하한 20 Hz");
-    expect(must("calibrate.plot.band.upper").textContent).toBe("RC 상한 310 Hz");
+    expect(must("calibrate.plot.band.upper").textContent).toBe("RC 상한 500 Hz");
     const extra = must("calibrate.plot.band.extra.1");
     expect(extra.textContent).toBe("추가 구간 15k~20k Hz");
     // Near the right side a label sits left of its edge, so it stays inside the plot; the RC band's stay as before.
     expect(extra.style.right).not.toBe("");
     expect(extra.className).not.toContain("--upper");
     expect(parseFloat(must("calibrate.plot.band.lower").style.left)).toBeCloseTo(Math.log10(20) * 100 + 4, 2);
-    expect(parseFloat(must("calibrate.plot.band.upper").style.left)).toBeCloseTo(Math.log10(310) * 100 + 4, 2);
+    expect(parseFloat(must("calibrate.plot.band.upper").style.left)).toBeCloseTo(Math.log10(500) * 100 + 4, 2);
     cleanupAll();
     // Two bands on a 500 px plot: 2–4 kHz fits beside the lower label; 15–20 kHz covers a label on either row, so it is left out.
     setup(fx.extraBandViews.two);
-    expect(JSON.parse(must("calibrate.plot").getAttribute("data-band")!)).toEqual({ lo: 20, hi: 310, extra: [[2000, 4000], [15000, 20000]] });
+    expect(JSON.parse(must("calibrate.plot").getAttribute("data-band")!)).toEqual({ lo: 20, hi: 500, extra: [[2000, 4000], [15000, 20000]] });
     expect(must("calibrate.plot.band.extra.1").textContent).toBe("추가 구간 2k~4k Hz");
     expect(ui("calibrate.plot.band.extra.2")).toBeNull();
     cleanupAll();
     setup(fx.splView);
-    expect(JSON.parse(must("calibrate.plot").getAttribute("data-band")!)).toEqual({ lo: 20, hi: 310, extra: [] });
+    expect(JSON.parse(must("calibrate.plot").getAttribute("data-band")!)).toEqual({ lo: 20, hi: 500, extra: [] });
     expect(ui("calibrate.plot.band.extra.1")).toBeNull();
-    expect(must("calibrate.plot.band.upper").textContent).toBe("RC 상한 310 Hz");
+    expect(must("calibrate.plot.band.upper").textContent).toBe("RC 상한 500 Hz");
     cleanupAll();
     // XO shows no RC band.
     setup({ ...fx.extraBandViews.two, tab: "xo", curves: fx.xoView.curves });
@@ -1751,12 +1760,13 @@ describe("extra correction bands (ADR 0024)", () => {
   });
 
   it("lists the merged band set in the calculation notes, in Korean and English", () => {
-    setup(fx.extraBandViews.two, { initial: { notesOpen: true } });
+    // The recorded calculation with 1–2 kHz and 15–20 kHz.
+    setup(fx.extraBandViews.calculated, { initial: { notesOpen: true } });
     const lines = () => [...must("calibrate.verdict.notes").querySelectorAll("li")].map((li) => li.textContent ?? "");
-    expect(lines()).toContain("RC 보정 구간 20~310 Hz, 2,000~4,000 Hz, 15,000~20,000 Hz");
+    expect(lines()).toContain("RC 보정 구간 20~500 Hz, 1,000~2,000 Hz, 15,000~20,000 Hz");
     cleanupAll();
-    setup(fx.extraBandViews.two, { locale: "en", initial: { notesOpen: true } });
-    expect(lines()).toContain("RC correction bands 20–310 Hz, 2,000–4,000 Hz, 15,000–20,000 Hz");
+    setup(fx.extraBandViews.calculated, { locale: "en", initial: { notesOpen: true } });
+    expect(lines()).toContain("RC correction bands 20–500 Hz, 1,000–2,000 Hz, 15,000–20,000 Hz");
     expect(must("calibrate.range.extra.add").textContent).toBe("Add correction band");
     cleanupAll();
     // Without extra bands there is no such note.
@@ -1773,12 +1783,15 @@ describe("reach table", () => {
     for (const view of Object.values(STATES)) add(idsOf(screenOf(view)));
     // States that show the rest: a manual upper limit and lower MIMO limit, an infra sub, a group, a fixed sub.
     add(idsOf(screenOf({ ...fx.mimoView, settings: { ...fx.mimoView.settings, rc_hi: 400, mimo_low: 30 } })));
-    add(idsOf(screenOf({ ...fx.splView, settings: { ...fx.splView.settings, subs_manual: { SW1: { ...fx.baView.settings.subs_manual.SW2!, mode: "auto", hp_hz: 0, lp_hz: 25 }, SW2: { ...fx.baView.settings.subs_manual.SW2!, mode: "auto", hp_hz: 25, lp_hz: 0 } } } })));
+    const highPassed = { ...fx.baView.settings.subs_manual.SW2!, mode: "auto", hp_hz: 25, lp_hz: 0 };
+    add(idsOf(screenOf({ ...fx.splView, settings: { ...fx.splView.settings, subs_manual: { SW1: { ...fx.baView.settings.subs_manual.SW2!, mode: "auto", hp_hz: 0, lp_hz: 25 }, SW2: highPassed, SW3: highPassed } } })));
     add(idsOf(screenOf(fx.subsOnlyView, "SW2")));
     add(idsOf(screenOf(fx.baView, "SW2")));
     add(idsOf(screenOf({ ...fx.emptyView, settings: { ...fx.emptyView.settings, mimo_on: true } })));
     // Extra correction bands (ADR 0024): their rows and the graph's labels.
     add(idsOf(screenOf(fx.extraBandViews.two)));
+    // The input cut on (ADR 0031): its frequency row.
+    add(idsOf(screenOf(fx.inputHpViews.on)));
     // The header's pills, and the job tray's cancels and history (U8).
     for (const view of [fx.splView, fx.staleView, fx.runningMimoView]) add(idsOf(<>{calibrateHeader(view, t).status}</>));
     const jobs = (["calibrate", "recommend_xo", "mimo"] as const).map((kind, i) => ({ type: "event" as const, at: T0 + i, event: { event: "started" as const, job: i + 1, kind } }));

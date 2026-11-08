@@ -1,6 +1,6 @@
-# ADR 0010: 스킨 셋 (기본 · Hardware Rack · Signal Matrix)
+# 0010. 스킨 셋 (기본 · Hardware Rack · Signal Matrix)
 
-- 상태: 채택 (2026-10-22)
+상태: 채택, 2026-10-22
 - 관련: [ADR 0003](0003-stack-and-ipc.md)의 화면 규칙, [`docs/DESIGN.md`](../DESIGN.md), [`docs/skins/`](../skins/README.md)
 
 ## 맥락

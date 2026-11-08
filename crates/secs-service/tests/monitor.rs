@@ -2,7 +2,7 @@
 
 use std::fs;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
@@ -448,7 +448,7 @@ fn monitor_started_in_another_project_does_not_store_late_level() {
 }
 
 #[test]
-fn level_stop_cancels_only_the_active_burst_and_is_idempotent() {
+fn level_stop_stops_only_the_play_and_keeps_the_monitor() {
     let root = root();
     let service = Service::new(Default::default());
     configure_mock(&service, &root.join("room.secs"));
@@ -567,6 +567,7 @@ impl secs_rew::Transport for RecordingRew {
 #[derive(Debug, Clone, Default)]
 struct FailingRew {
     calls: Arc<Mutex<Vec<secs_rew::Request>>>,
+    failed_play: Arc<AtomicBool>,
 }
 
 impl secs_rew::Transport for FailingRew {
@@ -580,6 +581,7 @@ impl secs_rew::Transport for FailingRew {
                 .body
                 .as_ref()
                 .is_some_and(|body| body["command"] == "Play")
+            && !self.failed_play.swap(true, Ordering::SeqCst)
         {
             return Err(secs_rew::RewError::Connection {
                 path: request.path.clone(),
@@ -591,7 +593,7 @@ impl secs_rew::Transport for FailingRew {
 }
 
 #[test]
-fn rew_monitor_cleans_up_after_loop_error() {
+fn rew_level_monitor_survives_a_failed_play_td265() {
     let root = root();
     let transport = FailingRew::default();
     let injected = transport.clone();
@@ -616,9 +618,66 @@ fn rew_monitor_cleans_up_after_loop_error() {
         }),
         Arc::new(NoEvents),
     );
+    events.wait_play_end(started.job, "L", "failed", Duration::from_secs(2));
+    assert!(events.values.lock().unwrap().iter().any(|event| {
+        matches!(event, JobEvent::Log { job, code, params }
+        if *job == started.job
+            && code == "level_play_end"
+            && params.get("role").is_some_and(|role| role == "L")
+            && params.get("error_code").is_some_and(|code| {
+                // the wire spelling, as the envelope writes it
+                !code.is_empty() && code.chars().all(|c| c.is_ascii_lowercase() || c == '_')
+            }))
+    }));
+    assert!(
+        !events
+            .values
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|event| matches!(event, JobEvent::Finished { job, .. } if *job == started.job))
+    );
+
+    call(
+        &service,
+        Request::LevelPlay(LevelPlayParams {
+            role: "R".into(),
+            master_dbfs: -30.0,
+        }),
+        Arc::new(NoEvents),
+    );
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while transport
+        .calls
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|request| {
+            request.path == "/generator/command"
+                && request
+                    .body
+                    .as_ref()
+                    .is_some_and(|body| body["command"] == "Play")
+        })
+        .count()
+        < 2
+    {
+        assert!(Instant::now() < deadline, "second REW play did not start");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(
+        !events
+            .values
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|event| matches!(event, JobEvent::Finished { job, .. } if *job == started.job))
+    );
+
+    call(&service, Request::LevelMonitorStop, Arc::new(NoEvents));
     assert_eq!(
         events.wait_finished(started.job, Duration::from_secs(2)),
-        JobStatus::Failed
+        JobStatus::Cancelled
     );
     let calls = transport.calls.lock().unwrap();
     assert!(calls.iter().any(|call| {
@@ -812,7 +871,7 @@ fn levels_methods_fill_only_missing_defaults() {
 }
 
 #[test]
-fn generic_cancel_ends_monitor_during_an_active_burst() {
+fn job_cancel_alone_stops_a_playing_level_monitor() {
     let root = root();
     let service = Service::new(Default::default());
     configure_mock(&service, &root.join("room.secs"));
@@ -838,6 +897,7 @@ fn generic_cancel_ends_monitor_during_an_active_burst() {
         Request::JobCancel(JobCancelParams { job: started.job }),
         Arc::new(NoEvents),
     );
+    events.wait_play_end(started.job, "L", "stopped", Duration::from_secs(1));
     assert_eq!(
         events.wait_finished(started.job, Duration::from_secs(1)),
         JobStatus::Cancelled

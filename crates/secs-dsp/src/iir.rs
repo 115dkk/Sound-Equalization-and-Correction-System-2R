@@ -14,6 +14,134 @@ pub enum BType {
     Bandpass,
 }
 
+/// One normalized digital biquad section.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Biquad {
+    /// Numerator coefficient at zero delay.
+    pub b0: f64,
+    /// Numerator coefficient at one-sample delay.
+    pub b1: f64,
+    /// Numerator coefficient at two-sample delay.
+    pub b2: f64,
+    /// Denominator coefficient at one-sample delay.
+    pub a1: f64,
+    /// Denominator coefficient at two-sample delay.
+    pub a2: f64,
+}
+
+impl Biquad {
+    /// Convert a normalized SOS row whose `a0` is one.
+    pub fn from_sos(row: [f64; 6]) -> Result<Self, DspError> {
+        if row[3] != 1.0 || row.iter().any(|value| !value.is_finite()) {
+            return Err(invalid("non-normalized or non-finite biquad section"));
+        }
+        Ok(Self {
+            b0: row[0],
+            b1: row[1],
+            b2: row[2],
+            a1: row[4],
+            a2: row[5],
+        })
+    }
+
+    /// Whether all five normalized coefficients are finite.
+    pub fn is_finite(self) -> bool {
+        [self.b0, self.b1, self.b2, self.a1, self.a2]
+            .into_iter()
+            .all(f64::is_finite)
+    }
+
+    /// Filter one block with fresh zero state.
+    pub fn apply(self, values: &mut [f64]) {
+        let mut filter = Tdf2::new(self);
+        for value in values {
+            *value = filter.process(*value);
+        }
+    }
+}
+
+/// Direct-form-II-transposed state for one biquad section.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Tdf2 {
+    section: Biquad,
+    z1: f64,
+    z2: f64,
+}
+
+impl Tdf2 {
+    /// Start one section with zero state.
+    pub const fn new(section: Biquad) -> Self {
+        Self {
+            section,
+            z1: 0.0,
+            z2: 0.0,
+        }
+    }
+
+    /// Process one sample in direct-form-II-transposed arithmetic order.
+    pub fn process(&mut self, input: f64) -> f64 {
+        let output = self.section.b0 * input + self.z1;
+        self.z1 = self.section.b1 * input - self.section.a1 * output + self.z2;
+        self.z2 = self.section.b2 * input - self.section.a2 * output;
+        output
+    }
+
+    /// Reset both delay states to zero.
+    pub fn reset(&mut self) {
+        self.z1 = 0.0;
+        self.z2 = 0.0;
+    }
+}
+
+fn normalize(b: [f64; 3], a: [f64; 3]) -> Biquad {
+    Biquad {
+        b0: b[0] / a[0],
+        b1: b[1] / a[0],
+        b2: b[2] / a[0],
+        a1: a[1] / a[0],
+        a2: a[2] / a[0],
+    }
+}
+
+/// Digital RBJ peaking section at an explicit sample rate.
+pub fn rbj_peaking(rate: f64, hz: f64, q: f64, gain_db: f64) -> Biquad {
+    let w = 2.0 * PI * hz / rate;
+    let alpha = w.sin() / (2.0 * q);
+    let gain = 10_f64.powf(gain_db / 40.0);
+    normalize(
+        [1.0 + alpha * gain, -2.0 * w.cos(), 1.0 - alpha * gain],
+        [1.0 + alpha / gain, -2.0 * w.cos(), 1.0 - alpha / gain],
+    )
+}
+
+/// Digital RBJ all-pass section at an explicit sample rate.
+pub fn rbj_allpass(rate: f64, hz: f64, q: f64) -> Biquad {
+    let w = 2.0 * PI * hz / rate;
+    let alpha = w.sin() / (2.0 * q);
+    let middle = -2.0 * w.cos();
+    normalize(
+        [1.0 - alpha, middle, 1.0 + alpha],
+        [1.0 + alpha, middle, 1.0 - alpha],
+    )
+}
+
+/// Digital RBJ low-pass or high-pass section at an explicit sample rate.
+pub fn rbj_band(rate: f64, hz: f64, q: f64, high_pass: bool) -> Biquad {
+    let w = 2.0 * PI * hz / rate;
+    let alpha = w.sin() / (2.0 * q);
+    let cosine = w.cos();
+    let edge = if high_pass {
+        (1.0 + cosine) / 2.0
+    } else {
+        (1.0 - cosine) / 2.0
+    };
+    let middle = if high_pass { -2.0 * edge } else { 2.0 * edge };
+    normalize(
+        [edge, middle, edge],
+        [1.0 + alpha, -2.0 * cosine, 1.0 - alpha],
+    )
+}
+
 /// Analog Butterworth prototype -> LP/HP -> prewarped bilinear -> nearest SOS.
 /// SciPy 1.18.1 `scipy/signal/_filter_design.py`.
 /// Verified with SciPy 1.18.0. Nearest pairing consumes the poles nearest the

@@ -3,7 +3,6 @@ use std::path::{Path, PathBuf};
 use secs_project::PyJson;
 use secs_types::ipc::{ExportFolderResult, ExportFolderSetParams, IpcError};
 
-use crate::measure::json::JsonExt;
 use crate::{LocalTime, Service, lock};
 
 impl Service {
@@ -11,7 +10,7 @@ impl Service {
         let session = lock(&self.session);
         let project_path = match session.require() {
             Ok(open) => {
-                if let Some(folder) = stored_folder(open.store.project()) {
+                if let Some(folder) = stored_folder(open.project()) {
                     return Ok(ExportFolderResult {
                         folder: folder.to_owned(),
                         stored: true,
@@ -39,16 +38,25 @@ impl Service {
     ) -> Result<ExportFolderResult, IpcError> {
         let mut session = lock(&self.session);
         let open = session.require_mut()?;
-        set_stored_folder(open.store.project_mut(), &params.folder);
-        open.dirty = true;
+        open.edit(|project| set_stored_folder(project, &params.folder));
         Ok(ExportFolderResult {
             folder: params.folder,
             stored: true,
         })
     }
 
-    pub(crate) fn resolved_export_base(&self) -> Result<PathBuf, IpcError> {
-        Ok(PathBuf::from(self.export_folder_get()?.folder))
+    pub(crate) fn resolved_export_base_for(
+        &self,
+        open: &crate::session::OpenProject,
+    ) -> Result<PathBuf, IpcError> {
+        if let Some(folder) = stored_folder(open.project()) {
+            return Ok(PathBuf::from(folder));
+        }
+        Ok(default_export_folder(
+            Some(&open.path),
+            &self.deps.host.home_dir()?,
+            (self.deps.clock)(),
+        ))
     }
 }
 

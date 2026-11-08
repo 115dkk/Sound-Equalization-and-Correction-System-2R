@@ -11,6 +11,8 @@ use secs_dsp::{
 };
 use std::sync::OnceLock;
 
+pub(crate) use secs_dsp::stats::median;
+
 /// The low-frequency linear grid BA measures late energy on (`_ba_setup`).
 #[derive(Debug, Clone)]
 pub struct BaLateGrid {
@@ -195,19 +197,5 @@ pub(crate) fn percentile(values: &[f64], q: f64) -> f64 {
         sorted[hi] - d * (1.0 - t)
     } else {
         sorted[lo] + d * t
-    }
-}
-
-pub(crate) fn median(values: &[f64]) -> f64 {
-    if values.is_empty() || values.iter().any(|v| v.is_nan()) {
-        return f64::NAN;
-    }
-    let mut sorted = values.to_vec();
-    sorted.sort_by(f64::total_cmp);
-    let k = sorted.len() / 2;
-    if sorted.len().is_multiple_of(2) {
-        (sorted[k - 1] + sorted[k]) / 2.0
-    } else {
-        sorted[k]
     }
 }

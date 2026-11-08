@@ -3,6 +3,8 @@
 
 use secs_compute::Context;
 use secs_dsp::response::lr4;
+#[cfg(any(test, feature = "test-support"))]
+use secs_graph::emit::grouped;
 use secs_types::{
     calibration::CalibrationSettings,
     chain::{MimoFilter, MimoPath, MimoPaths},
@@ -11,7 +13,7 @@ use secs_types::{
 use super::{IirDerivatives, IirSolveOptions, IirSupport, MimoDesign, MimoRequest, support_path};
 use crate::{
     C, Design, EngineConfig, EngineError, MeasurementSet, Note, PeqDerivatives, Tuning,
-    grid::design_freqs, scorecard::Metrics,
+    grid::design_freqs, input::RoleMap, scorecard::Metrics,
 };
 
 /// Low-rate taps a FIR support solves for (upstream `mimo.FIR_TAPS_LOW`):
@@ -31,8 +33,11 @@ pub struct MimoKey {
 }
 
 impl MimoKey {
-    /// Normalize legacy fields using project bounds; preserve the early interval
-    /// so the engine rejects invalid direct settings instead of hiding them.
+    /// Clamp `fsiso`, `mimo_low` and `mimo_max_supports` to project bounds.
+    /// These fields predate validation, so saved projects may contain out-of-range
+    /// values. Non-finite `fsiso` uses its default; non-finite `mimo_low` is omitted.
+    /// Preserve `mimo_early_ms` as given so the engine rejects an invalid direct
+    /// setting (ADR 0037; audit #186 TD-261).
     pub fn from_settings(settings: &CalibrationSettings) -> Self {
         let mut exclude: Vec<_> = settings
             .subs_manual
@@ -116,6 +121,8 @@ pub(crate) enum Support {
     Fir { taps: Vec<f64>, fs_low: f64 },
 }
 pub(crate) type Supports = Vec<(String, Vec<(String, Support)>)>;
+type PathSpectra = Vec<(String, Vec<C>)>;
+type FilterResponses = Vec<(String, PathSpectra)>;
 
 pub(crate) fn fir_supports(ideal: &MimoDesign) -> Supports {
     ideal
@@ -149,10 +156,12 @@ pub(crate) fn fir_response(taps: &[f64], fs_low: f64, frequencies: &[f64]) -> Ve
 
 /// Band-limited interpolation to 48 kHz, cropped to the low-rate FIR's duration.
 /// Invalid or oversized low-rate recipes produce an empty filter.
+#[cfg(any(test, feature = "test-support"))]
 pub fn fir_to_48k(taps_low: &[f64], fs_low: f64) -> Vec<f64> {
     secs_dsp::fir::lowrate_to_48k(taps_low, fs_low)
 }
 
+// UI text by design: the service shows these sentences unchanged (audit #186 TD-254, maintainer decision 2026-11-06).
 pub fn availability(positions: usize) -> (bool, String) {
     if positions < 3 {
         (
@@ -164,22 +173,12 @@ pub fn availability(positions: usize) -> (bool, String) {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 pub fn kind_text(fir: bool) -> &'static str {
     if fir { "FIR" } else { "IIR" }
 }
 
-fn grouped(n: usize) -> String {
-    let s = n.to_string();
-    let mut out = String::new();
-    for (i, c) in s.chars().enumerate() {
-        if i != 0 && (s.len() - i).is_multiple_of(3) {
-            out.push(',');
-        }
-        out.push(c);
-    }
-    out
-}
-
+#[cfg(any(test, feature = "test-support"))]
 pub fn fir_budget_text(run: &MimoRun, budget: usize) -> String {
     if !run.fir || budget == 0 {
         return String::new();
@@ -202,6 +201,7 @@ pub fn cap_text(max_supports: usize) -> String {
 }
 
 /// Upstream's estimate with project input count and worker count made explicit.
+#[cfg(any(test, feature = "test-support"))]
 pub fn estimate_seconds(inputs: usize, positions: usize, workers: usize, fir: bool) -> f64 {
     let rounds = if fir {
         0
@@ -215,6 +215,7 @@ fn check(ctx: &Context) -> Result<(), EngineError> {
     ctx.cancel().check().map_err(|_| EngineError::Cancelled)
 }
 
+#[cfg(any(test, feature = "test-support"))]
 pub fn compute(
     design: &Design,
     measurements: &MeasurementSet,
@@ -235,6 +236,7 @@ pub fn compute(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[cfg(any(test, feature = "test-support"))]
 pub(crate) fn compute_observed(
     design: &Design,
     measurements: &MeasurementSet,
@@ -348,27 +350,31 @@ fn compute_observed_accelerated(
     progress.advance(1);
     check(ctx)?;
     let started = std::time::Instant::now();
+    let mut realization_notes = Vec::new();
     let supports = if key.fir {
         fir_supports(&ideal)
     } else if ideal.supports.is_empty() {
         Vec::new()
     } else {
-        super::iir::design_mimo_iir_prepared_with_options(
+        let realized = super::iir::design_mimo_iir_prepared_with_options(
             design, &prepared, &ideal, &req, tuning, &iir, ctx,
-        )?
-        .supports
-        .into_iter()
-        .map(|(r, s)| {
-            (
-                r,
-                s.into_iter().map(|(r, s)| (r, Support::Iir(s))).collect(),
-            )
-        })
-        .collect()
+        )?;
+        realization_notes = realized.notes;
+        realized
+            .supports
+            .into_iter()
+            .map(|(r, s)| {
+                (
+                    r,
+                    s.into_iter().map(|(r, s)| (r, Support::Iir(s))).collect(),
+                )
+            })
+            .collect()
     };
     observe("realization", started.elapsed());
     let started = std::time::Instant::now();
     let mut run = assemble_prepared(design, &prepared, &ideal, supports, key, ctx)?;
+    run.notes.extend(realization_notes);
     if let Some(acceleration) = acceleration {
         run.compute = acceleration.report();
     }
@@ -420,8 +426,8 @@ struct ResponseAt<'a> {
 fn applied_response(
     design: &Design,
     prepared: &super::prepared::Prepared<'_>,
-    ideal: &MimoDesign,
-    supports: &Supports,
+    path_spectra: &PathSpectra,
+    filter_responses: &FilterResponses,
     lp: &[C],
     at: ResponseAt<'_>,
     ctx: &Context,
@@ -437,20 +443,11 @@ fn applied_response(
         })?
         .output;
     let mut extra = vec![C::new(0.0, 0.0); f.len()];
-    if let Some((_, sups)) = supports.iter().find(|(input, _)| input == at.role) {
-        for (support, realization) in sups {
+    if let Some(responses) = RoleMap::get_from(filter_responses, at.role) {
+        for (support, response) in responses {
             check(ctx)?;
-            let path = support_path(
-                ideal,
-                support,
-                &prepared.spectra,
-                at.position,
-                &prepared.align_delay_ms,
-            )?;
-            let response = match realization {
-                Support::Iir(support) => support.response(f),
-                Support::Fir { taps, fs_low } => fir_response(taps, *fs_low, f),
-            };
+            let path = RoleMap::get_from(path_spectra, support)
+                .expect("support path precomputed for every position");
             for index in 0..f.len() {
                 extra[index] += path[index] * lp[index] * response[index];
             }
@@ -478,17 +475,13 @@ pub(crate) fn assemble_prepared(
     for (input, sups) in &supports {
         for (support, sp) in sups {
             check(ctx)?;
-            let low_hz = ideal
-                .ranges
-                .iter()
-                .find(|(r, _)| r == support)
-                .and_then(|(_, r)| *r)
-                .map_or(50.0, |r| r.0);
-            let delay_ms = prepared
-                .align_delay_ms
-                .iter()
-                .find(|(r, _)| r == support)
-                .map_or(0.0, |(_, d)| *d)
+            let low_hz = RoleMap::get_from(&ideal.ranges, support)
+                .copied()
+                .flatten()
+                .map_or(50.0, |range| range.0);
+            let delay_ms = RoleMap::get_from(&prepared.align_delay_ms, support)
+                .copied()
+                .unwrap_or(0.0)
                 + design.chain.main_extra_ms;
             let filter = match sp {
                 Support::Iir(s) => MimoFilter::Iir {
@@ -514,27 +507,27 @@ pub(crate) fn assemble_prepared(
     }
     let mut ideal = ideal.clone();
     if key.max_supports != 0 {
-        ideal
-            .notes
-            .push(Note::Mimo(crate::notes::MimoNote::SupportLimit {
+        ideal.notes.push(Note::Mimo {
+            note: crate::notes::MimoNote::SupportLimit {
                 max_supports: key.max_supports,
-            }));
+            },
+        });
     }
     if key.fir {
         let total: usize = paths.iter().map(|p| p.filter.fir_len_48k()).sum();
-        ideal
-            .notes
-            .push(Note::Mimo(crate::notes::MimoNote::FirBudget {
+        ideal.notes.push(Note::Mimo {
+            note: crate::notes::MimoNote::FirBudget {
                 support_count: paths.len(),
                 taps_total: total,
-            }));
+            },
+        });
     }
     let lp = if key.fir {
         vec![C::new(1.0, 0.0); f.len()]
     } else {
         lr4(f, key.fsiso, "LP")
     };
-    let spl_grid = crate::design::geomspace(5.0, 20000.0, 1390);
+    let spl_grid = secs_dsp::grid::geomspace(5.0, 20000.0, 1390);
     let target = design.target.sample(
         &f.iter()
             .map(|frequency| frequency.max(1.0))
@@ -545,19 +538,73 @@ pub(crate) fn assemble_prepared(
         .input_hp_hz
         .map(|hz| secs_dsp::response::band_filter(f, hz, "HP", "BW48"))
         .transpose()?;
+    let mut support_roles = Vec::new();
+    for (_, input_supports) in &supports {
+        for (support, _) in input_supports {
+            if !support_roles.contains(support) {
+                support_roles.push(support.clone());
+            }
+        }
+    }
+    let cache_spectra = design
+        .spectra
+        .positions
+        .len()
+        .saturating_mul(support_roles.len())
+        .saturating_add(supports.len().saturating_mul(support_roles.len()));
+    let cache_bytes = (cache_spectra as u64).saturating_mul(crate::measurement::SPECTRUM_BYTES);
+    // These caches live beside the preparation's held spectra. The second
+    // amount makes the admission check include both before acquiring the cache.
+    let _cache_permit = crate::memory::reserve(ctx, cache_bytes, prepared.reserved)?;
+    let mut path_spectra = Vec::with_capacity(design.spectra.positions.len());
+    for &position in &design.spectra.positions {
+        let mut paths = Vec::with_capacity(support_roles.len());
+        for support in &support_roles {
+            check(ctx)?;
+            paths.push((
+                support.clone(),
+                support_path(
+                    &ideal,
+                    support,
+                    &prepared.spectra,
+                    position,
+                    &prepared.align_delay_ms,
+                )?,
+            ));
+        }
+        path_spectra.push((position, paths));
+    }
+    let filter_responses: Result<FilterResponses, EngineError> = supports
+        .iter()
+        .map(|(input, input_supports)| {
+            let responses = input_supports
+                .iter()
+                .map(|(support, realization)| {
+                    check(ctx)?;
+                    let response = match realization {
+                        Support::Iir(support) => support.response(f),
+                        Support::Fir { taps, fs_low } => fir_response(taps, *fs_low, f),
+                    };
+                    Ok((support.clone(), response))
+                })
+                .collect::<Result<Vec<_>, EngineError>>()?;
+            Ok((input.clone(), responses))
+        })
+        .collect();
+    let filter_responses = filter_responses?;
     let mut final_resp = Vec::new();
     let mut applied = Vec::new();
     let mut scorecard = Vec::new();
     let mut late_energy = Vec::new();
     let mut spl_mimo = Vec::new();
-    for &position in &design.spectra.positions {
+    for (&position, (_, paths_at_position)) in design.spectra.positions.iter().zip(&path_spectra) {
         for main in &design.chain.mains {
             let role = &main.role;
             let (base, sum) = applied_response(
                 design,
                 prepared,
-                &ideal,
-                &supports,
+                paths_at_position,
+                &filter_responses,
                 &lp,
                 ResponseAt { role, position },
                 ctx,

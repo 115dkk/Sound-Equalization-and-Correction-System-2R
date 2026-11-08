@@ -1,6 +1,7 @@
+use std::path::Path;
 use std::sync::Arc;
 
-use secs_types::ipc::{Envelope, IpcError, Request, Response};
+use secs_types::ipc::{Envelope, ErrorCode, IpcError, Request, Response};
 
 use crate::{EventSink, Service, lock};
 
@@ -19,6 +20,7 @@ pub(crate) fn dispatch(
                 params.sub_count,
                 params.sample,
                 params.tutorial,
+                &service.deps.app_data_path,
             )
             .map(Response::ProjectNew)
             .map_err(IpcError::from),
@@ -26,14 +28,9 @@ pub(crate) fn dispatch(
             .open(params.path.into())
             .map(Response::ProjectOpen)
             .map_err(IpcError::from),
-        Request::ProjectSave(params) => lock(&service.session)
-            .save(
-                params.path.map(Into::into),
-                &service.deps.uuid,
-                (service.deps.unix_ms)(),
-            )
-            .map(Response::ProjectSave)
-            .map_err(IpcError::from),
+        Request::ProjectSave(params) => service
+            .project_save(params, events)
+            .map(Response::ProjectSave),
         Request::ProjectInfo => lock(&service.session)
             .info()
             .map(Response::ProjectInfo)
@@ -41,18 +38,24 @@ pub(crate) fn dispatch(
         Request::SampleLoad(params) => service
             .start_sample_load(params, events)
             .map(Response::SampleLoad),
-        Request::JobCancel(params) => {
-            service.cancel_level_monitor_job(params.job);
-            service.jobs.cancel(params.job).map(Response::JobCancel)
-        }
+        Request::JobCancel(params) => service.jobs.cancel(params.job).map(Response::JobCancel),
         Request::Jobs => Ok(Response::Jobs(service.jobs.snapshots())),
         Request::Calibrate(params) => service
             .start_calibration(params, events)
             .map(Response::Calibrate),
-        Request::RecommendXo => service.start_xo(false, events).map(Response::RecommendXo),
+        Request::RecommendXo(params) => service
+            .start_xo(params.unwrap_or_default().background, events)
+            .map(Response::RecommendXo),
         Request::Mimo(params) => service.start_mimo(params, events).map(Response::Mimo),
         Request::Results => service.results().map(Response::Results),
-        Request::Export(params) => service.start_export(params, events).map(Response::Export),
+        Request::Export(params) => service
+            .plan_export(params, crate::export_plan::ExportPurpose::Export)
+            .and_then(|plan| {
+                service.start_export(plan, events, |result| {
+                    Ok(secs_types::ipc::JobResult::Export(result.into_ipc()))
+                })
+            })
+            .map(Response::Export),
         Request::MeasureMethods => Ok(Response::MeasureMethods(service.measure_methods())),
         Request::MeasureConfigure(params) => service
             .measure_configure(params)
@@ -138,7 +141,7 @@ pub(crate) fn dispatch(
         Request::AppSettingsSet(params) => service
             .app_settings_set(params)
             .map(Response::AppSettingsSet),
-        Request::ApplyStatus => Ok(Response::ApplyStatus(service.apply_status())),
+        Request::ApplyStatus => service.apply_status().map(Response::ApplyStatus),
         Request::ApplyCamilla(params) => service
             .start_apply_camilla(params, events)
             .map(Response::ApplyCamilla),
@@ -180,27 +183,49 @@ pub(crate) fn dispatch(
             .host
             .local_api_regenerate_token()
             .map(Response::LocalApiTokenRegenerate),
-        request @ (Request::MeasurementCurves(_)
-        | Request::ResultCurves(_)
-        | Request::ResultLines
-        | Request::SubTakeValues) => crate::curves::dispatch(service, request),
+        Request::MeasurementCurves(params) => service
+            .measurement_curves(params)
+            .map(Response::MeasurementCurves),
+        Request::ResultCurves(params) => service.result_curves(params).map(Response::ResultCurves),
+        Request::ResultLines => service.result_lines().map(Response::ResultLines),
+        Request::SubTakeValues => service.sub_take_values().map(Response::SubTakeValues),
         Request::DialogOpenProject => service
+            .deps
+            .host
             .dialog_open_project()
             .map(Response::DialogOpenProject),
         Request::DialogSaveProject(params) => service
-            .dialog_save_project(params)
+            .deps
+            .host
+            .dialog_save_project(&params.suggested)
             .map(Response::DialogSaveProject),
-        Request::DialogPickMdat => service.dialog_pick_mdat().map(Response::DialogPickMdat),
+        Request::DialogPickMdat => service
+            .deps
+            .host
+            .dialog_pick_mdat()
+            .map(Response::DialogPickMdat),
         Request::DialogPickFolder(params) => service
-            .dialog_pick_folder(params)
+            .deps
+            .host
+            .dialog_pick_folder(params.start.as_deref().map(Path::new))
             .map(Response::DialogPickFolder),
         Request::DialogSaveFile(params) => service
-            .dialog_save_file(params)
+            .deps
+            .host
+            .dialog_save_file(params.kind, &params.suggested)
             .map(Response::DialogSaveFile),
         Request::DialogOpenFile(params) => service
-            .dialog_open_file(params)
+            .deps
+            .host
+            .dialog_open_file(params.kind)
             .map(Response::DialogOpenFile),
-        Request::OpenFolder(params) => service.open_folder(params).map(Response::OpenFolder),
+        Request::OpenFolder(params) => {
+            let path = Path::new(&params.path);
+            std::fs::create_dir_all(path)
+                .map_err(|error| IpcError::new(ErrorCode::ProjectIo, error.to_string()))
+                .and_then(|()| service.deps.host.open_folder(path))
+                .map(Response::OpenFolder)
+        }
         Request::OpenGpuHelp => service.deps.host.open_gpu_help().map(Response::OpenGpuHelp),
         Request::LevelMonitorStart(params) => service
             .start_level_monitor(params, events)

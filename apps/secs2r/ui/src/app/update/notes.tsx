@@ -7,9 +7,9 @@
 // put markup on the screen.
 import { Fragment, useMemo } from "react";
 
-export type NoteSpan = { kind: "text" | "code" | "strong"; text: string };
+type NoteSpan = { kind: "text" | "code" | "strong"; text: string };
 
-export type NoteBlock =
+type NoteBlock =
   | { kind: "heading"; spans: NoteSpan[] }
   | { kind: "paragraph"; spans: NoteSpan[] }
   | { kind: "list"; items: NoteSpan[][] };

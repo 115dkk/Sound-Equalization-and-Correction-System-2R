@@ -15,8 +15,11 @@ pub mod note;
 pub mod pyfmt;
 
 use pyfmt::{format_fixed, format_g, format_i3, format_s30, repr_f64, round_ndigits};
-use secs_graph::{ExportGraph, GraphError, LfeChoice};
-use secs_types::chain::{BandType, MimoFilter, MimoPath, MimoPaths, SignalChain, SubChannel};
+use secs_graph::emit::guard;
+use secs_graph::{ExportGraph, FilterPlan, GraphError, LfeChoice, Op};
+use secs_types::chain::{
+    BandFamily, BandType, MimoFilter, MimoPath, MimoPaths, SignalChain, SubChannel,
+};
 use std::fmt::Write as _;
 use std::path::{Component, Path, PathBuf};
 
@@ -117,6 +120,7 @@ pub struct Config {
     pub yaml: String,
     /// Coefficient paths and complete WAV bytes.
     pub coeffs: Vec<(PathBuf, Vec<u8>)>,
+    n_in: usize,
 }
 
 /// Labels needed by the calibration-level export wrapper.
@@ -343,12 +347,26 @@ fn delay_samples(samples: i64) -> Json {
     )
 }
 
-/// [`wav_bytes`] for one exported FIR, naming its owner in a range error.
-fn fir_wav(owner: &str, taps: &[f64], rate: u32) -> Result<Vec<u8>, CamillaError> {
-    wav_bytes(taps, rate).map_err(|error| match error {
-        GraphError::NonFinite(name) => CamillaError::NonFinite(format!("{owner}.{name}")),
-        other => other.into(),
-    })
+fn fir_error(error: GraphError, plan: &FilterPlan) -> CamillaError {
+    let GraphError::NonFinite(detail) = error else {
+        return error.into();
+    };
+    let Some((stem, field)) = detail.split_once(": ") else {
+        return CamillaError::NonFinite(detail);
+    };
+    let has_stem = |ops: &[Op]| {
+        ops.iter().any(|op| match op {
+            Op::Fir { name, .. } | Op::FirLowRate { name, .. } => name == stem,
+            _ => false,
+        })
+    };
+    if let Some((role, _)) = plan.input_ops.iter().find(|(_, ops)| has_stem(ops)) {
+        CamillaError::NonFinite(format!("main.{role}.{field}"))
+    } else if let Some(index) = plan.mimo.iter().position(|feed| has_stem(&feed.ops)) {
+        CamillaError::NonFinite(format!("mimo.paths[{index}].{field}"))
+    } else {
+        CamillaError::NonFinite(detail)
+    }
 }
 
 fn absolute(path: &Path) -> Result<PathBuf, CamillaError> {
@@ -417,29 +435,6 @@ fn file_devices(out: &Path, n_in: usize, n_out: usize) -> Result<(Device, Device
     ))
 }
 
-/// The coefficient filename prefix (`secs_mixed_`), the writer's own identifier.
-fn check_ascii_identifier(name: &str) -> Result<(), CamillaError> {
-    if !name.is_ascii() {
-        return Err(CamillaError::NonAscii(name.into()));
-    }
-    if name.is_empty()
-        || !name
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
-    {
-        return Err(CamillaError::Invalid(format!("unsafe identifier {name:?}")));
-    }
-    Ok(())
-}
-
-fn finite(name: &str, value: f64) -> Result<(), CamillaError> {
-    if value.is_finite() {
-        Ok(())
-    } else {
-        Err(CamillaError::NonFinite(name.into()))
-    }
-}
-
 /// The writer's own options; the chain and its MIMO paths are the export
 /// graph's to check.
 fn validate_options(options: &Options) -> Result<(), CamillaError> {
@@ -448,21 +443,17 @@ fn validate_options(options: &Options) -> Result<(), CamillaError> {
             "unsupported output sample rate".into(),
         ));
     }
-    finite("options.lfe_lp_hz", options.lfe_lp_hz)?;
+    guard::finite("options.lfe_lp_hz", options.lfe_lp_hz)?;
+    guard::no_line_breaks("options.note", &options.note)?;
     if !options.mode.is_ascii() {
         return Err(CamillaError::NonAscii(options.mode.clone()));
     }
-    if options.mode.contains(['\n', '\r']) {
-        return Err(CamillaError::Invalid(format!(
-            "unsafe mode identifier {:?}",
-            options.mode
-        )));
-    }
+    guard::no_line_breaks("mode identifier", &options.mode)?;
     if let Some(value) = options.lfe_gain_db {
-        finite("options.lfe_gain_db", value)?;
+        guard::finite("options.lfe_gain_db", value)?;
     }
     if let Some(value) = options.latency_ms {
-        finite("options.latency_ms", value)?;
+        guard::finite("options.latency_ms", value)?;
     }
     if let Some(design) = &options.design {
         if design.design_name.chars().any(char::is_control)
@@ -490,7 +481,7 @@ fn validate_options(options: &Options) -> Result<(), CamillaError> {
                 return Err(CamillaError::NonAscii(key.clone()));
             }
             if let DeviceValue::Float(number) = value {
-                finite(&format!("device.{key}"), *number)?;
+                guard::finite(&format!("device.{key}"), *number)?;
             }
         }
     }
@@ -498,29 +489,13 @@ fn validate_options(options: &Options) -> Result<(), CamillaError> {
 }
 
 fn band_name(kind: BandType, highpass: bool) -> (&'static str, i64) {
-    let prefix = match kind {
-        BandType::Lr12 | BandType::Lr24 | BandType::Lr48 => "LinkwitzRiley",
-        BandType::Bw12 | BandType::Bw24 | BandType::Bw48 => "Butterworth",
+    let name = match (kind.family(), highpass) {
+        (BandFamily::LinkwitzRiley, true) => "LinkwitzRileyHighpass",
+        (BandFamily::LinkwitzRiley, false) => "LinkwitzRileyLowpass",
+        (BandFamily::Butterworth, true) => "ButterworthHighpass",
+        (BandFamily::Butterworth, false) => "ButterworthLowpass",
     };
-    let order = match kind {
-        BandType::Lr12 | BandType::Bw12 => 2,
-        BandType::Lr24 | BandType::Bw24 => 4,
-        BandType::Lr48 | BandType::Bw48 => 8,
-    };
-    (
-        if highpass {
-            if prefix == "LinkwitzRiley" {
-                "LinkwitzRileyHighpass"
-            } else {
-                "ButterworthHighpass"
-            }
-        } else if prefix == "LinkwitzRiley" {
-            "LinkwitzRileyLowpass"
-        } else {
-            "ButterworthLowpass"
-        },
-        order,
-    )
+    (name, i64::from(kind.order()))
 }
 
 fn fixed_filters(role: &str, sub: &SubChannel, filters: &mut Vec<(String, Json)>) -> Vec<String> {
@@ -696,6 +671,303 @@ fn howto_lines(
     lines
 }
 
+struct CamillaSupportGroup {
+    output: usize,
+    low_hz: f64,
+    fir: bool,
+    delay_samples: i64,
+    members: Vec<usize>,
+}
+
+fn support_groups_for_camilla(
+    graph: &ExportGraph,
+    paths: &[MimoPath],
+    output_rate: u32,
+) -> (Vec<CamillaSupportGroup>, Vec<usize>, Vec<i64>) {
+    let n_paths = paths.len();
+    let path_delays: Vec<_> = paths
+        .iter()
+        .map(|path| {
+            let extra = match &path.filter {
+                MimoFilter::Iir { delay_ms, .. } => *delay_ms,
+                _ => 0.0,
+            };
+            // Round the old complete delay exactly once, then factor integer samples.
+            secs_dsp::rate::delay_samples(path.delay_ms + extra, output_rate)
+        })
+        .collect();
+    // The graph groups support paths by output, family and exact low edge.
+    // CamillaDSP writes the high-pass at the low edge rounded to three places,
+    // so graph groups whose rounded cutoff coincides share one channel. The
+    // delay split is this writer's own (F13): each path's total delay is
+    // rounded to whole samples once, the group carries the smallest and each
+    // path the rest, so no path's delay is rounded twice. Equalizer APO keeps
+    // the identical rendered milliseconds instead.
+    let mut groups = graph
+        .support_groups_rounded()
+        .into_iter()
+        .map(|group| CamillaSupportGroup {
+            output: group.output,
+            low_hz: group.low_hz,
+            fir: group.fir,
+            delay_samples: 0,
+            members: group.members,
+        })
+        .collect::<Vec<_>>();
+    let mut path_groups = vec![0; n_paths];
+    for (index, group) in groups.iter_mut().enumerate() {
+        group.members.sort_unstable();
+        group.delay_samples = group
+            .members
+            .iter()
+            .map(|&path| path_delays[path])
+            .min()
+            .expect("a support group has a path");
+        for &path in &group.members {
+            path_groups[path] = index;
+        }
+    }
+    (groups, path_groups, path_delays)
+}
+
+fn head_comment(
+    inputs: &[String],
+    outputs: &[String],
+    subs: &[SubChannel],
+    options: &Options,
+    lfe: bool,
+    capture: &Device,
+    playback: &Device,
+) -> Vec<String> {
+    let n_in = inputs.len();
+    let n_out = outputs.len();
+    let mut lines = vec![
+        "# SECS 2 calibration -> CamillaDSP v4 (generated)".into(),
+        format!(
+            "# inputs {n_in}: {} / outputs {n_out}: {}",
+            inputs.join(", "),
+            outputs.join(", ")
+        ),
+    ];
+    if !options.note.is_empty() {
+        lines.push(format!(
+            "# {}",
+            options
+                .note
+                .chars()
+                .filter(char::is_ascii)
+                .collect::<String>()
+        ));
+    }
+    if let Some(gain) = options.lfe_gain_db.filter(|_| lfe) {
+        lines.push(format!(
+            "# LFE: gain {} dB, LR24 lowpass {} Hz -> every sub bus (same sub gain/polarity/filters/delay as the bass-managed mains), no MIMO",
+            format_g(gain, true),
+            format_g(options.lfe_lp_hz, false)
+        ));
+    }
+    for sub in subs {
+        let allpass = sub
+            .allpass
+            .iter()
+            .map(|(frequency, q)| {
+                format!(
+                    ", allpass {} Hz Q {}",
+                    format_fixed(*frequency, 1, false),
+                    format_fixed(*q, 3, false)
+                )
+            })
+            .collect::<String>();
+        let mut fixed = String::new();
+        if sub.hp_hz != 0.0 {
+            write!(
+                fixed,
+                ", fixed HP {} Hz {}",
+                format_g(sub.hp_hz, false),
+                sub.hp_type.name()
+            )
+            .expect("String write");
+        }
+        if sub.lp_hz != 0.0 {
+            write!(
+                fixed,
+                ", fixed LP {} Hz {}",
+                format_g(sub.lp_hz, false),
+                sub.lp_type.name()
+            )
+            .expect("String write");
+        }
+        for (frequency, q, gain) in &sub.peq {
+            write!(
+                fixed,
+                ", fixed PEQ {} Hz Q {} {} dB",
+                format_fixed(*frequency, 1, false),
+                format_fixed(*q, 3, false),
+                format_fixed(*gain, 2, true)
+            )
+            .expect("String write");
+        }
+        lines.push(format!(
+            "# sub {}: {} gain {} dB, delay {} ms, polarity {}{allpass}{fixed}",
+            sub.role,
+            sub.mode,
+            format_fixed(sub.gain_db, 3, true),
+            format_fixed(sub.delay_ms, 3, false),
+            if sub.polarity > 0 {
+                "normal"
+            } else {
+                "inverted"
+            }
+        ));
+    }
+    lines.push("#".into());
+    lines.extend(howto_lines(
+        inputs,
+        outputs,
+        options.latency_ms,
+        &options.mode,
+        options.output_rate,
+        options.design.is_none() || (options.capture.is_none() && options.playback.is_none()),
+        options.design.is_some() && (device_is(capture, "Asio") || device_is(playback, "Asio")),
+    ));
+
+    lines
+}
+
+fn title_and_description(
+    options: &Options,
+    inputs: &[String],
+    outputs: &[String],
+) -> (String, String) {
+    let title = if let Some(design) = &options.design {
+        let base = design.project_name.as_deref().map_or_else(
+            || format!("SECS 2R · {}", design.design_name),
+            |project| format!("SECS 2R · {project} · {}", design.design_name),
+        );
+        if design.bypass {
+            format!("{base} (우회)")
+        } else {
+            base
+        }
+    } else {
+        format!(
+            "SECS 2{}{}",
+            if options.mode.is_empty() {
+                String::new()
+            } else {
+                format!(" {}", options.mode)
+            },
+            options.latency_ms.map_or_else(String::new, |value| format!(
+                " ({} ms)",
+                format_fixed(value, 1, false)
+            ))
+        )
+    };
+    let mut description = format!(
+        "inputs {} | outputs {} | numbers start at 0, change routing in Mixers route_in / route_out | devices are file placeholders: set capture = loopback, playback = interface",
+        inputs
+            .iter()
+            .enumerate()
+            .map(|(index, role)| format!("{index} {role}"))
+            .collect::<Vec<_>>()
+            .join(", "),
+        outputs
+            .iter()
+            .enumerate()
+            .map(|(index, role)| format!("{index} {role}"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+    if let Some(design) = &options.design {
+        write!(
+            description,
+            " | secs-design {}{}",
+            design.design_id,
+            if design.bypass { " bypass" } else { "" }
+        )
+        .expect("String write");
+    }
+    (title, description)
+}
+
+struct SerializeParts<'a> {
+    lines: Vec<String>,
+    title: String,
+    description: String,
+    options: &'a Options,
+    capture: &'a Device,
+    playback: &'a Device,
+    inputs: &'a [String],
+    filters: Vec<(String, Json)>,
+    route_in: Json,
+    route_out: Json,
+    fork: Option<Json>,
+    mixers: Vec<(String, Json)>,
+    pipeline: Vec<Json>,
+    coeffs: Vec<(PathBuf, Vec<u8>)>,
+    n_in: usize,
+}
+
+fn serialize(parts: SerializeParts<'_>) -> Config {
+    let SerializeParts {
+        mut lines,
+        title,
+        description,
+        options,
+        capture,
+        playback,
+        inputs,
+        filters,
+        route_in,
+        route_out,
+        fork,
+        mixers,
+        pipeline,
+        coeffs,
+        n_in,
+    } = parts;
+    lines.extend([
+        format!("title: {}", json(&Json::Str(title))),
+        format!("description: {}", json(&Json::Str(description))),
+        "devices:".into(),
+        format!("  samplerate: {}", options.output_rate),
+        format!("  chunksize: {}", options.chunksize),
+        format!(
+            "  capture: {}",
+            json(&if options.labels {
+                device_json_with_labels(capture, Some(inputs))
+            } else {
+                device_json(capture)
+            })
+        ),
+        format!("  playback: {}", json(&device_json(playback))),
+        "filters:".into(),
+    ]);
+    for (name, spec) in filters {
+        lines.push(format!("  {name}: {}", json(&spec)));
+    }
+    lines.extend([
+        "mixers:".into(),
+        format!("  route_in: {}", json(&route_in)),
+        format!("  route_out: {}", json(&route_out)),
+    ]);
+    if let Some(fork) = fork {
+        lines.push(format!("  mimo_fork: {}", json(&fork)));
+    }
+    for (name, mixer) in mixers {
+        lines.push(format!("  {name}: {}", json(&mixer)));
+    }
+    lines.push("pipeline:".into());
+    for stage in pipeline {
+        lines.push(format!("  - {}", json(&stage)));
+    }
+    Config {
+        yaml: lines.join("\n") + "\n",
+        coeffs,
+        n_in,
+    }
+}
+
 /// Build a CamillaDSP v4 configuration without writing anything.
 pub fn make_config(
     chain: &SignalChain,
@@ -728,8 +1000,14 @@ pub fn make_config_observed(
         });
     let graph = ExportGraph::build(chain, mimo, lfe_choice)?;
     if !fir_prefix.is_empty() {
-        check_ascii_identifier(fir_prefix)?;
+        guard::identifier("coefficient filename prefix", fir_prefix, b"_-")?;
     }
+    let coeff_dir = out.join(COEFF_DIR);
+    let coeffs = secs_graph::emit::fir_files(graph.plan(), fir_prefix, options.output_rate)
+        .map_err(|error| fir_error(error, graph.plan()))?
+        .into_iter()
+        .map(|(name, bytes)| (coeff_dir.join(name), bytes))
+        .collect::<Vec<_>>();
     let chain = graph.chain();
     let mimo = graph.mimo();
     let mains = &chain.mains;
@@ -752,7 +1030,7 @@ pub fn make_config_observed(
     let mut filters: Vec<(String, Json)> = Vec::new();
     let mut pipeline = Vec::new();
     if options.headroom {
-        let headroom = (secs_graph::headroom_db(graph.plan())? * 2.0).ceil() / 2.0;
+        let headroom = secs_graph::headroom_db_half_db(graph.plan())?;
         filters.push((
             "secs_headroom".into(),
             filter_spec(
@@ -770,8 +1048,6 @@ pub fn make_config_observed(
         filters.push(("input_hp".into(), combo("ButterworthHighpass", hz, 8)));
         pipeline.push(pipeline_all_filter("input_hp", "secs:input_hp", n_in));
     }
-    let mut coeffs = Vec::new();
-    let coeff_dir = out.join(COEFF_DIR);
     let fork = if paths.is_empty() {
         None
     } else {
@@ -811,12 +1087,6 @@ pub fn make_config_observed(
                 )));
             }
             let filename = posix(&relative(&file, config_dir)?);
-            let taps = secs_dsp::rate::fir_to_rate(&main.fir, options.output_rate)
-                .map_err(|error| CamillaError::Invalid(error.to_string()))?;
-            coeffs.push((
-                file,
-                fir_wav(&format!("main.{}", main.role), &taps, options.output_rate)?,
-            ));
             let name = format!("in_{}_fir", main.role);
             filters.push((
                 name.clone(),
@@ -1036,61 +1306,8 @@ pub fn make_config_observed(
         pipeline.push(pipeline_filter(n_main + sub_index, names));
     }
 
-    struct SupportGroup {
-        output: usize,
-        low_hz: f64,
-        fir: bool,
-        delay_samples: i64,
-        members: Vec<usize>,
-    }
-    let path_delays: Vec<_> = paths
-        .iter()
-        .map(|path| {
-            let extra = match &path.filter {
-                MimoFilter::Iir { delay_ms, .. } => *delay_ms,
-                _ => 0.0,
-            };
-            // Round the old complete delay exactly once, then factor integer samples.
-            secs_dsp::rate::delay_samples(path.delay_ms + extra, options.output_rate)
-        })
-        .collect();
-    // The graph groups support paths by output, family and exact low edge.
-    // CamillaDSP writes the high-pass at the low edge rounded to three places,
-    // so graph groups whose rounded cutoff coincides share one channel. The
-    // delay split is this writer's own (F13): each path's total delay is
-    // rounded to whole samples once, the group carries the smallest and each
-    // path the rest, so no path's delay is rounded twice. Equalizer APO keeps
-    // the identical rendered milliseconds instead.
-    let mut groups: Vec<SupportGroup> = Vec::new();
-    for shared in graph.support_groups() {
-        let low_hz = round_ndigits(shared.low_hz, 3);
-        if let Some(group) = groups.iter_mut().find(|group| {
-            group.output == shared.output && group.low_hz == low_hz && group.fir == shared.fir
-        }) {
-            group.members.extend_from_slice(&shared.members);
-        } else {
-            groups.push(SupportGroup {
-                output: shared.output,
-                low_hz,
-                fir: shared.fir,
-                delay_samples: 0,
-                members: shared.members.clone(),
-            });
-        }
-    }
-    let mut path_groups = vec![0; n_paths];
-    for (index, group) in groups.iter_mut().enumerate() {
-        group.members.sort_unstable();
-        group.delay_samples = group
-            .members
-            .iter()
-            .map(|&path| path_delays[path])
-            .min()
-            .expect("a support group has a path");
-        for &path in &group.members {
-            path_groups[path] = index;
-        }
-    }
+    let (groups, path_groups, path_delays) =
+        support_groups_for_camilla(&graph, paths, options.output_rate);
     for (index, path) in paths.iter().enumerate() {
         let tag = path_tag(path);
         let mut names = Vec::new();
@@ -1102,16 +1319,6 @@ pub fn make_config_observed(
         }
         match &path.filter {
             MimoFilter::Fir { .. } | MimoFilter::FirLowRate { .. } => {
-                let taps = match &path.filter {
-                    MimoFilter::Fir { taps_48k } => {
-                        secs_dsp::rate::fir_to_rate(taps_48k, options.output_rate)
-                    }
-                    MimoFilter::FirLowRate { taps_low, fs_low } => {
-                        secs_dsp::rate::lowrate_to_rate(taps_low, *fs_low, options.output_rate)
-                    }
-                    MimoFilter::Iir { .. } => unreachable!(),
-                }
-                .map_err(|error| CamillaError::Invalid(error.to_string()))?;
                 let file = coeff_dir.join(format!("{fir_prefix}{tag}.wav"));
                 if file.parent() != Some(coeff_dir.as_path()) {
                     return Err(CamillaError::Invalid(format!(
@@ -1120,10 +1327,6 @@ pub fn make_config_observed(
                     )));
                 }
                 let filename = posix(&relative(&file, config_dir)?);
-                coeffs.push((
-                    file,
-                    fir_wav(&format!("mimo.paths[{index}]"), &taps, options.output_rate)?,
-                ));
                 let name = format!("{tag}_fir");
                 filters.push((
                     name.clone(),
@@ -1306,192 +1509,36 @@ pub fn make_config_observed(
         ),
     ]);
 
-    let mut lines = vec![
-        "# SECS 2 calibration -> CamillaDSP v4 (generated)".into(),
-        format!(
-            "# inputs {n_in}: {} / outputs {n_out}: {}",
-            inputs.join(", "),
-            outputs.join(", ")
-        ),
-    ];
-    if !options.note.is_empty() {
-        lines.push(format!(
-            "# {}",
-            options
-                .note
-                .chars()
-                .filter(char::is_ascii)
-                .collect::<String>()
-        ));
-    }
-    if let Some(gain) = options.lfe_gain_db.filter(|_| lfe) {
-        lines.push(format!(
-            "# LFE: gain {} dB, LR24 lowpass {} Hz -> every sub bus (same sub gain/polarity/filters/delay as the bass-managed mains), no MIMO",
-            format_g(gain, true),
-            format_g(options.lfe_lp_hz, false)
-        ));
-    }
-    for sub in subs {
-        let allpass = sub
-            .allpass
-            .iter()
-            .map(|(frequency, q)| {
-                format!(
-                    ", allpass {} Hz Q {}",
-                    format_fixed(*frequency, 1, false),
-                    format_fixed(*q, 3, false)
-                )
-            })
-            .collect::<String>();
-        let mut fixed = String::new();
-        if sub.hp_hz != 0.0 {
-            write!(
-                fixed,
-                ", fixed HP {} Hz {}",
-                format_g(sub.hp_hz, false),
-                sub.hp_type.name()
-            )
-            .expect("String write");
-        }
-        if sub.lp_hz != 0.0 {
-            write!(
-                fixed,
-                ", fixed LP {} Hz {}",
-                format_g(sub.lp_hz, false),
-                sub.lp_type.name()
-            )
-            .expect("String write");
-        }
-        for (frequency, q, gain) in &sub.peq {
-            write!(
-                fixed,
-                ", fixed PEQ {} Hz Q {} {} dB",
-                format_fixed(*frequency, 1, false),
-                format_fixed(*q, 3, false),
-                format_fixed(*gain, 2, true)
-            )
-            .expect("String write");
-        }
-        lines.push(format!(
-            "# sub {}: {} gain {} dB, delay {} ms, polarity {}{allpass}{fixed}",
-            sub.role,
-            sub.mode,
-            format_fixed(sub.gain_db, 3, true),
-            format_fixed(sub.delay_ms, 3, false),
-            if sub.polarity > 0 {
-                "normal"
-            } else {
-                "inverted"
-            }
-        ));
-    }
-    lines.push("#".into());
-    lines.extend(howto_lines(
-        inputs,
-        outputs,
-        options.latency_ms,
-        &options.mode,
-        options.output_rate,
-        options.design.is_none() || (options.capture.is_none() && options.playback.is_none()),
-        options.design.is_some() && (device_is(capture, "Asio") || device_is(playback, "Asio")),
-    ));
-
-    let title = if let Some(design) = &options.design {
-        let base = design.project_name.as_deref().map_or_else(
-            || format!("SECS 2R · {}", design.design_name),
-            |project| format!("SECS 2R · {project} · {}", design.design_name),
-        );
-        if design.bypass {
-            format!("{base} (우회)")
-        } else {
-            base
-        }
-    } else {
-        format!(
-            "SECS 2{}{}",
-            if options.mode.is_empty() {
-                String::new()
-            } else {
-                format!(" {}", options.mode)
-            },
-            options.latency_ms.map_or_else(String::new, |value| format!(
-                " ({} ms)",
-                format_fixed(value, 1, false)
-            ))
-        )
-    };
-    let mut description = format!(
-        "inputs {} | outputs {} | numbers start at 0, change routing in Mixers route_in / route_out | devices are file placeholders: set capture = loopback, playback = interface",
-        inputs
-            .iter()
-            .enumerate()
-            .map(|(index, role)| format!("{index} {role}"))
-            .collect::<Vec<_>>()
-            .join(", "),
-        outputs
-            .iter()
-            .enumerate()
-            .map(|(index, role)| format!("{index} {role}"))
-            .collect::<Vec<_>>()
-            .join(", ")
-    );
-    if let Some(design) = &options.design {
-        write!(
-            description,
-            " | secs-design {}{}",
-            design.design_id,
-            if design.bypass { " bypass" } else { "" }
-        )
-        .expect("String write");
-    }
+    let lines = head_comment(inputs, outputs, subs, options, lfe, capture, playback);
+    let (title, description) = title_and_description(options, inputs, outputs);
     boundary("build");
-    lines.extend([
-        format!("title: {}", json(&Json::Str(title))),
-        format!("description: {}", json(&Json::Str(description))),
-        "devices:".into(),
-        format!("  samplerate: {}", options.output_rate),
-        format!("  chunksize: {}", options.chunksize),
-        format!(
-            "  capture: {}",
-            json(&if options.labels {
-                device_json_with_labels(capture, Some(inputs))
-            } else {
-                device_json(capture)
-            })
-        ),
-        format!("  playback: {}", json(&device_json(playback))),
-        "filters:".into(),
-    ]);
-    for (name, spec) in filters {
-        lines.push(format!("  {name}: {}", json(&spec)));
-    }
-    lines.extend([
-        "mixers:".into(),
-        format!("  route_in: {}", json(&route_in)),
-        format!("  route_out: {}", json(&route_out)),
-    ]);
-    if let Some(fork) = fork {
-        lines.push(format!("  mimo_fork: {}", json(&fork)));
-    }
-    for (name, mixer) in mixers {
-        lines.push(format!("  {name}: {}", json(&mixer)));
-    }
-    lines.push("pipeline:".into());
-    for stage in pipeline {
-        lines.push(format!("  - {}", json(&stage)));
-    }
-    let config = Config {
-        yaml: lines.join("\n") + "\n",
+    let config = serialize(SerializeParts {
+        lines,
+        title,
+        description,
+        options,
+        capture,
+        playback,
+        inputs,
+        filters,
+        route_in,
+        route_out,
+        fork,
+        mixers,
+        pipeline,
         coeffs,
-    };
+        n_in,
+    });
     boundary("serialize");
     Ok(config)
 }
 
-/// Atomically replace one export file through a sibling temporary file.
-pub fn atomic_write(destination: &Path, bytes: &[u8]) -> Result<(), std::io::Error> {
-    secs_types::fs::write_atomic_bytes(destination, bytes)
-}
+/// Deprecated compatibility name for the shared atomic byte writer.
+#[deprecated(
+    since = "0.22.0",
+    note = "use secs_types::fs::write_atomic_bytes (ADR 0045)"
+)]
+pub use secs_types::fs::write_atomic_bytes as atomic_write;
 
 fn without_correction(chain: &SignalChain) -> SignalChain {
     let mut chain = chain.clone();
@@ -1502,36 +1549,23 @@ fn without_correction(chain: &SignalChain) -> SignalChain {
     chain
 }
 
-/// Write `configs/<name>.yml`, coefficient WAVs, and a placeholder `in.raw` when needed.
-pub fn write_config(
-    chain: &SignalChain,
-    out: &Path,
-    name: &str,
-    options: &Options,
-    mimo: Option<&MimoPaths>,
-) -> Result<Vec<PathBuf>, CamillaError> {
-    write_config_observed(chain, out, name, options, mimo, &|_, _| Ok(()), &|_, _| {
-        Ok(())
-    })
+/// A CamillaDSP configuration whose validation and byte construction are complete.
+#[derive(Debug)]
+pub struct PreparedConfig {
+    bundle: Vec<(PathBuf, Vec<u8>)>,
+    entry: PathBuf,
+    write_input: bool,
 }
 
-/// Audit-only staging seam invoked after each complete staged file.
-#[doc(hidden)]
-pub fn write_config_observed(
+/// Validates and constructs every byte of a CamillaDSP configuration before installation.
+pub fn prepare_config(
     chain: &SignalChain,
     out: &Path,
     name: &str,
     options: &Options,
     mimo: Option<&MimoPaths>,
-    after_stage_write: &dyn Fn(usize, &Path) -> std::io::Result<()>,
-    before_install: &dyn Fn(usize, &Path) -> std::io::Result<()>,
-) -> Result<Vec<PathBuf>, CamillaError> {
-    let safe = safe_name(name);
-    if safe == "." || safe == ".." {
-        return Err(CamillaError::Invalid(format!(
-            "unsafe output name {name:?}"
-        )));
-    }
+) -> Result<PreparedConfig, CamillaError> {
+    let safe = guard::safe_component(name)?;
     let config_dir = out.join(CONFIG_DIR);
     let config = make_config(chain, out, &config_dir, &format!("{safe}_"), options, mimo)?;
     let bypass = if options.bypass {
@@ -1552,15 +1586,12 @@ pub fn write_config_observed(
     } else {
         None
     };
-    let n_in =
-        chain.mains.len() + usize::from(!chain.subs.is_empty() && options.lfe_gain_db.is_some());
-
-    // All validation and pure construction have completed before the first write.
-    let config_relative = PathBuf::from(CONFIG_DIR).join(format!("{safe}.yml"));
+    let entry = PathBuf::from(CONFIG_DIR).join(format!("{safe}.yml"));
     let bypass_relative = PathBuf::from(CONFIG_DIR).join(format!("{safe}_bypass.yml"));
+    let write_input = options.capture.is_none() && !out.join("in.raw").exists();
     let mut bundle = Vec::new();
-    if options.capture.is_none() && !out.join("in.raw").exists() {
-        bundle.push((PathBuf::from("in.raw"), vec![0_u8; 1024 * n_in * 4]));
+    if write_input {
+        bundle.push((PathBuf::from("in.raw"), vec![0_u8; 1024 * config.n_in * 4]));
     }
     for (path, bytes) in &config.coeffs {
         let relative = path.strip_prefix(out).map_err(|_| {
@@ -1577,26 +1608,99 @@ pub fn write_config_observed(
                 "bypass configuration unexpectedly needs FIR coefficients".into(),
             ));
         }
-        bundle.push((bypass_relative.clone(), bypass.yaml.as_bytes().to_vec()));
+        bundle.push((bypass_relative, bypass.yaml.as_bytes().to_vec()));
     }
-    bundle.push((config_relative.clone(), config.yaml.into_bytes()));
-    write_bundle_observed(
+    bundle.push((entry.clone(), config.yaml.into_bytes()));
+    Ok(PreparedConfig {
+        bundle,
+        entry,
+        write_input,
+    })
+}
+
+/// Files installed by an observed writer and any backup it could not remove.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Installed {
+    pub files: Vec<PathBuf>,
+    pub leftover_backup: Option<(PathBuf, String)>,
+}
+
+/// Installs a configuration returned by [`prepare_config`].
+pub fn install_prepared(
+    out: &Path,
+    prepared: PreparedConfig,
+    after_stage_write: &dyn Fn(usize, &Path) -> std::io::Result<()>,
+    before_install: &dyn Fn(usize, &Path) -> std::io::Result<()>,
+) -> Result<Installed, CamillaError> {
+    let PreparedConfig {
+        bundle,
+        entry,
+        write_input,
+    } = prepared;
+    let bypass = bundle
+        .iter()
+        .map(|(path, _)| path)
+        .find(|path| **path != entry && path.extension().is_some_and(|value| value == "yml"))
+        .cloned();
+    let installed = write_bundle_observed(out, &bundle, &entry, after_stage_write, before_install)?;
+
+    let mut written = vec![out.join(&entry)];
+    if let Some(bypass) = &bypass {
+        written.push(out.join(bypass));
+    }
+    let mut coefficient_paths = bundle
+        .into_iter()
+        .map(|(path, _)| path)
+        .filter(|path| {
+            path != &entry
+                && bypass.as_ref() != Some(path)
+                && !(write_input && path == Path::new("in.raw"))
+        })
+        .map(|path| out.join(path))
+        .collect::<Vec<_>>();
+    coefficient_paths.sort();
+    written.extend(coefficient_paths);
+    Ok(Installed {
+        files: written,
+        leftover_backup: installed.leftover_backup,
+    })
+}
+
+/// Write `configs/<name>.yml`, coefficient WAVs, and a placeholder `in.raw` when needed.
+///
+/// This plain variant returns the files and discards a leftover-backup warning.
+pub fn write_config(
+    chain: &SignalChain,
+    out: &Path,
+    name: &str,
+    options: &Options,
+    mimo: Option<&MimoPaths>,
+) -> Result<Vec<PathBuf>, CamillaError> {
+    Ok(
+        write_config_observed(chain, out, name, options, mimo, &|_, _| Ok(()), &|_, _| {
+            Ok(())
+        })?
+        .files,
+    )
+}
+
+/// Audit-only staging seam invoked after each complete staged file.
+#[doc(hidden)]
+pub fn write_config_observed(
+    chain: &SignalChain,
+    out: &Path,
+    name: &str,
+    options: &Options,
+    mimo: Option<&MimoPaths>,
+    after_stage_write: &dyn Fn(usize, &Path) -> std::io::Result<()>,
+    before_install: &dyn Fn(usize, &Path) -> std::io::Result<()>,
+) -> Result<Installed, CamillaError> {
+    install_prepared(
         out,
-        &bundle,
-        &config_relative,
+        prepare_config(chain, out, name, options, mimo)?,
         after_stage_write,
         before_install,
-    )?;
-
-    let config_path = out.join(&config_relative);
-    let mut written = vec![config_path];
-    if bypass.is_some() {
-        written.push(out.join(&bypass_relative));
-    }
-    let mut coeff_paths: Vec<_> = config.coeffs.into_iter().map(|(path, _)| path).collect();
-    coeff_paths.sort();
-    written.extend(coeff_paths);
-    Ok(written)
+    )
 }
 
 /// Calibration-level export wrapper.
@@ -1617,7 +1721,7 @@ pub fn export_with_options(
     mimo: Option<&MimoPaths>,
     mut options: Options,
 ) -> Result<Vec<PathBuf>, CamillaError> {
-    finite("labels.latency_ms", labels.latency_ms)?;
+    guard::finite("labels.latency_ms", labels.latency_ms)?;
     options.note = labels.note.clone();
     options.latency_ms = Some(labels.latency_ms);
     options.mode = labels.mode.clone();

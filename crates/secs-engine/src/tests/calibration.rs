@@ -6,8 +6,8 @@ use super::cases;
 
 #[test]
 fn engine_inputs_match_constructor_goldens() {
-    for name in cases::names() {
-        let case = cases::load(&name);
+    for name in cases::names(&crate::tests::Oracle) {
+        let case = cases::load(&crate::tests::Oracle, &name);
         let settings: CalibrationSettings = serde_json::from_value(case.settings.clone()).unwrap();
         let groups = cases::pairs(&case.project["groups"])
             .map(|(group, roles)| {
@@ -150,7 +150,7 @@ fn inverted_main_designs_on_the_flipped_response() {
     use crate::{DesignRequest, Samples, Tuning, design};
     use secs_compute::Context;
 
-    let case = cases::load("room");
+    let case = cases::load(&crate::tests::Oracle, "room");
     let settings: CalibrationSettings = serde_json::from_value(case.settings.clone()).unwrap();
     let inverted = vec!["C".into()];
     let configured = engine_inputs(
@@ -225,7 +225,7 @@ fn inverted_main_designs_on_the_flipped_response() {
             adapter_notes: &[],
         },
         &context,
-        &*crate::production_fitters(context.cancel()),
+        &*crate::production_fitters(&context),
     )
     .unwrap();
     let manual_design = design(
@@ -237,7 +237,7 @@ fn inverted_main_designs_on_the_flipped_response() {
             adapter_notes: &[],
         },
         &context,
-        &*crate::production_fitters(context.cancel()),
+        &*crate::production_fitters(&context),
     )
     .unwrap();
     let mut configured_chain = configured_design.chain;
@@ -285,7 +285,7 @@ fn calibration_replay_matches_assembled_design_bit_for_bit() {
     };
     use secs_compute::Context;
 
-    let mut case = cases::load("dolby_linear");
+    let mut case = cases::load(&crate::tests::Oracle, "dolby_linear");
     // Resolution must retain its adapter note, but not the biamp measurement.
     let measurement = case.measurements.positions[0].1[0].1.clone();
     case.measurements.positions[0]
@@ -302,7 +302,7 @@ fn calibration_replay_matches_assembled_design_bit_for_bit() {
     let inputs = engine_inputs(&view, &case.measurements, &settings).unwrap();
     let measurements =
         normalize_measurements(&inputs.measurements, settings.sample_rate_policy, &ctx).unwrap();
-    let replay = cases::Replay::for_case("dolby_linear");
+    let replay = cases::Replay::for_case(&crate::tests::Oracle, "dolby_linear");
     let expected = design(
         &DesignRequest {
             measurements: &measurements,
@@ -316,7 +316,7 @@ fn calibration_replay_matches_assembled_design_bit_for_bit() {
     )
     .unwrap();
     replay.finish();
-    let replay = cases::Replay::for_case("dolby_linear");
+    let replay = cases::Replay::for_case(&crate::tests::Oracle, "dolby_linear");
     let actual = calibrate_with(
         &CalibrationRequest {
             view: &view,

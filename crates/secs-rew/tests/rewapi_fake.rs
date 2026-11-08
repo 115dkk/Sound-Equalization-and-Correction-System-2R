@@ -243,3 +243,38 @@ fn test_measure_level_dbfs_and_calibration_when_running_or_down() {
     assert_eq!(f.measure_level_dbfs(), None);
     assert_eq!(f.input_calibration_file(), None);
 }
+
+#[test]
+fn test_plan_rejects_invalid_sweep_frequencies_and_levels() {
+    for (low, high) in [
+        (f64::NAN, 20000.0),
+        (20.0, f64::NAN),
+        (0.0, 20000.0),
+        (-1.0, 20000.0),
+        (20.0, 20.0),
+        (100.0, 20.0),
+        (20.0, 24000.0),
+        (20.0, f64::INFINITY),
+    ] {
+        let mut plan = fake_plan(&["L"], &[1]);
+        plan.start_frequency = low;
+        plan.end_frequency = high;
+        assert!(
+            plan.validate().contains(&"rew.plan.frequency"),
+            "48 kHz requires finite 0 < low < high < 24000 Hz, got {low}..{high}"
+        );
+    }
+    for level in [1.0, f64::NAN, f64::INFINITY, -120.1] {
+        let mut plan = fake_plan(&["L"], &[1]);
+        plan.sweep_level_db = level;
+        assert!(
+            plan.validate().contains(&"rew.plan.level"),
+            "level must be finite and in -120..=0 dBFS, got {level}"
+        );
+    }
+    for level in [-120.0, 0.0] {
+        let mut plan = fake_plan(&["L"], &[1]);
+        plan.sweep_level_db = level;
+        assert!(plan.validate().is_empty());
+    }
+}

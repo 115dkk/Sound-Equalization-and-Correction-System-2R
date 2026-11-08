@@ -20,7 +20,7 @@ SECS 2R은 자체 측정을 위해 운영체제 오디오(Windows WASAPI, macOS 
 - 기능은 `features.toml`에 등록합니다. '구현됨'으로 표시한 기능은 실제로 있는 검증 테스트를 하나 이상 가리켜야 하고, 화면이 부를 수 있는 IPC 메서드는 모두 `ipc.<메서드>`로 등록합니다.
 - `crates/secs-policy`의 테스트가 저장소 파일을 직접 읽어 위 규칙을 검사하고, 다음도 함께 봅니다.
   - faer는 `std` 기능 없이 씁니다. 그 기능이 끌어오는 `private-gemm-x86`의 어셈블리 커널이 AVX 상위 상태를 더럽혀 뒤따르는 SSE 명령이 모두 느려집니다(임펄사이퍼에서 PEQ 잔차가 8배 느려진 것을 쟀습니다).
-  - 다른 프로세스를 띄울 수 있는 파일은 REW 실행기(`crates/secs-rew/src/launch.rs`) 하나입니다.
+  - 다른 프로세스를 실행할 수 있는 파일은 `crates/secs-sys/src/rew.rs`와 `crates/secs-sys/src/host.rs`입니다. ADR 0018의 관리 서비스 도입에 따른 허용 목록이며, `secs-policy`의 `SUBPROCESS_ALLOWLIST`로 검사합니다.
   - 업스트림 트리와 `UPSTREAM.toml`이 제자리에 있어야 합니다(0001).
 - CI는 신뢰할 수 없는 바이트를 읽는 파서(jos, mdat, WAV, `.secs`)를 Miri와 cargo-fuzz로 돌립니다. 대상은 그 파서가 들어오는 M1부터 더합니다.
 

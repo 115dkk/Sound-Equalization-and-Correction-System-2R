@@ -84,6 +84,8 @@ export type ConnectView = {
     /** rew_driver_set is waiting for REW to switch its driver and reopen its devices. */
     switchingDriver: boolean;
     details: RewDetails;
+    /** The service's refusal of the REW executable path sent last (`field = rew_executable`), shown at that field; null once one is taken. */
+    executableError: IpcError | null;
   };
   micCalibration: MicCalibrationView;
   /** Stored level per role in dBFS from levels_get, pre-filling the rows. */
@@ -98,10 +100,20 @@ export type ConnectView = {
     playing: string | null;
     /** Playing every channel in turn. */
     playingAll: boolean;
-    /** Master output for level_play, −40…0 dBFS (host state; −20 by default). */
+    /** Master output for level_play, −40…0 dBFS (the level monitor store; −20 by default). */
     masterDbfs: number;
   };
 };
+
+/** The level monitor fields the mic meter draws: they change with every Meter event (TD-176). */
+export type LiveLevel = Pick<ConnectView["level"], "monitor" | "error" | "reading">;
+
+/**
+ * `ConnectView` without `LiveLevel`: what `useConnectScreen` gives the frame,
+ * the step header and the tutorial, none of which draw the meter. The screen
+ * itself gets the live fields where it is drawn (`withLiveLevel`).
+ */
+export type ConnectState = Omit<ConnectView, "level"> & { level: Omit<ConnectView["level"], keyof LiveLevel> };
 
 export type ConnectActions = {
   /** measure_configure { method } for native, rew and mock; "mdat" is a host choice that skips the step. */
@@ -110,10 +122,12 @@ export type ConnectActions = {
   refreshMethods: () => void;
   /** rew_launch: checks REW, and starts it in API mode when it does not answer. */
   launchRew: () => void;
-  /** Reads REW's sample rate, sweep length and level for the hint line (service gap: no method yet). */
+  /** Reads REW's sample rate, sweep length and level for the hint line again (`rew_info`). */
   readRewSettings: () => void;
   /** rew_driver_set { driver }: switches REW's audio driver, then reads REW's devices again. */
   setRewDriver: (driver: string) => void;
+  /** measure_configure { rew_executable }: the REW executable to start instead of the installed one; "" clears it (TD-221). */
+  setRewExecutable: (path: string) => void;
   /** measure_configure { input_device } ("" = the default device); on the REW path a REW device name, which REW also opens. */
   setInputDevice: (id: string) => void;
   /** measure_configure { input_channel } (1-based). */
@@ -130,13 +144,13 @@ export type ConnectActions = {
   attachMicCalibration: () => void;
   /** level_play { role, master_dbfs } (level_monitor_start first when the monitor is off or failed); subs play 50 Hz, 2.5 s. */
   playLevel: (role: string) => void;
-  /** Stops the playing channel and the queue (service gap: no early stop for one burst; level_monitor_stop and start again). */
+  /** Stops the playing channel and the queue (`level_stop`). */
   stopLevel: () => void;
   /** level_play for every channel in turn, in row order (host queue). */
   playAllLevels: () => void;
   /** Host state: the master output for level_play. */
   setMasterLevel: (dbfs: number) => void;
-  /** Fills the channels without a level with upstream's defaults (service gap: no method yet). */
+  /** Fills the channels without a level with upstream's defaults (`levels_fill_defaults`). */
   skipLevels: () => void;
   /** Host: opens 측정·가져오기 (the header's primary action on the mdat path). */
   next: () => void;

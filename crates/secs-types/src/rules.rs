@@ -56,6 +56,8 @@ pub struct CalibrationLimits {
     pub mimo_max: (f64, f64),
     /// Protected MIMO onset interval (ms, ADR 0037).
     pub mimo_early_ms: (f64, f64),
+    /// Input PEQ band count (None uses the engine default).
+    pub peq_bands: (f64, f64),
 }
 
 /// Upstream's clamp of a stored RC low edge (calibration.py), kept for reading
@@ -83,6 +85,7 @@ pub const CALIBRATION_LIMITS: CalibrationLimits = CalibrationLimits {
     mimo_low: (15.0, 150.0),
     mimo_max: (0.0, 12.0),
     mimo_early_ms: (5.0, 60.0),
+    peq_bands: (0.0, 64.0),
 };
 
 /// Sweep lengths a measurement plan accepts, shortest first.
@@ -115,6 +118,113 @@ pub const ARRANGEMENT_COUNTS: [usize; 4] = [1, 9, 13, 17];
 /// Finished jobs the service keeps in its job list beside every active one
 /// (ADR 0009).
 pub const JOB_HISTORY_MAX: usize = 32;
+
+/// Calibration fields read directly by `engine_key`; manual-sub fields are in
+/// [`MANUAL_KEY_FIELDS`] because `engine_key` includes `manual_key`.
+pub const ENGINE_KEY_FIELDS: &[&str] = &[
+    "mode",
+    "rc_lo",
+    "rc_hi",
+    "room_volume_m3",
+    "xo",
+    "ultra_ms",
+    "infra_boost_max_db",
+    "xo_peq_on",
+    "xo_peq_lo",
+    "xo_peq_hi",
+    "boost_max_db",
+    "rc_hi_basis",
+    "rc_hi_transition",
+    "rc_bands",
+    "sample_rate_policy",
+    "low_protect",
+    "lf_align",
+    "mode_decay",
+    "hf_phase",
+    "dip_limit",
+    "input_hp_hz",
+    "peq_analytic_derivatives",
+];
+
+/// Calibration fields read by `manual_key`.
+pub const MANUAL_KEY_FIELDS: &[&str] = &["subs_manual", "bundle_layouts", "sub_main_delay_ms"];
+
+/// Calibration fields read by `mimo_key`.
+pub const MIMO_KEY_FIELDS: &[&str] = &[
+    "fsiso",
+    "mimo_low",
+    "subs_manual",
+    "mimo_max_supports",
+    "mimo_fir",
+    "mimo_iir_analytic_derivatives",
+    "mimo_seat_guard",
+    "mimo_early_ms",
+];
+
+/// Exclusive foreground-job groups and the job-kind wire names in each group.
+pub const JOB_GROUPS: &[(&str, &[&str])] = &[
+    (
+        "device",
+        &["measure", "sample_load", "mdat_import", "level_monitor"],
+    ),
+    ("compute", &["calibrate", "recommend_xo", "mimo"]),
+    ("export", &["export", "apply"]),
+    ("status_watch", &["status_watch"]),
+];
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+pub struct ScalarEditRule {
+    pub kind: &'static str,
+    pub field: &'static str,
+    pub limit: &'static str,
+    pub policy: &'static str,
+}
+
+/// Scalar edit rules the mock can apply without copying the service match.
+pub use crate::calibration::{KNOWN_KEYS, SCALAR_EDITS};
+
+/// Folder tag used by each `ExportKind` wire name.
+pub const EXPORT_FOLDER_TAGS: &[(&str, &str)] = &[
+    ("camilla_dsp", "camilla"),
+    ("before_after_mdat", "mdat"),
+    ("staged_mdat", "mdat"),
+    ("filter_text", "text"),
+    ("equalizer_apo", "eqapo"),
+    ("convolution", "convolution"),
+];
+
+pub const MIMO_MIN_POSITIONS: usize = 3;
+pub const DESIGN_RATE: u32 = 48_000;
+pub const OUTPUT_RATES: [u32; 6] = [44_100, 48_000, 88_200, 96_000, 176_400, 192_000];
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubLimits {
+    pub gain: (f64, f64),
+    pub delay: (f64, f64),
+    pub ap_hz: (f64, f64),
+    pub ap_q: (f64, f64),
+    pub filter_hz: (f64, f64),
+    pub peq_gain: (f64, f64),
+}
+
+pub const SUB_LIMITS: SubLimits = SubLimits {
+    gain: (-60.0, 20.0),
+    delay: (0.0, 500.0),
+    ap_hz: (10.0, 500.0),
+    ap_q: (0.1, 20.0),
+    filter_hz: (10.0, 300.0),
+    peq_gain: (-30.0, 12.0),
+};
+pub const INFRA_DEFAULT_HZ: f64 = 25.0;
+pub const ALLPASS_Q_DEFAULT: f64 = 0.71;
+pub const TRANSITION_FACTORS: [u8; 3] = [1, 2, 4];
+pub const AGREEMENT_MIN_POSITIONS: usize = 3;
+pub const REPETITIONS: [u8; 4] = [1, 2, 4, 8];
+pub const NEW_PROJECT_PRESETS: [&str; 10] = [
+    "2.0", "2.1", "2.2", "4.0", "4.1", "4.2", "5.1", "7.1", "7.1.4", "9.1.6",
+];
+pub const INPUT_HP_START: f64 = 25.0;
 
 #[cfg(test)]
 mod typescript {
@@ -184,6 +294,24 @@ mod typescript {
             constant("CONFIG_GROUPS", None, &CONFIG_GROUPS),
             constant("ARRANGEMENT_COUNTS", None, &ARRANGEMENT_COUNTS),
             constant("JOB_HISTORY_MAX", None, &JOB_HISTORY_MAX),
+            constant("ENGINE_KEY_FIELDS", None, &ENGINE_KEY_FIELDS),
+            constant("MANUAL_KEY_FIELDS", None, &MANUAL_KEY_FIELDS),
+            constant("MIMO_KEY_FIELDS", None, &MIMO_KEY_FIELDS),
+            constant("JOB_GROUPS", None, &JOB_GROUPS),
+            constant("SCALAR_EDITS", None, &SCALAR_EDITS),
+            constant("KNOWN_KEYS", None, &KNOWN_KEYS),
+            constant("EXPORT_FOLDER_TAGS", None, &EXPORT_FOLDER_TAGS),
+            constant("MIMO_MIN_POSITIONS", None, &MIMO_MIN_POSITIONS),
+            constant("DESIGN_RATE", None, &DESIGN_RATE),
+            constant("OUTPUT_RATES", None, &OUTPUT_RATES),
+            constant("SUB_LIMITS", None, &SUB_LIMITS),
+            constant("INFRA_DEFAULT_HZ", None, &INFRA_DEFAULT_HZ),
+            constant("ALLPASS_Q_DEFAULT", None, &ALLPASS_Q_DEFAULT),
+            constant("TRANSITION_FACTORS", None, &TRANSITION_FACTORS),
+            constant("AGREEMENT_MIN_POSITIONS", None, &AGREEMENT_MIN_POSITIONS),
+            constant("REPETITIONS", None, &REPETITIONS),
+            constant("NEW_PROJECT_PRESETS", None, &NEW_PROJECT_PRESETS),
+            constant("INPUT_HP_START", None, &INPUT_HP_START),
         ]
         .concat()
     }
@@ -216,13 +344,42 @@ mod tests {
             "{limits}"
         );
         assert!(
-            limits.ends_with("  mimo_max: [0, 12],\n  mimo_early_ms: [5, 60],\n} as const;\n"),
+            limits.ends_with("  mimo_max: [0, 12],\n  mimo_early_ms: [5, 60],\n  peq_bands: [0, 64],\n} as const;\n"),
             "{limits}"
         );
     }
 
     /// Writes `rules.ts` where ts-rs writes the bindings (`TS_RS_EXPORT_DIR`,
     /// `./bindings` by default), so CI's bindings diff compares it too.
+    #[test]
+    fn exports_architecture_tables_to_typescript() {
+        let text = rules_ts();
+        assert!(text.contains("peq_bands: [0, 64]"));
+        assert!(text.contains("filterHz: [10, 300]"));
+        for name in [
+            "ENGINE_KEY_FIELDS",
+            "MANUAL_KEY_FIELDS",
+            "MIMO_KEY_FIELDS",
+            "JOB_GROUPS",
+            "SCALAR_EDITS",
+            "KNOWN_KEYS",
+            "EXPORT_FOLDER_TAGS",
+            "MIMO_MIN_POSITIONS",
+            "DESIGN_RATE",
+            "OUTPUT_RATES",
+            "SUB_LIMITS",
+            "INFRA_DEFAULT_HZ",
+            "ALLPASS_Q_DEFAULT",
+            "TRANSITION_FACTORS",
+            "AGREEMENT_MIN_POSITIONS",
+            "REPETITIONS",
+            "NEW_PROJECT_PRESETS",
+            "INPUT_HP_START",
+        ] {
+            assert!(text.contains(&format!("export const {name}")), "{name}");
+        }
+    }
+
     #[test]
     fn export_rules_ts() {
         let dir = ts_rs::Config::from_env().out_dir().to_path_buf();

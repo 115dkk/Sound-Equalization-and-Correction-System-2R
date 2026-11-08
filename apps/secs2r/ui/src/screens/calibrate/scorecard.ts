@@ -32,7 +32,7 @@ export type LatePositions = {
   mimo: boolean;
 };
 
-export type ScorecardModel = {
+type ScorecardModel = {
   /** In the order of the result lines (the configuration order). */
   rows: ScoreRow[];
   /** The smallest measured position, where the engine takes the scorecard's figures; null without late-energy entries. */

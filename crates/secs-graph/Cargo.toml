@@ -16,6 +16,10 @@ include = ["Cargo.toml", "README.md", "LICENSE", "src/**"]
 workspace = true
 
 [dependencies]
+num-bigint = "0.4.6"
+num-integer = "0.1.47"
+num-traits = "0.2.19"
+ryu = "=1.0.20"
 secs-types.workspace = true
 secs-dsp.workspace = true
 serde.workspace = true

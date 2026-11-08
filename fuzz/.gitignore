@@ -1,4 +1,7 @@
 target/
-corpus/
+corpus/*
+!corpus/mdat_load/
+corpus/mdat_load/*
+!corpus/mdat_load/shared_calibration.mdat
 artifacts/
 coverage/

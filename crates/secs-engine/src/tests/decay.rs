@@ -67,7 +67,7 @@ fn calibration_late_matches_oracle() {
         } else {
             let name = i["case"].as_str().unwrap();
             let spectra = cache.entry(name.to_owned()).or_insert_with(|| {
-                let case = cases::load(name);
+                let case = cases::load(&crate::tests::Oracle, name);
                 let setup = Setup::new(&case.config);
                 let prep = prepare(&case.measurements, &case.config, &setup).unwrap();
                 long_spectra(&case.measurements, &prep, &setup.sub_filters, 2000.0).unwrap()

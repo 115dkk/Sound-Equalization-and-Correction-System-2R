@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import os
 import shutil
 import subprocess
@@ -14,6 +13,9 @@ import urllib.request
 import zipfile
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Callable
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _http import fetch_file as _fetch_file  # noqa: E402
 
 DEFAULT_MANIFEST = Path(__file__).resolve().parent.parent / "eqapo-engines.toml"
 FORMATS = {"nupkg", "nsis"}
@@ -55,14 +57,6 @@ def load_manifest(
     return {key: entry[key] for key in required}
 
 
-def sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
 def fetch_file(
     url: str,
     expected: str,
@@ -70,37 +64,16 @@ def fetch_file(
     opener: Callable[..., object] = urllib.request.urlopen,
     sleeper: Callable[[float], None] = time.sleep,
 ) -> bool:
-    """Fetch target atomically; return False when an existing cache was reused."""
-    target.parent.mkdir(parents=True, exist_ok=True)
-    if target.is_file() and sha256(target) == expected:
-        return False
-    if target.exists():
-        target.unlink()
-    temporary = target.with_name(f".{target.name}.part")
-    temporary.unlink(missing_ok=True)
-    request = urllib.request.Request(url, headers={"User-Agent": "secs2r-ci"})
-    last_error: Exception | None = None
-    for attempt in range(4):
-        try:
-            with opener(request) as response, temporary.open("wb") as output:
-                shutil.copyfileobj(response, output)
-            actual = sha256(temporary)
-            if actual != expected:
-                temporary.unlink(missing_ok=True)
-                raise EngineError(
-                    f"checksum mismatch: expected {expected} got {actual}"
-                )
-            os.replace(temporary, target)
-            return True
-        except EngineError:
-            raise
-        except Exception as error:  # urllib exposes several unrelated failure types.
-            last_error = error
-            temporary.unlink(missing_ok=True)
-            if attempt == 3:
-                break
-            sleeper(2 ** (attempt + 1))
-    raise EngineError(f"download failed after 4 attempts: {last_error}")
+    return _fetch_file(
+        url,
+        expected,
+        target,
+        opener=opener,
+        attempts=4,
+        sleeper=sleeper,
+        error_type=EngineError,
+        remove_invalid_target=True,
+    )
 
 
 def extract_nupkg(package: Path, destination: Path) -> None:

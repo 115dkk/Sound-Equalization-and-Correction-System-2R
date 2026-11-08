@@ -3,17 +3,18 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
 import re
-import shutil
 import subprocess
 import sys
 import time
 import tomllib
 import urllib.request
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _http import fetch_file as _fetch_file  # noqa: E402
 
 DEFAULT_MANIFEST = Path(__file__).resolve().parent.parent / "blackhole.toml"
 DEVICE = "BlackHole 2ch"
@@ -44,35 +45,22 @@ def load_manifest(path: Path) -> dict[str, str]:
     return {key: entry[key] for key in required}
 
 
-def sha256(path: Path) -> str:
-    with path.open("rb") as stream:
-        return hashlib.file_digest(stream, "sha256").hexdigest()
-
-
 def fetch_file(url: str, expected: str, target: Path, opener=urllib.request.urlopen,
                sleeper=time.sleep) -> None:
-    target.parent.mkdir(parents=True, exist_ok=True)
-    if target.is_file() and sha256(target) == expected:
-        return
-    temporary = target.with_suffix(".pkg.part")
-    request = urllib.request.Request(url, headers={"User-Agent": "secs2r-ci"})
-    for attempt in range(4):
-        try:
-            with opener(request, timeout=60) as response, temporary.open("wb") as stream:
-                shutil.copyfileobj(response, stream)
-            actual = sha256(temporary)
-            if actual != expected:
-                raise BlackHoleError(f"BlackHole checksum mismatch: expected {expected}, got {actual}")
-            os.replace(temporary, target)
-            return
-        except BlackHoleError:
-            raise
-        except OSError as error:
-            if attempt == 3:
-                raise BlackHoleError(f"BlackHole download failed after 4 attempts: {error}") from error
-            sleeper(2 ** (attempt + 1))
-        finally:
-            temporary.unlink(missing_ok=True)
+    _fetch_file(
+        url,
+        expected,
+        target,
+        opener=opener,
+        attempts=4,
+        sleeper=sleeper,
+        error_type=BlackHoleError,
+        timeout=60,
+        temporary=target.with_suffix(".pkg.part"),
+        retry_errors=(OSError,),
+        checksum_message="BlackHole checksum mismatch: expected {expected}, got {actual}",
+        failure_message="BlackHole download failed after {attempts} attempts: {error}",
+    )
 
 
 def has_device(value: object) -> bool:

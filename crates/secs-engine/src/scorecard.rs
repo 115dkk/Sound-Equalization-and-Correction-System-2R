@@ -5,9 +5,12 @@ use crate::{
     decay::{energy, first_max, fit_slope, median, percentile},
 };
 use secs_dsp::{
-    fft, interp,
+    fft, gradient,
+    grid::geomspace,
+    interp,
     response::gd_curve_with_peak,
     smooth::{Fraction, smooth_complex, smooth_power},
+    unwrap_phase as unwrap,
 };
 use std::f64::consts::PI;
 
@@ -31,50 +34,6 @@ pub struct Metrics {
     pub gd24_span: f64,
     pub gd_30: f64,
     pub pre_db: f64,
-}
-
-fn geomspace(start: f64, stop: f64, n: usize) -> Vec<f64> {
-    let lo = start.log10();
-    let step = (stop.log10() - lo) / (n - 1) as f64;
-    let mut out: Vec<_> = (0..n)
-        .map(|i| 10.0_f64.powf(i as f64 * step + lo))
-        .collect();
-    out[0] = start;
-    out[n - 1] = stop;
-    out
-}
-
-fn unwrap(phase: &mut [f64]) {
-    let mut previous = phase[0];
-    let mut correction = 0.0;
-    for p in &mut phase[1..] {
-        let d = *p - previous;
-        previous = *p;
-        let mut dm = (d + PI).rem_euclid(2.0 * PI) - PI;
-        if dm == -PI && d > 0.0 {
-            dm = PI;
-        }
-        if d.abs() >= PI {
-            correction += dm - d;
-        }
-        *p += correction;
-    }
-}
-
-fn gradient(y: &[f64], x: &[f64]) -> Vec<f64> {
-    let n = x.len();
-    let mut out = vec![0.0; n];
-    out[0] = (y[1] - y[0]) / (x[1] - x[0]);
-    out[n - 1] = (y[n - 1] - y[n - 2]) / (x[n - 1] - x[n - 2]);
-    for i in 1..n - 1 {
-        let d1 = x[i] - x[i - 1];
-        let d2 = x[i + 1] - x[i];
-        let a = -d2 / (d1 * (d1 + d2));
-        let b = (d2 - d1) / (d1 * d2);
-        let c = d1 / (d2 * (d1 + d2));
-        out[i] = a * y[i - 1] + b * y[i] + c * y[i + 1];
-    }
-    out
 }
 
 fn band(x: &[f64], y: &[f64], lo: f64, hi: f64) -> Vec<f64> {

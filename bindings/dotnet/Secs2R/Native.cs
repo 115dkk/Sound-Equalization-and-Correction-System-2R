@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.Text;
 using System.Text.Json;
 
@@ -112,10 +114,19 @@ internal static unsafe class Native
         }
 
         JsonElement error = root.GetProperty("error");
+        var parameters = new Dictionary<string, string>();
+        if (error.TryGetProperty("params", out JsonElement parameterValues))
+        {
+            foreach (JsonProperty parameter in parameterValues.EnumerateObject())
+            {
+                parameters.Add(parameter.Name, parameter.Value.GetString() ?? string.Empty);
+            }
+        }
         throw new SecsException(
             error.GetProperty("code").GetString() ?? "internal",
             error.GetProperty("message").GetString() ?? "SECS 2R returned an error.",
             error.GetProperty("detail").GetString() ?? string.Empty,
-            error.TryGetProperty("retryable", out JsonElement retryable) && retryable.GetBoolean());
+            error.TryGetProperty("retryable", out JsonElement retryable) && retryable.GetBoolean(),
+            new ReadOnlyDictionary<string, string>(parameters));
     }
 }

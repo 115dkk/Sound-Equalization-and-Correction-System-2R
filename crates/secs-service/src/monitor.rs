@@ -4,12 +4,13 @@ use std::time::Duration;
 
 use secs_project::{Project, PyJson};
 use secs_types::ipc::{
-    ErrorCode, IpcError, JobEvent, JobId, JobKind, JobResult, JobSnapshot, JobStarted,
+    ErrorCode, IpcError, JobEvent, JobKind, JobResult, JobSnapshot, JobStarted,
     LevelMonitorStartParams, LevelPlayParams, LevelsResult,
 };
 
-use crate::measure::json::JsonExt;
+use crate::jobs::JobContext;
 use crate::measure::{MeasurementSettings, plan_for};
+use crate::measurement::{input, measure_error as level_error, method};
 use crate::session::{self, ProjectTicket};
 use crate::{EventSink, Service, lock};
 
@@ -20,7 +21,6 @@ pub(crate) struct LevelState {
 
 #[derive(Debug, Default)]
 struct LevelInner {
-    job: Option<JobId>,
     play: Option<PlayRequest>,
     next_generation: u64,
 }
@@ -31,29 +31,6 @@ struct PlayRequest {
     master_dbfs: f64,
     generation: u64,
     cancel: crate::measure::CancelToken,
-}
-
-fn method(project: &Project) -> &str {
-    project
-        .extra
-        .iter()
-        .find(|(key, _)| key == "devices")
-        .and_then(|(_, value)| value.get("method"))
-        .and_then(JsonExt::str)
-        .unwrap_or("native")
-}
-
-fn input(field: &str, detail: impl Into<String>) -> IpcError {
-    IpcError::new(ErrorCode::MeasurementInput, detail).with_param("field", field)
-}
-
-/// Uses the shared measurement error classification (TD-34).
-fn level_error(
-    error: crate::measure::MeasureError,
-    field: &str,
-    share: secs_audio::SharePreference,
-) -> IpcError {
-    super::measurement::measure_error(error, field, share)
 }
 
 fn rew_error(error: secs_rew::RewError, rew: &crate::measure::RewLink) -> IpcError {
@@ -67,13 +44,9 @@ impl Service {
         params: LevelMonitorStartParams,
         events: Arc<dyn EventSink>,
     ) -> Result<JobStarted, IpcError> {
-        let (project, ticket) = {
-            let session = lock(&self.session);
-            (
-                session.require()?.store.project().clone(),
-                session.ticket()?,
-            )
-        };
+        let snapshot = lock(&self.session).snapshot().map_err(IpcError::from)?;
+        let ticket = snapshot.ticket;
+        let project = snapshot.project;
         let settings = MeasurementSettings::from_project(&project)
             .map_err(|error| level_error(error, "settings", secs_audio::SharePreference::Auto))?;
         let plan = plan_for(&project, &settings);
@@ -86,43 +59,20 @@ impl Service {
         let state = self.level.inner.clone();
         let session = self.session.clone();
         let rew = self.rew.clone();
-        let started = self.jobs.start(JobKind::LevelMonitor, events, move |job| {
-            lock(&state).job = Some(job.id());
+        self.start_job(JobKind::LevelMonitor, events, move |job| {
             let outcome = monitor_loop(
                 &deps, &session, &state, &project, ticket, settings, plan, &job, &rew,
             );
-            let mut state = lock(&state);
-            if state.job == Some(job.id()) {
-                state.job = None;
-                state.play = None;
-            }
+            lock(&state).play = None;
             outcome
-        })?;
-        lock(&self.level.inner).job = Some(started.job);
-        Ok(started)
+        })
     }
 
     pub(crate) fn stop_level_monitor(&self) -> Result<Option<JobSnapshot>, IpcError> {
-        let (job, play) = {
-            let state = lock(&self.level.inner);
-            (state.job, state.play.clone())
-        };
-        if let Some(play) = play {
-            play.cancel.cancel();
-        }
-        job.map(|job| self.jobs.cancel(job)).transpose()
-    }
-
-    pub(crate) fn cancel_level_monitor_job(&self, job: JobId) {
-        let play = {
-            let state = lock(&self.level.inner);
-            (state.job == Some(job))
-                .then(|| state.play.clone())
-                .flatten()
-        };
-        if let Some(play) = play {
-            play.cancel.cancel();
-        }
+        self.jobs
+            .running(JobKind::LevelMonitor)
+            .map(|job| self.jobs.cancel(job))
+            .transpose()
     }
 
     pub(crate) fn level_stop(&self) -> Result<(), IpcError> {
@@ -134,40 +84,40 @@ impl Service {
 
     pub(crate) fn levels_get(&self) -> Result<LevelsResult, IpcError> {
         let session = lock(&self.session);
-        let project = session.require()?.store.project();
+        let project = session.require()?.project();
         Ok(levels_result(project))
     }
 
     pub(crate) fn levels_fill_defaults(&self) -> Result<LevelsResult, IpcError> {
         let mut session = lock(&self.session);
         let open = session.require_mut()?;
-        let roles = plan_for(open.store.project(), &Default::default()).roles;
-        let existing = levels_result(open.store.project()).levels;
-        let mut changed = false;
-        for role in roles {
-            if !existing.contains_key(&role) {
-                let default = -22.0 - f64::from(((role.len() * 7) % 6) as u8);
-                put_extra_map(open.store.project_mut(), "levels", &role, default);
-                changed = true;
+        let roles = plan_for(open.project(), &Default::default()).roles;
+        let existing = levels_result(open.project()).levels;
+        open.edit_if(|project| {
+            let mut changed = false;
+            for role in roles {
+                if !existing.contains_key(&role) {
+                    let default = -22.0 - f64::from(((role.len() * 7) % 6) as u8);
+                    put_extra_map(project, "levels", &role, default);
+                    changed = true;
+                }
             }
-        }
-        if changed {
-            open.dirty = true;
-        }
-        Ok(levels_result(open.store.project()))
+            ((), changed)
+        });
+        Ok(levels_result(open.project()))
     }
 
     pub(crate) fn level_play(&self, params: LevelPlayParams) -> Result<(), IpcError> {
         if !params.master_dbfs.is_finite() || !(-120.0..=0.0).contains(&params.master_dbfs) {
             return Err(input("master_dbfs", "level outside -120..0 dBFS"));
         }
-        let mut state = lock(&self.level.inner);
-        if state.job.is_none() {
+        if self.jobs.running(JobKind::LevelMonitor).is_none() {
             return Err(IpcError::new(
                 ErrorCode::JobNotFound,
                 "level monitor is not running",
             ));
         }
+        let mut state = lock(&self.level.inner);
         state.next_generation = state.next_generation.wrapping_add(1);
         let generation = state.next_generation;
         if let Some(play) = state.play.take() {
@@ -211,7 +161,7 @@ fn sampled_loop(
     plan: secs_project::MeasurementPlan,
     job: &crate::jobs::JobContext,
 ) -> Result<JobResult, IpcError> {
-    let method = method(lock(session).require()?.store.project()).to_owned();
+    let method = method(lock(session).require()?.project()).to_owned();
     let share = settings.share;
     let mut measurer = match method.as_str() {
         "native" => SampledMeasurer::Native(Box::new(
@@ -250,6 +200,7 @@ fn sampled_loop(
             }
             continue;
         };
+        job.attach_cancel(play.cancel.clone());
         let mut play_plan = plan.clone();
         play_plan.sweep_level_db = play.master_dbfs;
         let report = match measurer.level_check_streaming(
@@ -268,13 +219,14 @@ fn sampled_loop(
             store_level(
                 session,
                 ticket,
+                job,
                 &play.role,
                 report.input_dbfs,
                 report.spl_db,
             )?;
-            send_play_end(job, &play.role, "done");
+            send_play_end(job, &play.role, "done", None);
         } else {
-            send_play_end(job, &play.role, "stopped");
+            send_play_end(job, &play.role, "stopped", None);
         }
         handled_generation = play.generation;
     }
@@ -316,14 +268,32 @@ fn send_meter(job: &crate::jobs::JobContext, report: secs_audio::LevelReport) {
     });
 }
 
-fn send_play_end(job: &crate::jobs::JobContext, role: &str, outcome: &str) {
+/// The wire spelling of an error code (`snake_case`), as the envelope writes it.
+fn wire_name(code: ErrorCode) -> String {
+    serde_json::to_value(code)
+        .ok()
+        .and_then(|value| value.as_str().map(str::to_owned))
+        .unwrap_or_else(|| format!("{code:?}"))
+}
+
+fn send_play_end(
+    job: &crate::jobs::JobContext,
+    role: &str,
+    outcome: &str,
+    error: Option<&IpcError>,
+) {
+    let mut params = BTreeMap::from([
+        ("role".into(), role.into()),
+        ("outcome".into(), outcome.into()),
+    ]);
+    if let Some(error) = error {
+        params.insert("error_code".into(), wire_name(error.code));
+        params.insert("detail".into(), error.detail.clone());
+    }
     job.send(JobEvent::Log {
         job: job.id(),
         code: "level_play_end".into(),
-        params: BTreeMap::from([
-            ("role".into(), role.into()),
-            ("outcome".into(), outcome.into()),
-        ]),
+        params,
     });
 }
 
@@ -356,7 +326,7 @@ fn rew_loop(
             }) {
                 secs_rew::LevelMonitor::stop_generator(&mut rew);
                 if let Some((play, _, _)) = active.take() {
-                    send_play_end(job, &play.role, "stopped");
+                    send_play_end(job, &play.role, "stopped", None);
                     handled_generation = play.generation;
                 }
             }
@@ -370,9 +340,23 @@ fn rew_loop(
                     .ok()
                     .filter(|value| *value > 0)
                     .ok_or_else(|| input("role", "role has no output"))?;
-                secs_rew::LevelMonitor::play_pink(&mut rew, &play.role, output, play.master_dbfs)
-                    .map_err(|error| rew_error(error, link))?;
-                active = Some((play, std::time::Instant::now(), None));
+                job.attach_cancel(play.cancel.clone());
+                match secs_rew::LevelMonitor::play_pink(
+                    &mut rew,
+                    &play.role,
+                    output,
+                    play.master_dbfs,
+                ) {
+                    Ok(()) => active = Some((play, std::time::Instant::now(), None)),
+                    Err(error) => {
+                        // REW may have started the generator before the reply
+                        // was lost, so stop it as the other paths do.
+                        secs_rew::LevelMonitor::stop_generator(&mut rew);
+                        let error = rew_error(error, link);
+                        send_play_end(job, &play.role, "failed", Some(&error));
+                        handled_generation = play.generation;
+                    }
+                }
             }
             for level in std::mem::take(&mut *lock(&pending)) {
                 job.send(JobEvent::Meter {
@@ -393,9 +377,16 @@ fn rew_loop(
                 secs_rew::LevelMonitor::stop_generator(&mut rew);
                 if let Some((play, _, settled)) = active.take() {
                     if let Some(level) = settled {
-                        store_level(session, ticket, &play.role, level.input_dbfs, level.spl_db)?;
+                        store_level(
+                            session,
+                            ticket,
+                            job,
+                            &play.role,
+                            level.input_dbfs,
+                            level.spl_db,
+                        )?;
                     }
-                    send_play_end(job, &play.role, "done");
+                    send_play_end(job, &play.role, "done", None);
                     handled_generation = play.generation;
                 }
             }
@@ -405,7 +396,7 @@ fn rew_loop(
     })();
     secs_rew::LevelMonitor::stop_generator(&mut rew);
     if let Some((play, _, _)) = active.take() {
-        send_play_end(job, &play.role, "stopped");
+        send_play_end(job, &play.role, "stopped", None);
     }
     secs_rew::LevelMonitor::stop(&mut rew);
     result
@@ -417,15 +408,18 @@ fn rew_loop(
 fn store_level(
     session: &Arc<Mutex<crate::session::Session>>,
     ticket: ProjectTicket,
+    job: &JobContext,
     role: &str,
     dbfs: f64,
     spl_db: Option<f64>,
 ) -> Result<(), IpcError> {
-    let stored = session::apply(session, ticket, |open| {
-        put_extra_map(open.store.project_mut(), "levels", role, dbfs);
-        if let Some(spl) = spl_db {
-            put_extra_map(open.store.project_mut(), "spl", role, spl);
-        }
+    let stored = session::commit(session, ticket, job, session::Finality::Streaming, |open| {
+        open.edit(|project| {
+            put_extra_map(project, "levels", role, dbfs);
+            if let Some(spl) = spl_db {
+                put_extra_map(project, "spl", role, spl);
+            }
+        });
         Ok(((), true))
     });
     match stored {

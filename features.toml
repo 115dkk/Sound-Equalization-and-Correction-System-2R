@@ -17,8 +17,28 @@ kind = "app"
 milestone = "M6"
 status = "implemented"
 upstream = "new; ADR 0020"
-tests = ["secs2r::update_policy_and_portable_decisions", "secs2r::update_endpoint_override_preserves_nonempty_address", "secs2r::update_notice_matches_running_version_and_tracks_skipped_releases", "secs2r::update_actions_reject_wrong_phases", "secs2r::updater_config_requires_signed_version"]
-note = "The managed service refuses an update source that is a link or junction (audit #155 TD-135); apps/secs2r-host/src/rules.rs pins it with Windows-only tests, update_source_refuses_an_existing_system_junction and update_source_refuses_an_existing_directory_symlink, that the Linux registry check cannot list."
+tests = ["secs-service::update_policy_and_portable_decisions", "secs2r::update_endpoint_override_preserves_nonempty_address", "secs-service::update_notice_matches_running_version_and_tracks_skipped_releases", "secs-service::update_actions_reject_wrong_phases", "secs2r::updater_config_requires_signed_version", "secs2r::check_failure_logs_its_cause_td164", "secs2r::update_transitions_match_the_recorded_table", "secs2r-host::update_source_refuses_an_existing_system_junction", "secs2r-host::update_source_refuses_an_existing_directory_symlink"]
+note = "The managed service refuses an update source that is a link or junction (audit #155 TD-135); apps/secs2r-host/src/rules.rs pins it with Windows-only tests, update_source_refuses_an_existing_system_junction and update_source_refuses_an_existing_directory_symlink, which the Windows leg of the registry check lists (the three OS listings are merged, audit #186 TD-239)."
+
+[[feature]]
+id = "update.machine"
+kind = "service"
+milestone = "M6"
+status = "implemented"
+upstream = "new; ADR 0020, ADR 0058"
+tests = [
+  "secs-service::auto_policy_downloads_a_found_release_at_once",
+  "secs-service::notify_policy_only_announces_a_found_release",
+  "secs-service::portable_build_reports_the_release_url",
+  "secs-service::tick_is_ignored_while_checking_downloading_ready_or_installing",
+  "secs-service::late_check_result_with_an_old_generation_is_ignored",
+  "secs-service::set_policy_off_cancels_removes_pending_and_goes_off",
+  "secs-service::notify_while_downloading_cancels_back_to_available",
+  "secs-service::auto_while_available_starts_the_download",
+  "secs-service::exit_installs_only_a_ready_on_exit_release",
+  "secs-service::failures_keep_the_user_sentence_and_log_the_cause_td164",
+  "secs-service::download_past_the_cap_cancels_and_fails_before_buffering_td204",
+]
 
 [[feature]]
 id = "ipc.update_status"
@@ -26,7 +46,7 @@ kind = "ipc"
 milestone = "M6"
 status = "implemented"
 upstream = "new; ADR 0020"
-tests = ["secs2r::update_policy_and_portable_decisions"]
+tests = ["secs-service::update_policy_and_portable_decisions"]
 
 [[feature]]
 id = "ipc.update_check"
@@ -42,7 +62,7 @@ kind = "ipc"
 milestone = "M6"
 status = "implemented"
 upstream = "new; ADR 0020"
-tests = ["secs2r::update_actions_reject_wrong_phases"]
+tests = ["secs-service::update_actions_reject_wrong_phases"]
 
 [[feature]]
 id = "ipc.update_restart"
@@ -50,7 +70,7 @@ kind = "ipc"
 milestone = "M6"
 status = "implemented"
 upstream = "new; ADR 0020"
-tests = ["secs2r::update_actions_reject_wrong_phases"]
+tests = ["secs-service::update_actions_reject_wrong_phases"]
 
 [[feature]]
 id = "ipc.update_notice_dismiss"
@@ -58,7 +78,7 @@ kind = "ipc"
 milestone = "M6"
 status = "implemented"
 upstream = "new; ADR 0020"
-tests = ["secs2r::update_notice_matches_running_version_and_tracks_skipped_releases"]
+tests = ["secs-service::update_notice_matches_running_version_and_tracks_skipped_releases"]
 
 [[feature]]
 id = "ipc.update_open_release"
@@ -93,7 +113,7 @@ kind = "engine"
 milestone = "M2"
 status = "implemented"
 upstream = "CorrectionEngine.compute and calibration.compute"
-tests = ["secs-engine::design_matches_recorded_stages", "secs-engine::design_cancellation_returns_within_one_second"]
+tests = ["secs-engine::design_missing_reference_sub_returns_structured_error", "secs-engine::design_memory_refusal_preserves_requested_and_total_bytes", "secs-engine::design_matches_recorded_stages", "secs-engine::design_cancellation_returns_within_one_second", "secs-engine::design_methods_reproduce_the_values_secs_export_reads", "secs-engine::public_surface_is_the_adr_0046_list"]
 note = "Replayed design matches the recorded stages (room after BA reported, its DE diverges); cancellation returns within 1 s at five points of the dolby design (the fitter stops at its next gradient test)."
 
 [[feature]]
@@ -108,7 +128,7 @@ tests = [
   "secs-engine::polarity_check_averages_positions_and_skips_undecided_pairs",
   "secs-engine::polarity_check_runs_once_on_the_final_pass",
   "secs-engine::golden_rooms_have_no_polarity_notes",
-  "secs-service::polarity_notes_map_to_notices_with_role_confidence_and_groups",
+  "secs-engine::record_of_polarity_reversed_matches_the_service_literal",
 ]
 
 [[feature]]
@@ -122,7 +142,7 @@ tests = [
   "secs-engine::pair_phase_check_reports_only_cancelling_pairs_worst_first",
   "secs-engine::pair_phase_runs_once_on_the_final_pass_and_reports_dolby",
   "secs-engine::pair_phase_bands_skip_non_finite_and_include_the_top_edge",
-  "secs-service::pair_phase_notes_map_to_notices_with_bands",
+  "secs-engine::pair_phase_records_one_record_per_band_with_index",
 ]
 
 [[feature]]
@@ -335,14 +355,7 @@ id = "policy.feature_registry"
 kind = "policy"
 milestone = "M0"
 status = "implemented"
-tests = [
-  "secs-policy::features_registry_is_well_formed",
-  "secs-policy::implemented_features_have_existing_tests",
-  "secs-policy::test_detector_finds_test_attribute",
-  "secs-policy::test_detector_rejects_plain_function",
-  "secs-policy::test_detector_finds_proptest_function",
-  "secs-policy::test_detector_ignores_comments_and_strings",
-]
+tests = ["secs-policy::features_registry_is_well_formed"]
 
 [[feature]]
 id = "policy.os_code_stays_in_secs_sys"
@@ -427,6 +440,8 @@ tests = [
   "secs2r::civilian_pictures_are_square_and_match_their_names",
   "secs2r::queued_icon_callback_uses_the_latest_desired_icon_td115",
   "secs2r::callback_rechecks_a_request_between_read_and_mark_td115",
+  "secs-service::damaged_settings_file_is_reported_and_not_overwritten_until_set_td169",
+  "secs-service::newer_settings_file_is_never_overwritten_td169", "secs-service::newer_settings_file_written_while_running_is_never_overwritten_td169", "secs-service::unreadable_settings_file_is_never_overwritten_td169",
 ]
 upstream = "wizard/branding.py, window.py _sidebar, SECS.spec icon="
 note = "upstream's confirmed logo (logo_b8, 'expert mode') is the program icon and the default rail mark; the app settings may pick SECS 2R's own 'civilian mode' logo (apps/secs2r/icons/logo) for the rail and the window icon (docs/DEVIATIONS.md U12). apps/secs2r/ui src/state/flow.test.tsx and src/app/logo.test.ts pin the rail and the choice."
@@ -436,7 +451,14 @@ id = "app.log"
 kind = "app"
 milestone = "M5"
 status = "implemented"
-tests = ["secs2r::rotation_keeps_five_files_and_newest_line_in_current", "secs2r::event_sink_writes_started_log_finished_and_skips_progress"]
+tests = [
+  "secs2r::rotation_keeps_five_files_and_newest_line_in_current",
+  "secs2r::event_sink_writes_started_log_finished_and_skips_progress",
+  "secs-service::retire_failure_reaches_the_log_sink_td151",
+  "secs-service::side_mdat_failure_reaches_the_log_sink_td151",
+  "secs2r::failed_job_line_carries_params_as_key_value_td165",
+  "secs2r::cancelled_job_is_logged_as_warning_whatever_its_error_shape_td165",
+]
 note = "ADR 0027: a bounded local app log records starts, job events, request failures, and panics without stopping the app on I/O errors"
 
 # ---- Oracle (M1) ----
@@ -571,7 +593,7 @@ id = "format.irs_store"
 kind = "format"
 milestone = "M1"
 status = "implemented"
-tests = ["secs-project::wav_writer_and_readers_match_oracle", "secs-project::wav_reader_decodes_hand_built_fixtures_of_every_supported_format_td47", "secs-project::wav_reader_rejects_hand_built_malformed_fixtures_td47", "secs-project::truncated_wav_data_chunk_is_rejected_f17"]
+tests = ["secs-project::wav_writer_and_readers_match_oracle", "secs-project::wav_reader_decodes_hand_built_fixtures_of_every_supported_format_td47", "secs-project::wav_reader_rejects_hand_built_malformed_fixtures_td47", "secs-project::truncated_wav_data_chunk_is_rejected_f17", "secs-project::wav_readers_reject_zero_rate_and_stereo_float_td228"]
 upstream = "rewapi/session.py"
 note = "float32 writer bytes match upstream; reader also supports mono PCM 16/24/32, float 32/64 and WAVE_FORMAT_EXTENSIBLE; PCM8 and non-left-aligned valid-bit/container combinations are unsupported"
 
@@ -607,7 +629,7 @@ id = "format.mdat_source_info"
 kind = "format"
 milestone = "M5"
 status = "implemented"
-tests = ["secs-mdat::source_info_extracts_and_round_trips_oracle_values", "secs-mdat::source_info_from_rew_measurement_matches_oracle", "secs-mdat::source_info_allocation_is_bounded"]
+tests = ["secs-mdat::source_info_extracts_and_round_trips_oracle_values", "secs-mdat::source_info_from_rew_measurement_matches_oracle", "secs-mdat::source_info_allocation_is_bounded", "secs-mdat::source_info_integer_box_rejects_i64_narrowing_td228"]
 upstream = "rew_mdat/source_info.py"
 note = "원 측정의 마이크 캘리브레이션, 장치, 박스 값, 시각과 형식을 꺼내고 비운 템플릿에 되넣으며 REW 측정 캘 파일을 파싱합니다."
 
@@ -662,7 +684,7 @@ id = "project.measurement_store"
 kind = "project"
 milestone = "M4"
 status = "implemented"
-tests = ["secs-project::test_run_plan_writes_secs_and_ir_files", "secs-project::test_reload_project_restores_irs_by_role_and_load_project_irs_roundtrip", "secs-project::interrupted_save_leaves_old_secs_intact_f1", "secs-project::test_cancel_then_resume_skips_done_positions_and_partial_position_is_not_done_f2", "secs-project::f5_absolute_parent_and_symlink_escapes_are_rejected_but_in_tree_reads", "secs-project::ir_cache_rereads_changed_file_and_evicts_to_cap", "secs-project::ir_cache_keeps_its_byte_cap_and_evicts_least_recently_used_td44"]
+tests = ["secs-project::test_run_plan_writes_secs_and_ir_files", "secs-project::test_reload_project_restores_irs_by_role", "secs-project::interrupted_save_leaves_old_secs_intact_f1", "secs-project::test_cancel_then_resume_skips_done_positions_and_partial_position_is_not_done_f2", "secs-project::f5_absolute_parent_and_symlink_escapes_are_rejected_but_in_tree_reads", "secs-project::ir_cache_rereads_changed_file_and_evicts_to_cap", "secs-project::ir_cache_keeps_its_byte_cap_and_evicts_least_recently_used_td44"]
 upstream = "rewapi/session.py MeasurementSession, IrSaver, load_project_irs"
 
 [[feature]]
@@ -670,7 +692,7 @@ id = "project.measurement_source"
 kind = "project"
 milestone = "M5"
 status = "implemented"
-tests = ["secs-project::measurement_source_writes_exact_bytes_reads_and_deletes_stale_file", "secs-project::measurement_source_tolerates_partial_values_and_rejects_unsafe_narrowing", "secs-project::measurement_source_builds_upstream_mdat_bytes_and_skips_upstream_exceptions_f10", "secs-project::project_sources_are_read_only_inside_the_irs_folder_td43", "secs-service::project_session_create_open_save_and_save_as", "secs-service::mdat_scan_and_import_match_direct_oracle_bytes", "secs-service::rew_measurements_capture_calibration_and_keep_bad_sensitivity_measurements", "secs-service::exports_after_reopening_match_pre_close_bytes", "secs-project::oversized_measurement_source_sidecar_is_absent_on_open_td112", "secs-project::shared_source_materialisation_keeps_only_entries_within_budget_td112", "secs-project::distinct_large_sidecars_stop_parsing_at_the_project_budget_td112", "secs-project::sidecars_without_source_info_still_spend_the_cache_budget_td112", "secs-project::load_project_sources_skips_only_the_bad_sidecar_td112"]
+tests = ["secs-project::measurement_source_writes_exact_bytes_reads_and_deletes_stale_file", "secs-project::measurement_source_tolerates_partial_values_and_rejects_unsafe_narrowing", "secs-project::measurement_source_builds_upstream_mdat_bytes_and_skips_upstream_exceptions_f10", "secs-project::project_sources_are_read_only_inside_the_irs_folder_td43", "secs-service::project_session_create_open_save_and_save_as", "secs-service::mdat_scan_and_import_match_direct_oracle_bytes", "secs-service::rew_measurements_capture_calibration_and_keep_bad_sensitivity_measurements", "secs-service::exports_after_reopening_match_pre_close_bytes", "secs-project::oversized_measurement_source_sidecar_is_absent_on_open_td112", "secs-project::shared_source_materialisation_keeps_only_entries_within_budget_td112", "secs-project::distinct_large_sidecars_stop_parsing_at_the_project_budget_td112", "secs-project::sidecars_without_source_info_still_spend_the_cache_budget_td112", "secs-project::load_project_sources_skips_only_the_bad_sidecar_td112", "secs-project::unreadable_sidecar_is_reported_as_a_migration_warning_td183", "secs-project::budget_exhaustion_is_reported_td183", "secs-project::sidecar_that_is_a_directory_is_reported_as_skipped_td183", "secs-service::project_open_surfaces_sidecar_warnings_td183", "secs-service::side_mdat_job_reports_sidecar_warnings_td183", "secs-project::open_parses_each_sidecar_once_and_source_of_never_parses_again", "secs-project::record_replace_remove_and_restore_keep_the_source_map_in_step_with_the_files", "secs-service::mic_calibration_attach_gives_the_file_to_sweeps_only", "secs-service::the_side_mdat_job_reads_sources_from_the_snapshot_not_the_disk"]
 upstream = "rewapi/session.py IrSaver.save_source, IrSaver.load_source, load_project_sources"
 
 [[feature]]
@@ -804,7 +826,7 @@ id = "engine.mimo_design"
 kind = "engine"
 milestone = "M3"
 status = "implemented"
-tests = ["secs-engine::mimo_stage_boundary_goldens", "secs-engine::mimo_whole_path_goldens", "secs-engine::mimo_whole_path_inputs_match_recorded", "secs-engine::mimo_toeplitz_normal_equations_match_dense", "secs-engine::mimo_cholesky_matches_lu_on_golden_system", "secs-engine::mimo_ranges_and_upstream_behaviors", "secs-engine::mimo_cap_four_is_subset_of_six_candidates", "secs-engine::mimo_deterministic_threads", "secs-engine::mimo_guard_cause_names_the_last_rejected_level_and_its_guards"]
+tests = ["secs-engine::mimo_validation_names_the_invalid_field", "secs-engine::mimo_stage_boundary_goldens", "secs-engine::mimo_whole_path_goldens", "secs-engine::mimo_whole_path_inputs_match_recorded", "secs-engine::mimo_toeplitz_normal_equations_match_dense", "secs-engine::mimo_cholesky_matches_lu_on_golden_system", "secs-engine::mimo_ranges_and_upstream_behaviors", "secs-engine::mimo_cap_four_is_subset_of_six_candidates", "secs-engine::mimo_deterministic_threads", "secs-engine::mimo_guard_cause_names_the_last_rejected_level_and_its_guards"]
 upstream = "mimo.py"
 note = "Ideal FIR supports, ranges, ranking and guard (docs/MIMO.md, P14). New: the guard notes carry the last rejected level and the band or mode that broke the limit there. Stage-boundary goldens on all nine cases; whole path asserted where BA matches (room_dba, room_filters, room_multi), reported on the room design (BA diverges, docs/ENGINE.md §3). The settings variants run on room only; their room_dba twins are a follow-up."
 
@@ -813,7 +835,7 @@ id = "engine.mimo_iir"
 kind = "engine"
 milestone = "M3"
 status = "implemented"
-tests = ["secs-engine::mimo_iir_functions_match_dense_oracle", "secs-engine::mimo_iir_seed_costs_within_spread", "secs-engine::mimo_iir_joint_costs_within_spread", "secs-engine::mimo_iir_postprocessing_matches_oracle", "secs-engine::mimo_iir_problem_from_replayed_design_matches_oracle", "secs-engine::mimo_iir_whole_path_within_spread_and_deterministic", "secs-engine::mimo_iir_joint_cancels_within_one_second", "secs-engine::mimo_iir_band_limits_match_upstream_1012"]
+tests = ["secs-engine::mimo_iir_joint_seed_fallback_is_reported", "secs-engine::mimo_run_preserves_iir_seed_fallback_note", "secs-engine::mimo_validation_names_the_invalid_field", "secs-engine::mimo_iir_functions_match_dense_oracle", "secs-engine::mimo_iir_seed_costs_within_spread", "secs-engine::mimo_iir_joint_costs_within_spread", "secs-engine::mimo_iir_postprocessing_matches_oracle", "secs-engine::mimo_iir_problem_from_replayed_design_matches_oracle", "secs-engine::mimo_iir_whole_path_within_spread_and_deterministic", "secs-engine::mimo_iir_joint_cancels_within_one_second", "secs-engine::mimo_iir_band_limits_match_upstream_1012"]
 upstream = "mimo_iir.py"
 note = "IIR realization (docs/MIMO.md, P16): seeds by fit_peq + dense TRF, joint fit by the normal-equation TRF with block-accumulated JᵀJ. Joint fits pass P07c against twelve runs; seeds stopped at max_nfev are reported (a seed is the joint fit's start point), converged seeds and the rank guard are asserted. Whole path reported on the room design (BA diverges)."
 
@@ -968,10 +990,13 @@ tests = [
   "secs-audio::phase_column_is_removed",
   "secs-audio::c_weighting_matches_iec_table",
   "secs-audio::bad_inputs_error_without_panics",
+  "secs-audio::calibration_curve_validity_matches_embedded_point_parser_td262",
   "secs-project::store_reads_and_updates_calibration_fingerprints",
   "secs-service::attached_calibration_is_removed_before_the_engine",
   "secs-service::measurement_curves_use_the_corrected_ir",
   "secs-service::calibration_signature_keeps_old_caches_without_curves",
+  "secs-service::invalid_sidecar_curve_is_excluded_and_noticed_td262",
+  "secs-service::reopening_after_calibrating_with_an_invalid_curve_keeps_results_fresh_td262",
 ]
 upstream = "new"
 note = "new (D45): calculation and measurement graphs remove each measurement's attached meterCal/scCal curves (and, for a C-weighted meter, C weighting outside the meter file's range, as REW) with a zero-phase filter, boost capped at 20 dB; the signature carries the curves' fingerprints only when some are attached (ADR 0015)."
@@ -981,7 +1006,7 @@ id = "measure.rew_api"
 kind = "measure"
 milestone = "M4"
 status = "implemented"
-tests = ["secs-rew::test_run_position_sequence_and_ir", "secs-rew::test_rew_progress_strings_reach_the_progress_callback", "secs-rew::test_r1_pro_required_uses_only_status", "secs-rew::test_r2_full_position_ignores_offline_hold_including_device_lookups", "secs-rew::test_r3_random_token_wrong_path_404_and_oversized_body_drained", "secs-rew::test_r4_fake_two_position_plan_uses_only_supplied_ir_source", "secs-rew::test_current_audio_reads_java_string_and_object_values", "secs-rew::test_current_audio_reads_asio_device_once_for_both_directions", "secs-rew::test_current_audio_tolerates_errors_empty_and_unknown_values", "secs-rew::test_driver_uses_list_cache", "secs-rew::test_set_driver_posts_and_drops_list_cache", "secs-rew::test_java_multichannel_count_uses_output_channels", "secs-rew::test_set_device_uses_java_body_timeout_and_drops_cache", "secs-rew::test_open_plan_devices_skips_missing_and_current_java_devices", "secs-rew::test_open_plan_devices_sets_asio_device_once", "secs-rew::test_fake_driver_and_devices_record_changes", "secs-service::test_measurements_follow_contract_shape", "secs-service::rew_measurements_capture_calibration_and_keep_bad_sensitivity_measurements", "secs-service::rew_source_devices_fall_back_only_to_names_in_rew_lists"]
+tests = ["secs-rew::test_impulse_response_rejects_fractional_sample_rates", "secs-rew::test_plan_rejects_invalid_sweep_frequencies_and_levels", "secs-service::rew_plan_rejects_invalid_sweep_settings_from_project", "secs-rew::test_run_position_sequence_and_ir", "secs-rew::test_rew_progress_strings_reach_the_progress_callback", "secs-rew::test_r1_pro_required_uses_only_status", "secs-rew::test_r2_full_position_ignores_offline_hold_including_device_lookups", "secs-rew::test_r3_random_token_wrong_path_404_and_oversized_body_drained", "secs-rew::test_r4_fake_two_position_plan_uses_only_supplied_ir_source", "secs-rew::test_current_audio_reads_java_string_and_object_values", "secs-rew::test_current_audio_reads_asio_device_once_for_both_directions", "secs-rew::test_current_audio_tolerates_errors_empty_and_unknown_values", "secs-rew::test_driver_uses_list_cache", "secs-rew::test_set_driver_posts_and_drops_list_cache", "secs-rew::test_java_multichannel_count_uses_output_channels", "secs-rew::test_set_device_uses_java_body_timeout_and_drops_cache", "secs-rew::test_open_plan_devices_skips_missing_and_current_java_devices", "secs-rew::test_open_plan_devices_sets_asio_device_once", "secs-rew::test_fake_driver_and_devices_record_changes", "secs-service::test_measurements_follow_contract_shape", "secs-service::rew_measurements_capture_calibration_and_keep_bad_sensitivity_measurements", "secs-service::rew_source_devices_fall_back_only_to_names_in_rew_lists", "secs-service::subscribe_failure_is_noticed_td215", "secs-service::sidecar_build_failure_is_noticed_td215", "secs-service::late_progress_from_the_previous_role_is_ignored_td172", "secs-service::subscribe_failure_is_kept_when_the_role_then_fails_td215"]
 upstream = "rewapi/rew.py, rewapi/callback.py"
 
 [[feature]]
@@ -989,7 +1014,7 @@ id = "measure.mdat_import"
 kind = "measure"
 milestone = "M4"
 status = "implemented"
-tests = ["secs-service::service_mdat_every_oracle_value_and_imported_secs_bytes", "secs-service::test_mdat_titles_match_biamp_roles", "secs-service::test_mdat_cancel_and_missing_file_leave_measurements_unchanged", "secs-service::test_mdat_dialog_repeated_duplicate_skip_and_cancel", "secs-service::mdat_scan_and_import_match_direct_oracle_bytes"]
+tests = ["secs-service::service_mdat_every_oracle_value_and_imported_secs_bytes", "secs-service::test_mdat_titles_match_biamp_roles", "secs-service::test_mdat_cancel_and_missing_file_leave_measurements_unchanged", "secs-service::test_mdat_dialog_repeated_duplicate_skip_and_cancel", "secs-service::mdat_scan_and_import_match_direct_oracle_bytes", "secs-service::import_rejects_a_row_with_non_finite_samples_naming_it_td263", "secs-service::import_rejects_an_empty_row_td263"]
 upstream = "wizard/step5_measure.py MdatAssignDialog, MdatFilesDialog"
 
 [[feature]]
@@ -1001,7 +1026,10 @@ tests = [
   "secs-service::dirac_channel_names_suggest_roles",
   "secs-service::dirac_scan_lists_positions_channels_and_sub_flags",
   "secs-service::dirac_import_records_irs_t0_and_source",
+  "secs-service::dirac_rows_keep_a_source_with_the_file_name_td219",
   "secs-service::dirac_import_skips_unplanned_and_outside_rows_and_rejects_bad_files",
+  "secs-service::import_rejects_a_row_with_non_finite_samples_naming_it_td263",
+  "secs-service::import_rejects_an_empty_row_td263",
 ]
 upstream = "new"
 note = "new: mdat 가져오기 흐름(mdat_scan, mdat_import)이 .liveproject도 받습니다. Dirac 위치 p는 위치 p+1, 채널 이름에서 역할 제안, t0 −0.25 s, 출처는 파일 이름입니다(ADR 0013)."
@@ -1028,14 +1056,14 @@ id = "cli.commands"
 kind = "cli"
 milestone = "M4"
 status = "implemented"
-tests = ["secs2r-cli::bootstrap_and_check_are_json_lines", "secs2r-cli::deterministic_run_and_sample_flow", "secs2r-cli::errors_exit_one_and_quiet_omits_events", "secs2r-cli::calibrate_parses_mimo_flag"]
+tests = ["secs2r-cli::bootstrap_and_check_are_json_lines", "secs2r-cli::deterministic_run_and_sample_flow", "secs2r-cli::errors_exit_one_and_quiet_omits_events", "secs2r-cli::calibrate_parses_mimo_flag", "secs2r-cli::cli_export_records_utc_under_a_nonzero_clock_offset_td152"]
 
 [[feature]]
 id = "service.jobs"
 kind = "service"
 milestone = "M4"
 status = "implemented"
-tests = ["secs-service::jobs_push_ordered_events_and_exclude_the_same_group", "secs-service::cancellation_finishes_within_one_second", "secs-service::cancelled_calibration_preserves_previous_results", "secs-service::room_dba_mimo_runs_and_becomes_stale_after_recalibration", "secs-service::terminal_history_is_bounded_by_completion_and_active_jobs_keep_their_events", "secs-types::job_snapshot_is_metadata_without_a_result_payload"]
+tests = ["secs-service::jobs_push_ordered_events_and_exclude_the_same_group", "secs-service::cancellation_finishes_within_one_second", "secs-service::cancelled_calibration_preserves_previous_results", "secs-service::room_dba_mimo_runs_and_becomes_stale_after_recalibration", "secs-service::terminal_history_is_bounded_by_completion_and_active_jobs_keep_their_events", "secs-types::job_snapshot_is_metadata_without_a_result_payload", "secs-service::a_body_that_returns_cancelled_finishes_like_an_external_cancel_td165"]
 note = "one job per group, cooperative cancellation, stale instead of discarded results; metadata-only job records retain the latest 32 completions and every active job (ADR 0009)"
 
 [[feature]]
@@ -1065,7 +1093,7 @@ id = "service.exports"
 kind = "service"
 milestone = "M4"
 status = "implemented"
-tests = ["secs-service::project_session_create_open_save_and_save_as", "secs-service::oracle_project_calibrates_recommends_xo_and_exports", "secs-service::filter_text_export_matches_direct_and_reopened_bytes_without_redesign", "secs-service::exports_after_reopening_match_pre_close_bytes", "secs-service::room_dba_mimo_runs_and_becomes_stale_after_recalibration", "secs-service::convolution_export_with_subs_and_mimo_reopens_byte_identically", "secs-service::stale_calibration_exports_with_flag_and_cache_survives_reopen"]
+tests = ["secs-service::project_session_create_open_save_and_save_as", "secs-service::oracle_project_calibrates_recommends_xo_and_exports", "secs-service::filter_text_export_matches_direct_and_reopened_bytes_without_redesign", "secs-service::exports_after_reopening_match_pre_close_bytes", "secs-service::room_dba_mimo_runs_and_becomes_stale_after_recalibration", "secs-service::convolution_export_with_subs_and_mimo_reopens_byte_identically", "secs-service::stale_calibration_exports_with_flag_and_cache_survives_reopen", "secs-service::project_keys_strings_are_pinned", "secs-service::inputs_unchanged_since_is_false_after_a_config_settings_or_target_change", "secs-service::camilla_apply_reads_the_main_config_from_the_export_result", "secs-service::plan_export_rejects_the_four_invalid_requests_with_reasons", "secs-service::plan_export_marks_apply_plans_without_index_or_record", "secs-service::camilla_writer_stores_the_same_files_main_config_and_design_id", "secs-service::staged_mdat_writer_stores_the_same_files_main_config_and_design_id", "secs-service::before_after_mdat_writer_stores_the_same_files_main_config_and_design_id", "secs-service::filter_text_writer_stores_the_same_files_main_config_and_design_id", "secs-service::eqapo_writer_stores_the_same_files_main_config_and_design_id", "secs-service::convolution_writer_stores_the_same_files_main_config_and_design_id"]
 note = "Exports include CamillaDSP, staged and before/after mdat, filter text, Equalizer APO, and complete convolution bundles; filter formats enforce subs/MIMO scope synchronously and reuse cached designs after reopening."
 
 [[feature]]
@@ -1080,7 +1108,7 @@ id = "service.level_monitor"
 kind = "service"
 milestone = "M5"
 status = "partial"
-tests = ["secs-service::mock_monitor_emits_stores_excludes_and_stops", "secs-service::native_monitor_meters_while_idle_and_closes_it_before_a_play", "secs-service::generic_cancel_ends_monitor_during_an_active_burst"]
+tests = ["secs-service::mock_monitor_emits_stores_excludes_and_stops", "secs-service::native_monitor_meters_while_idle_and_closes_it_before_a_play", "secs-service::job_cancel_alone_stops_a_playing_level_monitor", "secs-service::rew_level_monitor_survives_a_failed_play_td265"]
 note = "mock readings arrive during a play, REW readings arrive at its callback rate, and the native path meters the idle input in 0.1 s windows while closing that input before each play."
 
 [[feature]]
@@ -1102,7 +1130,7 @@ id = "export.before_after_mdat"
 kind = "export"
 milestone = "M4"
 status = "implemented"
-tests = ["secs-export::export_items_and_source_environments_match_oracle", "secs-export::built_projects_match_oracle_structure_and_size", "secs-export::public_exports_use_oracle_filenames_and_replace_existing_files", "secs-service::exports_after_reopening_match_pre_close_bytes"]
+tests = ["secs-export::export_items_and_source_environments_match_oracle", "secs-export::built_projects_match_oracle_structure_and_size", "secs-export::public_exports_use_oracle_filenames_and_replace_existing_files", "secs-service::exports_after_reopening_match_pre_close_bytes", "secs-export::public_item_builders_return_errors_for_invalid_design_td225"]
 upstream = "calibration.py export_before_after_mdat"
 
 [[feature]]
@@ -1120,6 +1148,11 @@ tests = [
   "secs-service::mdat_scope_is_refused_for_other_kinds",
   "secs-service::measurement_mdat_reads_outside_session_lock_and_cancels_during_read",
   "secs-service::measurement_mdat_rejects_all_originals_that_exceed_one_budget_td130",
+  "secs-service::project_save_returns_before_the_side_mdat_exists_and_a_job_writes_it_td149",
+  "secs-service::side_mdat_failure_is_a_job_error_not_a_silent_save_td149",
+  "secs-service::successive_saves_to_two_paths_write_both_side_mdats_td149",
+  "secs-service::saves_while_a_side_mdat_job_runs_coalesce_into_one_job_td149",
+  "secs-service::shutdown_waits_for_a_running_side_mdat_job_td149",
 ]
 upstream = "calibration.py export_before_after_mdat (deviation F19)"
 note = "new: the REW mdat carries all (default), the original measurements of every position without a result, or the computed responses; file names say which. Original items use the stored WAV and its curves, computed items carry no curves (fixes the 0.29.0 double removal)."
@@ -1129,7 +1162,7 @@ id = "export.staged_mdat"
 kind = "export"
 milestone = "M4"
 status = "implemented"
-tests = ["secs-export::export_items_and_source_environments_match_oracle", "secs-export::built_projects_match_oracle_structure_and_size", "secs-export::public_exports_use_oracle_filenames_and_replace_existing_files", "secs-service::cached_mdat_export_rejects_changed_calibration_inputs_before_writing", "secs-service::cached_mdat_export_rejects_changed_sample_rate_policy_td116", "secs-service::cached_resample_replay_releases_read_memory_before_calibrating_td130", "secs-service::cached_mdat_cancel_after_a_real_read_finishes_cancelled_td130"]
+tests = ["secs-export::export_items_and_source_environments_match_oracle", "secs-export::built_projects_match_oracle_structure_and_size", "secs-export::public_exports_use_oracle_filenames_and_replace_existing_files", "secs-service::cached_mdat_export_rejects_changed_calibration_inputs_before_writing", "secs-service::a_cached_mdat_export_rejects_inputs_changed_after_planning_td155", "secs-service::cached_mdat_export_rejects_changed_sample_rate_policy_td116", "secs-service::cached_resample_replay_releases_read_memory_before_calibrating_td130", "secs-service::cached_mdat_cancel_after_a_real_read_finishes_cancelled_td130", "secs-export::public_item_builders_return_errors_for_invalid_design_td225"]
 upstream = "calibration.py export_mdat (hidden in SECS 2's screen)"
 
 [[feature]]
@@ -1137,7 +1170,7 @@ id = "export.camilladsp"
 kind = "export"
 milestone = "M4"
 status = "implemented"
-tests = ["secs-camilla::export_camilladsp_matches_oracle", "secs-camilla::invalid_values_write_nothing", "secs-camilla::fir_taps_that_overflow_f32_write_nothing_td45", "secs-camilla::duplicate_or_reserved_roles_write_nothing_td46", "secs-camilla::negative_delays_write_nothing_td94", "secs-camilla::controller_metadata_headroom_bypass_labels_and_devices_follow_v4_schema", "secs-camilla::camilla_exports_play_as_designed", "secs-camilla::failed_install_restores_the_previous_camilla_bundle_td22"]
+tests = ["secs-camilla::export_camilladsp_matches_oracle", "secs-camilla::invalid_values_write_nothing", "secs-camilla::fir_taps_that_overflow_f32_write_nothing_td45", "secs-camilla::duplicate_or_reserved_roles_write_nothing_td46", "secs-camilla::negative_delays_write_nothing_td94", "secs-camilla::controller_metadata_headroom_bypass_labels_and_devices_follow_v4_schema", "secs-camilla::camilla_exports_play_as_designed", "secs-camilla::failed_install_restores_the_previous_camilla_bundle_td22", "secs-graph::fir_filename_collisions_are_rejected_td266", "secs-graph::symlinked_bundle_parent_is_refused_td270", "secs-graph::wav_data_len_refuses_riff_overflow_td225", "secs-graph::refused_oracle_edge_keeps_its_fixed_format_bytes_td182", "secs-camilla::option_note_newline_writes_nothing_td224", "secs-camilla::sub_mode_newline_writes_nothing_td224", "secs-graph::nonfinite_formats_match_python_td267", "secs-service::camilla_export_cancelled_before_commit_writes_nothing_td196", "secs-camilla::prepared_config_installs_the_bytes_write_config_writes"]
 upstream = "calibration.py export_camilladsp"
 note = "The default writer remains byte-compatible with upstream. Service exports add design identity, capture labels, rounded headroom and controller-addressable correction/MIMO descriptions; these are new deviations from upstream."
 
@@ -1147,7 +1180,7 @@ kind = "export"
 milestone = "M6"
 status = "implemented"
 upstream = "new"
-tests = ["secs-graph::design_id_is_stable_and_changes_with_taps_delays_and_mimo", "secs-service::named_design_manifest_replaces_bundle_hashes_files_and_rebuilds_index", "secs-service::invalid_design_names_are_rejected_before_a_folder_is_chosen", "secs-service::named_filter_bundles_replace_heal_index_hash_every_file_and_share_design_id", "secs-service::explicit_unnamed_export_merges_the_chosen_folder_into_valid_existing_index", "secs-service::index_scan_reaches_a_named_design_below_four_container_folders", "secs-service::index_scan_does_not_follow_a_manifest_file_link", "secs-service::selected_rebuild_preserves_an_unreadable_existing_entry", "secs-service::selected_rebuild_skips_an_indexed_path_with_an_intermediate_link", "secs-service::full_index_scan_skips_an_unreadable_sibling_manifest"]
+tests = ["secs-graph::design_id_is_stable_and_changes_with_taps_delays_and_mimo", "secs-service::named_design_manifest_replaces_bundle_hashes_files_and_rebuilds_index", "secs-service::invalid_design_names_are_rejected_before_a_folder_is_chosen", "secs-service::named_filter_bundles_replace_heal_index_hash_every_file_and_share_design_id", "secs-service::explicit_unnamed_export_merges_the_chosen_folder_into_valid_existing_index", "secs-service::index_scan_reaches_a_named_design_below_four_container_folders", "secs-service::index_scan_does_not_follow_a_manifest_file_link", "secs-service::selected_rebuild_preserves_an_unreadable_existing_entry", "secs-service::selected_rebuild_skips_an_indexed_path_with_an_intermediate_link", "secs-service::full_index_scan_skips_an_unreadable_sibling_manifest", "secs-service::rollback_failure_names_the_backup_folder_td198", "secs-service::backup_removal_failure_is_a_warning_not_a_job_error_td198", "secs-graph::bundle_install_names_the_backup_when_restore_fails_td198", "secs-service::bundle_backup_removal_failure_is_an_export_warning_td198"]
 note = "New deviation from upstream: every filter bundle has a stable SHA-256 design identity, a hashed manifest and a rebuilt base-folder index; named bundles replace their prior contents. An explicit folder is the base of a named bundle, so the default export base is not read."
 
 [[feature]]
@@ -1173,7 +1206,7 @@ id = "export.filter_text"
 kind = "export"
 milestone = "M5"
 status = "implemented"
-tests = ["secs-filters::filter_text_files_match_oracle_bytes", "secs-filters::public_wrappers_match_oracle_and_eqapo_carries_mimo_f12", "secs-filters::computed_public_wrappers_match_oracle_files", "secs-filters::computed_subwoofer_text_scope_matches_oracle"]
+tests = ["secs-filters::filter_text_files_match_oracle_bytes", "secs-filters::public_wrappers_match_oracle_and_eqapo_carries_mimo_f12", "secs-filters::computed_public_wrappers_match_oracle_files", "secs-filters::computed_subwoofer_text_scope_matches_oracle", "secs-graph::check_structure_rejects_missing_paths_firs_and_outputs_td180", "secs-filters::malformed_plans_return_errors_instead_of_panicking_td180", "secs-filters::graph_errors_keep_their_variants_td225", "secs-filters::filter_run_note_newline_writes_nothing_td224"]
 upstream = "calibration.py export_filter_text; export_filters.py"
 
 [[feature]]
@@ -1181,7 +1214,7 @@ id = "export.eqapo"
 kind = "export"
 milestone = "M5"
 status = "implemented"
-tests = ["secs-filters::equalizer_apo_files_match_oracle_bytes", "secs-filters::public_wrappers_match_oracle_and_eqapo_carries_mimo_f12", "secs-filters::computed_public_wrappers_match_oracle_files", "secs-filters::eqapo_public_exports_use_single_assignments_f11", "secs-filters::eqapo_disabled_and_case_sensitive_mapping_f11", "secs-filters::exported_configs_play_as_designed", "secs-filters::fir_taps_that_overflow_f32_write_nothing_td45", "secs-filters::negative_delays_write_nothing_td94", "secs-filters::fir_responses_require_the_rfft_grid_td94", "secs-filters::uses_a_relative_nested_include_with_crlf", "secs-filters::generation_entry_plays_from_unrelated_working_directory_across_two_applies"]
+tests = ["secs-filters::equalizer_apo_files_match_oracle_bytes", "secs-filters::public_wrappers_match_oracle_and_eqapo_carries_mimo_f12", "secs-filters::computed_public_wrappers_match_oracle_files", "secs-filters::eqapo_public_exports_use_single_assignments_f11", "secs-filters::eqapo_disabled_and_case_sensitive_mapping_f11", "secs-filters::exported_configs_play_as_designed", "secs-filters::fir_taps_that_overflow_f32_write_nothing_td45", "secs-filters::negative_delays_write_nothing_td94", "secs-filters::fir_responses_require_the_rfft_grid_td94", "secs-filters::uses_a_relative_nested_include_with_crlf", "secs-filters::generation_entry_plays_from_unrelated_working_directory_across_two_applies", "secs-graph::check_structure_rejects_missing_paths_firs_and_outputs_td180", "secs-filters::malformed_plans_return_errors_instead_of_panicking_td180", "secs-filters::graph_errors_keep_their_variants_td225", "secs-filters::filter_run_note_newline_writes_nothing_td224"]
 upstream = "calibration.py export_eqapo; export_filters.py"
 
 [[feature]]
@@ -1196,9 +1229,14 @@ tests = [
   "secs-filters::convolution_bundle_contains_complete_paths_and_is_atomic",
   "secs-service::convolution_export_with_subs_and_mimo_reopens_byte_identically",
   "secs-service::cancelled_convolution_compute_installs_no_files",
-  "secs-filters::convolution_cancel_inside_the_first_rate_finishes_before_rate_progress",
+  "secs-filters::convolution_prepare_reports_progress_until_done_equals_total",
+  "secs-filters::convolution_prepare_cancelled_midway_writes_nothing",
+  "secs-graph::check_structure_rejects_missing_paths_firs_and_outputs_td180",
+  "secs-filters::malformed_plans_return_errors_instead_of_panicking_td180",
+  "secs-filters::convolution_guide_uses_python_fixed_numbers_td226",
+  "secs-filters::convolution_guide_formats_exact_ties_like_python_td226",
 ]
-note = "New: complete f32 convolution IRs fold FIR, PEQ, crossovers, all-pass, gain, polarity and delay into one WAV and exact-DTFT CSV per reachable input/output pair, with routing metadata and shared headroom. Additional output rates are written into rate-named subfolders."
+note = "New: complete f32 convolution IRs fold FIR, PEQ, crossovers, all-pass, gain, polarity and delay into one WAV and exact-DTFT CSV per reachable input/output pair, with routing metadata and shared headroom. Additional output rates are written into rate-named subfolders. Progress uses the stable stage id filters.convolution."
 
 [[feature]]
 id = "export.output_rate"
@@ -1257,7 +1295,7 @@ kind = "ipc"
 milestone = "M6"
 status = "implemented"
 upstream = "new"
-tests = ["secs-service::eqapo_status_reads_injected_install_and_applied_manifest", "secs-service::apply_camilla_covers_success_rejection_rollback_folder_and_design_matches"]
+tests = ["secs-service::eqapo_status_reads_injected_install_and_applied_manifest", "secs-service::apply_camilla_covers_success_rejection_rollback_folder_and_design_matches", "secs-service::latin1_config_txt_is_reported_as_an_encoding_problem_td199", "secs-service::utf16_config_txt_is_reported_as_an_encoding_problem_td199", "secs-service::relative_eqapo_config_path_is_unsupported_td200"]
 
 [[feature]]
 id = "ipc.apply_camilla"
@@ -1265,7 +1303,7 @@ kind = "ipc"
 milestone = "M6"
 status = "implemented"
 upstream = "new"
-tests = ["secs-service::apply_camilla_covers_success_rejection_rollback_folder_and_design_matches", "secs-service::apply_camilla_gives_each_design_its_own_folder_so_reload_reads_its_firs", "secs-apply::failed_rollback_carries_both_reload_errors", "secs-service::rejected_camilla_generation_keeps_previous_bytes_and_restores_its_path", "secs-service::failed_camilla_rollback_keeps_both_possible_active_generations", "secs-service::camilla_pruning_uses_the_reported_previous_path_after_a_marker_write_fails", "secs-service::unknown_camilla_previous_path_keeps_every_generation_and_retained_record", "secs-service::failed_camilla_apply_retains_the_reported_previous_path_without_a_marker", "secs-sys::rollback_failure_error_keeps_the_previous_config_path", "secs-camilla::one_running_pipeline_switches_generation_firs_by_unique_paths", "secs-apply::unanswered_selection_restores_and_reports_the_previous_path"]
+tests = ["secs-service::apply_camilla_covers_success_rejection_rollback_folder_and_design_matches", "secs-service::apply_camilla_gives_each_design_its_own_folder_so_reload_reads_its_firs", "secs-apply::failed_rollback_carries_both_reload_errors", "secs-service::rejected_camilla_generation_keeps_previous_bytes_and_restores_its_path", "secs-service::failed_camilla_rollback_keeps_both_possible_active_generations", "secs-service::camilla_pruning_uses_the_reported_previous_path_after_a_marker_write_fails", "secs-service::unknown_camilla_previous_path_keeps_every_generation_and_retained_record", "secs-service::failed_camilla_apply_retains_the_reported_previous_path_without_a_marker", "secs-sys::rollback_failure_error_keeps_the_previous_config_path", "secs-camilla::one_running_pipeline_switches_generation_firs_by_unique_paths", "secs-apply::unanswered_selection_restores_and_reports_the_previous_path", "secs-service::camilla_apply_leaves_no_design_index_in_applied_td153"]
 
 [[feature]]
 id = "ipc.apply_eqapo"
@@ -1273,7 +1311,7 @@ kind = "ipc"
 milestone = "M6"
 status = "implemented"
 upstream = "new"
-tests = ["secs-service::apply_eqapo_installs_reapplies_repairs_once_and_removes_stale_files", "secs-service::failed_eqapo_generation_install_preserves_every_previous_byte", "secs-service::failed_eqapo_include_repair_keeps_every_generation_the_entry_has_referenced", "secs-service::apply_eqapo_prunes_a_link_without_touching_its_target", "secs-service::applied_eqapo_manifest_names_every_installed_file_with_size_and_hash", "secs2r-cli::apply_eqapo_opens_the_project_and_uses_the_injected_install"]
+tests = ["secs-service::apply_eqapo_installs_reapplies_repairs_once_and_removes_stale_files", "secs-service::failed_eqapo_generation_install_preserves_every_previous_byte", "secs-service::failed_eqapo_include_repair_keeps_every_generation_the_entry_has_referenced", "secs-service::apply_eqapo_prunes_a_link_without_touching_its_target", "secs-service::a_junction_target_is_refused_like_a_symlink_td197", "secs-service::applied_eqapo_manifest_names_every_installed_file_with_size_and_hash", "secs2r-cli::apply_eqapo_opens_the_project_and_uses_the_injected_install", "secs-service::eqapo_apply_leaves_no_design_index_in_the_config_root_td153", "secs-service::permission_denied_is_classified_by_kind_not_by_english_text_td154"]
 
 [[feature]]
 id = "ipc.revert_eqapo"
@@ -1297,7 +1335,25 @@ kind = "ipc"
 milestone = "M6"
 status = "implemented"
 upstream = "new"
-tests = ["secs-service::managed_host_status_and_missing_camilla_executable_are_typed"]
+tests = ["secs-service::managed_host_status_and_missing_camilla_executable_are_typed", "secs-sys::managed_host_install_touches_the_shell_only_when_asked"]
+
+[[feature]]
+id = "app.native_dependencies"
+kind = "app"
+milestone = "M6"
+status = "implemented"
+upstream = "new"
+tests = ["secs-sys::native_deps_keeps_the_clock_and_its_offset_consistent"]
+note = "ADR 0053: secs-sys assembles the operating-system adapters and paired local clock values for both native applications."
+
+[[feature]]
+id = "ipc.mock_rules"
+kind = "ipc"
+milestone = "M5"
+status = "implemented"
+upstream = "new"
+tests = ["secs-types::exports_architecture_tables_to_typescript", "secs-types::engine_key_reads_exactly_the_exported_fields", "secs-service::job_groups_match_the_exported_table"]
+note = "ADR 0052: the screen mock reads generated service tables instead of copying rule values."
 
 [[feature]]
 id = "ipc.host_uninstall"
@@ -1321,7 +1377,7 @@ kind = "service"
 milestone = "M6"
 status = "implemented"
 upstream = "new"
-tests = ["secs2r-host::state_file_round_trip_missing_and_corrupt_handling", "secs2r-host::exit_logon_and_logoff_choose_supervision_actions", "secs2r-host::file_change_repairs_only_absent_or_damaged_pairs", "secs2r-host::log_rotates_once_at_the_size_cap", "secs2r-host::changing_owner_discards_the_previous_users_targets", "secs2r-host::same_owner_keeps_targets_omitted_from_an_update", "secs2r-host::failed_eqapo_repair_does_not_stop_camilla_or_the_driver", "secs2r-host::logoff_only_stops_a_child_running_in_that_session", "secs2r-host::core_keeps_one_thousand_logs_and_bounds_the_serialized_response"]
+tests = ["secs2r-host::state_file_round_trip_missing_and_corrupt_handling", "secs2r-host::core_rejects_mutating_requests_without_transition_context", "secs2r-host::file_change_repairs_only_absent_or_damaged_pairs", "secs2r-host::log_rotates_once_at_the_size_cap", "secs2r-host::changing_owner_discards_the_previous_users_targets", "secs2r-host::same_owner_keeps_targets_omitted_from_an_update", "secs2r-host::failed_eqapo_repair_does_not_stop_camilla_or_the_driver", "secs2r-host::logoff_only_stops_a_child_running_in_that_session", "secs2r-host::core_keeps_one_thousand_logs_and_bounds_the_serialized_response", "secs2r-host::watcher_failure_damages_eqapo_and_still_accepts_stop_managing", "secs2r-host::watcher_failure_keeps_the_loop_and_later_effects", "secs-sys::worker_error_reports_nonzero_service_exit", "secs-sys::real_pipe_slot_never_releases_name_between_accept_polls", "secs-sys::checked_pipe_call_rejects_a_test_process_server", "secs-sys::slow_handler_gets_a_response_with_a_fresh_write_deadline", "secs2r-host::set_managed_accepts_takeover_and_logoff_while_work_is_pending", "secs2r-host::owner_console_disconnect_stops_the_child_and_marks_no_session", "secs2r-host::owner_console_connect_launches_and_repairs", "secs2r-host::other_users_console_connect_marks_other_user", "secs2r-host::one_child_exit_schedules_the_first_backoff_and_counts_it", "secs2r-host::five_exits_within_five_minutes_give_up", "secs2r-host::exit_without_a_session_schedules_nothing", "secs2r-host::restart_tick_after_restart_due_launches", "secs2r-host::owner_logoff_and_stop_managing_clear_restart_due_and_stop", "secs2r-host::fake_platform_records_no_session_after_owner_logoff", "secs2r-host::port_busy_backs_off_and_gives_up_on_the_fifth", "secs-sys::service_session_change_maps_console_switch_events"]
 
 [[feature]]
 id = "host.shell"
@@ -1344,7 +1400,7 @@ kind = "ui"
 milestone = "M5"
 status = "partial"
 tests = []
-note = "five-stage flow, results first, three disclosure levels (docs/ARCHITECTURE.md, Screens). P29 landed the foundation: tokens, the frame with the step rail and status, the job tray, the component kit, the uPlot graphs, the SVG maps, the mock service and the gallery (docs/DESIGN.md). Its vitest tests live in apps/secs2r/ui, which this registry cannot reference (it lists cargo tests). P33 connects the P30-P32 screens through typed stores, explicit mutation/job invalidation, per-call Tauri channels, project/close dialogs and lifecycle hooks. src/state/flow.test.tsx walks a non-tutorial sample project through mock measure_position jobs, calibration and CamillaDSP export; per-screen hook tests pin action IPC params. app.live exercises the full mock app. P35 supplies the complete tutorial quests. P55 moves static setting explanations into contextual help while retaining live state, recommendations and recovery inline; labels and both locales are revised, with pointer/keyboard/touch and disabled-control coverage in the UI tests. Audit #155 (A5 and A4, TD-118 to TD-125, TD-68) adds the project session's ordering tests: src/state/session.test.ts and projectFollowUps.test.tsx pin the edit barrier before save, the epoch that drops follow-ups after a project switch and the resource reset on replacement; writers.test.ts serializes the app and apply settings writers; screens/project/useProjectScreen.test.ts, screens/calibrate/{CalibrateScreen,useCalibrateScreen}.test.tsx and screens/export/useExportScreen.test.tsx pin the save-before-apply rule, the extra-band edit queue, the room-size draft reset and the export recalibration arguments; ipc/mock.test.ts and mockWiring.test.ts keep the mock service's job groups and MIMO checks in line with the service."
+note = "five-stage flow, results first, three disclosure levels (docs/ARCHITECTURE.md, Screens). P29 landed the foundation: tokens, the frame with the step rail and status, the job tray, the component kit, the uPlot graphs, the SVG maps, the mock service and the gallery (docs/DESIGN.md). Its vitest tests live in apps/secs2r/ui, which this registry cannot reference (it lists cargo tests). P33 connects the P30-P32 screens through typed stores, explicit mutation/job invalidation, per-call Tauri channels, project/close dialogs and lifecycle hooks. src/state/flow.test.tsx walks a non-tutorial sample project through mock measure_position jobs, calibration and CamillaDSP export; per-screen hook tests pin action IPC params. app.live exercises the full mock app. P35 supplies the complete tutorial quests. P55 moves static setting explanations into contextual help while retaining live state, recommendations and recovery inline; labels and both locales are revised, with pointer/keyboard/touch and disabled-control coverage in the UI tests. Audit #155 (A5 and A4, TD-118 to TD-125, TD-68) adds the project session's ordering tests: src/state/session.test.ts and projectFollowUps.test.tsx pin the edit barrier before save, the epoch that drops follow-ups after a project switch and the resource reset on replacement; writers.test.ts serializes the app and apply settings writers; screens/project/useProjectScreen.test.ts, screens/calibrate/{CalibrateScreen,useCalibrateScreen}.test.tsx and screens/export/useExportScreen.test.tsx pin the save-before-apply rule, the extra-band edit queue, the room-size draft reset and the export recalibration arguments; ipc/mock.test.ts and mockWiring.test.ts keep the mock service's job groups and MIMO checks in line with the service. Since audit #186 (A11, ADR 0052) the mock answers from the service's recorded responses in src/ipc/recorded and the generated tables in src/ipc/bindings/rules.ts instead of copies of its rules, and src/ipc/recorded.test.ts replays every record against it."
 
 [[feature]]
 id = "ui.output_rate"
@@ -1394,8 +1450,9 @@ note = "release.yml: Windows NSIS + portable zip, macOS dmg, Linux AppImage + de
 id = "release.updater"
 kind = "release"
 milestone = "M6"
-status = "planned"
+status = "partial"
 tests = []
+note = "release.yml signs updater bundles, generates and publishes latest.json with .github/scripts/updater_manifest.py, and updates the fixed updater release (ADR 0020). This registry lists Cargo tests, not workflow checks."
 
 # ---- Service IPC (M4) ----
 
@@ -1404,7 +1461,7 @@ id = "ipc.project_new"
 kind = "ipc"
 milestone = "M4"
 status = "implemented"
-tests = ["secs-types::every_method_name_is_listed_and_parses", "secs-service::new_projects_match_upstream_bytes", "secs-service::tutorial_projects_block_save_without_writing", "secs-service::tutorial_measurements_and_results_stay_in_a_temporary_folder_removed_with_the_session"]
+tests = ["secs-types::every_method_name_is_listed_and_parses", "secs-service::new_projects_match_upstream_bytes", "secs-service::tutorial_projects_block_save_without_writing", "secs-service::tutorial_measurements_and_results_stay_in_a_temporary_folder_removed_with_the_session", "secs-service::tutorial_folder_lives_under_app_data_and_refuses_an_existing_path_td210"]
 
 [[feature]]
 id = "ipc.sample_load"
@@ -1418,7 +1475,7 @@ id = "ipc.project_open"
 kind = "ipc"
 milestone = "M4"
 status = "implemented"
-tests = ["secs-types::every_method_name_is_listed_and_parses", "secs-service::exports_after_reopening_match_pre_close_bytes", "secs-service::old_cache_without_run_key_keeps_calibration_but_marks_mimo_stale"]
+tests = ["secs-types::every_method_name_is_listed_and_parses", "secs-service::exports_after_reopening_match_pre_close_bytes", "secs-service::old_cache_without_run_key_keeps_calibration_but_marks_mimo_stale", "secs-service::project_open_surfaces_sidecar_warnings_td183", "secs-service::opening_a_missing_project_names_the_path_td208", "secs-service::project_open_permission_denied_maps_to_permission_denied_td208"]
 
 [[feature]]
 id = "ipc.project_save"
@@ -1439,14 +1496,14 @@ id = "ipc.calibrate"
 kind = "ipc"
 milestone = "M4"
 status = "implemented"
-tests = ["secs-types::every_method_name_is_listed_and_parses", "secs-types::calibrate_mimo_defaults_false_on_the_wire", "secs-service::oracle_project_calibrates_recommends_xo_and_exports", "secs-service::cancelled_calibration_preserves_previous_results", "secs-service::calibrate_with_mimo_matches_separate_runs_and_orders_progress", "secs-service::calibrate_with_mimo_refuses_disabled_and_too_few_positions_before_starting", "secs-service::cancelling_calibrate_during_mimo_keeps_only_the_new_calibration", "secs-service::mimo_failure_after_combined_calibration_keeps_calibration_and_marks_stage", "sound-equalization-and-correction-system-rust-api::engine_calibrate_passes_the_mimo_flag", "secs2r-cli::calibrate_parses_mimo_flag"]
+tests = ["secs-service::calibration_snapshot_clamps_override_boost_like_settings_edit", "secs-service::calibrate_params_settings_are_checked_like_edits", "secs-engine::record_of_sub_filters_mode_decay_and_mimo_guard_match_the_service_literals", "secs-service::engine_measurement_errors_preserve_context_and_diagnostic_details", "secs-types::every_method_name_is_listed_and_parses", "secs-types::calibrate_mimo_defaults_false_on_the_wire", "secs-service::oracle_project_calibrates_recommends_xo_and_exports", "secs-service::cancelled_calibration_preserves_previous_results", "secs-service::calibrate_with_mimo_matches_separate_runs_and_orders_progress", "secs-service::calibrate_with_mimo_refuses_disabled_and_too_few_positions_before_starting", "secs-service::cancelling_calibrate_during_mimo_keeps_only_the_new_calibration", "secs-service::mimo_failure_after_combined_calibration_keeps_calibration_and_marks_stage", "sound-equalization-and-correction-system-rust-api::engine_calibrate_passes_the_mimo_flag", "secs2r-cli::calibrate_parses_mimo_flag", "secs-engine::record_of_flat_notes_preserves_scalar_values_and_order", "secs-engine::every_note_variant_records_at_least_one_code", "secs-policy::engine_note_codes_are_catalog_keys", "secs-local-api::calibration_summary_notes_are_typed_on_the_wire", "secs-types::every_note_variant_round_trips_json_with_its_snake_case_code", "secs-types::note_json_rejects_non_finite_numbers"]
 
 [[feature]]
 id = "ipc.recommend_xo"
 kind = "ipc"
 milestone = "M4"
 status = "implemented"
-tests = ["secs-types::every_method_name_is_listed_and_parses", "secs-service::oracle_project_calibrates_recommends_xo_and_exports", "secs-service::recommend_xo_preserves_xo_edits_made_while_the_job_runs"]
+tests = ["secs-types::recommend_xo_accepts_absent_null_and_background_params", "secs-service::typed_recommend_xo_can_ask_for_a_background_job_td157", "secs-service::recommend_xo_accepts_absent_null_and_background_params", "secs2r-cli::recommend_xo_parses_background_flag_td157", "secs-types::every_method_name_is_listed_and_parses", "secs-service::oracle_project_calibrates_recommends_xo_and_exports", "secs-service::recommend_xo_preserves_xo_edits_made_while_the_job_runs"]
 
 [[feature]]
 id = "ipc.mimo"
@@ -1475,7 +1532,7 @@ id = "ipc.export"
 kind = "ipc"
 milestone = "M4"
 status = "implemented"
-tests = ["secs-types::every_method_name_is_listed_and_parses", "secs-types::mdat_scope_is_optional_on_the_wire", "secs-service::oracle_project_calibrates_recommends_xo_and_exports", "secs-service::room_dba_mimo_runs_and_becomes_stale_after_recalibration", "secs-service::output_rate_resolver_falls_back_for_bad_missing_and_failed_defaults", "secs-service::changing_only_output_rate_keeps_calibration_fresh_for_export"]
+tests = ["secs-types::every_method_name_is_listed_and_parses", "secs-types::mdat_scope_is_optional_on_the_wire", "secs-service::oracle_project_calibrates_recommends_xo_and_exports", "secs-service::room_dba_mimo_runs_and_becomes_stale_after_recalibration", "secs-service::output_rate_resolver_falls_back_for_bad_missing_and_failed_defaults", "secs-service::changing_only_output_rate_keeps_calibration_fresh_for_export", "secs-service::camilla_export_cancelled_before_commit_writes_nothing_td196", "secs-service::relative_export_folder_is_rejected_td211"]
 note = "Export IPC covers CamillaDSP, mdat, filter text, Equalizer APO, and complete convolution bundles, including typed export_scope reasons, the REW mdat's optional mdat_scope, additional convolution rates, the resolved output rate, and automatic-rate fallback notices."
 
 [[feature]]
@@ -1483,7 +1540,7 @@ id = "ipc.job_cancel"
 kind = "ipc"
 milestone = "M4"
 status = "implemented"
-tests = ["secs-types::every_method_name_is_listed_and_parses", "secs-service::cancelled_calibration_preserves_previous_results", "secs-service::generic_cancel_ends_monitor_during_an_active_burst"]
+tests = ["secs-types::every_method_name_is_listed_and_parses", "secs-service::cancelled_calibration_preserves_previous_results", "secs-service::job_cancel_alone_stops_a_playing_level_monitor"]
 
 [[feature]]
 id = "ipc.jobs"
@@ -1497,21 +1554,21 @@ id = "ipc.measure_methods"
 kind = "ipc"
 milestone = "M4"
 status = "implemented"
-tests = ["secs-service::rew_recorded_transport_records_each_role_and_warning", "secs-service::rew_license_observation_tracks_rejection_success_and_launch_reset"]
+tests = ["secs-service::rew_configures_once_per_position_td172", "secs-service::rew_license_observation_tracks_rejection_success_and_launch_reset"]
 
 [[feature]]
 id = "ipc.measure_configure"
 kind = "ipc"
 milestone = "M4"
 status = "implemented"
-tests = ["secs-service::configure_validates_fields_and_host_stub_reports_its_error", "secs-service::measure_configure_opens_selected_rew_device_after_project_update", "secs-service::rew_driver_and_devices_stay_while_a_measurement_runs"]
+tests = ["secs-service::configure_validates_fields_and_host_stub_reports_its_error", "secs-service::measure_configure_opens_selected_rew_device_after_project_update", "secs-service::rew_driver_and_devices_stay_while_a_measurement_runs", "secs-service::rew_launch_tries_the_configured_executable_first_td221"]
 
 [[feature]]
 id = "ipc.measure_config_get"
 kind = "ipc"
 milestone = "M5"
 status = "implemented"
-tests = ["secs-service::measure_config_get_reads_stored_settings_without_dirtying_the_project"]
+tests = ["secs-service::measure_config_get_reads_stored_settings_without_dirtying_the_project", "secs-service::unparsable_mic_calibration_setting_names_itself_td268"]
 
 [[feature]]
 id = "ipc.measurement_records"
@@ -1539,14 +1596,20 @@ id = "ipc.level_stop"
 kind = "ipc"
 milestone = "M5"
 status = "implemented"
-tests = ["secs-service::level_stop_cancels_only_the_active_burst_and_is_idempotent", "secs-service::rew_level_stop_stops_generator_but_keeps_subscription_alive"]
+tests = ["secs-service::level_stop_stops_only_the_play_and_keeps_the_monitor", "secs-service::rew_level_stop_stops_generator_but_keeps_subscription_alive"]
 
 [[feature]]
 id = "ipc.measure_position"
 kind = "ipc"
 milestone = "M4"
 status = "implemented"
-tests = ["secs-service::device_group_exclusion_and_cancel_preserve_project"]
+tests = [
+  "secs-service::device_group_exclusion_and_cancel_preserve_project",
+  "secs-service::oversized_input_cal_file_is_refused_with_a_notice_and_read_once_td170",
+  "secs-service::mock_measure_reports_in_role_stages_td171",
+  "secs-service::subscribe_failure_is_noticed_td215",
+  "secs-service::sidecar_build_failure_is_noticed_td215",
+]
 
 [[feature]]
 id = "ipc.position_clear"
@@ -1567,7 +1630,7 @@ id = "ipc.rew_launch"
 kind = "ipc"
 milestone = "M4"
 status = "implemented"
-tests = ["secs-service::rew_launch_classifies_reasons_and_returns_after_spawn", "secs-service::configure_validates_fields_and_host_stub_reports_its_error"]
+tests = ["secs-service::rew_launch_classifies_reasons_and_returns_after_spawn", "secs-service::configure_validates_fields_and_host_stub_reports_its_error", "secs-service::rew_launch_tries_the_configured_executable_first_td221", "secs-sys::a_configured_executable_that_is_missing_is_reported_with_its_path_td221"]
 
 [[feature]]
 id = "ipc.mdat_scan"
@@ -1797,7 +1860,7 @@ id = "ipc.local_api_token_regenerate"
 kind = "ipc"
 milestone = "M6"
 status = "implemented"
-tests = ["secs-service::null_host_reports_not_implemented", "secs-local-api::token_is_persistent_lowercase_hex_and_invalid_files_are_replaced", "secs-local-api::token_files_are_created_and_tightened_to_owner_only_td109"]
+tests = ["secs-types::io_error_preserves_path_and_permission_kind_td208", "secs2r::denied_token_folder_is_a_permission_error_td208", "secs-service::null_host_reports_not_implemented", "secs-local-api::token_is_persistent_lowercase_hex_and_invalid_files_are_replaced", "secs-local-api::token_files_are_created_and_tightened_to_owner_only_td109"]
 
 [[feature]]
 id = "api.public_crate"
@@ -1805,11 +1868,17 @@ kind = "api"
 milestone = "M6"
 status = "implemented"
 tests = [
-  "sound-equalization-and-correction-system-rust-api::engine_bootstrap_and_invalid_json",
+  "sound-equalization-and-correction-system-rust-api::engine_bootstrap_and_invalid_json", "sound-equalization-and-correction-system-rust-api::wire_error_has_one_shape_for_every_error_kind_td160",
   "sound-equalization-and-correction-system-rust-api::engine_oracle_flow_and_ordered_events",
+  "sound-equalization-and-correction-system-rust-api::dropping_the_engine_stops_its_jobs_within_three_seconds_td206",
   "sound-equalization-and-correction-system-rust-api::a_full_subscription_counts_drops_without_blocking_td127",
   "sound-equalization-and-correction-system-rust-api::terminal_events_keep_only_the_service_retention_td127",
-  "sound-equalization-and-correction-system-rust-api::engine_subscribe_keeps_its_receiver_return_type_td127",
+  "sound-equalization-and-correction-system-rust-api::subscribe_delivers_job_events_in_order_on_both_adapters",
+  "sound-equalization-and-correction-system-rust-api::slow_engine_subscriber_counts_dropped_events_and_slow_client_receives_lagged",
+  "sound-equalization-and-correction-system-rust-api::wait_job_answers_finished_unknown_and_timeout_the_same_way",
+  "sound-equalization-and-correction-system-rust-api::closer_ends_a_blocked_recv_within_one_second",
+  "sound-equalization-and-correction-system-rust-api::error_display_prints_snake_case_codes",
+  "sound-equalization-and-correction-system-rust-api::engine_builder_from_deps_keeps_every_field",
 ]
 note = "ADR 0016: one supported crates.io facade for embedding the file-based engine or driving a running app through the authenticated local API."
 
@@ -1818,16 +1887,16 @@ id = "api.python"
 kind = "api"
 milestone = "M6"
 status = "implemented"
-tests = ["sound-equalization-and-correction-system-rust-api::engine_bootstrap_and_invalid_json", "secs-py::dropped_event_count_does_not_lock_the_blocking_receiver_td127"]
-note = "ADR 0019: PyPI package secs2r exposes the embedded engine and authenticated local API client. bindings/python/tests/test_secs2r.py verifies the installed wheel, structured errors, closed-port failure and an optional oracle-project round trip."
+tests = ["sound-equalization-and-correction-system-rust-api::engine_bootstrap_and_invalid_json", "sound-equalization-and-correction-system-rust-api::closer_ends_a_blocked_recv_within_one_second"]
+note = "ADR 0019: PyPI package secs2r exposes the embedded engine and authenticated local API client. bindings/python/tests/test_secs2r.py::test_python_error_carries_params_and_retryable_td160 verifies params and retryable; test_events_close_ends_iteration_td150, test_events_timeout_raises_td150 and test_keyboard_interrupt_reaches_a_blocked_next_td150 verify interruptible iteration. bindings/python/tests/test_secs2r.py verifies the installed wheel, structured errors, closed-port failure and an optional oracle-project round trip."
 
 [[feature]]
 id = "api.dotnet"
 kind = "api"
 milestone = "M6"
 status = "implemented"
-tests = ["secs-dotnet-sys::bootstrap_reports_the_native_crate_version", "secs-dotnet-sys::fresh_engine_results_preserve_structured_api_error", "secs-dotnet-sys::unknown_engine_handle_is_an_error_and_free_is_a_no_op", "secs-dotnet-sys::pointer_validation_accepts_only_representable_buffers", "secs-dotnet-sys::short_result_buffer_keeps_the_result", "secs-dotnet-sys::guard_turns_a_panic_into_an_internal_error", "secs-dotnet-sys::a_full_client_event_queue_drops_and_counts_the_newest_events"]
-note = "ADR 0032: NuGet package Secs2R exposes the embedded engine and authenticated local API client to C#, .NET and Unity through the C ABI isolation crate secs-dotnet-sys. bindings/dotnet/tests/Secs2R.Tests installs the packed package and verifies versions, structured errors, closed-port failure, event cancellation and a mock-measurement calibration with an Equalizer APO export."
+tests = ["secs-dotnet-sys::bootstrap_reports_the_native_crate_version", "secs-dotnet-sys::fresh_engine_results_preserve_structured_api_error", "secs-dotnet-sys::unknown_engine_handle_is_an_error_and_free_is_a_no_op", "secs-dotnet-sys::pointer_validation_accepts_only_representable_buffers", "secs-dotnet-sys::short_result_buffer_keeps_the_result", "secs-dotnet-sys::results_table_is_capped_and_evicts_the_oldest_td205", "secs-dotnet-sys::guard_turns_a_panic_into_an_internal_error"]
+note = "ADR 0032: NuGet package Secs2R exposes the embedded engine and authenticated local API client to C#, .NET and Unity through the C ABI isolation crate secs-dotnet-sys. bindings/dotnet/tests/Secs2R.Tests/PackageTests.cs::SecsExceptionCarriesParams verifies structured parameters. bindings/dotnet/tests/Secs2R.Tests installs the packed package and verifies versions, structured errors, closed-port failure, event cancellation and a mock-measurement calibration with an Equalizer APO export."
 
 [[feature]]
 id = "app.local_api"
@@ -1835,15 +1904,22 @@ kind = "app"
 milestone = "M6"
 status = "implemented"
 tests = [
-  "secs-types::access_table_covers_every_request_method_exactly",
+  "secs-types::method_names_match_the_wire",
   "secs-types::old_app_settings_without_local_api_use_the_disabled_default",
   "secs-service::observer_receives_every_caller_event_in_the_same_order",
+  "secs-service::settings_effect_runs_once_after_a_successful_set_and_never_after_a_refusal",
   "secs-service::oracle_project_calibrates_recommends_xo_and_exports",
   "secs-local-api::authentication_host_origin_and_body_limit_are_enforced",
+  "secs-local-api::slow_reader_receives_lagged_before_the_1013_close_td161",
+  "secs-local-api::stop_returns_within_the_shutdown_bound_while_a_request_runs_td214",
   "secs-local-api::call_matches_service_and_ui_only_never_reaches_the_host",
   "secs-local-api::websocket_receives_changed_and_ordered_job_events",
   "secs-local-api::stop_frees_the_port_and_busy_port_is_typed",
-  "secs2r::local_api_lifecycle_follows_enabled_and_port_changes",
+  "secs-local-api::runtime_startup_enabled_serves_and_disabled_only_makes_a_token",
+  "secs-local-api::runtime_apply_settings_moves_port_stops_and_keeps_an_unchanged_server",
+  "secs-local-api::runtime_regenerate_token_invalidates_the_old_token",
+  "secs-local-api::runtime_stop_returns_within_three_seconds_while_a_request_runs",
+  "secs-local-api::read_only_token_folder_is_a_token_error",
   "secs-local-api::stop_finishes_while_a_client_stalls_mid_body_td126",
   "secs-local-api::progressing_near_limit_upload_is_not_timed_out_td126",
   "secs-local-api::idle_request_body_returns_request_timeout_td126",
@@ -1864,7 +1940,7 @@ id = "service.app_settings"
 kind = "service"
 milestone = "M5"
 status = "implemented"
-tests = ["secs-service::app_settings_are_versioned_bounded_and_capped", "secs-service::legacy_expert_preference_is_ignored_without_resetting_other_settings", "secs-service::newer_app_settings_win_when_older_effects_finish_late_td115", "secs-service::effects_compare_with_the_last_applied_settings_td115"]
+tests = ["secs-service::app_settings_are_versioned_bounded_and_capped", "secs-service::legacy_expert_preference_is_ignored_without_resetting_other_settings", "secs-service::open_without_a_file_starts_from_defaults_without_a_notice", "secs-service::set_increments_the_revision_and_writes_atomically_and_a_rejected_value_changes_nothing", "secs-service::effects_run_once_per_revision_in_order_even_when_two_threads_interleave", "secs-service::typed_readers_return_the_stored_fields_and_apply_settings_set_touches_nothing_else", "secs-service::app_settings_writes_are_serialized_with_memory_and_bounded_by_the_read_cap", "secs-service::open_reports_a_damaged_or_oversized_file_as_app_settings_unreadable", "secs-service::open_keeps_a_newer_file_read_only_and_set_refuses_it", "secs-service::bootstrap_carries_the_settings_notice"]
 note = "versioned bounded data-only JSON, injected path or in-memory storage"
 
 [[feature]]
@@ -1985,7 +2061,7 @@ id = "ipc.level_play"
 kind = "ipc"
 milestone = "M5"
 status = "implemented"
-tests = ["secs-service::mock_monitor_emits_stores_excludes_and_stops"]
+tests = ["secs-service::mock_monitor_emits_stores_excludes_and_stops", "secs-service::rew_level_monitor_survives_a_failed_play_td265"]
 
 [[feature]]
 id = "ipc.status_watch_start"
@@ -2013,7 +2089,7 @@ id = "ipc.mic_calibration_get"
 kind = "ipc"
 milestone = "M4"
 status = "implemented"
-tests = ["secs-service::mic_calibration_set_get_clear_and_errors"]
+tests = ["secs-service::mic_calibration_set_get_clear_and_errors", "secs-service::unparsable_mic_calibration_setting_names_itself_td268"]
 upstream = "new"
 
 [[feature]]
@@ -2069,7 +2145,7 @@ kind = "engine"
 milestone = "M5"
 status = "implemented"
 upstream = "new; ADR 0024 (D48)"
-tests = ["secs-engine::rc_band_set_sorts_merges_overlaps_and_touching_edges", "secs-engine::rc_bands_empty_masks_are_bit_identical_and_extra_ramps_use_max", "secs-engine::rc_bands_fir_corrects_high_bump_not_gap_and_retains_boost_cap", "secs-engine::rc_bands_zero_peq_centres_stay_in_the_union", "secs-engine::rc_bands_fir_excess_phase_moves_high_gd_toward_reference", "secs-project::rc_bands_round_trip_filter_sort_trim_and_clear", "secs-service::result_curves_use_stored_then_run_extra_rc_bands"]
+tests = ["secs-engine::rc_band_set_sorts_merges_overlaps_and_touching_edges", "secs-engine::rc_bands_empty_masks_are_bit_identical_and_extra_ramps_use_max", "secs-engine::rc_bands_fir_corrects_high_bump_not_gap_and_retains_boost_cap", "secs-engine::rc_bands_zero_peq_centres_stay_in_the_union", "secs-engine::rc_bands_fir_excess_phase_moves_high_gd_toward_reference", "secs-project::rc_bands_round_trip_filter_sort_trim_and_clear", "secs-service::result_curves_use_stored_then_run_extra_rc_bands", "secs-engine::rc_bands_records_one_record_per_band"]
 
 [[feature]]
 id = "calibration.edit_rc_bands"
@@ -2093,7 +2169,7 @@ kind = "engine"
 milestone = "M5"
 status = "implemented"
 upstream = "correction_engine.py schroeder_hz; ADR 0021 (D46)"
-tests = ["secs-engine::rc_lenient_synthetic_decay_bands_follow_room_treatment", "secs-engine::rc_lenient_uses_every_main_and_position_without_reference_weighting", "secs-engine::rc_agreement_stops_at_first_non_improving_band_and_weights_positions", "secs-engine::rc_agreement_design_runs_two_passes_and_preserves_manual_override", "secs-project::rc_upper_round_trip_and_legacy_unknown_defaults", "secs-service::rc_agreement_calibration_fails_with_typed_position_reason", "secs-service::rc_limit_notices_keep_legacy_fields_and_add_basis_evidence", "secs-engine::schroeder_reserves_the_actual_ir_length_before_analysis", "secs-engine::schroeder_cancels_during_sample_processing", "secs-engine::schroeder_chunked_filter_preserves_sosfilt_bits"]
+tests = ["secs-engine::rc_lenient_synthetic_decay_bands_follow_room_treatment", "secs-engine::rc_lenient_uses_every_main_and_position_without_reference_weighting", "secs-engine::rc_agreement_stops_at_first_non_improving_band_and_weights_positions", "secs-engine::rc_agreement_design_runs_two_passes_and_preserves_manual_override", "secs-project::rc_upper_round_trip_and_legacy_unknown_defaults", "secs-service::rc_agreement_calibration_fails_with_typed_position_reason", "secs-engine::record_of_rc_limit_matches_the_service_literals", "secs-engine::schroeder_reserves_the_actual_ir_length_before_analysis", "secs-engine::schroeder_cancels_during_sample_processing", "secs-engine::schroeder_chunked_filter_preserves_sosfilt_bits"]
 
 [[feature]]
 id = "engine.rc_hi_transition"
@@ -2152,7 +2228,7 @@ kind = "workflow"
 milestone = "M5"
 status = "implemented"
 upstream = "new; ADR 0022, calibration_settings_edit LowProtect"
-tests = ["secs-service::low_protect_edits_persist_and_mark_results_stale", "secs-service::low_protect_notices_include_outcome_and_optional_highpass"]
+tests = ["secs-service::low_protect_edits_persist_and_mark_results_stale", "secs-engine::record_of_flat_notes_preserves_scalar_values_and_order"]
 
 [[feature]]
 id = "cli.low_protect"
@@ -2191,7 +2267,7 @@ tests = [
   "secs-types::dip_limit_defaults_off_and_preserves_legacy_engine_key",
   "secs-project::dip_limit_round_trip_and_legacy_default",
   "secs-service::dip_limit_edits_persist_and_mark_results_stale",
-  "secs-service::dip_limit_notices_list_dips",
+  "secs-engine::record_of_flat_notes_preserves_scalar_values_and_order",
 ]
 
 [[feature]]
@@ -2246,7 +2322,7 @@ kind = "workflow"
 milestone = "M5"
 status = "implemented"
 upstream = "new; ADR 0025, calibration_settings_edit LfAlign"
-tests = ["secs-service::lf_align_and_mode_decay_edits_persist_and_mark_results_stale", "secs-service::lf_align_notices_include_outcome_and_optional_arrival"]
+tests = ["secs-service::lf_align_and_mode_decay_edits_persist_and_mark_results_stale", "secs-engine::record_of_flat_notes_preserves_scalar_values_and_order"]
 
 [[feature]]
 id = "calibration.edit_mode_decay"
@@ -2254,7 +2330,7 @@ kind = "workflow"
 milestone = "M5"
 status = "implemented"
 upstream = "new; ADR 0025, calibration_settings_edit ModeDecay"
-tests = ["secs-service::lf_align_and_mode_decay_edits_persist_and_mark_results_stale", "secs-service::mode_decay_notices_expand_modes_and_report_empty_result"]
+tests = ["secs-service::lf_align_and_mode_decay_edits_persist_and_mark_results_stale", "secs-engine::record_of_sub_filters_mode_decay_and_mimo_guard_match_the_service_literals"]
 
 [[feature]]
 id = "calibration.edit_hf_phase"
@@ -2262,7 +2338,7 @@ kind = "workflow"
 milestone = "M5"
 status = "implemented"
 upstream = "new; ADR 0030, calibration_settings_edit HfPhase"
-tests = ["secs-service::lf_align_and_mode_decay_edits_persist_and_mark_results_stale", "secs-service::hf_phase_notices_include_rotation_or_report_no_unwind_range"]
+tests = ["secs-service::lf_align_and_mode_decay_edits_persist_and_mark_results_stale", "secs-engine::record_of_flat_notes_preserves_scalar_values_and_order"]
 
 [[feature]]
 id = "cli.lf_align"
@@ -2310,7 +2386,7 @@ kind = "apply"
 milestone = "M6"
 status = "implemented"
 upstream = "new"
-tests = ["secs-apply::camilla_ws", "secs-apply::websocket_ping_frames_do_not_extend_request_deadline", "secs-apply::incomplete_fragment_stream_does_not_extend_request_deadline"]
+tests = ["secs-apply::camilla_ws", "secs-apply::websocket_ping_frames_do_not_extend_request_deadline", "secs-apply::incomplete_fragment_stream_does_not_extend_request_deadline", "secs-apply::status_uses_one_deadline_for_every_command_td201"]
 
 [[feature]]
 id = "apply.eqapo_config"
@@ -2318,7 +2394,7 @@ kind = "apply"
 milestone = "M6"
 status = "implemented"
 upstream = "new"
-tests = ["secs-apply::eqapo_config", "secs-apply::trailing_spaces_are_managed_and_repair_revert_count_real_includes"]
+tests = ["secs-apply::eqapo_config", "secs-apply::trailing_spaces_are_managed_and_repair_revert_count_real_includes", "secs-service::latin1_config_txt_is_reported_as_an_encoding_problem_td199", "secs-service::utf16_config_txt_is_reported_as_an_encoding_problem_td199", "secs-service::relative_eqapo_config_path_is_unsupported_td200"]
 
 [[feature]]
 id = "apply.supervise"
@@ -2326,7 +2402,7 @@ kind = "apply"
 milestone = "M6"
 status = "implemented"
 upstream = "new"
-tests = ["secs-apply::supervise"]
+tests = ["secs-apply::supervise", "secs2r-host::set_managed_accepts_takeover_and_logoff_while_work_is_pending", "secs2r-host::owner_console_disconnect_stops_the_child_and_marks_no_session", "secs2r-host::owner_console_connect_launches_and_repairs", "secs2r-host::other_users_console_connect_marks_other_user"]
 
 [[feature]]
 id = "engine.input_hp"
@@ -2335,4 +2411,11 @@ milestone = "M5"
 status = "implemented"
 upstream = "new"
 note = "ADR 0031: common BW48 input high-pass after RC/BA design, before input correction and the MIMO fork in every export; the MIMO scorecard divides it back out and the engine refuses a cut outside 10-50 Hz."
-tests = ["secs-engine::input_hp_keeps_rc_ba_bits_and_filters_export_and_mimo_once", "secs-engine::input_hp_setting_reaches_engine_without_changing_other_fields", "secs-engine::input_hp_leaves_the_mimo_scorecard_as_without_it", "secs-engine::design_rejects_an_input_cut_outside_its_limits", "secs-graph::input_hp_plan_cuts_every_input_and_mimo_once", "secs-filters::input_hp_render_collector_prefixes_every_route", "secs-filters::input_hp_eqapo_precedes_raw_copies_and_cuts_every_input", "secs-filters::input_hp_playback_filters_raw_inputs_before_full_and_lowrate_support", "secs-camilla::input_hp_camilla_is_one_all_input_step_before_mimo_fork"]
+tests = ["secs-engine::design_rejects_invalid_settings_before_allocation", "secs-engine::room_volume_predicate_ignores_zero_and_nonfinite", "secs-engine::input_hp_keeps_rc_ba_bits_and_filters_export_and_mimo_once", "secs-engine::input_hp_setting_reaches_engine_without_changing_other_fields", "secs-engine::input_hp_leaves_the_mimo_scorecard_as_without_it", "secs-engine::design_rejects_an_input_cut_outside_its_limits", "secs-graph::input_hp_plan_cuts_every_input_and_mimo_once", "secs-filters::input_hp_render_collector_prefixes_every_route", "secs-filters::input_hp_eqapo_precedes_raw_copies_and_cuts_every_input", "secs-filters::input_hp_playback_filters_raw_inputs_before_full_and_lowrate_support", "secs-camilla::input_hp_camilla_is_one_all_input_step_before_mimo_fork"]
+
+[[feature]]
+id = "calibration.settings_declaration"
+kind = "internal"
+milestone = "M5"
+status = "implemented"
+tests = ["secs2r-cli::every_scalar_flag_makes_its_edit", "secs-types::scalar_constructor_uses_declared_kind_and_payload", "secs-types::scalar_settings_table_round_trips_defaults_and_keeps_engine_keys", "secs-types::apply_scalar_clamps_and_refuses_by_policy", "secs-types::checked_applies_every_policy_to_a_whole_value", "secs-types::limits_table_has_the_two_new_entries"]

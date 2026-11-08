@@ -31,7 +31,7 @@ export const SERVICE_TEXT: Record<ServiceView, MessageKey> = {
 };
 
 /** What the service does with CamillaDSP: nothing, or the supervision state of the one it manages. */
-export type CamillaManaged =
+type CamillaManaged =
   | { kind: "unmanaged" }
   | { kind: "running"; pid: number | null }
   | { kind: "restarting"; until: string; restarts: number }

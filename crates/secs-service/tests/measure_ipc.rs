@@ -1,12 +1,13 @@
+#![allow(deprecated)]
 #![forbid(unsafe_code)]
 
-use secs_service::{Deps, EventSink, NoEvents, Service, measure};
+use secs_service::{Deps, EventSink, MockMeasurer, NoEvents, Service, plan_for, sample};
 use secs_types::ipc::*;
 use serde_json::json;
 use std::{
     collections::BTreeMap,
     fs,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{Arc, Condvar, Mutex},
     time::{Duration, Instant},
 };
@@ -161,9 +162,9 @@ fn sample_load_embedded_keeps_only_position_one() {
     let project = secs_project::MeasurementStore::open(&path).unwrap();
     let record = project.entry_for(1).unwrap();
     assert_eq!(record.ir.len(), 14);
-    for entry in measure::sample::index().entries.iter() {
+    for entry in sample::index().entries.iter() {
         let (actual, rate) = secs_project::load_ir(&path, &entry.role, 1).unwrap();
-        let (expected, expected_rate, expected_t0) = measure::sample::ir(&entry.role, 1).unwrap();
+        let (expected, expected_rate, expected_t0) = sample::ir(&entry.role, 1).unwrap();
         assert_eq!(rate, expected_rate, "{}", entry.role);
         assert_eq!(actual, expected, "{}", entry.role);
         assert_eq!(
@@ -224,10 +225,10 @@ fn sample_load_synthetic_structure_and_determinism() {
             assert!(values[direct].abs() > 0.8, "{role} position {position}");
         }
     }
-    let main = measure::sample::fallback_ir("L");
-    let sub = measure::sample::fallback_ir("SW4");
-    assert_eq!(main, measure::sample::fallback_ir("L"));
-    assert_eq!(sub, measure::sample::fallback_ir("SW4"));
+    let main = sample::fallback_ir("L");
+    let sub = sample::fallback_ir("SW4");
+    assert_eq!(main, sample::fallback_ir("L"));
+    assert_eq!(sub, sample::fallback_ir("SW4"));
     let high_energy = |values: &[f32]| {
         values
             .windows(2)
@@ -274,11 +275,16 @@ fn mock_flow_measurement_and_calibration() {
     let job = measure(&service, 1, events.clone());
     succeeded(&events, job);
     let values = events.values.lock().unwrap();
-    assert_eq!(values.len(), 4, "{values:?}");
     assert!(matches!(values[0], JobEvent::Started { .. }));
+    let role_progress = values
+        .iter()
+        .filter(|event| {
+            matches!(event, JobEvent::Progress { stage, .. } if stage == "L" || stage == "R")
+        })
+        .collect::<Vec<_>>();
     for (i, role) in ["L", "R"].iter().enumerate() {
         assert!(
-            matches!(&values[i+1],JobEvent::Progress{stage,done,total,..} if stage==role && *done==i as u64+1 && *total==2)
+            matches!(role_progress[i],JobEvent::Progress{stage,done,total,..} if stage==role && *done==i as u64+1 && *total==2)
         );
     }
     assert!(path.is_file());
@@ -286,6 +292,39 @@ fn mock_flow_measurement_and_calibration() {
     assert!(!calibration(&service).stale);
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn mock_measure_reports_in_role_stages_td171() {
+    let root = root("mock-progress");
+    let path = root.join("room.secs");
+    let service = Service::new(Deps::default());
+    new(&service, &path);
+    configure(&service, "mock");
+    let events = Arc::new(Events::default());
+    let job = measure(&service, 1, events.clone());
+    succeeded(&events, job);
+
+    let values = events.values.lock().unwrap();
+    let first_role_done = values
+        .iter()
+        .position(|event| matches!(event, JobEvent::Progress { stage, .. } if stage == "L"))
+        .expect("the first role must finish");
+    assert!(values[..first_role_done].iter().any(|event| {
+        matches!(event, JobEvent::Progress { stage, .. } if stage == "running" || stage == "process")
+    }));
+    let final_progress = values
+        .iter()
+        .rev()
+        .find_map(|event| match event {
+            JobEvent::Progress { done, total, .. } => Some((*done, *total)),
+            _ => None,
+        })
+        .expect("measurement progress is absent");
+    assert_eq!(final_progress.0, final_progress.1);
+    drop(values);
+    fs::remove_dir_all(root).unwrap();
+}
+
 #[test]
 fn measurement_records_report_planned_positions_and_sources() {
     let root = root("records");
@@ -440,10 +479,7 @@ fn repetitions_accept_supported_values_and_acoustic_forces_one() {
         Request::ProjectSave(ProjectSaveParams { path: None }),
     );
     let project = secs_project::Project::load_text(&fs::read_to_string(&path).unwrap()).unwrap();
-    assert_eq!(
-        measure::plan_for(&project, &Default::default()).repetitions,
-        1
-    );
+    assert_eq!(plan_for(&project, &Default::default()).repetitions, 1);
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -513,8 +549,8 @@ fn position_clear_undo_is_byte_exact_and_single_use() {
 }
 fn rooms() -> BTreeMap<i64, secs_audio::SimRoom> {
     let project = secs_project::Project::from_preset("2.0").unwrap();
-    let plan = measure::plan_for(&project, &Default::default());
-    let (room, _) = measure::sample::room(&plan, 1).unwrap();
+    let plan = plan_for(&project, &Default::default());
+    let (room, _) = sample::room(&plan, 1).unwrap();
     BTreeMap::from([(1, room.clone()), (2, room)])
 }
 #[test]
@@ -530,7 +566,7 @@ fn device_group_exclusion_and_cancel_preserve_project() {
                 } else {
                     Duration::from_secs(5)
                 };
-                measure::MockMeasurer::with_rooms(rooms()).with_delay(delay)
+                MockMeasurer::with_rooms(rooms()).with_delay(delay)
             })
         },
         ..Default::default()
@@ -581,7 +617,7 @@ fn measuring_another_position_marks_calibration_stale() {
     let root = root("stale");
     let path = root.join("room.secs");
     let service = Service::new(Deps {
-        mock_measurer: Arc::new(|| measure::MockMeasurer::with_rooms(rooms())),
+        mock_measurer: Arc::new(|| MockMeasurer::with_rooms(rooms())),
         ..Default::default()
     });
     new(&service, &path);
@@ -662,6 +698,7 @@ fn mdat_scan_and_import_match_direct_oracle_bytes() {
     };
     succeeded(&events, job.job);
     assert_eq!(fs::read(&path).unwrap(), expected);
+    let recorded = secs_project::MeasurementStore::open(&path).unwrap();
     for (role, notes) in [("L", "global SPL"), ("R", "item SPL")] {
         let direct_source = root
             .join("direct/import.irs")
@@ -674,9 +711,7 @@ fn mdat_scan_and_import_match_direct_oracle_bytes() {
             fs::read(service_source).unwrap(),
             fs::read(direct_source).unwrap()
         );
-        let info =
-            secs_project::load_source(&path.with_extension("irs").join(format!("{role}_P1.wav")))
-                .unwrap();
+        let info = recorded.source_of(role, 1).unwrap();
         assert_eq!(info.notes.as_deref(), Some(notes));
         assert_eq!(info.format.as_deref(), Some("SECS2 measurement"));
     }
@@ -690,6 +725,161 @@ fn mdat_scan_and_import_match_direct_oracle_bytes() {
     );
     fs::remove_dir_all(root).unwrap();
 }
+
+#[derive(Clone, Debug)]
+struct StableCallbackTransport(secs_rew::RecordedTransport);
+
+impl secs_rew::Transport for StableCallbackTransport {
+    fn request(
+        &self,
+        request: &secs_rew::Request,
+    ) -> Result<secs_rew::Response, secs_rew::RewError> {
+        let mut request = request.clone();
+        if matches!(
+            request.path.as_str(),
+            "/measure/subscribe" | "/measure/unsubscribe"
+        ) && let Some(body) = request.body.as_mut()
+        {
+            body["url"] = json!("callback");
+        }
+        self.0.request(&request)
+    }
+}
+
+struct LateProgressState {
+    started: bool,
+    release: Option<std::sync::mpsc::SyncSender<()>>,
+    done: Option<std::sync::mpsc::Receiver<Result<(), String>>>,
+}
+
+#[derive(Clone)]
+struct LateProgressTransport {
+    recorded: secs_rew::RecordedTransport,
+    state: Arc<Mutex<LateProgressState>>,
+}
+
+fn read_http_response(stream: &mut std::net::TcpStream) -> Result<(), String> {
+    use std::io::Read as _;
+
+    let mut header = Vec::new();
+    while !header.ends_with(b"\r\n\r\n") {
+        let mut byte = [0_u8; 1];
+        stream
+            .read_exact(&mut byte)
+            .map_err(|error| error.to_string())?;
+        header.push(byte[0]);
+    }
+    let header = String::from_utf8(header).map_err(|error| error.to_string())?;
+    let length = header
+        .lines()
+        .find_map(|line| {
+            let (name, value) = line.split_once(':')?;
+            name.eq_ignore_ascii_case("content-length")
+                .then(|| value.trim().parse::<usize>().ok())
+                .flatten()
+        })
+        .unwrap_or(0);
+    let mut body = vec![0; length];
+    stream
+        .read_exact(&mut body)
+        .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+fn delayed_progress(
+    url: String,
+    headers_sent: std::sync::mpsc::SyncSender<()>,
+    release: std::sync::mpsc::Receiver<()>,
+) -> Result<(), String> {
+    use std::io::Write as _;
+
+    let target = url
+        .strip_prefix("http://")
+        .ok_or_else(|| format!("unexpected callback URL: {url}"))?;
+    let (address, path) = target
+        .split_once('/')
+        .ok_or_else(|| format!("callback URL has no path: {url}"))?;
+    let mut stream = std::net::TcpStream::connect(address).map_err(|error| error.to_string())?;
+    stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .map_err(|error| error.to_string())?;
+    let payload = serde_json::to_vec(&json!("50% late L")).unwrap();
+    write!(
+        stream,
+        "POST /{path} HTTP/1.1\r\nHost: {address}\r\nContent-Length: {}\r\n\r\n",
+        payload.len()
+    )
+    .map_err(|error| error.to_string())?;
+    stream.flush().map_err(|error| error.to_string())?;
+    headers_sent.send(()).map_err(|error| error.to_string())?;
+    release.recv().map_err(|error| error.to_string())?;
+    stream
+        .write_all(&payload)
+        .map_err(|error| error.to_string())?;
+    stream.flush().map_err(|error| error.to_string())?;
+    read_http_response(&mut stream)?;
+    write!(
+        stream,
+        "GET /{path} HTTP/1.1\r\nHost: {address}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+    )
+    .map_err(|error| error.to_string())?;
+    stream.flush().map_err(|error| error.to_string())?;
+    read_http_response(&mut stream)
+}
+
+impl secs_rew::Transport for LateProgressTransport {
+    fn request(
+        &self,
+        request: &secs_rew::Request,
+    ) -> Result<secs_rew::Response, secs_rew::RewError> {
+        let mut request = request.clone();
+        if request.path == "/measure/subscribe" {
+            let url = request
+                .body
+                .as_ref()
+                .and_then(|body| body["url"].as_str())
+                .expect("subscribe URL")
+                .to_owned();
+            let mut state = self.state.lock().unwrap();
+            if !state.started {
+                state.started = true;
+                let (headers_tx, headers_rx) = std::sync::mpsc::sync_channel(1);
+                let (release_tx, release_rx) = std::sync::mpsc::sync_channel(1);
+                let (done_tx, done_rx) = std::sync::mpsc::sync_channel(1);
+                std::thread::spawn(move || {
+                    let _ = done_tx.send(delayed_progress(url, headers_tx, release_rx));
+                });
+                headers_rx
+                    .recv_timeout(Duration::from_secs(5))
+                    .expect("late callback did not send headers");
+                std::thread::sleep(Duration::from_millis(100));
+                state.release = Some(release_tx);
+                state.done = Some(done_rx);
+            }
+            request.body.as_mut().unwrap()["url"] = json!("callback");
+        } else if request.path == "/measure/unsubscribe" {
+            request.body.as_mut().unwrap()["url"] = json!("callback");
+        } else if request.path == "/audio/java/output-channel"
+            && request
+                .body
+                .as_ref()
+                .is_some_and(|body| body["channel"] == "R")
+        {
+            let (release, done) = {
+                let mut state = self.state.lock().unwrap();
+                (state.release.take(), state.done.take())
+            };
+            if let (Some(release), Some(done)) = (release, done) {
+                release.send(()).unwrap();
+                done.recv_timeout(Duration::from_secs(5))
+                    .expect("late callback did not finish")
+                    .expect("late callback request failed");
+            }
+        }
+        self.recorded.request(&request)
+    }
+}
+
 fn get(path: &str, body: serde_json::Value, seconds: u64) -> secs_rew::RecordedExchange {
     secs_rew::RecordedExchange::new(
         secs_rew::Request::new("GET", path, None, Duration::from_secs(seconds)),
@@ -702,7 +892,7 @@ fn post(path: &str, body: serde_json::Value) -> secs_rew::RecordedExchange {
         json!({"message":"ok"}),
     )
 }
-fn rew_script() -> Vec<secs_rew::RecordedExchange> {
+fn rew_script_with_cal(input_cal: &str) -> Vec<secs_rew::RecordedExchange> {
     let mut script = vec![get(
         "/version",
         json!({"message":"5.40 Beta 124 API 0.9.4"}),
@@ -726,26 +916,24 @@ fn rew_script() -> Vec<secs_rew::RecordedExchange> {
                 get("/audio/java/inputs", json!(["1: Demo In 1"]), 5),
                 get("/audio/java/input-device", json!("Demo USB Mic"), 5),
             ]);
-        } else {
+        }
+        if i == 0 {
             script.extend([
-                get("/audio/java/input-device", json!("Demo USB Mic"), 5),
-                get("/audio/java/output-device", json!("Demo Speakers (2ch)"), 5),
-                get("/audio/java/input", json!("1: Demo In 1"), 5),
-                get("/audio/java/output-device", json!("Demo Speakers (2ch)"), 5),
-                get("/audio/java/input-device", json!("Demo USB Mic"), 5),
+                post("/application/blocking", json!(true)),
+                post("/audio/samplerate", json!({"value":48000.0,"unit":"Hz"})),
+                post(
+                    "/measure/sweep/configuration",
+                    json!({"startFrequency":20,"endFrequency":20000,"length":"64k"}),
+                ),
+                post("/measure/level", json!({"value":-20.0,"unit":"dBFS"})),
+                get("/measure/sweep/repetitions", json!(1), 5),
+                post("/measure/timing/reference", json!("None")),
             ]);
         }
-        script.extend([
-            post("/application/blocking", json!(true)),
-            post("/audio/samplerate", json!({"value":48000.0,"unit":"Hz"})),
-            post(
-                "/measure/sweep/configuration",
-                json!({"startFrequency":20,"endFrequency":20000,"length":"64k"}),
-            ),
-            post("/measure/level", json!({"value":-20.0,"unit":"dBFS"})),
-            get("/measure/sweep/repetitions", json!(1), 5),
-            post("/measure/timing/reference", json!("None")),
-        ]);
+        script.push(post(
+            "/measure/subscribe",
+            json!({"url":"callback","parameters":{}}),
+        ));
         script.extend([
             post("/audio/java/output-channel",json!({"channel":role})),
             post("/measure/naming",json!({"title":format!("{role} P1"),"namingOption":"Use as entered","prefixMeasNameWithOutput":false})),
@@ -775,17 +963,25 @@ fn rew_script() -> Vec<secs_rew::RecordedExchange> {
                 json!({"splOffsetdB":116.12}),
                 5,
             ),
-            get(
-                "/audio/input-cal",
-                json!({"separateCalFileForEachInput":false,"calDataAllInputs":{"calFilePath":""}}),
-                3,
-            ),
         ]);
+        script.push(post("/measure/unsubscribe", json!({"url":"callback"})));
+        if i == 0 {
+            script.push(get(
+                "/audio/input-cal",
+                json!({"separateCalFileForEachInput":false,"calDataAllInputs":{"calFilePath":input_cal}}),
+                3,
+            ));
+        }
     }
     script
 }
+
+fn rew_script() -> Vec<secs_rew::RecordedExchange> {
+    rew_script_with_cal("")
+}
+
 #[test]
-fn rew_recorded_transport_records_each_role_and_warning() {
+fn rew_configures_once_per_position_td172() {
     let root = root("rew");
     let path = root.join("room.secs");
     let mut script = rew_script();
@@ -797,7 +993,7 @@ fn rew_recorded_transport_records_each_role_and_warning() {
     let transport = secs_rew::RecordedTransport::new(script);
     let copy = transport.clone();
     let service = Service::new(Deps {
-        rew_transport: Arc::new(move || Box::new(copy.clone())),
+        rew_transport: Arc::new(move || Box::new(StableCallbackTransport(copy.clone()))),
         ..Default::default()
     });
     new(&service, &path);
@@ -815,19 +1011,270 @@ fn rew_recorded_transport_records_each_role_and_warning() {
     };
     assert_eq!(methods.rew.pro, Some(true));
     transport.assert_finished();
+    let calls = transport.calls();
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|request| request.path == "/measure/sweep/configuration")
+            .count(),
+        1
+    );
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|request| request.path == "/audio/java/output-channel")
+            .count(),
+        2
+    );
     let mut store = secs_project::MeasurementStore::open(&path).unwrap();
     for role in ["L", "R"] {
-        assert_eq!(
-            store.ir_of(role, 1).unwrap(),
-            (vec![1.0, -0.25, 0.125], 48000)
-        );
+        let (samples, rate) = store.ir_of(role, 1).unwrap();
+        assert_eq!(&*samples, &[1.0, -0.25, 0.125]);
+        assert_eq!(rate, 48000);
         assert_eq!(store.t0_of(role, 1), -0.125);
     }
     let values = events.values.lock().unwrap();
-    assert_eq!(values.len(), 6);
+    let low_snr_roles = values
+        .iter()
+        .filter_map(|event| match event {
+            JobEvent::Log { code, params, .. } if code == "measurement_low_snr" => {
+                Some(params["role"].as_str())
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(low_snr_roles, ["L", "R"]);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn late_progress_from_the_previous_role_is_ignored_td172() {
+    let root = root("rew-late-progress");
+    let path = root.join("room.secs");
+    let transport = secs_rew::RecordedTransport::new(rew_script());
+    let state = Arc::new(Mutex::new(LateProgressState {
+        started: false,
+        release: None,
+        done: None,
+    }));
+    let copy = transport.clone();
+    let state_copy = state.clone();
+    let service = Service::new(Deps {
+        rew_transport: Arc::new(move || {
+            Box::new(LateProgressTransport {
+                recorded: copy.clone(),
+                state: state_copy.clone(),
+            })
+        }),
+        ..Deps::default()
+    });
+    new(&service, &path);
+    configure(&service, "rew");
+    call(&service, Request::MeasureMethods);
+    let events = Arc::new(Events::default());
+    let job = measure(&service, 1, events.clone());
+    succeeded(&events, job);
+    transport.assert_finished();
+
+    let values = events.values.lock().unwrap();
+    let first_role_finished = values
+        .iter()
+        .position(|event| matches!(event, JobEvent::Progress { stage, .. } if stage == "L"))
+        .expect("L role completion");
     assert!(
-        matches!(&values[2],JobEvent::Log{code,params,..} if code=="measurement_low_snr" && params["role"]=="L")
+        values[first_role_finished + 1..]
+            .iter()
+            .any(|event| matches!(event, JobEvent::Progress { stage, .. } if stage == "R"))
     );
+    assert!(
+        !values[first_role_finished + 1..]
+            .iter()
+            .any(|event| matches!(event, JobEvent::Progress { stage, .. } if stage == "running"))
+    );
+    drop(values);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn subscribe_failure_is_kept_when_the_role_then_fails_td215() {
+    let root = root("rew-subscribe-and-sweep-failure");
+    let path = root.join("room.secs");
+    let mut script = rew_script();
+    let subscribe = script
+        .iter()
+        .position(|exchange| exchange.request.path == "/measure/subscribe")
+        .unwrap();
+    script[subscribe].response = Ok(secs_rew::Response {
+        status: 500,
+        body: json!({"message":"subscribe failed"}),
+    });
+    let sweep = script
+        .iter()
+        .enumerate()
+        .skip(subscribe + 1)
+        .find(|(_, exchange)| exchange.request.path == "/measure/command")
+        .unwrap()
+        .0;
+    script[sweep].response = Ok(secs_rew::Response {
+        status: 500,
+        body: json!({"message":"sweep failed"}),
+    });
+    script.truncate(sweep + 1);
+    let transport = secs_rew::RecordedTransport::new(script);
+    let copy = transport.clone();
+    let service = Service::new(Deps {
+        rew_transport: Arc::new(move || Box::new(StableCallbackTransport(copy.clone()))),
+        ..Deps::default()
+    });
+    new(&service, &path);
+    configure(&service, "rew");
+    call(&service, Request::MeasureMethods);
+    let events = Arc::new(Events::default());
+    let job = measure(&service, 1, events.clone());
+
+    let JobEvent::Finished {
+        status: JobStatus::Failed,
+        error: Some(error),
+        ..
+    } = events.wait(job, Duration::from_secs(5))
+    else {
+        panic!("measurement must fail after the rejected sweep")
+    };
+    assert!(error.detail.contains("sweep failed"));
+    assert!(
+        error
+            .params
+            .get("subscribe_error")
+            .is_some_and(|detail| detail.contains("subscribe failed"))
+    );
+    transport.assert_finished();
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn subscribe_failure_is_noticed_td215() {
+    let root = root("rew-subscribe-failure");
+    let path = root.join("room.secs");
+    let mut script = rew_script();
+    let subscribe = script
+        .iter()
+        .position(|exchange| exchange.request.path == "/measure/subscribe")
+        .unwrap();
+    script[subscribe].response = Ok(secs_rew::Response {
+        status: 500,
+        body: json!({"message":"subscribe failed"}),
+    });
+    let unsubscribe = script
+        .iter()
+        .enumerate()
+        .skip(subscribe + 1)
+        .find(|(_, exchange)| exchange.request.path == "/measure/unsubscribe")
+        .unwrap()
+        .0;
+    script.remove(unsubscribe);
+    let transport = secs_rew::RecordedTransport::new(script);
+    let copy = transport.clone();
+    let service = Service::new(Deps {
+        rew_transport: Arc::new(move || Box::new(StableCallbackTransport(copy.clone()))),
+        ..Deps::default()
+    });
+    new(&service, &path);
+    configure(&service, "rew");
+    call(&service, Request::MeasureMethods);
+    let events = Arc::new(Events::default());
+    let job = measure(&service, 1, events.clone());
+    succeeded(&events, job);
+    transport.assert_finished();
+
+    let values = events.values.lock().unwrap();
+    assert!(values.iter().any(|event| {
+        matches!(event, JobEvent::Log { code, params, .. }
+            if code == "measurement_subscribe_failed" && params["role"] == "L")
+    }));
+    drop(values);
+    let mut store = secs_project::MeasurementStore::open(&path).unwrap();
+    assert!(store.ir_of("L", 1).is_ok());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn sidecar_build_failure_is_noticed_td215() {
+    let root = root("rew-sidecar-failure");
+    let path = root.join("room.secs");
+    let cal = root.join("invalid-sensitivity.cal");
+    fs::write(
+        &cal,
+        b"Sens Factor = 1.2.3
+",
+    )
+    .unwrap();
+    let transport = secs_rew::RecordedTransport::new(rew_script_with_cal(&cal.to_string_lossy()));
+    let copy = transport.clone();
+    let service = Service::new(Deps {
+        rew_transport: Arc::new(move || Box::new(StableCallbackTransport(copy.clone()))),
+        ..Deps::default()
+    });
+    new(&service, &path);
+    configure(&service, "rew");
+    call(&service, Request::MeasureMethods);
+    let events = Arc::new(Events::default());
+    let job = measure(&service, 1, events.clone());
+    succeeded(&events, job);
+    transport.assert_finished();
+
+    let values = events.values.lock().unwrap();
+    assert!(values.iter().any(|event| {
+        matches!(event, JobEvent::Log { code, params, .. }
+            if code == "measurement_source_missing" && params["role"] == "L")
+    }));
+    drop(values);
+    let mut store = secs_project::MeasurementStore::open(&path).unwrap();
+    assert!(store.ir_of("L", 1).is_ok());
+    assert_eq!(store.source_of("L", 1), None);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn oversized_input_cal_file_is_refused_with_a_notice_and_read_once_td170() {
+    let root = root("rew-cal-limit");
+    let path = root.join("room.secs");
+    let cal = root.join("oversized.cal");
+    fs::File::create(&cal)
+        .unwrap()
+        .set_len(4 * 1024 * 1024 + 1)
+        .unwrap();
+    let transport = secs_rew::RecordedTransport::new(rew_script_with_cal(&cal.to_string_lossy()));
+    let copy = transport.clone();
+    let service = Service::new(Deps {
+        rew_transport: Arc::new(move || Box::new(StableCallbackTransport(copy.clone()))),
+        ..Deps::default()
+    });
+    new(&service, &path);
+    configure(&service, "rew");
+    let Response::MeasureMethods(_) = call(&service, Request::MeasureMethods) else {
+        panic!("REW methods must be available")
+    };
+    let events = Arc::new(Events::default());
+    let job = measure(&service, 1, events.clone());
+    succeeded(&events, job);
+    transport.assert_finished();
+
+    let values = events.values.lock().unwrap();
+    let notices = values
+        .iter()
+        .filter_map(|event| match event {
+            JobEvent::Log { code, params, .. } if code == "measurement_calibration_too_large" => {
+                Some(params)
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(notices.len(), 1);
+    assert_eq!(
+        notices[0].get("path").map(String::as_str),
+        Some(cal.to_string_lossy().as_ref())
+    );
+    drop(values);
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -852,7 +1299,7 @@ fn rew_license_observation_tracks_rejection_success_and_launch_reset() {
     let transport = secs_rew::RecordedTransport::new(script);
     let copy = transport.clone();
     let service = Service::new(Deps {
-        rew_transport: Arc::new(move || Box::new(copy.clone())),
+        rew_transport: Arc::new(move || Box::new(StableCallbackTransport(copy.clone()))),
         ..Default::default()
     });
     new(&service, &path);
@@ -920,15 +1367,15 @@ fn rew_cancel_keeps_already_recorded_role() {
     let second = script
         .iter()
         .enumerate()
-        .filter(|(_, e)| e.request.path == "/audio/java/input-device")
-        .nth(2)
+        .filter(|(_, exchange)| exchange.request.path == "/measure/subscribe")
+        .nth(1)
         .unwrap()
         .0;
     script.truncate(second);
     let transport = secs_rew::RecordedTransport::new(script);
     let copy = transport.clone();
     let service = Arc::new(Service::new(Deps {
-        rew_transport: Arc::new(move || Box::new(copy.clone())),
+        rew_transport: Arc::new(move || Box::new(StableCallbackTransport(copy.clone()))),
         ..Default::default()
     }));
     new(&service, &path);
@@ -1030,9 +1477,81 @@ fn undo_retains_only_last_sixteen_tokens_and_original_order() {
 struct LaunchHost(Result<(), secs_service::RewLaunchError>);
 
 impl secs_service::Host for LaunchHost {
-    fn launch_rew(&self) -> Result<(), secs_service::RewLaunchError> {
+    fn launch_rew(&self, _executable: Option<&Path>) -> Result<(), secs_service::RewLaunchError> {
         self.0.clone()
     }
+}
+
+#[derive(Debug, Default)]
+struct RecordingLaunchHost(Mutex<Vec<Option<PathBuf>>>);
+
+impl secs_service::Host for RecordingLaunchHost {
+    fn launch_rew(&self, executable: Option<&Path>) -> Result<(), secs_service::RewLaunchError> {
+        self.0
+            .lock()
+            .unwrap()
+            .push(executable.map(Path::to_path_buf));
+        Ok(())
+    }
+}
+
+/// TD-221: a project may name the REW executable. The launch hands that path
+/// to the host instead of the fixed install paths, an empty value clears it,
+/// and a relative path is refused before it is stored.
+#[test]
+fn rew_launch_tries_the_configured_executable_first_td221() {
+    let root = root("rew-executable");
+    let host = Arc::new(RecordingLaunchHost::default());
+    let service = Service::new(Deps {
+        host: host.clone(),
+        ..Default::default()
+    });
+    new(&service, &root.join("room.secs"));
+    call(&service, Request::RewLaunch);
+
+    let exe = root.join("tools").join("roomeqwizard.exe");
+    let exe_text = exe.to_string_lossy().into_owned();
+    let Response::MeasureConfigure(result) = call(
+        &service,
+        Request::MeasureConfigure(MeasureConfigureParams {
+            method: "rew".into(),
+            rew_executable: Some(exe_text.clone()),
+            ..Default::default()
+        }),
+    ) else {
+        panic!()
+    };
+    assert_eq!(result.rew_executable.as_deref(), Some(exe_text.as_str()));
+    call(&service, Request::RewLaunch);
+
+    let Envelope::Err(error) = service.call(
+        Request::MeasureConfigure(MeasureConfigureParams {
+            method: "rew".into(),
+            rew_executable: Some("tools/roomeqwizard.exe".into()),
+            ..Default::default()
+        }),
+        Arc::new(NoEvents),
+    ) else {
+        panic!()
+    };
+    assert_eq!(error.code, ErrorCode::MeasurementInput);
+    assert_eq!(error.params["field"], "rew_executable");
+
+    let Response::MeasureConfigure(result) = call(
+        &service,
+        Request::MeasureConfigure(MeasureConfigureParams {
+            method: "rew".into(),
+            rew_executable: Some(String::new()),
+            ..Default::default()
+        }),
+    ) else {
+        panic!()
+    };
+    assert_eq!(result.rew_executable, None);
+    call(&service, Request::RewLaunch);
+
+    assert_eq!(*host.0.lock().unwrap(), vec![None, Some(exe), None]);
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
@@ -1079,6 +1598,47 @@ fn rew_launch_classifies_reasons_and_returns_after_spawn() {
             pro: None,
         }
     );
+}
+
+#[test]
+fn unparsable_mic_calibration_setting_names_itself_td268() {
+    let root = root("bad-mic-calibration-setting");
+    let path = root.join("room.secs");
+    let mut project = secs_project::Project::from_preset("2.0").unwrap();
+    project.extra.push((
+        "devices".into(),
+        secs_project::PyJson::Object(vec![(
+            "mic_calibration".into(),
+            secs_project::PyJson::Str("not a calibration".into()),
+        )]),
+    ));
+    fs::write(&path, project.save_text()).unwrap();
+    let service = Service::new(Deps::default());
+    call(
+        &service,
+        Request::ProjectOpen(ProjectPathParams {
+            path: path.to_string_lossy().into_owned(),
+        }),
+    );
+
+    let Envelope::Err(error) = service.call(Request::MeasureConfigGet, Arc::new(NoEvents)) else {
+        panic!("invalid microphone calibration must fail measure_config_get")
+    };
+    assert_eq!(error.code, ErrorCode::MeasurementInput);
+    assert_eq!(
+        error.params.get("field").map(String::as_str),
+        Some("mic_calibration")
+    );
+
+    let Envelope::Err(error) = service.call(Request::MicCalibrationGet, Arc::new(NoEvents)) else {
+        panic!("mic_calibration_get must retain its typed parse error")
+    };
+    assert_eq!(error.code, ErrorCode::MeasurementInput);
+    assert_eq!(
+        error.params.get("reason").map(String::as_str),
+        Some("mic_calibration")
+    );
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]

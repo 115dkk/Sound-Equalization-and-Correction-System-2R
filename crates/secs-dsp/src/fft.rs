@@ -134,7 +134,6 @@ pub fn rfft(x: &[f64]) -> Vec<Complex64> {
 }
 
 /// Internal consuming transform avoids copying freshly padded/centered data.
-#[allow(dead_code)]
 pub(crate) fn rfft_owned(mut x: Vec<f64>) -> Vec<Complex64> {
     assert!(!x.is_empty(), "FFT length must be positive");
     let plan = real_forward(x.len());

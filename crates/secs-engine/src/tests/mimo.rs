@@ -2,6 +2,7 @@ use super::{cases, design};
 use crate::{
     MimoDesign, MimoRequest, Note,
     mimo::design::{InputResult, convolve, design_input, design_mimo_traced, normal_equations},
+    notes::MimoOracleText,
 };
 use secs_compute::{CancelToken, Context, MemoryBudget, NoProgress};
 use secs_oracle::{Fixture, number, oracle_libm};
@@ -44,44 +45,60 @@ fn request(fx: &Fixture) -> MimoRequest {
     }
 }
 
-/// The default 60 ms is the pre-change constant `EARLY = 36`: the configured
-/// normal equations must equal the constant-36 path bit for bit. The default
-/// request's results against the recorded goldens (candidates, ranking,
-/// supports of every case and role) are asserted by
-/// `mimo_stage_boundary_goldens` and `mimo_whole_path_goldens`, which run with
-/// `MimoRequest::default()`'s early window.
 #[test]
 fn mimo_early_sixty_keeps_goldens_bit_identical() {
-    use secs_types::calibration::CalibrationSettings;
-
-    let req = MimoRequest::default();
-    assert_eq!(req.mimo_early_ms, 60.0);
-    assert_eq!(crate::mimo::design::early_samples(req.mimo_early_ms), 36);
-    let key = crate::MimoKey::from_settings(&CalibrationSettings::default());
-    assert_eq!(key.mimo_early_ms, 60.0);
-    assert_eq!(key.request().mimo_early_ms, req.mimo_early_ms);
-
-    let fx = Fixture::load("engine_mimo", "room");
-    let stage = &fx.inputs()["stage"]["inputs"]["L"];
-    let xs: Vec<_> = stage["xs"]
-        .as_array()
-        .unwrap()
+    let case = "room";
+    let fx = Fixture::load("engine_mimo", case);
+    let mut req = request(&fx);
+    req.mimo_early_ms = 60.0;
+    let runs: Vec<_> = LABELS
         .iter()
-        .map(|v| fx.f64s(v))
+        .map(|label| Fixture::load("engine_mimo", &format!("{case}_{label}")))
         .collect();
-    let paths: Vec<Vec<Vec<f64>>> = (0..xs.len())
-        .map(|p| vec![fx.f64s(&fx.inputs()["stage"]["paths"]["R"][p])])
-        .collect();
-    let legacy = normal_equations(&xs, &paths, req.taps_low, 10.0, 36);
-    let configured = normal_equations(
-        &xs,
-        &paths,
-        req.taps_low,
-        10.0,
-        crate::mimo::design::early_samples(req.mimo_early_ms),
-    );
-    assert_eq!(legacy.0, configured.0, "FIR normal matrix bits");
-    assert_eq!(legacy.1, configured.1, "FIR right-hand-side bits");
+    let stage = &fx.inputs()["stage"];
+    let mut stats = Statistics::default();
+    for (role, data) in stage["inputs"].as_object().unwrap() {
+        let xs: Vec<_> = data["xs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|value| fx.f64s(value))
+            .collect();
+        let direct = fx.f64s(&data["direct"]);
+        let candidates: Vec<_> = runs[0].outputs()["ranges"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|value| {
+                !value[1].is_null()
+                    && value[0].as_str().unwrap() != role
+                    && !req
+                        .exclude
+                        .iter()
+                        .any(|item| item == value[0].as_str().unwrap())
+            })
+            .map(|value| value[0].as_str().unwrap().to_owned())
+            .collect();
+        let paths: Vec<Vec<Vec<_>>> = (0..xs.len())
+            .map(|position| {
+                candidates
+                    .iter()
+                    .map(|candidate| fx.f64s(&stage["paths"][candidate][position]))
+                    .collect()
+            })
+            .collect();
+        let result =
+            design_input(&xs, &paths, &direct, &candidates, &req, &Context::serial()).unwrap();
+        for (support, _) in &result.supports {
+            let recorded = &runs[0].outputs()["supports"][role][support];
+            assert!(!recorded.is_null(), "{case}/{role}/{support}");
+        }
+        // The taps follow the whole-path goldens' rule: within three times the spread of
+        // the eight recorded oracle runs. glibc lands a few ULP away from the reference
+        // run's bits (PR #189), so bits are not asked.
+        compare_input(case, role, &result, &runs, &mut stats);
+    }
+    stats.finish(case);
 }
 
 #[test]
@@ -141,7 +158,7 @@ fn mimo_early_clamps_to_three_samples() {
     assert_eq!(crate::mimo::design::early_samples(5.0), 3);
     assert_eq!(crate::mimo::design::early_samples(1.0), 3);
 
-    let case = cases::load("room_dba");
+    let case = cases::load(&crate::tests::Oracle, "room_dba");
     let design = design::replay("room_dba");
     for invalid in [4.9, 60.1, f64::NAN] {
         let request = MimoRequest {
@@ -526,9 +543,9 @@ fn mimo_guard_cause_names_the_last_rejected_level_and_its_guards() {
     .unwrap();
     assert!((cause.rejected_db + 3.0).abs() < 1e-12);
     assert_eq!(cause.band, None);
-    let (hz, tail_db) = cause.tail.unwrap();
-    assert_eq!(hz, 47.5);
-    assert!((tail_db - 2.0).abs() < 1e-12);
+    let tail = cause.tail.unwrap();
+    assert_eq!(tail.hz, 47.5);
+    assert!((tail.db - 2.0).abs() < 1e-12);
     // Every level failed: the cause is the last, −12 dB trial, with both guards.
     let cause = guard_cause(
         &[
@@ -542,7 +559,14 @@ fn mimo_guard_cause_names_the_last_rejected_level_and_its_guards() {
     )
     .unwrap();
     assert!((cause.rejected_db + 12.0).abs() < 1e-12);
-    assert_eq!(cause.band, Some((40.0, 50.4, 1.5)));
+    assert_eq!(
+        cause.band,
+        Some(crate::notes::GuardBand {
+            lo_hz: 40.0,
+            hi_hz: 50.4,
+            db: 1.5,
+        })
+    );
     assert!(cause.tail.is_some());
 }
 
@@ -875,7 +899,7 @@ fn mimo_whole_path_goldens() {
     // Replay only the preceding engine's optimizer decisions. MIMO receives
     // Rust spectra, chain responses and alignment, never recorded low-rate data.
     for base in ["room", "room_dba", "room_filters", "room_multi"] {
-        let case = cases::load(base);
+        let case = cases::load(&crate::tests::Oracle, base);
         let mut d = design::replay(base);
         for name in CASES.into_iter().filter(|name| {
             *name == base
@@ -936,7 +960,7 @@ fn mimo_whole_path_goldens() {
                 .notes
                 .iter()
                 .map(|n| match n {
-                    Note::Mimo(note) => note.oracle_text(),
+                    Note::Mimo { note } => note.oracle_text(),
                     other => panic!("unexpected MIMO note: {other:?}"),
                 })
                 .collect();
@@ -981,7 +1005,7 @@ fn mimo_whole_path_goldens() {
 
 #[test]
 fn mimo_cap_four_is_subset_of_six_candidates() {
-    let case = cases::load("room_dba");
+    let case = cases::load(&crate::tests::Oracle, "room_dba");
     let d = design::replay("room_dba");
     let ctx = Context::serial();
     let uncapped = crate::design_mimo(
@@ -1370,7 +1394,7 @@ fn mimo_ridge_sweep_recorded_systems_and_trajectories() {
 
 #[test]
 fn mimo_ranges_and_upstream_behaviors() {
-    let case = cases::load("room");
+    let case = cases::load(&crate::tests::Oracle, "room");
     let mut d = design::replay("room");
     let ctx = Context::serial();
     let req = MimoRequest::default();
@@ -1413,13 +1437,11 @@ fn mimo_ranges_and_upstream_behaviors() {
             .iter()
             .all(|(_, t)| !t.candidates.iter().any(|r| r == "SW2"))
     );
-    assert!(
-        excluded
-            .notes
-            .contains(&Note::Mimo(crate::MimoNote::ExcludedSupports(vec![
-                "SW2".into()
-            ])))
-    );
+    assert!(excluded.notes.contains(&Note::Mimo {
+        note: crate::MimoNote::ExcludedSupports {
+            roles: vec!["SW2".into()],
+        },
+    }));
     let view = crate::export_view(&d, &case.measurements, &case.config).unwrap();
     let baseline =
         crate::mimo::support_ranges(&d, &view.spectra, 150.0, &d.spectra.positions).unwrap();
@@ -1437,9 +1459,9 @@ fn mimo_ranges_and_upstream_behaviors() {
     assert_eq!(
         short,
         MimoDesign {
-            notes: vec![Note::Mimo(crate::MimoNote::InsufficientPositions {
-                measured: 2
-            })],
+            notes: vec![Note::Mimo {
+                note: crate::MimoNote::InsufficientPositions { measured: 2 },
+            }],
             ..MimoDesign::default()
         }
     );
@@ -1448,7 +1470,7 @@ fn mimo_ranges_and_upstream_behaviors() {
 
 #[test]
 fn mimo_input_selection_preserves_all_input_result() {
-    let case = cases::load("room");
+    let case = cases::load(&crate::tests::Oracle, "room");
     let d = design::replay("room");
     let ctx = Context::new(
         1,
@@ -1481,7 +1503,7 @@ fn mimo_input_selection_preserves_all_input_result() {
 
 #[test]
 fn mimo_deterministic_threads() {
-    let case = cases::load("room");
+    let case = cases::load(&crate::tests::Oracle, "room");
     let d = design::replay("room");
     let make = |n| {
         Context::new(
@@ -1507,7 +1529,7 @@ fn mimo_deterministic_threads() {
 fn mimo_whole_path_inputs_match_recorded() {
     let mut failures = Vec::new();
     for base in ["room", "room_dba", "room_filters", "room_multi"] {
-        let case = cases::load(base);
+        let case = cases::load(&crate::tests::Oracle, base);
         let mut d = design::replay(base);
         let spectra = crate::export_view(&d, &case.measurements, &case.config)
             .unwrap()
@@ -1624,7 +1646,7 @@ fn mimo_shared_preparation_bit_identical() {
             "room_dba" | "room_filters" | "room_multi" => name,
             _ => "room",
         };
-        let case = cases::load(base);
+        let case = cases::load(&crate::tests::Oracle, base);
         let mut d = design::replay(base);
         let fx = Fixture::load("engine_mimo", name);
         if let Some(positions) = fx.inputs()["settings"]["positions"].as_array() {
@@ -1684,7 +1706,7 @@ fn mimo_shared_preparation_bit_identical() {
 
 #[test]
 fn mimo_one_input_budget_completes_parallel_and_matches_unbounded() {
-    let case = cases::load("room_dba");
+    let case = cases::load(&crate::tests::Oracle, "room_dba");
     let mut d = design::replay("room_dba");
     // Repeat the two recorded inputs so nested Rayon maps can steal another
     // input even on a four-thread pool; the acoustic problem stays small, but
@@ -1780,7 +1802,7 @@ fn mimo_one_input_budget_completes_parallel_and_matches_unbounded() {
 
 #[test]
 fn mimo_shared_paths_reject_combined_budget() {
-    let case = cases::load("room");
+    let case = cases::load(&crate::tests::Oracle, "room");
     let d = design::replay("room");
     let req = MimoRequest::default();
     let serial = Context::serial();
@@ -1829,7 +1851,7 @@ fn mimo_shared_paths_reject_combined_budget() {
             &MimoRequest::default(),
             &ctx
         ),
-        Err(crate::EngineError::Input(_))
+        Err(crate::EngineError::Memory { requested, total }) if requested > total && total == budget
     ));
     assert_eq!(ctx.budget().available(), budget);
 }

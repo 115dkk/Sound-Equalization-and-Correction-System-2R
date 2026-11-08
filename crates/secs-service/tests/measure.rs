@@ -1,11 +1,18 @@
 #![forbid(unsafe_code)]
 use secs_project::{MeasurementStore, Project, PyJson};
-use secs_service::measure::*;
+use secs_service::{
+    CancelToken, Deps, EventSink, MeasureError, MeasurementSettings, MockMeasurer, NoEvents,
+    RewMeasurer, Service, plan_for, sample, store_devices, to_audio_plan, to_rew_plan,
+};
+use secs_types::ipc::{
+    Envelope, JobCancelParams, JobEvent, JobStatus, MeasureConfigureParams, MeasurePositionParams,
+    ProjectNewParams, Request, Response,
+};
 use std::{
     collections::BTreeMap,
     path::PathBuf,
-    sync::{Arc, Mutex},
-    time::Duration,
+    sync::{Arc, Condvar, Mutex},
+    time::{Duration, Instant},
 };
 fn project() -> Project {
     Project::from_preset("2.0").unwrap()
@@ -98,7 +105,7 @@ fn test_measure_two_positions_then_redo_last() {
     let mut store = MeasurementStore::new(&path, project());
     for pos in [1, 2] {
         let results = mock
-            .measure_position(&p, pos, None, &CancelToken::default())
+            .measure_position(&p, pos, &CancelToken::default())
             .unwrap();
         store.start_position(pos);
         for r in results {
@@ -121,7 +128,7 @@ fn test_measure_two_positions_then_redo_last() {
             let role = r.role.clone();
             let samples = r.ir.clone();
             store.record(r, Some(&p.roles)).unwrap();
-            assert_eq!(store.ir_of(&role, pos).unwrap().0, samples);
+            assert_eq!(&*store.ir_of(&role, pos).unwrap().0, samples.as_slice());
         }
     }
     assert_eq!(store.done_positions(Some(&p.roles)), vec![1, 2]);
@@ -138,7 +145,7 @@ fn test_sample_mode_refuses_position_2() {
     let p = plan();
     let mut mock = MockMeasurer::new();
     assert!(
-        mock.measure_position(&p, 2, None, &CancelToken::default())
+        mock.measure_position(&p, 2, &CancelToken::default())
             .is_err()
     );
     assert!(sample::ir("L:LF", 1).is_err());
@@ -162,7 +169,7 @@ fn test_sample_mode_keeps_the_real_inter_channel_t0_differences() {
     p.sweep_length = "64k".into();
     let mut mock = MockMeasurer::new();
     let got = mock
-        .measure_position(&p, 1, None, &CancelToken::default())
+        .measure_position(&p, 1, &CancelToken::default())
         .unwrap();
     let mut arrivals = vec![];
     for r in got {
@@ -213,7 +220,7 @@ fn test_measurements_follow_contract_shape() {
     let dir = temp("rew");
     let mut store = MeasurementStore::new(dir.join("room.secs"), project());
     for r in rew
-        .measure_position(&p, 1, None, &CancelToken::default())
+        .measure_position(&p, 1, &CancelToken::default())
         .unwrap()
     {
         let (ir, rate, t0) = sample::ir(&r.role, 1).unwrap();
@@ -230,6 +237,24 @@ fn test_measurements_follow_contract_shape() {
     assert_eq!(records[0].uuid.len(), p.roles.len());
     std::fs::remove_dir_all(dir).unwrap();
 }
+#[test]
+fn rew_pro_gate_is_reported_through_the_measurer_td220() {
+    let mut fake = secs_rew::FakeRew::new(sample::SampleSource);
+    fake.options.delay = Duration::ZERO;
+    fake.options.pro = false;
+    let mut rew = RewMeasurer::new(fake, Arc::new(|| 0));
+    let error = rew
+        .measure_position(&plan(), 1, &CancelToken::default())
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        MeasureError::Rew(secs_rew::RewError::ProRequired {
+            status: 403,
+            ref path,
+        }) if path == "/measure/sweep/configuration"
+    ));
+}
+
 #[test]
 fn rew_measurements_capture_calibration_and_keep_bad_sensitivity_measurements() {
     let mut p = plan();
@@ -251,7 +276,7 @@ fn rew_measurements_capture_calibration_and_keep_bad_sensitivity_measurements() 
         }),
     );
     let results = rew
-        .measure_position(&p, 1, None, &CancelToken::default())
+        .measure_position(&p, 1, &CancelToken::default())
         .unwrap();
     assert_eq!(
         clock_calls.load(std::sync::atomic::Ordering::Relaxed),
@@ -309,7 +334,7 @@ fn rew_measurements_capture_calibration_and_keep_bad_sensitivity_measurements() 
 
     std::fs::write(&cal, b"Sens Factor = 1.2.3 dB\n20 -1.0\n").unwrap();
     let bad = rew
-        .measure_position(&p, 1, None, &CancelToken::default())
+        .measure_position(&p, 1, &CancelToken::default())
         .unwrap();
     assert_eq!(bad.len(), p.roles.len());
     assert!(bad.iter().all(|result| result.source_info.is_none()));
@@ -327,7 +352,7 @@ fn rew_source_devices_fall_back_only_to_names_in_rew_lists() {
     fake.options.current_audio = secs_rew::CurrentAudio::default();
     let mut rew = RewMeasurer::new(fake, Arc::new(|| 0));
     let result = rew
-        .measure_position(&p, 1, None, &CancelToken::default())
+        .measure_position(&p, 1, &CancelToken::default())
         .unwrap();
     let source = result[0].source_info.as_ref().unwrap();
     assert!(source.strings.iter().any(|(key, value)| {
@@ -343,29 +368,113 @@ fn rew_source_devices_fall_back_only_to_names_in_rew_lists() {
     p.output_device = "wasapi:{not-rew-output}".into();
     p.input_device = "wasapi:{not-rew-input}".into();
     let result = rew
-        .measure_position(&p, 1, None, &CancelToken::default())
+        .measure_position(&p, 1, &CancelToken::default())
         .unwrap();
     assert!(result[0].source_info.is_none());
 }
 
+#[derive(Debug)]
+struct CancelOnStarted {
+    service: Arc<Service>,
+    events: Mutex<Vec<JobEvent>>,
+    changed: Condvar,
+}
+
+impl EventSink for CancelOnStarted {
+    fn send(&self, event: JobEvent) {
+        if let JobEvent::Started { job, .. } = &event {
+            let response = self.service.call(
+                Request::JobCancel(JobCancelParams { job: *job }),
+                Arc::new(NoEvents),
+            );
+            assert!(matches!(response, Envelope::Ok(_)));
+        }
+        self.events.lock().unwrap().push(event);
+        self.changed.notify_all();
+    }
+}
+
+impl CancelOnStarted {
+    fn wait_finished(&self) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut events = self.events.lock().unwrap();
+        while !events
+            .iter()
+            .any(|event| matches!(event, JobEvent::Finished { .. }))
+        {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            assert!(!remaining.is_zero(), "measurement did not finish");
+            events = self.changed.wait_timeout(events, remaining).unwrap().0;
+        }
+    }
+}
+
 #[test]
 fn test_cancel_before_start_measures_nothing() {
-    let cancel = CancelToken::default();
-    cancel.cancel();
-    let events = Arc::new(Mutex::new(vec![]));
-    let copy = events.clone();
-    let mut mock = MockMeasurer::new();
-    assert!(
-        mock.measure_position(
-            &plan(),
-            1,
-            Some(Arc::new(move |p| copy.lock().unwrap().push(p))),
-            &cancel
-        )
-        .unwrap()
-        .is_empty()
+    let dir = temp("cancel-before-start");
+    let path = dir.join("room.secs");
+    let service = Arc::new(Service::new(Deps::default()));
+    assert!(matches!(
+        service.call(
+            Request::ProjectNew(ProjectNewParams {
+                path: path.to_string_lossy().into_owned(),
+                preset: "2.0".into(),
+                sub_count: 0,
+                sample: false,
+                tutorial: false,
+            }),
+            Arc::new(NoEvents),
+        ),
+        Envelope::Ok(_)
+    ));
+    assert!(matches!(
+        service.call(
+            Request::MeasureConfigure(MeasureConfigureParams {
+                method: "mock".into(),
+                ..Default::default()
+            }),
+            Arc::new(NoEvents),
+        ),
+        Envelope::Ok(_)
+    ));
+    let events = Arc::new(CancelOnStarted {
+        service: service.clone(),
+        events: Mutex::new(Vec::new()),
+        changed: Condvar::new(),
+    });
+    assert!(matches!(
+        service.call(
+            Request::MeasurePosition(MeasurePositionParams { position: 1 }),
+            events.clone(),
+        ),
+        Envelope::Ok(response) if matches!(*response, Response::MeasurePosition(_))
+    ));
+    events.wait_finished();
+
+    let values = events.events.lock().unwrap();
+    assert!(matches!(
+        values.last(),
+        Some(JobEvent::Finished {
+            status: JobStatus::Cancelled,
+            ..
+        })
+    ));
+    assert_eq!(
+        values.iter().rev().find_map(|event| match event {
+            JobEvent::Progress { stage, .. } => Some(stage.as_str()),
+            _ => None,
+        }),
+        Some("cancelled")
     );
-    assert_eq!(events.lock().unwrap().last().unwrap().phase, "cancelled");
+    drop(values);
+    let Envelope::Ok(response) = service.call(Request::ProjectInfo, Arc::new(NoEvents)) else {
+        panic!()
+    };
+    let Response::ProjectInfo(info) = *response else {
+        panic!()
+    };
+    assert!(info.positions.is_empty());
+    std::fs::remove_dir_all(dir).unwrap();
 }
 #[test]
 fn native_plan_ignores_the_rew_only_timing_and_repetitions_u15() {

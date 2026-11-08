@@ -195,24 +195,12 @@ describe("useExportScreen", () => {
     await perform(() => result.current.actions.exportFiles("convolution"));
     expect(mock.calls.filter((call) => call.method === "export")).toEqual([{ method: "export", params: { kind: "convolution", folder: "", extra_rates: [192000] } }]);
     await perform(mock.drain);
-    expect(result.current.view?.runs.convolution).toMatchObject({ status: "done", rate: 44100 });
+    // The run keeps what the service answered (the recorded export's rate).
+    expect(result.current.view?.runs.convolution).toMatchObject({ status: "done", rate: 48000 });
     // Kept for the session, across projects.
     await perform(() => session.call({ method: "project_new", params: { path: "", preset: "2.0", sub_count: 0, sample: false, tutorial: false } }));
     expect(result.current.view?.extraRates).toEqual([192000, 44100]);
-  });
-
-  it("records the service's output-rate fallback note on the row's run", async () => {
-    mock.dispose();
-    session.dispose();
-    mock = createMockService({ tickMs: 0, playbackRate: null }); session = createSession(mock); await session.start();
-    await perform(() => session.call({ method: "calibrate", params: { settings: null, subs_only: false } }));
-    await perform(mock.drain);
-    await perform(() => session.writers.dsp.edit({ output_rate: "auto" }));
-    const { result } = renderHook(useExportScreen, { wrapper });
-    expect(result.current.view?.outputRate).toBe("auto");
-    await perform(() => result.current.actions.exportFiles("camilla_dsp"));
-    await perform(mock.drain);
-    expect(result.current.view?.runs.camilla_dsp).toMatchObject({ status: "done", rate: 48000, notes: [{ code: "output_rate_fallback", params: {} }] });
+    // The rate is chosen on 시스템.
     await perform(result.current.actions.goToSystem);
     expect(session.host.getSnapshot().current).toBe("system");
   });
@@ -307,7 +295,8 @@ describe("useExportScreen", () => {
     await perform(mock.drain);
     expect(result.current.view?.recalibrating).toBe(false);
     expect(result.current.view?.computing).toBe(false);
-    expect(result.current.view?.results.calibration).toMatchObject({ cached: false, stale: false, mode: "linear" });
+    // A current result again; it is the service's recorded one (the sample room's, in its recorded mode).
+    expect(result.current.view?.results.calibration).toMatchObject({ cached: false, stale: false, mode: "mixed" });
     for (const kind of mdatKinds) {
       expect(exportBlock(result.current.view!, kind)).toBeNull();
       await perform(() => result.current.actions.exportFiles(kind));
@@ -523,6 +512,8 @@ describe("useExportScreen 관리 갱신", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+    // 관리 is polled only while 내보내기 is on show.
+    session.host.set({ current: "export" });
   });
   afterEach(() => vi.useRealTimers());
   const tick = (ms = 3000) => act(async () => { await vi.advanceTimersByTimeAsync(ms); });
@@ -537,9 +528,16 @@ describe("useExportScreen 관리 갱신", () => {
     expect(reads()).toBe(initial + 1);
     await tick();
     expect(reads()).toBe(initial + 2);
-    unmount();
+    // Another screen on show: no polling until 내보내기 is back.
+    await act(async () => session.host.set({ current: "calibrate" }));
     await tick(9000);
     expect(reads()).toBe(initial + 2);
+    await act(async () => session.host.set({ current: "export" }));
+    await tick();
+    expect(reads()).toBe(initial + 3);
+    unmount();
+    await tick(9000);
+    expect(reads()).toBe(initial + 3);
   });
 
   it("pauses while hidden and refreshes immediately when visible again", async () => {

@@ -42,17 +42,8 @@ pub fn target_db(target: &TargetCurve, f: &[f64]) -> Vec<f64> {
     target.sample(f)
 }
 
-pub(crate) fn median(mut values: Vec<f64>) -> f64 {
-    if values.is_empty() || values.iter().any(|v| v.is_nan()) {
-        return f64::NAN;
-    }
-    values.sort_by(f64::total_cmp);
-    let mid = values.len() / 2;
-    if values.len().is_multiple_of(2) {
-        (values[mid - 1] + values[mid]) / 2.0
-    } else {
-        values[mid]
-    }
+pub(crate) fn median(values: Vec<f64>) -> f64 {
+    secs_dsp::stats::median(&values)
 }
 
 pub fn band_level(
@@ -97,6 +88,10 @@ pub fn band_level(
     )
 }
 
+pub(crate) fn room_volume(config: &EngineConfig) -> Option<f64> {
+    config.room_volume_m3.filter(|v| v.is_finite() && *v > 0.0)
+}
+
 #[derive(Clone, Copy, Default)]
 pub(crate) struct Schroeder {
     pub strict: Option<f64>,
@@ -109,17 +104,16 @@ impl Schroeder {
         config: &EngineConfig,
         ctx: &secs_compute::Context,
     ) -> Result<Self, crate::EngineError> {
-        Self::analyze_until(set, config, ctx, &|| ctx.cancel().is_cancelled())
+        Self::analyze_until(set, config, ctx)
     }
 
     pub(crate) fn analyze_until(
         set: &MeasurementSet,
         config: &EngineConfig,
         ctx: &secs_compute::Context,
-        cancelled: &dyn Fn() -> bool,
     ) -> Result<Self, crate::EngineError> {
-        check_analysis(cancelled)?;
-        if config.rc_range.1.is_some() || config.room_volume_m3.is_none_or(|v| v == 0.0) {
+        ctx.cancel().check()?;
+        if config.rc_range.1.is_some() || room_volume(config).is_none() {
             return Ok(Self::default());
         }
         let lenient = config.rc_hi_basis == secs_types::calibration::RcHiBasis::Lenient;
@@ -136,9 +130,9 @@ impl Schroeder {
         // This permit ends before design/XO reserve their own working arrays.
         let _permit = crate::memory::reserve(ctx, (longest as u64).saturating_mul(4 * 8), 0)?;
         Ok(Self {
-            strict: strict_until(set, config, cancelled)?,
+            strict: strict_until(set, config, ctx)?,
             lenient: if lenient {
-                lenient_until(set, config, cancelled)?
+                lenient_until(set, config, ctx)?
             } else {
                 None
             },
@@ -148,20 +142,20 @@ impl Schroeder {
 
 #[cfg(test)]
 pub fn schroeder_hz(set: &MeasurementSet, config: &EngineConfig) -> Option<f64> {
-    strict_until(set, config, &|| false).unwrap()
+    strict_until(set, config, &secs_compute::Context::serial()).unwrap()
 }
 
 fn strict_until(
     set: &MeasurementSet,
     config: &EngineConfig,
-    cancelled: &dyn Fn() -> bool,
+    ctx: &secs_compute::Context,
 ) -> Result<Option<f64>, EngineError> {
-    let Some(volume) = config.room_volume_m3.filter(|v| *v != 0.0) else {
+    let Some(volume) = room_volume(config) else {
         return Ok(None);
     };
     let mut t60s = Vec::new();
     for role in &config.mains {
-        check_analysis(cancelled)?;
+        ctx.cancel().check()?;
         let Some(m) = set
             .get(config.main_position, role)
             .filter(|m| !m.samples.is_empty())
@@ -169,7 +163,7 @@ fn strict_until(
             continue;
         };
         for fc in [500.0, 1000.0] {
-            check_analysis(cancelled)?;
+            ctx.cancel().check()?;
             let Ok(sos) = iir::butter(
                 4,
                 &[fc / 2.0_f64.sqrt(), fc * 2.0_f64.sqrt()],
@@ -178,7 +172,7 @@ fn strict_until(
             ) else {
                 return Ok(None);
             };
-            if let Some(t60) = band_t60(&m.samples, &sos, cancelled)? {
+            if let Some(t60) = band_t60(&m.samples, &sos, ctx)? {
                 t60s.push(t60);
             }
         }
@@ -203,32 +197,32 @@ pub fn lenient_schroeder_hz(
     set: &MeasurementSet,
     config: &EngineConfig,
 ) -> Option<(f64, f64, f64)> {
-    lenient_until(set, config, &|| false).unwrap()
+    lenient_until(set, config, &secs_compute::Context::serial()).unwrap()
 }
 
 fn lenient_until(
     set: &MeasurementSet,
     config: &EngineConfig,
-    cancelled: &dyn Fn() -> bool,
+    ctx: &secs_compute::Context,
 ) -> Result<Option<(f64, f64, f64)>, EngineError> {
-    let Some(volume) = config.room_volume_m3.filter(|v| v.is_finite() && *v > 0.0) else {
+    let Some(volume) = room_volume(config) else {
         return Ok(None);
     };
     let width = 2.0_f64.powf(1.0 / 6.0);
     let mut chosen = None;
     for fc in RC_BAND_CENTRES.into_iter().take(8) {
-        check_analysis(cancelled)?;
+        ctx.cancel().check()?;
         let Ok(sos) = iir::butter(4, &[fc / width, fc * width], BType::Bandpass, SR_F) else {
             return Ok(None);
         };
         let mut t60s = Vec::new();
         for (position, _) in &set.positions {
             for role in &config.mains {
-                check_analysis(cancelled)?;
+                ctx.cancel().check()?;
                 let Some(m) = set.get(*position, role).filter(|m| !m.samples.is_empty()) else {
                     continue;
                 };
-                if let Some(t60) = band_t60(&m.samples, &sos, cancelled)? {
+                if let Some(t60) = band_t60(&m.samples, &sos, ctx)? {
                     t60s.push(t60);
                 }
             }
@@ -246,31 +240,23 @@ fn lenient_until(
 
 const ANALYSIS_CHUNK: usize = 4096;
 
-fn check_analysis(cancelled: &dyn Fn() -> bool) -> Result<(), EngineError> {
-    if cancelled() {
-        Err(EngineError::Cancelled)
-    } else {
-        Ok(())
-    }
-}
-
 // Both estimates keep the same sample, SOS-section and reverse-sum order.
 fn band_t60(
     samples: &Samples,
     sos: &iir::Sos,
-    cancelled: &dyn Fn() -> bool,
+    ctx: &secs_compute::Context,
 ) -> Result<Option<f64>, EngineError> {
     let mut ir = Vec::with_capacity(samples.len());
     for start in (0..samples.len()).step_by(ANALYSIS_CHUNK) {
-        check_analysis(cancelled)?;
+        ctx.cancel().check()?;
         ir.extend((start..(start + ANALYSIS_CHUNK).min(samples.len())).map(|i| samples.at(i)));
     }
-    let y = filter_band(&ir, sos, cancelled)?;
+    let y = filter_band(&ir, sos, ctx)?;
     let mut energy = vec![0.0; y.len()];
     let mut sum = 0.0;
     for (i, (e, y)) in energy.iter_mut().zip(&y).rev().enumerate() {
         if i.is_multiple_of(ANALYSIS_CHUNK) {
-            check_analysis(cancelled)?;
+            ctx.cancel().check()?;
         }
         sum += y * y;
         *e = sum;
@@ -278,12 +264,12 @@ fn band_t60(
     let origin = energy[0] + 1e-30;
     let mut db = Vec::with_capacity(energy.len());
     for chunk in energy.chunks(ANALYSIS_CHUNK) {
-        check_analysis(cancelled)?;
+        ctx.cancel().check()?;
         db.extend(chunk.iter().map(|e| 10.0 * (e / origin + 1e-30).log10()));
     }
     let crossing = |threshold| -> Result<usize, EngineError> {
         for (i, chunk) in db.chunks(ANALYSIS_CHUNK).enumerate() {
-            check_analysis(cancelled)?;
+            ctx.cancel().check()?;
             if let Some(j) = chunk.iter().position(|v| *v < threshold) {
                 return Ok(i * ANALYSIS_CHUNK + j);
             }
@@ -300,13 +286,13 @@ fn band_t60(
 pub(crate) fn filter_band(
     ir: &[f64],
     sos: &iir::Sos,
-    cancelled: &dyn Fn() -> bool,
+    ctx: &secs_compute::Context,
 ) -> Result<Vec<f64>, EngineError> {
     assert_eq!(sos.0.len(), 4);
     let mut output = Vec::with_capacity(ir.len());
     let mut state = [[0.0; 2]; 4];
     for chunk in ir.chunks(ANALYSIS_CHUNK) {
-        check_analysis(cancelled)?;
+        ctx.cancel().check()?;
         for &sample in chunk {
             let mut value = sample;
             for (s, z) in sos.0.iter().zip(&mut state) {

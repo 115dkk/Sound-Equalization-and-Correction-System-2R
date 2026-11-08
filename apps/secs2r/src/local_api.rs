@@ -1,249 +1,164 @@
-use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, mpsc};
 
-use secs_local_api::{EventHub, ServerConfig, ServerHandle};
-use secs_service::{AppEffects, RevisedAppSettings, Service};
+use secs_local_api::{EventHub, LocalApiError, Runtime};
+use secs_service::{LogLevel, Service};
 use secs_types::ipc::{ErrorCode, IpcError, LocalApiSettings, LocalApiStatus};
-use tauri::{AppHandle, Emitter, Manager as TauriManager};
+use tauri::{AppHandle, Emitter};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Lifecycle {
-    Start,
-    Stop,
-    Restart,
-    Nothing,
+#[derive(Debug)]
+struct SettingsApplier {
+    sender: mpsc::Sender<(LocalApiSettings, LocalApiSettings)>,
 }
 
-fn lifecycle(old: LocalApiSettings, new: LocalApiSettings) -> Lifecycle {
-    match (old.enabled, new.enabled) {
-        (false, true) => Lifecycle::Start,
-        (true, false) => Lifecycle::Stop,
-        (true, true) if old.port != new.port => Lifecycle::Restart,
-        _ => Lifecycle::Nothing,
+impl SettingsApplier {
+    fn new(runtime: Arc<Runtime>) -> Self {
+        let (sender, receiver) = mpsc::channel();
+        std::thread::Builder::new()
+            .name("secs-local-api-settings".into())
+            .spawn(move || {
+                while let Ok((old, new)) = receiver.recv() {
+                    runtime.apply_settings(old, new);
+                }
+            })
+            .expect("local API settings worker must start");
+        Self { sender }
+    }
+
+    fn apply_settings(&self, old: LocalApiSettings, new: LocalApiSettings) {
+        let _ = self.sender.send((old, new));
     }
 }
 
-#[derive(Debug)]
-struct Inner {
-    settings: LocalApiSettings,
-    server: Option<ServerHandle>,
-    token: Option<String>,
-    error: Option<String>,
-}
-
 pub(crate) struct Manager {
-    config_dir: PathBuf,
-    service: Arc<Service>,
-    hub: EventHub,
-    app: AppHandle,
-    inner: Mutex<Inner>,
+    runtime: Arc<Runtime>,
+    settings: SettingsApplier,
 }
 
 impl std::fmt::Debug for Manager {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("LocalApiManager")
-            .field("config_dir", &self.config_dir)
-            .field("service", &self.service)
-            .field("hub", &self.hub)
-            .field("inner", &self.inner)
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("LocalApiManager")
+            .field("runtime", &self.runtime)
+            .field("settings", &self.settings)
             .finish_non_exhaustive()
     }
 }
 
 impl Manager {
     pub(crate) fn new(
-        config_dir: PathBuf,
+        config_dir: std::path::PathBuf,
         service: Arc<Service>,
         hub: EventHub,
         app: AppHandle,
+        log: crate::applog::AppLog,
     ) -> Self {
-        Self {
+        let on_change = Arc::new(move |method: &str| {
+            let _ = app.emit("secs://external-change", method.to_owned());
+        });
+        let runtime_log = Arc::new(move |level: LogLevel, text: &str| {
+            let level = match level {
+                LogLevel::Warn => crate::applog::Level::Warn,
+                LogLevel::Error => crate::applog::Level::Error,
+            };
+            log.line(level, "local_api", text);
+        });
+        let runtime = Arc::new(Runtime::new(
             config_dir,
             service,
             hub,
-            app,
-            inner: Mutex::new(Inner {
-                settings: LocalApiSettings::default(),
-                server: None,
-                token: None,
-                error: None,
-            }),
-        }
+            on_change,
+            runtime_log,
+        ));
+        let settings = SettingsApplier::new(runtime.clone());
+        Self { runtime, settings }
     }
 
     pub(crate) fn startup(&self, settings: LocalApiSettings) {
-        let mut inner = lock(&self.inner);
-        inner.settings = settings;
-        if settings.enabled {
-            self.start_locked(&mut inner);
-        }
+        self.runtime.startup(settings);
     }
 
-    fn apply_settings(&self, old: LocalApiSettings, new: LocalApiSettings) {
-        let mut inner = lock(&self.inner);
-        inner.settings = new;
-        match lifecycle(old, new) {
-            Lifecycle::Start => self.start_locked(&mut inner),
-            Lifecycle::Stop => Self::stop_locked(&mut inner),
-            Lifecycle::Restart => {
-                Self::stop_locked(&mut inner);
-                self.start_locked(&mut inner);
-            }
-            Lifecycle::Nothing => {}
-        }
-    }
-
-    pub(crate) fn apply_revision(&self, effects: &Mutex<AppEffects>, revised: RevisedAppSettings) {
-        let mut effects = lock(effects);
-        let Some(previous) = effects.accept(revised.revision, &revised.settings) else {
-            return;
-        };
-        if previous.icon != revised.settings.icon {
-            crate::icon::show(&self.app, revised.settings.icon);
-        }
-        if previous.local_api != revised.settings.local_api {
-            self.apply_settings(previous.local_api, revised.settings.local_api);
-        }
+    /// The service's local-API settings effect (ADR 0051) lands here, once per
+    /// saved revision and outside the settings lock.
+    pub(crate) fn apply_settings(&self, old: LocalApiSettings, new: LocalApiSettings) {
+        self.settings.apply_settings(old, new);
     }
 
     pub(crate) fn status(&self) -> Result<LocalApiStatus, IpcError> {
-        let mut inner = lock(&self.inner);
-        self.ensure_token(&mut inner)?;
-        Ok(self.status_locked(&inner))
+        self.runtime.status().map_err(local_error)
     }
 
     pub(crate) fn regenerate_token(&self) -> Result<LocalApiStatus, IpcError> {
-        let token = secs_local_api::token::regenerate(&self.config_dir).map_err(local_error)?;
-        let mut inner = lock(&self.inner);
-        inner.token = Some(token);
-        inner.error = None;
-        if inner.server.is_some() {
-            Self::stop_locked(&mut inner);
-        }
-        if inner.settings.enabled {
-            self.start_locked(&mut inner);
-        }
-        Ok(self.status_locked(&inner))
-    }
-
-    fn ensure_token(&self, inner: &mut Inner) -> Result<(), IpcError> {
-        if inner.token.is_none() {
-            inner.token =
-                Some(secs_local_api::token::load_or_create(&self.config_dir).map_err(local_error)?);
-        }
-        Ok(())
-    }
-
-    fn start_locked(&self, inner: &mut Inner) {
-        if let Err(error) = self.ensure_token(inner) {
-            inner.error = Some(error.detail);
-            return;
-        }
-        let app = self.app.clone();
-        let on_change = Arc::new(move |method: &str| {
-            let _ = app.emit("secs://external-change", method.to_owned());
-            if method == "app_settings_set" {
-                let app = app.clone();
-                let _ = std::thread::Builder::new()
-                    .name("secs-local-api-settings".into())
-                    .spawn(move || {
-                        let service = app.state::<Arc<Service>>();
-                        let revised = service.revised_app_settings();
-                        app.state::<Manager>()
-                            .apply_revision(app.state::<Mutex<AppEffects>>().inner(), revised);
-                    });
-            }
-        });
-        let config = ServerConfig {
-            port: inner.settings.port,
-            token: inner.token.clone().expect("token was loaded"),
-            service: self.service.clone(),
-            hub: self.hub.clone(),
-            on_change,
-        };
-        match secs_local_api::start(config) {
-            Ok(server) => {
-                inner.server = Some(server);
-                inner.error = None;
-            }
-            Err(error) => {
-                inner.server = None;
-                inner.error = Some(error.to_string());
-            }
-        }
-    }
-
-    fn stop_locked(inner: &mut Inner) {
-        if let Some(server) = inner.server.take() {
-            server.stop();
-        }
-        inner.error = None;
-    }
-
-    fn status_locked(&self, inner: &Inner) -> LocalApiStatus {
-        let port = inner
-            .server
-            .as_ref()
-            .map_or(inner.settings.port, ServerHandle::port);
-        LocalApiStatus {
-            enabled: inner.settings.enabled,
-            port,
-            running: inner.server.is_some(),
-            error: inner.error.clone(),
-            url: format!("http://127.0.0.1:{port}"),
-            token: inner.token.clone().unwrap_or_default(),
-            token_path: self
-                .config_dir
-                .join(secs_types::local_api::TOKEN_FILE)
-                .to_string_lossy()
-                .into_owned(),
-        }
+        self.runtime.regenerate_token().map_err(local_error)
     }
 }
 
-fn local_error(error: impl std::fmt::Display) -> IpcError {
-    IpcError::new(ErrorCode::Internal, error.to_string())
-}
-
-fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    mutex
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
+fn local_error(error: LocalApiError) -> IpcError {
+    match error {
+        LocalApiError::Token { path, source } => IpcError::io(ErrorCode::ProjectIo, path, source),
+        error => IpcError::new(ErrorCode::Internal, error.to_string()),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn settings(enabled: bool, port: u16) -> LocalApiSettings {
-        LocalApiSettings { enabled, port }
+    #[test]
+    fn settings_are_applied_on_a_worker_without_blocking_the_caller() {
+        let root = std::env::temp_dir().join(format!(
+            "secs2r-local-api-settings-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let runtime = Arc::new(Runtime::new(
+            root.clone(),
+            Arc::new(Service::new(secs_service::Deps::default())),
+            EventHub::default(),
+            Arc::new(|_| {}),
+            Arc::new(|_, _| {}),
+        ));
+        let disabled = LocalApiSettings::default();
+        runtime.startup(disabled);
+        let applier = SettingsApplier::new(runtime.clone());
+        let enabled = LocalApiSettings {
+            enabled: true,
+            port: 0,
+        };
+
+        let started = std::time::Instant::now();
+        applier.apply_settings(disabled, enabled);
+        assert!(started.elapsed() < std::time::Duration::from_millis(100));
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        loop {
+            if runtime.status().unwrap().running {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "local API did not start"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        runtime.stop();
+        drop(applier);
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
-    fn local_api_lifecycle_follows_enabled_and_port_changes() {
-        assert_eq!(
-            lifecycle(settings(false, 1), settings(true, 1)),
-            Lifecycle::Start
-        );
-        assert_eq!(
-            lifecycle(settings(true, 1), settings(false, 1)),
-            Lifecycle::Stop
-        );
-        assert_eq!(
-            lifecycle(settings(true, 1), settings(true, 2)),
-            Lifecycle::Restart
-        );
-        assert_eq!(
-            lifecycle(settings(true, 1), settings(true, 1)),
-            Lifecycle::Nothing
-        );
-        assert_eq!(
-            lifecycle(settings(false, 1), settings(false, 2)),
-            Lifecycle::Nothing
-        );
-        assert_eq!(
-            lifecycle(settings(false, 1), settings(false, 1)),
-            Lifecycle::Nothing
-        );
+    fn denied_token_folder_is_a_permission_error_td208() {
+        let error = local_error(LocalApiError::Token {
+            path: std::path::Path::new(r"C:\x\token").to_path_buf(),
+            source: std::io::Error::from(std::io::ErrorKind::PermissionDenied),
+        });
+        assert_eq!(error.code, ErrorCode::PermissionDenied);
+        assert_eq!(error.params["path"], r"C:\x\token");
+        let error = local_error(LocalApiError::Token {
+            path: std::path::Path::new("missing/token").to_path_buf(),
+            source: std::io::Error::from(std::io::ErrorKind::NotFound),
+        });
+        assert_eq!(error.code, ErrorCode::ProjectIo);
+        assert_eq!(error.params["path"], "missing/token");
     }
 }

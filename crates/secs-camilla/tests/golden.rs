@@ -6,8 +6,8 @@ mod support;
 use secs_camilla::note;
 use secs_camilla::pyfmt::{format_fixed, format_g, repr_f64, round_ndigits};
 use secs_camilla::{
-    CamillaError, Device, DeviceValue, Options, RunLabels, export, make_config, write_config,
-    write_config_observed,
+    CamillaError, Device, DeviceValue, Options, RunLabels, export, install_prepared, make_config,
+    prepare_config, write_config, write_config_observed,
 };
 use secs_oracle::{Fixture, goldens};
 use secs_types::calibration::RcBand;
@@ -20,6 +20,8 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 static TEMP_ID: AtomicU64 = AtomicU64::new(0);
+const EXPECTED_GRAPH_REFUSALS: [(&str, &str); 1] =
+    [("camilla/direct_rounding", "main.L.top_peq[0].frequency")];
 
 struct TempDir(PathBuf);
 
@@ -40,6 +42,30 @@ impl Drop for TempDir {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.0);
     }
+}
+
+fn snapshot_files(root: &Path) -> std::collections::BTreeMap<PathBuf, Vec<u8>> {
+    fn visit(
+        root: &Path,
+        current: &Path,
+        files: &mut std::collections::BTreeMap<PathBuf, Vec<u8>>,
+    ) {
+        for entry in fs::read_dir(current).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                visit(root, &path, files);
+            } else {
+                files.insert(
+                    path.strip_prefix(root).unwrap().to_path_buf(),
+                    fs::read(path).unwrap(),
+                );
+            }
+        }
+    }
+
+    let mut files = std::collections::BTreeMap::new();
+    visit(root, root, &mut files);
+    files
 }
 
 fn number(value: &Value) -> f64 {
@@ -556,15 +582,21 @@ fn make_config_matches_oracle() {
         let temp = TempDir::new(&fixture.id.replace('/', "_"));
         let options = direct_options(&fixture);
         let config_dir = temp.0.join("where/configs");
-        let config = make_config(
-            &chain(&fixture),
-            &temp.0,
-            &config_dir,
-            "edge_",
-            &options,
-            None,
-        )
-        .unwrap();
+        let chain = chain(&fixture);
+        if let Some((_, field)) = EXPECTED_GRAPH_REFUSALS
+            .iter()
+            .find(|(expected, _)| *expected == fixture.id.as_str())
+        {
+            let error =
+                make_config(&chain, &temp.0, &config_dir, "edge_", &options, None).unwrap_err();
+            assert!(
+                matches!(&error, CamillaError::Invalid(message) if message.contains(field)),
+                "{}: {error}",
+                fixture.id
+            );
+            continue;
+        }
+        let config = make_config(&chain, &temp.0, &config_dir, "edge_", &options, None).unwrap();
         let got_yaml = replace_folder(&config.yaml, &temp.0);
         let expected_yaml = fixture.outputs()["yaml"].as_str().unwrap();
         assert_yaml_transfer(
@@ -1141,6 +1173,29 @@ fn write_config_sanitizes_nonascii_name_like_oracle() {
 }
 
 #[test]
+fn prepared_config_installs_the_bytes_write_config_writes() {
+    let fixture = Fixture::load("camilla", "direct_no_subs");
+    let chain = chain(&fixture);
+    let prepared_folder = TempDir::new("prepared_config");
+    let direct_folder = TempDir::new("direct_config");
+    let mut options = direct_options(&fixture);
+    options.output_rate = 96_000;
+    options.bypass = true;
+
+    let prepared = prepare_config(&chain, &prepared_folder.0, "prepared", &options, None).unwrap();
+    let prepared_paths =
+        install_prepared(&prepared_folder.0, prepared, &|_, _| Ok(()), &|_, _| Ok(())).unwrap();
+    let direct_paths = write_config(&chain, &direct_folder.0, "prepared", &options, None).unwrap();
+
+    assert_eq!(prepared_paths.files.len(), direct_paths.len());
+    assert!(prepared_paths.leftover_backup.is_none());
+    assert_eq!(
+        snapshot_files(&prepared_folder.0),
+        snapshot_files(&direct_folder.0)
+    );
+}
+
+#[test]
 fn write_config_replaces_existing_files_without_leaving_temporary_files() {
     let fixture = Fixture::load("camilla", "direct_no_subs");
     let temp = TempDir::new("replace_existing");
@@ -1255,6 +1310,36 @@ fn failed_install_restores_the_previous_camilla_bundle_td22() {
     for (path, bytes) in before {
         assert_eq!(fs::read(path).unwrap(), bytes);
     }
+}
+
+#[test]
+fn option_note_newline_writes_nothing_td224() {
+    let fixture = Fixture::load("camilla", "direct_no_subs");
+    let temp = TempDir::new("note_newline");
+    let options = Options {
+        note: "a\nb".into(),
+        ..Options::default()
+    };
+    let error = write_config(&chain(&fixture), &temp.0, "bad", &options, None).unwrap_err();
+    assert!(matches!(&error, CamillaError::Invalid(_)), "{error}");
+    assert!(error.to_string().contains("options.note"), "{error}");
+    assert_eq!(fs::read_dir(&temp.0).unwrap().count(), 0);
+}
+
+#[test]
+fn sub_mode_newline_writes_nothing_td224() {
+    let fixture = Fixture::load("camilla", "direct_lfe_none");
+    let temp = TempDir::new("sub_mode_newline");
+    let mut bad = chain(&fixture);
+    let role = bad.subs[0].role.clone();
+    bad.subs[0].mode = "fixed\r".into();
+    let error = write_config(&bad, &temp.0, "bad", &Options::default(), None).unwrap_err();
+    assert!(matches!(&error, CamillaError::Invalid(_)), "{error}");
+    assert!(
+        error.to_string().contains(&format!("sub.{role}.mode")),
+        "{error}"
+    );
+    assert_eq!(fs::read_dir(&temp.0).unwrap().count(), 0);
 }
 
 #[test]

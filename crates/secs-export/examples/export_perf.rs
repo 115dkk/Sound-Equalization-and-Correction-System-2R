@@ -25,15 +25,15 @@ fn main() {
         mode: camilla::note::mode_name(settings.mode, settings.ultra_ms),
         note: camilla::note::camilla_note(
             settings.mode,
-            case.design.chain.latency_ms,
-            case.design.rc_hi,
+            case.design.latency_ms(),
+            case.design.rc_hi(),
             None,
         ),
-        latency_ms: case.design.chain.latency_ms,
+        latency_ms: case.design.latency_ms(),
     };
     if op == "profile_camilla" {
         use sha2::{Digest, Sha256};
-        let bytes = serde_json::to_vec(&case.design.chain).unwrap();
+        let bytes = serde_json::to_vec(case.design.signal_chain()).unwrap();
         println!(
             "{}",
             serde_json::json!({"chain_sha256":Sha256::digest(&bytes).iter().map(|b| format!("{b:02x}")).collect::<String>(), "threads":threads})
@@ -51,7 +51,7 @@ fn main() {
                 ..camilla::Options::default()
             };
             let config = camilla::make_config_observed(
-                &case.design.chain,
+                case.design.signal_chain(),
                 &folder,
                 &folder.join("configs"),
                 "secs_mixed_",
@@ -82,7 +82,9 @@ fn main() {
             );
         }
         "camilla" => {
-            black_box(secs_camilla::export(&case.design.chain, &folder, &labels, None).unwrap());
+            black_box(
+                secs_camilla::export(case.design.signal_chain(), &folder, &labels, None).unwrap(),
+            );
         }
         "mdat_staged" => {
             black_box(secs_export::export_mdat(&run, &folder, None, 0).unwrap());

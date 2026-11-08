@@ -63,26 +63,27 @@ oracle/                   골든 내보내기 스크립트와 골든 (oracle/REA
 ```text
 ui ──IPC──> secs2r ─┬─> secs-service ─┬─> secs-engine ─┬─> secs-dsp
                     │                 │                ├─> secs-compute
+                    │                 │                ├─> secs-graph (출력 규약)
                     │                 │                └─> secs-types
                     │                 ├─> secs-project ──> secs-mdat (출처 정보), secs-types
                     │                 ├─> secs-rew
                     │                 ├─> secs-audio ────> secs-dsp
                     │                 ├─> secs-mdat ─────> secs-jos, secs-dsp
                     │                 ├─> secs-dirac
-                    │                 ├─> secs-export ───> secs-engine, secs-mdat, secs-camilla (숫자 포매터),
+                    │                 ├─> secs-export ───> secs-engine, secs-mdat, secs-graph,
                     │                 │                    secs-dsp, secs-types
                     │                 ├─> secs-camilla ──> secs-graph, secs-dsp, secs-types
-                    │                 ├─> secs-filters ──> secs-graph, secs-camilla (숫자 포매터),
-                    │                 │                    secs-dsp, secs-types
+                    │                 ├─> secs-filters ──> secs-graph, secs-dsp, secs-types
+                    │                 ├─> secs-graph
                     │                 └─> secs-compute, secs-dsp, secs-types
                     ├─> secs-gpu ─────> secs-engine (RidgeBackend seam), secs-compute, secs-types
                     │        └───────> secs-cuda-sys (선택적 네이티브 라이브러리)
                     ├─> secs-sys ─────> wasapi, cpal, OS 조회 크레이트
-                    │        └───────> secs-apply, secs-audio, secs-rew, secs-compute (어댑터가 구현하는 seam)
+                    │        └───────> secs-apply, secs-audio, secs-rew, secs-compute, secs-service, secs-types (adapter와 Deps 조립)
                     ├─> secs-local-api ─> secs-service, secs-types, axum, tokio
                     └─> secs-rew, secs-types
-secs2r-cli ─────────> secs-service, secs-sys, secs-gpu, secs-rew, secs-compute, secs-types
-secs-api ───────────> secs-types; engine 기능: secs-service, secs-audio, secs-rew;
+secs2r-cli ─────────> secs-api, secs-service, secs-sys, secs-gpu, secs-compute, secs-types
+secs-api ───────────> secs-types; engine 기능: secs-service, secs-audio, secs-rew, secs-compute, secs-engine;
                       client 기능: ureq, tungstenite
 secs-graph ─────────> secs-dsp, secs-types (작성기를 의존하지 않음)
 secs-apply ─────────> tungstenite (서비스는 시험에서만 의존)
@@ -135,6 +136,8 @@ IPC의 기본 동작은 바꾸지 않습니다.
 | 성적표 | 타입 있는 지표(±1 dB 비율, 위상 바퀴, GD 폭, 1/24 GD 봉우리, 앞울림) | `scorecard.py` |
 | 오케스트레이터 | 단계 캐시(입력 지문), 취소, 진행, XO 추천의 공유 단계 | `calibration.compute`, `compute_mimo` |
 
+바깥(서비스, GPU, 작성기)이 쓸 수 있는 공개 항목은 ADR 0046이 정한 목록뿐입니다. 크레이트 루트는 `calibrate`와 그 입출력(`Calibration`, `CalibrationRequest`, `ProjectView`, `EngineConfig`, `Measurement`, `MeasurementSet`, `Samples`, `Tuning`), 결과 값 `Design`(안쪽 배열은 `fir`, `stage`, `measured` 같은 메서드로만 읽음), `StageResponses`, `RoleLateEnergy`와 `late_energy`, `Metrics`, `SubFilter`, `ExportAxis`, `EngineError`, 메모 기록(`Note`, `MimoNote`, `GuardCause`는 `secs-types`의 재수출, `NoteRecord`, `NoteRecords`), MIMO 입구(`MimoRun`, `MimoKey`, `availability`, `compute_with_acceleration`, `AccelerationSelection`, `AccelerationError`, `RidgeBackend`, `CpuRidgeBackend`, `ShiftedSystem`, `mimo_cap_text`)를 내보내고, 모듈은 `input`, `preview`, `xo`만 공개합니다. 오라클 골든 시험과 `secs-engine-testkit`이 쓰는 단계 함수(`design`, `DesignRequest`, `FitterFactory`, `FitStage`, `calibrate_with`, `normalize_measurements`, MIMO의 단계별 함수)는 `test-support` 기능을 켰을 때만 쓸 수 있습니다. 공개 목록에 항목을 추가하려면 ADR 0046과 `tests/surface.rs`의 `public_surface_is_the_adr_0046_list`를 함께 고쳐야 합니다.
+
 업스트림이 환경 변수로 숨긴 값(`SECS_BOOST_RING_MS`, `SECS_BA_DELAY_MS`, `SECS_BA_EFF`, `SECS_SUB_BUS_FIX`, `SECS_MAIN_W_LO`, `SECS_PHASE_POS`, `SECS_LONG_BOOST_DB`, `SECS_NOBOOST_MS`, `SECS_MIMO_*`)은 명시적 튜닝 값의 필드로 옮기는 대상입니다. 화면에 제공할 때는 해당 기능의 세부 설정에서 펼치며, 사용자 숙련도로 접근을 나누지 않습니다.
 
 ## 6. 수치
@@ -172,7 +175,7 @@ IPC의 기본 동작은 바꾸지 않습니다.
 | M3 | MIMO(이상 FIR, IIR 맞춤, FIR 서포트), 메모리 예산 | MIMO 골든 통과, MIMO 실행(기본 IIR 모드) 5배 이상, 최대 메모리 1 GB 이하 ([`MIMO.md`](MIMO.md) 6절) |
 | M4 | 서비스, 잡, 자체 측정, REW, mdat 가져오기, 내보내기 셋, CLI, 무결성 잡 | CLI만으로 샘플 프로젝트 설계·내보내기, 모의 측정으로 흐름 전체 테스트, 하드웨어 프로브 실측 |
 | M5 | 새 화면, 디자인 토큰, 성적표, 작업 트레이, 튜토리얼, 한국어·영어 | 업스트림 기능 목록 전부 화면에서 닿음, 화면 리뷰에서 HIGH 없음 |
-| M6 | 실장비 검증, 업데이터, 서명, 출시 전 성능 감사, GPU 실험과 어댑터 | 실제 방에서 측정부터 CamillaDSP 적용까지 완주, 1.0.0 |
+| M6 | 완료: 업데이터(ADR 0020), GPU adapter(ADR 0008), macOS 자체 서명 인증서(ADR 0041). 남은 작업: 실장비 검증, 출시 전 성능 감사 | 실제 방에서 측정부터 CamillaDSP 적용까지 완주, 1.0.0 |
 
 ## 9. 작업 분배
 

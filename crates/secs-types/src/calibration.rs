@@ -9,7 +9,9 @@ use std::{collections::BTreeMap, fmt::Write as _};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
+use crate::chain::BandType;
 use crate::rules::CALIBRATION_LIMITS;
+use crate::settings_edit::{BandTypeChoice, SubBand, SubLayout, SubModeChoice, SubPatch};
 
 /// The ultra mode's latency budget range (ms).
 const ULTRA_MS: (f64, f64) = CALIBRATION_LIMITS.ultra_ms;
@@ -68,6 +70,16 @@ fn default_rc_hi_transition() -> u8 {
 pub struct RcBand {
     pub lo_hz: f64,
     pub hi_hz: f64,
+}
+
+/// Whether sidecar calibration arrays satisfy the embedded curve rules.
+pub fn calibration_curve_is_valid(frequencies: &[f64], gains: &[f64]) -> bool {
+    frequencies.len() >= 2
+        && frequencies.len() == gains.len()
+        && frequencies.iter().zip(gains).all(|(&frequency, &gain)| {
+            frequency.is_finite() && frequency > 0.0 && gain.is_finite() && gain.abs() <= 200.0
+        })
+        && frequencies.windows(2).all(|pair| pair[0] < pair[1])
 }
 
 /// The extra bands a calculation may use: finite, inside
@@ -163,130 +175,711 @@ impl Default for BundleLayoutEntry {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
-#[ts(export)]
-pub struct CalibrationSettings {
-    pub mode: Mode,
+// One declaration retains both wire orders: settings fields and edit variants.
+macro_rules! calibration_settings {
+    (
+        fields { $( $(#[$attr:meta])* $field:ident: $ty:ty = $default:expr;
+            $check:ident($($args:tt)*); $key:tt; project($read:ident, $write:ident); )* }
+        edits { $( $(#[$edit_attr:meta])* $variant:ident {
+            $( $(#[$payload_attr:meta])* $payload:ident: $payload_ty:ty, )*
+        } $( [ $kind:literal, $rule_field:ident ] )?
+            => |$settings:ident| $apply:block; )* }
+        project_order { $( $project_key:literal ),* $(,)? }
+    ) => {
+        #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+        #[ts(export)]
+        pub struct CalibrationSettings { $( $(#[$attr])* pub $field: $ty, )* }
+        impl Default for CalibrationSettings {
+            fn default() -> Self { Self { $( $field: $default, )* } }
+        }
+        #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+        #[serde(tag = "kind", rename_all = "snake_case")]
+        #[ts(export)]
+        pub enum SettingEdit {
+            $( $(#[$edit_attr])* $variant { $( $(#[$payload_attr])* $payload: $payload_ty, )* }, )*
+        }
+        impl SettingEdit {
+            /// Constructs a declared single-payload edit without applying its policy.
+            /// Unknown or structured kinds and mismatched payload types return `None`.
+            pub fn scalar(kind: &str, value: ScalarValue) -> Option<Self> {
+                $( if let Some(edit) = scalar_edit_constructor!(kind, value, [$($kind)?], $variant { $($payload: $payload_ty),* }) {
+                    return Some(edit);
+                } )*
+                None
+            }
+        }
+        #[allow(non_upper_case_globals)]
+        mod scalar_rules {
+            $( pub const $field: (&str, &str) = scalar_policy!($check($($args)*)); )*
+            pub const rear_trim_ms: (&str, &str) = ("rear_trim", "clamp");
+        }
+        pub const SCALAR_EDITS: &[crate::rules::ScalarEditRule] = &[
+            $( $( crate::rules::ScalarEditRule { kind: $kind, field: stringify!($rule_field), limit: scalar_rules::$rule_field.0, policy: scalar_rules::$rule_field.1 }, )? )*
+        ];
+        /// Project-file order, including the hand-written structured entries.
+        pub const KNOWN_KEYS: &[&str] = &[ $( $project_key, )* ];
+        impl CalibrationSettings {
+            $( fn $field(value: $ty) -> Result<$ty, SettingsRefusal> {
+                check_scalar!(value, stringify!($field), $check($($args)*))
+            } )*
+            /// Applies scalar edits; structured edits remain with their adapter.
+            pub fn apply_scalar(&mut self, edit: &SettingEdit) -> Result<Applied, SettingsRefusal> {
+                match edit {
+                    $( SettingEdit::$variant { $($payload,)* } => {
+                        $( let _ = $payload; )*
+                        let $settings = self;
+                        $apply
+                    }, )*
+                }
+            }
+            /// Applies edit policies to a complete request. Refusals are reported
+            /// in declaration order, before the hand-written cross-field checks.
+            pub fn checked(mut self) -> Result<Self, SettingsRefusal> {
+                $( let _ = scalar_rules::$field; self.$field = Self::$field(self.$field)?; )*
+                self.check_structured()?;
+                Ok(self)
+            }
+            /// Loads one declared scalar with the legacy project-file read policy.
+            /// `empty` distinguishes an empty calibration from a pre-FIR project.
+            pub fn load_project_scalar(&mut self, key: &str, input: Option<ProjectScalarInput<'_>>, empty: bool) {
+                match key {
+                    $( stringify!($field) => { read_project_scalar!(self, $field, input, empty, $default, $check($($args)*), $read); }, )*
+                    _ => {},
+                }
+            }
+            /// Returns a scalar in project-file representation, omitting legacy defaults.
+            /// Structured keys are handled by the project adapter.
+            pub fn project_scalar(&self, key: &str) -> Option<ScalarValue> {
+                match key {
+                    $( stringify!($field) => write_project_scalar!(&self.$field, $default, $write), )*
+                    _ => None,
+                }
+            }
+            fn scalar_engine_key(&self, field: &str) -> String {
+                match field { $( stringify!($field) => scalar_key!(&self.$field, $field, $key), )* _ => unreachable!("declared field") }
+            }
+        }
+    };
+}
+macro_rules! scalar_edit_constructor {
+    ($kind:ident, $value:ident, [$wire:literal], $variant:ident { $payload:ident: $ty:ty }) => {
+        if $kind == $wire {
+            <$ty as ScalarPayload>::from_scalar(&$value).map(|$payload| Self::$variant { $payload })
+        } else {
+            None
+        }
+    };
+    ($kind:ident, $value:ident, [$($wire:literal)?], $variant:ident { $($payload:ident: $ty:ty),* }) => {
+        None::<Self>
+    };
+}
+
+macro_rules! scalar_key {
+    ($value:expr, $field:ident, flag) => {
+        if *$value {
+            concat!("|", stringify!($field)).into()
+        } else {
+            String::new()
+        }
+    };
+    ($value:expr, $field:ident, number) => {
+        number(*$value)
+    };
+    ($value:expr, $field:ident, none) => {
+        String::new()
+    };
+    ($value:expr, $field:ident, $prefix:literal) => {
+        $value.map_or_else(String::new, |v| format!("|{}{}", $prefix, number(v)))
+    };
+}
+macro_rules! scalar_policy {
+    (identity()) => {
+        ("-", "-")
+    };
+    (volume()) => {
+        ("volume", "clamp")
+    };
+    (transition()) => {
+        ("-", "refuse")
+    };
+    (xo()) => {
+        ("xo", "clamp")
+    };
+    (refuse($limit:ident, $($rest:tt)*)) => {
+        (stringify!($limit), "refuse")
+    };
+    (optional_refuse($limit:ident, $($rest:tt)*)) => {
+        (stringify!($limit), "refuse")
+    };
+    ($policy:ident($limit:ident)) => {
+        (stringify!($limit), "clamp")
+    };
+}
+macro_rules! check_scalar {
+    ($v:ident, $f:expr, xo()) => {
+        Ok($v)
+    };
+    ($v:ident, $f:expr, identity()) => {
+        Ok($v)
+    };
+    ($v:ident, $f:expr, clamp($limit:ident)) => {
+        clamp_value($v, CALIBRATION_LIMITS.$limit, $f)
+    };
+    ($v:ident, $f:expr, optional_clamp($limit:ident)) => {
+        $v.map(|v| clamp_value(v, CALIBRATION_LIMITS.$limit, $f))
+            .transpose()
+    };
+    ($v:ident, $f:expr, integer($limit:ident)) => {
+        Ok($v.clamp(
+            CALIBRATION_LIMITS.$limit.0 as i64,
+            CALIBRATION_LIMITS.$limit.1 as i64,
+        ))
+    };
+    ($v:ident, $f:expr, refuse($limit:ident, $field:literal, $reason:literal)) => {
+        refuse_value($v, CALIBRATION_LIMITS.$limit, $field, $reason)
+    };
+    ($v:ident, $f:expr, optional_refuse($limit:ident, $field:literal, $reason:literal)) => {
+        $v.map(|v| refuse_value(v, CALIBRATION_LIMITS.$limit, $field, $reason))
+            .transpose()
+    };
+    ($v:ident, $f:expr, volume()) => {
+        Ok($v
+            .filter(|v| v.is_finite() && *v > CALIBRATION_LIMITS.volume.0)
+            .map(|v| v.min(CALIBRATION_LIMITS.volume.1)))
+    };
+    ($v:ident, $f:expr, transition()) => {
+        if crate::rules::TRANSITION_FACTORS.contains(&$v) {
+            Ok($v)
+        } else {
+            Err(SettingsRefusal::new($f, "rc_hi_transition", (1.0, 4.0)))
+        }
+    };
+}
+
+/// Typed scalar values shared by edit constructors and project-file adapters.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ScalarValue {
+    Bool(bool),
+    Number(f64),
+    OptionalNumber(Option<f64>),
+    Integer(i64),
+    Text(String),
+}
+
+trait ScalarPayload: Sized {
+    fn from_scalar(value: &ScalarValue) -> Option<Self>;
+}
+
+macro_rules! scalar_payload {
+    ($ty:ty, $variant:ident) => {
+        impl ScalarPayload for $ty {
+            fn from_scalar(value: &ScalarValue) -> Option<Self> {
+                match value {
+                    ScalarValue::$variant(value) => Some(*value),
+                    _ => None,
+                }
+            }
+        }
+    };
+}
+scalar_payload!(bool, Bool);
+scalar_payload!(f64, Number);
+scalar_payload!(Option<f64>, OptionalNumber);
+
+impl ScalarPayload for u8 {
+    fn from_scalar(value: &ScalarValue) -> Option<Self> {
+        match value {
+            ScalarValue::Number(value) if (0.0..=255.0).contains(value) && value.fract() == 0.0 => {
+                Some(*value as u8)
+            }
+            ScalarValue::Integer(value) => Self::try_from(*value).ok(),
+            _ => None,
+        }
+    }
+}
+
+macro_rules! scalar_enum_payload {
+    ($($ty:ty),* $(,)?) => {
+        $( impl ScalarPayload for $ty {
+            fn from_scalar(value: &ScalarValue) -> Option<Self> {
+                let ScalarValue::Text(value) = value else { return None; };
+                Self::deserialize(serde::de::value::StrDeserializer::<serde::de::value::Error>::new(value)).ok()
+            }
+        } )*
+    };
+}
+scalar_enum_payload!(Mode, SampleRatePolicy, RcHiBasis);
+
+/// The legacy JSON reader's scalar conversions. Strings may parse as numbers;
+/// integer excludes numeric strings, preserving the transition-factor rule.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ProjectScalarInput<'a> {
+    pub number: Option<f64>,
+    pub integer: Option<i64>,
+    pub text: Option<&'a str>,
+    pub truthy: bool,
+}
+
+fn project_number(input: Option<ProjectScalarInput<'_>>, bounds: (f64, f64)) -> Option<f64> {
+    input
+        .and_then(|v| v.number)
+        .filter(|v| v.is_finite())
+        .map(|v| v.clamp(bounds.0, bounds.1))
+}
+
+fn xo_maps_equal(left: &[(String, f64)], right: &[(String, f64)]) -> bool {
+    let mut left = left.to_vec();
+    let mut right = right.to_vec();
+    left.sort_by(|a, b| a.0.cmp(&b.0));
+    right.sort_by(|a, b| a.0.cmp(&b.0));
+    left == right
+}
+
+macro_rules! project_bounds {
+    (refuse(rc_lo, $($rest:tt)*)) => {
+        crate::rules::RC_LO_READ
+    };
+    (volume()) => {
+        (5.0, CALIBRATION_LIMITS.volume.1)
+    };
+    ($policy:ident($limit:ident $(, $rest:tt)*)) => {
+        CALIBRATION_LIMITS.$limit
+    };
+}
+macro_rules! read_project_scalar {
+    ($s:ident, $field:ident, $input:ident, $empty:ident, $default:expr, $check:ident($($args:tt)*), manual) => {};
+    ($s:ident, $field:ident, $input:ident, $empty:ident, $default:expr, $check:ident($($args:tt)*), number) => {
+        $s.$field = project_number($input, project_bounds!($check($($args)*))).unwrap_or($default)
+    };
+    ($s:ident, $field:ident, $input:ident, $empty:ident, $default:expr, $check:ident($($args:tt)*), optional_number) => {
+        $s.$field = project_number($input, project_bounds!($check($($args)*)))
+    };
+    ($s:ident, $field:ident, $input:ident, $empty:ident, $default:expr, $check:ident($($args:tt)*), integer) => {
+        $s.$field = project_number($input, project_bounds!($check($($args)*))).map_or($default, |v| v.round_ties_even() as i64)
+    };
+    ($s:ident, $field:ident, $input:ident, $empty:ident, $default:expr, $check:ident($($args:tt)*), boolean) => {
+        $s.$field = $input.map_or($default, |v| v.truthy)
+    };
+    ($s:ident, $field:ident, $input:ident, $empty:ident, $default:expr, $check:ident($($args:tt)*), legacy_fir) => {
+        $s.$field = $input.map_or($empty, |v| v.truthy)
+    };
+    ($s:ident, $field:ident, $input:ident, $empty:ident, $default:expr, $check:ident($($args:tt)*), include) => {
+        $s.$field = $input.map_or_else(|| $s.xo.is_empty() || xo_maps_equal(&$s.xo, &$s.xo_rec), |v| v.truthy)
+    };
+    ($s:ident, $field:ident, $input:ident, $empty:ident, $default:expr, $check:ident($($args:tt)*), text) => {
+        $s.$field = $input.and_then(|v| v.text).unwrap_or_default().to_owned()
+    };
+    ($s:ident, $field:ident, $input:ident, $empty:ident, $default:expr, $check:ident($($args:tt)*), transition) => {
+        $s.$field = $input.and_then(|v| v.integer).filter(|v| matches!(v, 1 | 2 | 4)).map_or($default, |v| v as u8)
+    };
+    ($s:ident, $field:ident, $input:ident, $empty:ident, $default:expr, $check:ident($($args:tt)*), mode) => {
+        $s.$field = match $input.and_then(|v| v.text) { Some("zero") => Mode::Zero, Some("linear") => Mode::Linear, Some("ultra") => Mode::Ultra, _ => $default }
+    };
+    ($s:ident, $field:ident, $input:ident, $empty:ident, $default:expr, $check:ident($($args:tt)*), policy) => {
+        $s.$field = match $input.and_then(|v| v.text) { Some("resample") => SampleRatePolicy::Resample, _ => $default }
+    };
+    ($s:ident, $field:ident, $input:ident, $empty:ident, $default:expr, $check:ident($($args:tt)*), basis) => {
+        $s.$field = match $input.and_then(|v| v.text) { Some("lenient") => RcHiBasis::Lenient, Some("agreement") => RcHiBasis::Agreement, _ => $default }
+    };
+}
+macro_rules! write_project_scalar {
+    ($v:expr, $default:expr, manual) => {
+        None
+    };
+    ($v:expr, $default:expr, number) => {
+        Some(ScalarValue::Number(*$v))
+    };
+    ($v:expr, $default:expr, non_default_number) => {
+        (*$v != $default).then_some(ScalarValue::Number(*$v))
+    };
+    ($v:expr, $default:expr, optional_number) => {
+        Some(ScalarValue::OptionalNumber(*$v))
+    };
+    ($v:expr, $default:expr, present_number) => {
+        $v.map(ScalarValue::Number)
+    };
+    ($v:expr, $default:expr, integer) => {
+        Some(ScalarValue::Integer(*$v))
+    };
+    ($v:expr, $default:expr, non_default_integer) => {
+        (*$v != $default).then_some(ScalarValue::Integer(i64::from(*$v)))
+    };
+    ($v:expr, $default:expr, boolean) => {
+        Some(ScalarValue::Bool(*$v))
+    };
+    ($v:expr, $default:expr, true_only) => {
+        (*$v).then_some(ScalarValue::Bool(true))
+    };
+    ($v:expr, $default:expr, false_only) => {
+        (!*$v).then_some(ScalarValue::Bool(false))
+    };
+    ($v:expr, $default:expr, nonempty_text) => {
+        (!$v.is_empty()).then(|| ScalarValue::Text($v.clone()))
+    };
+    ($v:expr, $default:expr, mode) => {
+        Some(ScalarValue::Text(mode_tag(*$v).into()))
+    };
+    ($v:expr, $default:expr, basis) => {
+        (*$v != $default).then(|| ScalarValue::Text($v.as_str().into()))
+    };
+    ($v:expr, $default:expr, policy) => {
+        (*$v != $default).then(|| ScalarValue::Text("resample".into()))
+    };
+}
+
+calibration_settings! {
+    fields {
+
+    mode: Mode = Mode::Mixed; identity(); none; project(mode, mode);
     #[serde(default)]
-    pub sample_rate_policy: SampleRatePolicy,
+    sample_rate_policy: SampleRatePolicy = SampleRatePolicy::Reject; identity(); none; project(policy, policy);
     #[serde(default)]
-    pub low_protect: bool,
+    low_protect: bool = false; identity(); flag; project(boolean, true_only);
     /// Common LF arrival for the mains (ADR 0025); off keeps upstream phase.
     #[serde(default)]
-    pub lf_align: bool,
+    lf_align: bool = false; identity(); flag; project(boolean, true_only);
     /// Shorter long-mode decay through pole-replacing cuts (ADR 0025).
     #[serde(default)]
-    pub mode_decay: bool,
+    mode_decay: bool = false; identity(); flag; project(boolean, true_only);
     /// Unwinds the RC FIR's constant phase above the band (ADR 0030).
     #[serde(default)]
-    pub hf_phase: bool,
+    hf_phase: bool = false; identity(); flag; project(boolean, true_only);
     /// Limits how much one main fills a narrow response dip (ADR 0034).
     #[serde(default)]
-    pub dip_limit: bool,
+    dip_limit: bool = false; identity(); flag; project(boolean, true_only);
     /// Common 8th-order Butterworth high-pass on every input before the MIMO
     /// fork, in Hz; `None` is off (ADR 0031).
     #[serde(default)]
-    pub input_hp_hz: Option<f64>,
-    pub rc_lo: f64,
-    pub rc_hi: Option<f64>,
+    input_hp_hz: Option<f64> = None; optional_refuse(input_hp, "input_hp", "input_hp_range"); "input_hp="; project(optional_number, present_number);
+    rc_lo: f64 = 20.0; refuse(rc_lo, "rc_lo", "rc_lo_range"); number; project(number, number);
+    rc_hi: Option<f64> = None; optional_refuse(rc_hi, "rc_hi", "rc_hi_range"); none; project(optional_number, optional_number);
     #[serde(default)]
-    pub rc_hi_basis: RcHiBasis,
+    rc_hi_basis: RcHiBasis = RcHiBasis::Strict; identity(); none; project(basis, basis);
     #[serde(default = "default_rc_hi_transition")]
-    pub rc_hi_transition: u8,
+    rc_hi_transition: u8 = 1; transition(); none; project(transition, non_default_integer);
     /// Extra correction bands, sorted by `lo_hz`, at most four (ADR 0024).
     #[serde(default)]
-    pub rc_bands: Vec<RcBand>,
-    pub room_volume_m3: Option<f64>,
-    pub room_dims_m: Option<[f64; 3]>,
-    pub mimo_on: bool,
-    pub fsiso: f64,
-    pub mimo_low: Option<f64>,
+    rc_bands: Vec<RcBand> = Vec::new(); identity(); none; project(manual, manual);
+    room_volume_m3: Option<f64> = None; volume(); none; project(optional_number, optional_number);
+    room_dims_m: Option<[f64; 3]> = None; identity(); none; project(manual, manual);
+    mimo_on: bool = false; identity(); none; project(boolean, boolean);
+    fsiso: f64 = 150.0; clamp(fsiso); number; project(number, number);
+    mimo_low: Option<f64> = None; optional_clamp(mimo_low); none; project(optional_number, optional_number);
     #[ts(type = "number")]
-    pub mimo_max_supports: i64,
-    pub mimo_fir: bool,
+    mimo_max_supports: i64 = 0; integer(mimo_max); none; project(integer, integer);
+    mimo_fir: bool = true; identity(); none; project(legacy_fir, boolean);
     /// Interval after onset protected from MIMO support action (ms, ADR 0037).
     #[serde(default = "default_mimo_early_ms")]
-    pub mimo_early_ms: f64,
+    mimo_early_ms: f64 = default_mimo_early_ms(); refuse(mimo_early_ms, "mimo_early_ms", "mimo_early_range"); none; project(number, non_default_number);
     /// Evaluates MIMO guards at each measured position (ADR 0036).
     #[serde(default)]
-    pub mimo_seat_guard: bool,
+    mimo_seat_guard: bool = false; identity(); none; project(boolean, true_only);
     /// Experimental: PEQ fits use closed-form Jacobians (results leave SECS 2).
     #[serde(default)]
-    pub peq_analytic_derivatives: bool,
+    peq_analytic_derivatives: bool = false; identity(); flag; project(boolean, true_only);
     /// Experimental: MIMO IIR fits use closed-form derivatives (results leave SECS 2).
     #[serde(default)]
-    pub mimo_iir_analytic_derivatives: bool,
+    mimo_iir_analytic_derivatives: bool = false; identity(); none; project(boolean, true_only);
     #[serde(with = "ordered_f64_map")]
     #[ts(as = "BTreeMap<String, f64>")]
-    pub xo: Vec<(String, f64)>,
+    xo: Vec<(String, f64)> = Vec::new(); xo(); none; project(manual, manual);
     #[serde(with = "ordered_f64_map")]
     #[ts(as = "BTreeMap<String, f64>")]
-    pub xo_rec: Vec<(String, f64)>,
+    xo_rec: Vec<(String, f64)> = Vec::new(); identity(); none; project(manual, manual);
     /// Fingerprint of the inputs used for the stored XO recommendation.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     #[ts(as = "Option<String>", optional)]
-    pub xo_rec_key: String,
+    xo_rec_key: String = String::new(); identity(); none; project(text, nonempty_text);
     /// Recompute the XO recommendation before calibration (ADR 0028).
     #[serde(default = "default_true", skip_serializing_if = "is_true")]
     #[ts(as = "Option<bool>", optional)]
-    pub xo_rec_include: bool,
-    pub ultra_ms: f64,
+    xo_rec_include: bool = true; identity(); none; project(include, false_only);
+    ultra_ms: f64 = 200.0; clamp(ultra_ms); none; project(number, number);
     #[serde(with = "ordered_sub_map")]
     #[ts(as = "BTreeMap<String, SubEntry>")]
-    pub subs_manual: Vec<(String, SubEntry)>,
-    pub sub_main_delay_ms: f64,
+    subs_manual: Vec<(String, SubEntry)> = Vec::new(); identity(); none; project(manual, manual);
+    sub_main_delay_ms: f64 = 0.0; clamp(main_delay); number; project(number, number);
     #[serde(with = "ordered_layout_map")]
     #[ts(as = "BTreeMap<String, BundleLayoutEntry>")]
-    pub bundle_layouts: Vec<(String, BundleLayoutEntry)>,
-    pub infra_boost_max_db: f64,
-    pub xo_peq_on: bool,
-    pub boost_max_db: f64,
-    pub xo_peq_lo: f64,
-    pub xo_peq_hi: f64,
+    bundle_layouts: Vec<(String, BundleLayoutEntry)> = Vec::new(); identity(); none; project(manual, manual);
+    infra_boost_max_db: f64 = 24.0; clamp(infra_boost); number; project(number, number);
+    xo_peq_on: bool = true; identity(); none; project(boolean, boolean);
+    boost_max_db: f64 = 10.0; clamp(boost); number; project(number, number);
+    xo_peq_lo: f64 = 0.0; clamp(xo_peq); number; project(number, number);
+    xo_peq_hi: f64 = 0.0; clamp(xo_peq); number; project(number, number);
+    }
+    edits {
+    Mode {
+        mode: Mode,
+        } ["mode", mode] => |s| { s.mode = Self::mode(*mode)?; Ok(Applied::Applied) };
+    SampleRatePolicy {
+        policy: SampleRatePolicy,
+        } ["sample_rate_policy", sample_rate_policy] => |s| { s.sample_rate_policy = Self::sample_rate_policy(*policy)?; Ok(Applied::Applied) };
+    UltraMs {
+        ms: f64,
+        } ["ultra_ms", ultra_ms] => |s| { s.ultra_ms = Self::ultra_ms(*ms)?; Ok(Applied::Applied) };
+    LowProtect {
+        on: bool,
+        } ["low_protect", low_protect] => |s| { s.low_protect = Self::low_protect(*on)?; Ok(Applied::Applied) };
+    LfAlign {
+        on: bool,
+        } ["lf_align", lf_align] => |s| { s.lf_align = Self::lf_align(*on)?; Ok(Applied::Applied) };
+    ModeDecay {
+        on: bool,
+        } ["mode_decay", mode_decay] => |s| { s.mode_decay = Self::mode_decay(*on)?; Ok(Applied::Applied) };
+    HfPhase {
+        on: bool,
+        } ["hf_phase", hf_phase] => |s| { s.hf_phase = Self::hf_phase(*on)?; Ok(Applied::Applied) };
+    DipLimit {
+        on: bool,
+        } ["dip_limit", dip_limit] => |s| { s.dip_limit = Self::dip_limit(*on)?; Ok(Applied::Applied) };
+    /// The common input high-pass in Hz, `None` to turn it off (ADR 0031).
+    InputHp {
+        hz: Option<f64>,
+        } ["input_hp", input_hp_hz] => |s| { s.input_hp_hz = Self::input_hp_hz(*hz)?; Ok(Applied::Applied) };
+    RcLo {
+        hz: f64,
+        } ["rc_lo", rc_lo] => |s| { s.rc_lo = Self::rc_lo(*hz)?; Ok(Applied::Applied) };
+    RcHi {
+        hz: Option<f64>,
+        } ["rc_hi", rc_hi] => |s| { s.rc_hi = Self::rc_hi(*hz)?; Ok(Applied::Applied) };
+    RcHiBasis {
+        basis: RcHiBasis,
+        } ["rc_hi_basis", rc_hi_basis] => |s| { s.rc_hi_basis = Self::rc_hi_basis(*basis)?; Ok(Applied::Applied) };
+    RcHiTransition {
+        factor: u8,
+        } ["rc_hi_transition", rc_hi_transition] => |s| { s.rc_hi_transition = Self::rc_hi_transition(*factor)?; Ok(Applied::Applied) };
+    /// Replaces the whole list of extra correction bands (ADR 0024); an
+    /// empty list removes them. Rejected, not clamped, when a band breaks
+    /// `CALIBRATION_LIMITS.rc_band` or the list is longer than `rc_bands_max`.
+    RcBands {
+        bands: Vec<RcBand>,
+        }  => |s| { let _ = s; Ok(Applied::Structured) };
+    RoomVolume {
+        m3: f64,
+        } ["room_volume", room_volume_m3] => |s| { s.room_volume_m3 = Self::room_volume_m3(Some(*m3))?; Ok(Applied::Applied) };
+    RoomDims {
+        dims: [f64; 3],
+        }  => |s| { let _ = s; Ok(Applied::Structured) };
+    BoostMax {
+        db: f64,
+        } ["boost_max", boost_max_db] => |s| { s.boost_max_db = Self::boost_max_db(*db)?; Ok(Applied::Applied) };
+    Xo {
+        group: String,
+        hz: f64,
+        } ["xo", xo] => |s| { let _ = s; Ok(Applied::Structured) };
+    XoRecInclude {
+        on: bool,
+        } ["xo_rec_include", xo_rec_include] => |s| { s.xo_rec_include = Self::xo_rec_include(*on)?; Ok(Applied::Applied) };
+    XoPeq {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        on: Option<bool>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        lo: Option<f64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        hi: Option<f64>,
+        }  => |s| { if let Some(v) = on { s.xo_peq_on = *v; }
+            if let Some(v) = lo { s.xo_peq_lo = Self::xo_peq_lo(*v)?; }
+            if let Some(v) = hi { s.xo_peq_hi = Self::xo_peq_hi(*v)?; } Ok(Applied::Applied) };
+    Infra {
+        role: Option<String>,
+        hz: f64,
+        #[serde(rename = "type")]
+        typ: BandType,
+        subs: Vec<String>,
+        }  => |s| { let _ = s; Ok(Applied::Structured) };
+    InfraBoost {
+        db: f64,
+        } ["infra_boost", infra_boost_max_db] => |s| { s.infra_boost_max_db = Self::infra_boost_max_db(*db)?; Ok(Applied::Applied) };
+    SubMode {
+        role: String,
+        mode: SubModeChoice,
+        }  => |s| { let _ = s; Ok(Applied::Structured) };
+    SubLayout {
+        bundle: String,
+        layout: SubLayout,
+        }  => |s| { let _ = s; Ok(Applied::Structured) };
+    RearTrim {
+        bundle: String,
+        ms: f64,
+        } ["rear_trim", rear_trim_ms] => |s| { let _ = s; Ok(Applied::Structured) };
+    Sub {
+        role: String,
+        patch: SubPatch,
+        }  => |s| { let _ = s; Ok(Applied::Structured) };
+    SubBandType {
+        role: String,
+        band: SubBand,
+        #[serde(rename = "type")]
+        typ: BandTypeChoice,
+        }  => |s| { let _ = s; Ok(Applied::Structured) };
+    MainDelay {
+        ms: f64,
+        } ["main_delay", sub_main_delay_ms] => |s| { s.sub_main_delay_ms = Self::sub_main_delay_ms(*ms)?; Ok(Applied::Applied) };
+    MimoOn {
+        on: bool,
+        } ["mimo_on", mimo_on] => |s| { s.mimo_on = Self::mimo_on(*on)?; Ok(Applied::Applied) };
+    Fsiso {
+        hz: f64,
+        } ["fsiso", fsiso] => |s| { s.fsiso = Self::fsiso(*hz)?; Ok(Applied::Applied) };
+    MimoLow {
+        hz: Option<f64>,
+        } ["mimo_low", mimo_low] => |s| { s.mimo_low = Self::mimo_low(*hz)?; Ok(Applied::Applied) };
+    MimoMax {
+        count: f64,
+        } ["mimo_max", mimo_max_supports] => |s| { s.mimo_max_supports = Self::mimo_max_supports(clamp_value(*count, CALIBRATION_LIMITS.mimo_max, "mimo_max_supports")?.round_ties_even() as i64)?; Ok(Applied::Applied) };
+    MimoFir {
+        on: bool,
+        } ["mimo_fir", mimo_fir] => |s| { s.mimo_fir = Self::mimo_fir(*on)?; Ok(Applied::Applied) };
+    MimoEarly {
+        ms: f64,
+        } ["mimo_early", mimo_early_ms] => |s| { s.mimo_early_ms = Self::mimo_early_ms(*ms)?; Ok(Applied::Applied) };
+    MimoSeatGuard {
+        on: bool,
+        } ["mimo_seat_guard", mimo_seat_guard] => |s| { s.mimo_seat_guard = Self::mimo_seat_guard(*on)?; Ok(Applied::Applied) };
+    /// Experimental closed-form derivatives (D43, D44); an absent part keeps its value.
+    AnalyticDerivatives {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        peq: Option<bool>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        mimo_iir: Option<bool>,
+        }  => |s| { if let Some(v) = peq { s.peq_analytic_derivatives = *v; }
+            if let Some(v) = mimo_iir { s.mimo_iir_analytic_derivatives = *v; } Ok(Applied::Applied) };
+    }
+    project_order { "mode", "rc_lo", "rc_hi", "room_volume_m3", "room_dims_m", "mimo_on", "fsiso", "mimo_low", "mimo_max_supports", "mimo_fir", "xo", "xo_rec", "ultra_ms", "subs_manual", "sub_main_delay_ms", "bundle_layouts", "infra_boost_max_db", "xo_peq_on", "boost_max_db", "xo_peq_lo", "xo_peq_hi", "rc_bands", "low_protect", "lf_align", "mode_decay", "hf_phase", "dip_limit", "input_hp_hz", "rc_hi_basis", "rc_hi_transition", "sample_rate_policy", "peq_analytic_derivatives", "mimo_iir_analytic_derivatives", "mimo_seat_guard", "mimo_early_ms", "xo_rec_key", "xo_rec_include" }
 }
 
-impl Default for CalibrationSettings {
-    fn default() -> Self {
+/// Whether an edit belongs to the scalar declaration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Applied {
+    Applied,
+    Structured,
+}
+/// A rejected setting and its screen message parameters.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SettingsRefusal {
+    pub field: String,
+    pub reason: &'static str,
+    pub min: f64,
+    pub max: f64,
+}
+impl SettingsRefusal {
+    fn new(field: impl Into<String>, reason: &'static str, bounds: (f64, f64)) -> Self {
         Self {
-            mode: Mode::Mixed,
-            sample_rate_policy: SampleRatePolicy::Reject,
-            low_protect: false,
-            lf_align: false,
-            mode_decay: false,
-            hf_phase: false,
-            dip_limit: false,
-            input_hp_hz: None,
-            rc_lo: 20.0,
-            rc_hi: None,
-            rc_hi_basis: RcHiBasis::Strict,
-            rc_hi_transition: 1,
-            rc_bands: Vec::new(),
-            room_volume_m3: None,
-            room_dims_m: None,
-            mimo_on: false,
-            fsiso: 150.0,
-            mimo_low: None,
-            mimo_max_supports: 0,
-            // Beta 1.3.0: MIMO supports start as FIR in a new project.
-            mimo_fir: true,
-            mimo_early_ms: default_mimo_early_ms(),
-            mimo_seat_guard: false,
-            peq_analytic_derivatives: false,
-            mimo_iir_analytic_derivatives: false,
-            xo: Vec::new(),
-            xo_rec: Vec::new(),
-            xo_rec_key: String::new(),
-            xo_rec_include: true,
-            ultra_ms: 200.0,
-            subs_manual: Vec::new(),
-            sub_main_delay_ms: 0.0,
-            bundle_layouts: Vec::new(),
-            infra_boost_max_db: 24.0,
-            xo_peq_on: true,
-            boost_max_db: 10.0,
-            xo_peq_lo: 0.0,
-            xo_peq_hi: 0.0,
+            field: field.into(),
+            reason,
+            min: bounds.0,
+            max: bounds.1,
         }
+    }
+}
+impl From<SettingsRefusal> for crate::ipc::IpcError {
+    fn from(value: SettingsRefusal) -> Self {
+        let detail = match value.reason {
+            "rc_lo_range" => "RC lower limit is outside its range",
+            "rc_hi_range" => "RC upper limit is outside its range",
+            "input_hp_range" => "input high-pass is outside its range",
+            "mimo_early_range" => "MIMO early interval is outside its range",
+            "rc_hi_transition" => "RC transition factor must be 1, 2 or 4",
+            _ => "calibration setting is outside its range",
+        };
+        let mut error = Self::new(crate::ipc::ErrorCode::InvalidRequest, detail)
+            .with_param("field", value.field);
+        // Preserve the existing transition rejection envelope.
+        if value.reason != "rc_hi_transition" {
+            error = error
+                .with_param("reason", value.reason)
+                .with_param("min", value.min.to_string())
+                .with_param("max", value.max.to_string());
+        }
+        error
+    }
+}
+fn refuse_value(
+    value: f64,
+    bounds: (f64, f64),
+    field: &str,
+    reason: &'static str,
+) -> Result<f64, SettingsRefusal> {
+    if value.is_finite() && (bounds.0..=bounds.1).contains(&value) {
+        Ok(value)
+    } else {
+        Err(SettingsRefusal::new(field, reason, bounds))
+    }
+}
+fn clamp_value(value: f64, bounds: (f64, f64), field: &str) -> Result<f64, SettingsRefusal> {
+    if value.is_nan() {
+        Err(SettingsRefusal::new(field, "not_finite", bounds))
+    } else {
+        Ok(value.clamp(bounds.0, bounds.1))
+    }
+}
+impl CalibrationSettings {
+    fn check_structured(&mut self) -> Result<(), SettingsRefusal> {
+        if self.rc_hi.is_some_and(|hi| self.rc_lo >= hi) {
+            return Err(SettingsRefusal::new(
+                "rc_lo",
+                "rc_lo_above_hi",
+                CALIBRATION_LIMITS.rc_lo,
+            ));
+        }
+        if self.rc_bands.len() > CALIBRATION_LIMITS.rc_bands_max.1 as usize {
+            return Err(SettingsRefusal::new(
+                "rc_bands",
+                "rc_band_count",
+                CALIBRATION_LIMITS.rc_bands_max,
+            ));
+        }
+        for band in &self.rc_bands {
+            refuse_value(
+                band.lo_hz,
+                CALIBRATION_LIMITS.rc_band,
+                "rc_bands",
+                "rc_band_range",
+            )?;
+            refuse_value(
+                band.hi_hz,
+                CALIBRATION_LIMITS.rc_band,
+                "rc_bands",
+                "rc_band_range",
+            )?;
+            if band.lo_hz >= band.hi_hz {
+                return Err(SettingsRefusal::new(
+                    "rc_bands",
+                    "rc_band_range",
+                    CALIBRATION_LIMITS.rc_band,
+                ));
+            }
+        }
+        self.rc_bands.sort_by(|a, b| a.lo_hz.total_cmp(&b.lo_hz));
+        for (role, sub) in &self.subs_manual {
+            for (name, hz) in [("hp_hz", sub.hp_hz), ("lp_hz", sub.lp_hz)] {
+                if hz != 0.0 {
+                    refuse_value(
+                        hz,
+                        crate::rules::SUB_LIMITS.filter_hz,
+                        &format!("subs_manual.{role}.{name}"),
+                        "sub_filter_range",
+                    )?;
+                }
+            }
+            if sub.hp_hz != 0.0 && sub.lp_hz != 0.0 && sub.hp_hz >= sub.lp_hz {
+                return Err(SettingsRefusal::new(
+                    format!("subs_manual.{role}.hp_hz"),
+                    "sub_filter_order",
+                    crate::rules::SUB_LIMITS.filter_hz,
+                ));
+            }
+        }
+        for (_, hz) in &mut self.xo {
+            *hz = clamp_value(*hz, CALIBRATION_LIMITS.xo, "xo")?.round_ties_even();
+        }
+        Ok(())
     }
 }
 
@@ -299,7 +892,13 @@ impl CalibrationSettings {
     /// Stable staleness fingerprint with the same inclusions and exclusions as upstream.
     pub fn engine_key(&self) -> String {
         let mut out = String::new();
-        write!(&mut out, "{:?}|{}|", self.mode, number(self.rc_lo)).unwrap();
+        write!(
+            &mut out,
+            "{:?}|{}|",
+            self.mode,
+            self.scalar_engine_key("rc_lo")
+        )
+        .unwrap();
         optional_number(&mut out, self.rc_hi);
         out.push('|');
         optional_number(&mut out, self.room_volume_m3);
@@ -316,11 +915,11 @@ impl CalibrationSettings {
         write!(
             &mut out,
             "|{}|{}|{}|{}|{}",
-            number(self.infra_boost_max_db),
+            self.scalar_engine_key("infra_boost_max_db"),
             self.xo_peq_on,
-            number(self.xo_peq_lo),
-            number(self.xo_peq_hi),
-            number(self.boost_max_db)
+            self.scalar_engine_key("xo_peq_lo"),
+            self.scalar_engine_key("xo_peq_hi"),
+            self.scalar_engine_key("boost_max_db")
         )
         .unwrap();
         // Preserve upstream keys for strict ×1, including existing caches.
@@ -351,28 +950,14 @@ impl CalibrationSettings {
         if self.sample_rate_policy == SampleRatePolicy::Resample {
             out.push_str("|sample_rate_policy=resample");
         }
-        if self.low_protect {
-            out.push_str("|low_protect");
-        }
-        if self.lf_align {
-            out.push_str("|lf_align");
-        }
-        if self.mode_decay {
-            out.push_str("|mode_decay");
-        }
-        if self.hf_phase {
-            out.push_str("|hf_phase");
-        }
-        if self.dip_limit {
-            out.push_str("|dip_limit");
-        }
+        out.push_str(&self.scalar_engine_key("low_protect"));
+        out.push_str(&self.scalar_engine_key("lf_align"));
+        out.push_str(&self.scalar_engine_key("mode_decay"));
+        out.push_str(&self.scalar_engine_key("hf_phase"));
+        out.push_str(&self.scalar_engine_key("dip_limit"));
         // ADR 0031: the chain is a calibration output, so the cut joins this key.
-        if let Some(hz) = self.input_hp_hz {
-            write!(&mut out, "|input_hp={}", number(hz)).unwrap();
-        }
-        if self.peq_analytic_derivatives {
-            out.push_str("|peq_analytic_derivatives");
-        }
+        out.push_str(&self.scalar_engine_key("input_hp_hz"));
+        out.push_str(&self.scalar_engine_key("peq_analytic_derivatives"));
         out
     }
 
@@ -441,7 +1026,7 @@ impl CalibrationSettings {
         }
         let fixed = self.subs_manual.iter().any(|(_, e)| e.mode == "fixed");
         if fixed {
-            write!(&mut out, "|{}", number(self.sub_main_delay_ms)).unwrap();
+            write!(&mut out, "|{}", self.scalar_engine_key("sub_main_delay_ms")).unwrap();
         } else {
             out.push_str("|-");
         }
@@ -457,7 +1042,7 @@ impl CalibrationSettings {
             .map(|(role, _)| role.as_str())
             .collect();
         excluded.sort_unstable();
-        let mut out = format!("{}|", number(self.fsiso));
+        let mut out = format!("{}|", self.scalar_engine_key("fsiso"));
         optional_number(&mut out, self.mimo_low);
         write!(
             &mut out,
@@ -705,6 +1290,138 @@ mod tests {
     }
 
     #[test]
+    fn scalar_constructor_uses_declared_kind_and_payload() {
+        assert_eq!(
+            SettingEdit::scalar("dip_limit", ScalarValue::Bool(true)),
+            Some(SettingEdit::DipLimit { on: true })
+        );
+        assert_eq!(
+            SettingEdit::scalar("mimo_early", ScalarValue::Number(20.0)),
+            Some(SettingEdit::MimoEarly { ms: 20.0 })
+        );
+        for hz in [None, Some(25.0)] {
+            assert_eq!(
+                SettingEdit::scalar("input_hp", ScalarValue::OptionalNumber(hz)),
+                Some(SettingEdit::InputHp { hz })
+            );
+        }
+        assert_eq!(
+            SettingEdit::scalar("rc_hi_transition", ScalarValue::Number(2.0)),
+            Some(SettingEdit::RcHiTransition { factor: 2 })
+        );
+        assert_eq!(
+            SettingEdit::scalar("mode", ScalarValue::Text("linear".into())),
+            Some(SettingEdit::Mode { mode: Mode::Linear })
+        );
+        assert_eq!(
+            SettingEdit::scalar("dip_limit", ScalarValue::Number(1.0)),
+            None
+        );
+        assert_eq!(
+            SettingEdit::scalar("unknown", ScalarValue::Bool(true)),
+            None
+        );
+        assert_eq!(SettingEdit::scalar("xo", ScalarValue::Number(80.0)), None);
+        assert_eq!(
+            SettingEdit::scalar("rc_hi_transition", ScalarValue::Number(2.5)),
+            None
+        );
+        assert_eq!(
+            SettingEdit::scalar("rc_hi_transition", ScalarValue::Number(f64::NAN)),
+            None
+        );
+    }
+
+    #[test]
+    fn scalar_settings_table_round_trips_defaults_and_keeps_engine_keys() {
+        use crate::settings_edit::SettingEdit;
+        let defaults = CalibrationSettings::default();
+        let json = serde_json::to_value(&defaults).unwrap();
+        let round: CalibrationSettings = serde_json::from_value(json.clone()).unwrap();
+        assert_eq!(defaults, round);
+        let limits = serde_json::to_value(CALIBRATION_LIMITS).unwrap();
+        for row in crate::rules::SCALAR_EDITS {
+            if row.kind == "rear_trim" {
+                continue;
+            }
+            assert!(
+                json.get(row.field).is_some() || row.field == "xo_rec_include",
+                "{}",
+                row.field
+            );
+            if row.limit != "-" {
+                assert!(limits.get(row.limit).is_some(), "{}", row.limit);
+            }
+            let mut edit = serde_json::to_value(SettingEdit::DipLimit { on: true }).unwrap();
+            edit["kind"] = row.kind.into();
+            let error = serde_json::from_value::<SettingEdit>(edit).err();
+            assert!(
+                !error.is_some_and(|e| e.to_string().contains("unknown variant")),
+                "{}",
+                row.kind
+            );
+        }
+        assert!(
+            crate::rules::SCALAR_EDITS
+                .iter()
+                .any(|r| r.kind == "dip_limit")
+        );
+        assert_eq!(
+            defaults.engine_key(),
+            "Mixed|4034000000000000|-|-||-||-|4038000000000000|true|0|0|4024000000000000"
+        );
+    }
+    #[test]
+    fn apply_scalar_clamps_and_refuses_by_policy() {
+        use crate::settings_edit::SettingEdit;
+        let mut settings = CalibrationSettings::default();
+        assert_eq!(
+            settings.apply_scalar(&SettingEdit::BoostMax { db: 1e9 }),
+            Ok(Applied::Applied)
+        );
+        assert_eq!(settings.boost_max_db, 10.0);
+        assert_eq!(
+            settings.apply_scalar(&SettingEdit::RcLo { hz: 5.0 }),
+            Err(SettingsRefusal {
+                field: "rc_lo".into(),
+                reason: "rc_lo_range",
+                min: 20.0,
+                max: 200.0,
+            })
+        );
+        assert_eq!(
+            settings
+                .apply_scalar(&SettingEdit::InputHp { hz: Some(f64::NAN) })
+                .unwrap_err()
+                .field,
+            "input_hp"
+        );
+        settings
+            .apply_scalar(&SettingEdit::DipLimit { on: true })
+            .unwrap();
+        assert!(settings.dip_limit);
+    }
+    #[test]
+    fn checked_applies_every_policy_to_a_whole_value() {
+        let mut settings = CalibrationSettings {
+            boost_max_db: 1e9,
+            ultra_ms: 1.0,
+            rc_lo: 5.0,
+            ..Default::default()
+        };
+        assert_eq!(settings.clone().checked().unwrap_err().field, "rc_lo");
+        settings.rc_lo = 20.0;
+        let checked = settings.checked().unwrap();
+        assert_eq!(checked.boost_max_db, 10.0);
+        assert_eq!(checked.ultra_ms, 30.0);
+    }
+    #[test]
+    fn limits_table_has_the_two_new_entries() {
+        assert_eq!(CALIBRATION_LIMITS.peq_bands, (0.0, 64.0));
+        assert_eq!(crate::rules::SUB_LIMITS.filter_hz, (10.0, 300.0));
+    }
+
+    #[test]
     fn valid_rc_bands_drop_broken_bands_sort_and_keep_four() {
         let kept = valid_rc_bands(&[
             band(15_000.0, 20_000.0),
@@ -728,6 +1445,27 @@ mod tests {
             ]
         );
         assert!(valid_rc_bands(&[]).is_empty());
+    }
+
+    #[test]
+    fn engine_key_reads_exactly_the_exported_fields() {
+        let settings = serde_json::to_value(CalibrationSettings::default()).unwrap();
+        let fields = settings
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect::<std::collections::BTreeSet<_>>();
+        let keyed = crate::rules::ENGINE_KEY_FIELDS
+            .iter()
+            .chain(crate::rules::MANUAL_KEY_FIELDS)
+            .chain(crate::rules::MIMO_KEY_FIELDS)
+            .copied()
+            .collect::<std::collections::BTreeSet<_>>();
+        let excluded = ["room_dims_m", "mimo_on", "xo_rec"]
+            .into_iter()
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(fields, keyed.union(&excluded).copied().collect());
     }
 
     #[test]

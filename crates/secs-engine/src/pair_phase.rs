@@ -122,7 +122,17 @@ pub fn check(f: &[f64], responses: &[(String, Vec<Complex64>)]) -> Vec<Note> {
         .map(|(_, left, right, bands)| Note::PairPhase {
             a: responses[left].0.clone(),
             b: responses[right].0.clone(),
-            bands,
+            bands: bands
+                .into_iter()
+                .map(
+                    |(lo_hz, hi_hz, phase_deg, loss_db)| secs_types::notes::PairBand {
+                        lo_hz,
+                        hi_hz,
+                        phase_deg,
+                        loss_db,
+                    },
+                )
+                .collect(),
         })
         .collect()
 }
@@ -232,7 +242,7 @@ mod tests {
             .map(|note| match note {
                 Note::PairPhase { bands, .. } => bands
                     .iter()
-                    .map(|band| band.3)
+                    .map(|band| band.loss_db)
                     .min_by(f64::total_cmp)
                     .unwrap(),
                 _ => unreachable!(),

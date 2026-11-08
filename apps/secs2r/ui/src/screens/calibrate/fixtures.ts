@@ -1,14 +1,18 @@
-// Views of the 보정 screen for the gallery and the tests: the sample 7.1.4
-// room with two subs (src/ipc/fixtures.ts) in every state the specimens
-// draw. Curves are synthetic but shaped like the service's: levels relative
-// to the target, the RC band, LR4 crossovers, sub sums. Deterministic.
+// Views of the 보정 screen for the gallery and the tests, in every state the
+// specimens draw. The results come from the service's recorded calibrations
+// of the sample room (src/ipc/recorded, ADR 0052): the 7.1.4 mains and three
+// subs at nine positions, a new project's settings, and one edit per
+// recorded variant. Only the curves are drawn here, synthetic but shaped like
+// the service's: levels relative to the target, the RC band, LR4 crossovers,
+// sub sums. A few views carry what no record has yet (a fixed or bundled
+// sub, a reversed main, an unheld sub bus, MIMO); each says so.
 import { logGrid, response } from "../../gallery/data";
 import type { CalibrationSettings } from "../../ipc/bindings/CalibrationSettings";
 import type { CalibrationSummary } from "../../ipc/bindings/CalibrationSummary";
-import type { ChannelResultLine } from "../../ipc/bindings/ChannelResultLine";
 import type { ConfigResult } from "../../ipc/bindings/ConfigResult";
 import type { MimoSummary } from "../../ipc/bindings/MimoSummary";
 import type { ModeSpecResult } from "../../ipc/bindings/ModeSpecResult";
+import type { Note } from "../../ipc/bindings/Note";
 import type { Notice } from "../../ipc/bindings/Notice";
 import type { RcBand } from "../../ipc/bindings/RcBand";
 import type { ResultCurve } from "../../ipc/bindings/ResultCurve";
@@ -17,15 +21,30 @@ import type { ResultLinesResult } from "../../ipc/bindings/ResultLinesResult";
 import type { SubResultLines } from "../../ipc/bindings/SubResultLines";
 import type { TargetResult } from "../../ipc/bindings/TargetResult";
 import * as fx from "../../ipc/fixtures";
-import { ipcError, mockInputHpNotes, mockLowProtectNotes, mockRcLines } from "../../ipc/mock";
+import { ipcError } from "../../ipc/mock";
+import { recordKey, recordedCalibration } from "../../ipc/recorded";
 import { bandLayout } from "../../ui/plot/bands";
 import { targetAt } from "../../ui/plot/targetEdit";
 import type { RangeRejection } from "./settingsView";
 import type { CalibrateView } from "./types";
 
+/* ── The recorded calibration ───────────────────────────────────────────── */
+
+/** The service's recorded calibration of the sample room on a new project's settings with this patch; the defaults' when not recorded. */
+const recordedRun = (patch: Partial<CalibrationSettings>) => recordedCalibration(recordKey({ ...fx.newProjectSettings, ...patch }));
+const RECORD = recordedRun({});
+const RECORDED_SUMMARY = RECORD.results.calibration!;
+const MAINS = RECORDED_SUMMARY.main_roles;
+const SUBS = RECORDED_SUMMARY.sub_roles;
+/** The sample room's roles in configuration order: the front three, the subs, then the other mains. */
+const SAMPLE_ROLES = [...MAINS.slice(0, 3), ...SUBS, ...MAINS.slice(3)];
+const NINE_POSITIONS = [...new Set(RECORDED_SUMMARY.late_energy.map((late) => late.position))];
+/** The RC band the recorded calibration used (its rc_limit note), which the curves draw. */
+const RC: [number, number] = [fx.newProjectSettings.rc_lo, RECORDED_SUMMARY.notes.find((note) => note.code === "rc_limit")!.hz];
+
 /* ── Project ────────────────────────────────────────────────────────────── */
 
-const GROUP_OF: Record<string, string> = { L: "프론트", R: "프론트", C: "센터", SW1: "서브", SW2: "서브", Ls: "서라운드", Rs: "서라운드", Lb: "백", Rb: "백", Tfl: "탑", Tfr: "탑", Tbl: "탑", Tbr: "탑" };
+const GROUP_OF: Record<string, string> = { L: "프론트", R: "프론트", C: "센터", Ls: "서라운드", Rs: "서라운드", Lb: "백", Rb: "백", Tfl: "탑", Tfr: "탑", Tbl: "탑", Tbr: "탑" };
 const GROUP_ORDER = ["프론트", "센터", "서브", "서라운드", "백", "와이드", "탑", "하이트", "기타"];
 
 function config(roles: readonly string[], preset: string): ConfigResult {
@@ -35,7 +54,7 @@ function config(roles: readonly string[], preset: string): ConfigResult {
   return { speakers, preset, device: "MOTU M4", groups, summary: { speaker_count: roles.length, outputs: roles.map((_, i) => i + 1), max_channel: roles.length, duplicate_outputs: [], sub_count: subs } };
 }
 
-const sampleConfig = config(fx.SAMPLE_ROLES, "7.1.4");
+const sampleConfig = config(SAMPLE_ROLES, "7.1.4");
 const stereoConfig = config(["L", "R"], "2.0");
 
 const HARMAN: [number, number][] = [
@@ -75,43 +94,12 @@ const targetPoints = HARMAN.map(([hz, db]) => ({ hz, db }));
 
 const XO = { 프론트: 80, 센터: 100, 서라운드: 80, 백: 80, 탑: 100 };
 
-export const baseSettings: CalibrationSettings = {
-  sample_rate_policy: "reject",
-  mode: "mixed",
-  low_protect: false,
-  lf_align: false,
-  mode_decay: false,
-  hf_phase: false,
-  dip_limit: false,
-  input_hp_hz: null,
-  rc_lo: 20,
-  rc_hi: null,
-  rc_hi_basis: "strict",
-  rc_hi_transition: 1,
-  rc_bands: [],
-  room_volume_m3: 62.6,
-  room_dims_m: [5.2, 4.3, 2.8],
-  mimo_on: false,
-  fsiso: 150,
-  mimo_low: null,
-  mimo_max_supports: 0,
-  mimo_fir: false,
-  mimo_early_ms: 60,
-  mimo_seat_guard: false,
-  peq_analytic_derivatives: false,
-  mimo_iir_analytic_derivatives: false,
-  xo: XO,
-  xo_rec: XO,
-  ultra_ms: 200,
-  subs_manual: {},
-  sub_main_delay_ms: 0,
-  bundle_layouts: {},
-  infra_boost_max_db: 24,
-  xo_peq_on: true,
-  boost_max_db: 10,
-  xo_peq_lo: 0,
-  xo_peq_hi: 0,
-};
+/**
+ * The settings the recorded calibration ran on (a new project's: no room
+ * volume), with the recommended crossovers stored and MIMO's IIR supports,
+ * which neither changes the correction's record.
+ */
+export const baseSettings: CalibrationSettings = { ...fx.newProjectSettings, xo: XO, xo_rec: XO, mimo_fir: false };
 
 const modeSpecs: Record<"zero" | "mixed" | "linear" | "ultra120", ModeSpecResult> = {
   zero: { rc_filter: "iir", fir_taps: 0, peq_bands: 32, mimo_filter: "iir", lift_ms: 0, phase_frac: 6, max_latency_ms: 0 },
@@ -122,7 +110,6 @@ const modeSpecs: Record<"zero" | "mixed" | "linear" | "ultra120", ModeSpecResult
 
 /* ── Curves ─────────────────────────────────────────────────────────────── */
 
-const RC: [number, number] = [20, 310];
 const arr = (values: ArrayLike<number>) => Array.from(values, (v) => Math.round(v * 100) / 100);
 const lr4 = (f: number, fc: number, high: boolean) => {
   const x = (f / fc) ** 4;
@@ -222,183 +209,88 @@ function baResult({ subsOnly = false }: { subsOnly?: boolean } = {}): ResultCurv
   const grid = logGrid(5, 300, 280);
   const t = grid.map((f) => targetAt(targetPoints, f));
   const shape = subShape;
-  const subs = fx.SAMPLE_SUBS.map((role, k) => {
+  const subs = SUBS.map((role, k) => {
     const dev = response(grid, role, 1, true);
     const before = grid.map((f, i) => t[i]! - 6 + (dev[i]! - shape(f) - (k ? 1.5 : -1)) * 0.9 + shape(f));
     const after = grid.map((f, i) => t[i]! - 6 + (dev[i]! - shape(f)) * 0.3 + shape(f));
     return { role, before, after };
   });
-  const sumBefore = grid.map((_, i) => sumDb(subs[0]!.before[i]! - 1.5, subs[1]!.before[i]! + 2.5 * Math.sin(i / 9)));
-  const sumAfter = grid.map((_, i) => sumDb(subs[0]!.after[i]!, subs[1]!.after[i]!));
+  const sumBefore = grid.map((_, i) => sumDb(...subs.map((s, k) => s.before[i]! + [-1.5, 2.5 * Math.sin(i / 9), 1.2 * Math.cos(i / 7)][k % 3]!)));
+  const sumAfter = grid.map((_, i) => sumDb(...subs.map((s) => s.after[i]!)));
   const curves: ResultCurve[] = [{ kind: "target", role: null, values: arr(t) }];
   for (const s of subs) curves.push({ kind: "before", role: s.role, values: arr(s.before) }, { kind: "after", role: s.role, values: arr(s.after) });
   curves.push({ kind: "sum_before", role: null, values: arr(sumBefore) }, { kind: "sum_after", role: null, values: arr(sumAfter) });
   return curvesResult("ba", grid, curves, { subs_only: subsOnly });
 }
 
-/* ── Scorecard figures ──────────────────────────────────────────────────── */
-
-/**
- * Per main role: ±1 dB share (%), GD spread (ms) and late 20–150 Hz energy
- * (dB) at position 1, each before correction, after it and after MIMO. L, R
- * and C are the reference case: MIMO gives up a little flatness for shorter
- * ringing. The others are shaped like them.
- */
-const FIGURES: Record<string, { within: [number, number, number]; gd: [number, number, number]; late: [number, number, number] }> = {
-  L: { within: [38, 64, 54], gd: [88.4, 47.5, 41.1], late: [-23.9, -16.3, -23.1] },
-  R: { within: [41, 65, 56], gd: [85.2, 47.3, 45.2], late: [-24.0, -17.0, -21.6] },
-  C: { within: [36, 62, 55], gd: [90.6, 47.7, 45.1], late: [-17.0, -16.0, -18.7] },
-  Ls: { within: [44, 71, 66], gd: [76.3, 39.8, 36.2], late: [-21.4, -18.2, -22.5] },
-  Rs: { within: [42, 69, 63], gd: [79.1, 41.2, 37.9], late: [-20.8, -17.6, -21.9] },
-  Lb: { within: [39, 67, 61], gd: [82.5, 43.6, 40.3], late: [-19.7, -16.9, -20.4] },
-  Rb: { within: [40, 66, 60], gd: [81.0, 44.1, 41.0], late: [-20.2, -17.3, -20.8] },
-  Tfl: { within: [47, 74, 70], gd: [68.4, 35.2, 33.6], late: [-22.6, -19.8, -22.1] },
-  Tfr: { within: [46, 73, 69], gd: [70.2, 36.0, 34.1], late: [-22.1, -19.4, -21.7] },
-  Tbl: { within: [43, 70, 67], gd: [72.9, 37.4, 35.8], late: [-21.0, -18.7, -20.9] },
-  Tbr: { within: [45, 72, 68], gd: [71.5, 36.8, 35.0], late: [-21.3, -18.9, -21.2] },
-};
+/* ── Results and lines ──────────────────────────────────────────────────── */
 
 const round1 = (value: number) => Math.round(value * 10) / 10;
 
-/** The ChannelScore metrics with this role's ±1 dB share and GD spread (before, after); the rest as the IPC fixture has them. */
-const scorecard: CalibrationSummary["scorecard"] = fx.scorecard.map((score) => {
-  const figures = FIGURES[score.role];
-  if (!figures) return score;
-  return {
-    ...score,
-    before: { ...score.before, in1_20: figures.within[0], gd_20: figures.gd[0] },
-    after: { ...score.after, in1_20: figures.within[1], gd_20: figures.gd[1] },
-  };
-});
-
 /**
- * Away from position 1 the room rings differently and the correction and
- * MIMO help less: each figure a few dB apart, deterministic per role and
- * position.
+ * MIMO on the recorded correction. No record has MIMO yet, so these figures
+ * are drawn on the recorded ones: shorter ringing than the correction alone
+ * at every recorded position, and a flatness that MIMO gains on some mains
+ * and gives up on others (so the order after MIMO differs).
  */
-function lateAt(role: string, position: number): [number, number, number] {
-  const [before, after, mimo] = FIGURES[role]!.late;
-  if (position === 1) return [before, after, mimo];
-  const k = fx.SAMPLE_MAINS.indexOf(role as (typeof fx.SAMPLE_MAINS)[number]);
-  const shift = [0, 2.1, -1.4, 1.2][position - 1]! + (((k * 7 + position * 3) % 5) - 2) * 0.4;
-  return [round1(before + shift), round1(after + shift * 0.6 + 0.9), round1(mimo + shift * 0.8 + 1.6)];
-}
-
-const lateEnergy = (positions: readonly number[]): CalibrationSummary["late_energy"] =>
-  positions.flatMap((position) => fx.SAMPLE_MAINS.map((role) => {
-    const [before_db, after_db] = lateAt(role, position);
-    return { role, position, before_db, after_db };
-  }));
-
-/** The MIMO result with its scorecard and late energy at the three measured positions. */
+const MIMO_SHARE = [4, -10, 6];
 const mimoSummary: MimoSummary = {
   ...fx.mimoSummary,
-  input_count: fx.SAMPLE_MAINS.length,
-  scorecard: scorecard.map((score) => ({
+  input_count: MAINS.length,
+  scorecard: RECORDED_SUMMARY.scorecard.map((score, k) => ({
     role: score.role,
-    after_mimo: { ...score.after, in1_20: FIGURES[score.role]!.within[2], gd_20: FIGURES[score.role]!.gd[2] },
+    after_mimo: { ...score.after, in1_20: Math.min(100, round1(score.after.in1_20 + MIMO_SHARE[k % MIMO_SHARE.length]!)), gd_20: round1(score.after.gd_20 * 0.85) },
   })),
-  late_energy: [1, 2, 3].flatMap((position) => fx.SAMPLE_MAINS.map((role) => ({ role, position, after_mimo_db: lateAt(role, position)[2] }))),
+  late_energy: RECORDED_SUMMARY.late_energy.map(({ role, position, after_db }) => ({ role, position, after_mimo_db: round1(after_db - 2.5) })),
 };
 
-/* ── Results and lines ──────────────────────────────────────────────────── */
+/** The recorded BA lines: three subs, nine positions. */
+const baLines: SubResultLines = RECORD.lines.ba!;
 
-const groupXo = (role: string) => XO[GROUP_OF[role] as keyof typeof XO] ?? null;
-
-function channelLines(roles: readonly string[], mimo: boolean): ChannelResultLine[] {
-  return roles.map((role, i) => {
-    const score = scorecard.find((s) => s.role === role) ?? scorecard[i % scorecard.length]!;
-    return {
-      role,
-      within_1db_pct: [round1(score.before.in1_20), round1(score.after.in1_20)],
-      gd_spread_ms: [round1(score.before.gd_20), round1(score.after.gd_20)],
-      peq_count: 3 + ((i * 5) % 6),
-      fir_taps: 2048,
-      xo_hz: groupXo(role),
-      mimo_support_count: mimo ? 1 + ((i * 3) % 4) : null,
-    };
-  });
-}
-
-const RC_NOTES = [
-  { code: "rc_limit", params: { hz: "310.42", auto: "true", schroeder_hz: "310.42" } },
-  { code: "rc_room_volume", params: { volume_m3: "62.6" } },
-];
-
-const BA_ROWS: SubResultLines["rows"] = [
-  { role: "SW1", mode: "auto", gain_db: 1.5, delay_ms: 3.42, polarity: 1, allpass: [[62, 0.8]], high_pass: [0, "LR24"], low_pass: [0, "LR24"], peq: [] },
-  { role: "SW2", mode: "auto", gain_db: -2, delay_ms: 0, polarity: -1, allpass: [], high_pass: [0, "LR24"], low_pass: [0, "LR24"], peq: [] },
-];
-
-const baLines: SubResultLines = {
-  stale: false,
-  subs_only: false,
-  band_hz: [20, 120],
-  flatness_db: [7.4, 2.1],
-  seat_spread_db: [5.8, 3.2],
-  positions: 3,
-  rows: BA_ROWS,
-  layouts: [],
-  warnings: [],
-};
-
-/** BA with a fixed SW2 whose filters leave almost no pass band, and the gain that tries to fill it. */
+/** BA with a fixed SW2 whose filters leave almost no pass band, and the gain that tries to fill it (hand-made: no record has a fixed sub yet). */
 const baWarnLines: SubResultLines = {
   ...baLines,
-  flatness_db: [7.4, 3.6],
-  rows: [BA_ROWS[0]!, { ...BA_ROWS[1]!, mode: "fixed", gain_db: 13.4, delay_ms: 1.2, high_pass: [40, "LR24"], low_pass: [60, "LR24"] }],
+  rows: baLines.rows.map((row) => (row.role === "SW2" ? { ...row, mode: "fixed", gain_db: 13.4, delay_ms: 1.2, high_pass: [40, "LR24"], low_pass: [60, "LR24"] } : row)),
   warnings: [
     { code: "sub_narrow_band", params: { role: "SW2", hp_hz: "40", lp_hz: "60" } },
     { code: "sub_high_gain", params: { role: "SW2", gain_db: "13.4" } },
   ],
 };
 
+/** SW1 and SW2 as a D.B.A. bundle, calculated alone (hand-made: no record has a bundle yet). */
 const baDbaLines: SubResultLines = {
   ...baLines,
   subs_only: true,
-  flatness_db: [7.4, 1.8],
-  seat_spread_db: [5.8, 2.4],
-  rows: [
-    { ...BA_ROWS[0]!, mode: "bundle:A:dba-front", gain_db: 0, delay_ms: 0, allpass: [], peq: [[42, 4.5, -3.5]] },
-    { ...BA_ROWS[1]!, mode: "bundle:A:dba-rear", gain_db: -1.2, delay_ms: 12.25, polarity: -1, peq: [[42, 4.5, -3.5]] },
-  ],
+  rows: baLines.rows.map((row) => row.role === "SW1" ? { ...row, mode: "bundle:A:dba-front", gain_db: 0, delay_ms: 0, allpass: [], peq: [[42, 4.5, -3.5]] }
+    : row.role === "SW2" ? { ...row, mode: "bundle:A:dba-rear", gain_db: -1.2, delay_ms: 12.25, polarity: -1, peq: [[42, 4.5, -3.5]] } : row),
   layouts: [{ bundle: "A", kind: "dba", members: ["SW1", "SW2"], front: ["SW1"], rear: ["SW2"], rear_ms: 12.25, auto_ms: 11.75, trim_ms: 0.5, peq: [[42, 4.5, -3.5]] }],
 };
 
-/** The calculation notes as secs-service sends them: one record per role, filter or room mode, scalar params. */
-const NOTES: Notice[] = [
-  { code: "lift_capped", params: { from_ms: "8", taps: "2048", lift_ms: "7.5" } },
-  { code: "rc_limit", params: { hz: "310.42", auto: "true", schroeder_hz: "310.42" } },
-  ...fx.SAMPLE_MAINS.map((role) => ({ code: "phase_strength", params: { role, strength: role.startsWith("T") ? "0.5" : "0.9" } })),
-  // The engine's phase_band is the same fraction as the strength (rc.rs), named `hz`.
-  ...fx.SAMPLE_MAINS.map((role) => ({ code: "phase_band", params: { role, enabled: "true", hz: role.startsWith("T") ? "0.5" : "0.9" } })),
-  { code: "long_mode_boost", params: { cap_db: "4", hz: "34.2", t60_s: "0.61" } },
-  { code: "long_mode_boost", params: { cap_db: "4", hz: "51.8", t60_s: "0.44" } },
-  { code: "ba_cost", params: { value: "0.8417" } },
-  { code: "ba_bus_pass", params: { first: "0.8417", second: "0.7952", kept_first: "false" } },
-];
+/** The recorded calculation notes. */
+const NOTES: readonly Note[] = RECORDED_SUMMARY.notes;
 
-/** SW2's fixed filters (the BA view's fixed sub), as the engine notes them first. */
-const SW2_FILTERS: Notice[] = [
-  { code: "sub_filters", params: { role: "SW2", hp_hz: "40", hp_type: "LR24", lp_hz: "60", lp_type: "LR24", peq_count: "1" } },
-  { code: "sub_filter_peq", params: { role: "SW2", index: "0", hz: "38", q: "5", gain_db: "-4" } },
-];
+/** SW2's fixed filters (the BA view's fixed sub), as one typed engine note (hand-made with that view). */
+const SW2_FILTERS: Note[] = [{
+  code: "sub_filters",
+  filters: [{ role: "SW2", value: { hp_hz: 40, hp_type: "LR24", lp_hz: 60, lp_type: "LR24", peq: [{ hz: 38, q: 5, gain_db: -4 }] } }],
+}];
 
-const summary = (stale = false, notes: readonly Notice[] = NOTES, positions: readonly number[] = [1, 2, 3]): CalibrationSummary => ({
-  ...fx.calibrationSummary,
+/** The recorded summary, stale or not, with these notes and the late energy at these positions. */
+const summary = (stale = false, notes: readonly Note[] = NOTES, positions: readonly number[] = NINE_POSITIONS): CalibrationSummary => ({
+  ...structuredClone(RECORDED_SUMMARY),
   stale,
   notes: [...notes],
-  // The verdict sums up the channels below it (about their mean).
-  verdict: { ...fx.calibrationSummary.verdict, within_1db_before_pct: 41.9, within_1db_after_pct: 68.6, low_band_time_spread_before_ms: 78.7, low_band_time_spread_after_ms: 41.5 },
-  scorecard,
-  late_energy: lateEnergy(positions),
+  late_energy: RECORDED_SUMMARY.late_energy.filter((late) => positions.includes(late.position)),
 });
 
-function lines({ roles = fx.SAMPLE_MAINS, mimo = false, stale = false, ba = baLines as SubResultLines | null }: { roles?: readonly string[]; mimo?: boolean; stale?: boolean; ba?: SubResultLines | null } = {}): ResultLinesResult {
-  return { stale, channels: channelLines(roles, mimo), total_delay_ms: 9.8, notes: summary().notes, rc: RC_NOTES, ba: ba ? { ...ba, stale } : null };
+/** The recorded lines for these mains, stale or not, with these BA lines; MIMO's support counts are drawn (no record has MIMO). */
+function lines({ roles = MAINS, mimo = false, stale = false, ba = baLines as SubResultLines | null }: { roles?: readonly string[]; mimo?: boolean; stale?: boolean; ba?: SubResultLines | null } = {}): ResultLinesResult {
+  const recorded = structuredClone(RECORD.lines);
+  const channels = recorded.channels.filter((channel) => roles.includes(channel.role)).map((channel, i) => (mimo ? { ...channel, mimo_support_count: 1 + ((i * 3) % 4) } : channel));
+  return { ...recorded, stale, channels, ba: ba ? { ...ba, stale } : null };
 }
 
-const noLines: ResultLinesResult = { stale: false, channels: [], total_delay_ms: null, notes: [], rc: [], ba: null };
+const noLines: ResultLinesResult = { stale: false, channels: [], total_delay_ms: null, notes: [], notices: [], rc: [], ba: null };
 
 /* ── Views ──────────────────────────────────────────────────────────────── */
 
@@ -412,8 +304,8 @@ const base: CalibrateView = {
   target: sampleTarget,
   targetEdit: "idle", xoEdit: "idle",
   config: sampleConfig,
-  positions: [1, 2, 3],
-  measuredRoles: [...fx.SAMPLE_ROLES],
+  positions: NINE_POSITIONS,
+  measuredRoles: [...SAMPLE_ROLES],
   subWarnings: [],
   curvesLoading: false,
   firBudget: 2097152,
@@ -632,31 +524,30 @@ export const xoRecStaleView: CalibrateView = {
 
 /* ── RC upper limit (ADR 0021) ──────────────────────────────────────────── */
 
-const NINE_POSITIONS = [1, 2, 3, 4, 5, 6, 7, 8, 9];
-
 /**
- * The range card on one upper-limit basis, its RC lines as the mock service's
- * calibration leaves them for these settings (`mockRcLines`). `ranOn` names
- * the settings of the run when they differ from the ones shown (an edit since).
+ * The range card on one upper-limit basis, the result and its RC lines as
+ * the service's recorded calibration with these settings left them. `ranOn`
+ * names the settings of the run when they differ from the ones shown (an
+ * edit since).
  */
-function rangeView(patch: Partial<CalibrationSettings>, positions: number[] = [1, 2, 3], ranOn: Partial<CalibrationSettings> = patch): CalibrateView {
+function rangeView(patch: Partial<CalibrationSettings>, positions: number[] = NINE_POSITIONS, ranOn: Partial<CalibrationSettings> = patch): CalibrateView {
   const settings = { ...baseSettings, ...patch };
-  return { ...base, positions, settings, lines: { ...base.lines, rc: mockRcLines({ ...baseSettings, ...ranOn }, positions.length) } };
+  const run = recordedRun(ranOn);
+  return { ...base, positions, settings, results: { ...run.results, calibration: summary(false, run.results.calibration!.notes, positions) }, lines: { ...lines(), notes: run.lines.notes, rc: run.lines.rc } };
 }
 
+/** One view per recorded upper-limit case (a new project has no room volume, so the Schroeder bases stay at 500 Hz). */
 export const rangeViews = {
   strict: rangeView({}),
   strictTimes2: rangeView({ rc_hi_transition: 2 }),
   strictTimes4: rangeView({ rc_hi_transition: 4 }),
   lenient: rangeView({ rc_hi_basis: "lenient" }),
-  lenientTimes2: rangeView({ rc_hi_basis: "lenient", rc_hi_transition: 2 }),
-  agreement: rangeView({ rc_hi_basis: "agreement" }, NINE_POSITIONS),
+  agreement: rangeView({ rc_hi_basis: "agreement" }),
   /** Two measured positions: agreement is off, with the reason. */
   agreementUnavailable: rangeView({}, [1, 2]),
   /** Agreement chosen earlier, a position cleared since: still chosen, with what to do. */
   agreementShort: rangeView({ rc_hi_basis: "agreement" }, [1, 2], {}),
-  manual: rangeView({ rc_hi: 300, rc_hi_basis: "lenient" }),
-  noVolume: rangeView({ room_volume_m3: null, room_dims_m: null }),
+  manual: rangeView({ rc_hi: 500 }),
 } satisfies Record<string, CalibrateView>;
 
 /* ── Extra correction bands (ADR 0024) ──────────────────────────────────── */
@@ -672,25 +563,35 @@ const FOUR_BANDS: RcBand[] = [
   { lo_hz: 15000, hi_hz: 20000 },
 ];
 
-/** The merged band set a calculation with these extra bands notes (`rc_bands`, "lo-hi,lo-hi"), the RC band of these views included. */
-export function rcBandsNote(bands: readonly RcBand[], hi = 310.42): Notice {
+/** The extra bands of the recorded calculation with extra bands. */
+const RECORDED_BANDS: RcBand[] = [
+  { lo_hz: 1000, hi_hz: 2000 },
+  { lo_hz: 15000, hi_hz: 20000 },
+];
+
+/**
+ * A `rc_bands` note's shape for these extra bands, the RC band of `hi`
+ * merged in; cases for the text renderer, not service output.
+ */
+function rcBandsNote(bands: readonly RcBand[], hi = 310.42): Note[] {
   const merged = bandLayout({ lo: RC[0], hi, extra: bands.map((band) => [band.lo_hz, band.hi_hz] as const) }).bands;
-  return { code: "rc_bands", params: { bands: merged.map(([lo, top]) => `${lo}-${top}`).join(",") } };
+  return [{ code: "rc_bands", bands: merged.map(([lo_hz, hi_hz]) => ({ lo_hz, hi_hz })) }];
 }
 
 /**
- * A current result calculated with these extra bands: SPL shades outside
- * their union with the RC band (`rc_bands_hz`), and the calculation notes
- * carry the merged band set after the RC limit.
+ * The range card with these extra bands: SPL shades outside their union
+ * with the RC band (`rc_bands_hz`). The result is the recorded calculation
+ * with them when it was recorded (its notes carry the merged band set), and
+ * the defaults' otherwise.
  */
 function extraBandsView(bands: RcBand[], patch: Partial<CalibrateView> = {}): CalibrateView {
-  const notes = [NOTES[0]!, NOTES[1]!, rcBandsNote(bands), ...NOTES.slice(2)];
+  const run = recordedRun({ rc_bands: bands });
   return {
     ...base,
     settings: { ...baseSettings, rc_bands: bands },
     curves: { ...splResult(), rc_bands_hz: bands.map((band) => [band.lo_hz, band.hi_hz]) },
-    results: { calibration: summary(false, notes), mimo: null, mimo_export: "off" },
-    lines: { ...lines(), notes },
+    results: { calibration: summary(false, run.results.calibration!.notes), mimo: null, mimo_export: "off" },
+    lines: { ...lines(), notes: run.lines.notes },
     ...patch,
   };
 }
@@ -710,46 +611,79 @@ export const extraBandViews = {
   none: base,
   /** 15–20 kHz: one row, the graph shaded between the RC band and it. */
   one: extraBandsView([{ lo_hz: 15000, hi_hz: 20000 }]),
-  /** 2–4 kHz and 15–20 kHz: two rows, the graph shaded outside the three bands, the band set in the notes. */
+  /** 2–4 kHz and 15–20 kHz: two rows, the graph shaded outside the three bands. */
   two: extraBandsView(TWO_BANDS),
   /** The second band's upper edge refused: the reason at that input, the stored 20000 Hz in it. */
   refused: extraBandsView(TWO_BANDS, { rangeRejection: refusedBandEdit }),
   /** Four bands: no add action. */
   four: extraBandsView(FOUR_BANDS),
+  /** 1–2 kHz and 15–20 kHz as the service calculated them: the merged band set in the notes. */
+  calculated: extraBandsView(RECORDED_BANDS),
 } satisfies Record<string, CalibrateView>;
 
-/** The `rc_bands` line for one extra band, two bands, and a band that merges with the RC band. */
-export const rcBandsNotes: Notice[] = [
+/** `rc_bands` note shapes for one extra band, two bands, and a band that merges with the RC band (text renderer cases). */
+export const rcBandsNotes: Note[][] = [
   rcBandsNote([{ lo_hz: 15000, hi_hz: 20000 }]),
   rcBandsNote(TWO_BANDS),
   rcBandsNote([{ lo_hz: 250, hi_hz: 800 }]),
 ];
 
-/* ── 극저역 보호 (ADR 0022) ─────────────────────────────────────────────── */
+/* ── 극성 경고와 딥 보정 제한 (ADR 0033, 0034) ─────────────────────────── */
 
 /**
- * A current result calculated with 극저역 보호, its notes as the mock
- * service's calibration leaves them for these settings (`mockLowProtectNotes`).
+ * A current result whose engine notes name a reversed main and the dips the
+ * limit filled only partly, as secs-engine records them (one record per
+ * dip). Hand-made until the service's recorded answers carry these notes.
  */
-function lowProtectView(patch: Partial<CalibrationSettings>): CalibrateView {
-  const settings = { ...baseSettings, ...patch };
-  const notes = [...NOTES, ...mockLowProtectNotes(settings, fx.SAMPLE_ROLES)];
-  return { ...base, settings, results: { calibration: summary(false, notes), mimo: null, mimo_export: "off" }, lines: { ...lines(), notes } };
+const POLARITY_DIP_NOTES: Note[] = [
+  { code: "polarity_reversed", role: "Rs", confidence: 0.94, compared: 3, opposite: 3 },
+  { code: "dip_limit", role: "L", dips: [{ hz: 94.43, depth_db: 7.54, fill_db: 4.77 }, { hz: 136.78, depth_db: 9.2, fill_db: 5.6 }] },
+];
+
+/** The polarity warning with its flip button, and the dip-limit line among the calculation notes. */
+export const polarityDipView: CalibrateView = (() => {
+  const notes = [...NOTES, ...POLARITY_DIP_NOTES];
+  return { ...base, settings: { ...baseSettings, dip_limit: true }, results: { calibration: summary(false, notes), mimo: null, mimo_export: "off" }, lines: { ...lines(), notes } };
+})();
+
+/* ── 극저역 보호 (ADR 0022) ─────────────────────────────────────────────── */
+
+/** A current result calculated with these settings, its notes as the service's recorded calculation with them left them. */
+function recordedView(patch: Partial<CalibrationSettings>, shown: Partial<CalibrationSettings> = patch): CalibrateView {
+  const notes = recordedRun(patch).results.calibration!.notes;
+  return { ...base, settings: { ...baseSettings, ...shown }, results: { calibration: summary(false, notes), mimo: null, mimo_export: "off" }, lines: { ...lines(), notes } };
 }
+
+/**
+ * 극저역 보호 notes for the sample room with the RC lower limit at 15 Hz:
+ * each channel's roll-off, a high-pass for each sub, and the sub bus that
+ * cannot hold its boost below the roll-off. Hand-made: the recorded
+ * calculation with 극저역 보호 notes none of these, and none was recorded
+ * at 15 Hz.
+ */
+const UNHELD_NOTES: Note[] = [
+  ...SAMPLE_ROLES.map((role, i): Note => SUBS.includes(role)
+    ? { code: "low_protect", role, rolloff_hz: 22 + 2 * SUBS.indexOf(role), hp_hz: (22 + 2 * SUBS.indexOf(role)) / Math.SQRT2, limited: true, reduced: 0, cuts: 0 }
+    : { code: "low_protect", role, rolloff_hz: 28 + ((i * 3) % 7), hp_hz: null, limited: true, reduced: 0, cuts: 0 }),
+  { code: "low_protect", role: SUBS.join(" + "), rolloff_hz: 22, hp_hz: null, limited: false, reduced: 0, cuts: 0 },
+];
 
 export const lowProtectViews = {
   /** The switch off (the default): the results as before. */
   off: base,
-  /** On: every channel's roll-off, and a high-pass for each sub. */
-  on: lowProtectView({ low_protect: true }),
+  /** On: the recorded calculation with it, which notes no channel in the sample room. */
+  on: recordedView({ low_protect: true }),
   /** On with the RC lower limit at 15 Hz: the sub bus cannot hold its boost below the roll-off, a warning with what to do. */
-  unheld: lowProtectView({ low_protect: true, rc_lo: 15 }),
+  unheld: (() => {
+    const notes = [...NOTES, ...UNHELD_NOTES];
+    return { ...base, settings: { ...baseSettings, low_protect: true, rc_lo: 15 }, results: { calibration: summary(false, notes), mimo: null, mimo_export: "off" }, lines: { ...lines(), notes } };
+  })(),
 } satisfies Record<string, CalibrateView>;
 
 /**
- * The 극저역 보호 notes for each case the service sends (secs-service
- * `scalar_notice`): a sub with its high-pass, a sub keeping the one the user
- * set, a main, and a sub bus that could not hold its boost.
+ * 극저역 보호 note shapes for each case the text renderer handles: a sub
+ * with its high-pass, a sub keeping the one the user set, a main, and a sub
+ * bus that could not hold its boost (not service output).
  */
 export const lowProtectNotes: Notice[] = [
   { code: "low_protect", params: { role: "SW1", rolloff_hz: "22", hp_hz: String(22 / Math.SQRT2), limited: "true" } },
@@ -760,18 +694,11 @@ export const lowProtectNotes: Notice[] = [
 
 /* ── 입력 저역 컷 (ADR 0031) ────────────────────────────────────────────── */
 
-/** A current result calculated with the input cut, its note as the mock service leaves it (`mockInputHpNotes`). */
-function inputHpView(patch: Partial<CalibrationSettings>): CalibrateView {
-  const settings = { ...baseSettings, ...patch };
-  const notes = [...NOTES, ...mockLowProtectNotes(settings, fx.SAMPLE_ROLES), ...mockInputHpNotes(settings)];
-  return { ...base, settings, results: { calibration: summary(false, notes), mimo: null, mimo_export: "off" }, lines: { ...lines(), notes } };
-}
-
 export const inputHpViews = {
-  /** On at 27 Hz: its frequency field under the switch, and one calculation note. */
-  on: inputHpView({ input_hp_hz: 27 }),
-  /** Both protections on, side by side. */
-  both: inputHpView({ input_hp_hz: 27, low_protect: true }),
+  /** On at 25 Hz: its frequency field under the switch, and the recorded calculation's note. */
+  on: recordedView({ input_hp_hz: 25 }),
+  /** Both protections on, side by side; the notes are the input cut's record (none has both). */
+  both: recordedView({ input_hp_hz: 25 }, { input_hp_hz: 25, low_protect: true }),
 } satisfies Record<string, CalibrateView>;
 
 /* ── 저음 도착 맞추기, 고역 위상 맞추기, 방 울림 줄이기 (ADR 0025, 0030) ─────── */
@@ -784,23 +711,23 @@ export const inputHpViews = {
  * record per cut mode, or mode_decay_none where no mode rings long enough
  * (the height speakers here), then hf_phase with the rotation unwound above
  * the band (not in Zero mode either). Mixed mode's short delay cuts the
- * alignment (`limited`).
+ * alignment (`limited`). Hand-made: no record has these switches on yet.
  */
-function lfNotes(mode: "zero" | "mixed" | "linear", { align, decay, phase }: { align: boolean; decay: boolean; phase: boolean }): Notice[] {
-  return fx.SAMPLE_MAINS.flatMap((role, i): Notice[] => {
-    const notes: Notice[] = [];
+function lfNotes(mode: "zero" | "mixed" | "linear", { align, decay, phase }: { align: boolean; decay: boolean; phase: boolean }): Note[] {
+  return MAINS.flatMap((role, i): Note[] => {
+    const notes: Note[] = [];
     if (align && mode !== "zero") {
       const arrival = mode === "mixed" ? 2.4 + (i % 3) * 0.3 : (((i * 7) % 9) - 4) / 10;
-      notes.push({ code: "lf_align", params: { role, strength: mode === "mixed" ? "0.5" : role.startsWith("T") ? "0.75" : "1", arrival_ms: String(Math.round(arrival * 10) / 10), limited: String(mode === "mixed") } });
+      notes.push({ code: "lf_align", role, strength: mode === "mixed" ? 0.5 : role.startsWith("T") ? 0.75 : 1, arrival_ms: Math.round(arrival * 10) / 10, limited: mode === "mixed" });
     }
     if (decay) {
-      if (role.startsWith("T")) notes.push({ code: "mode_decay_none", params: { role, target_s: "0.31" } });
-      else {
-        notes.push({ code: "mode_decay", params: { role, hz: String(42 + (i % 2)), t60_s: "0.82", target_s: "0.31", depth_db: "-8.4" } });
-        if (i < 3) notes.push({ code: "mode_decay", params: { role, hz: "63", t60_s: "0.55", target_s: "0.31", depth_db: "-4.9" } });
-      }
+      const modes = role.startsWith("T") ? [] : [
+        { hz: 42 + (i % 2), t60_s: 0.82, cut_db: -8.4 },
+        ...(i < 3 ? [{ hz: 63, t60_s: 0.55, cut_db: -4.9 }] : []),
+      ];
+      notes.push({ code: "mode_decay", role, target_t60_s: 0.31, modes });
     }
-    if (phase && mode !== "zero") notes.push({ code: "hf_phase", params: { role, rotation_deg: String(((i * 67) % 340) - 170), limited: "false" } });
+    if (phase && mode !== "zero") notes.push({ code: "hf_phase", role, rotation_deg: ((i * 67) % 340) - 170, limited: false });
     return notes;
   });
 }
@@ -833,11 +760,12 @@ export const lfViews = {
 } satisfies Record<string, CalibrateView>;
 
 /**
- * The lines for each case the service sends: a main aligned in full, one
- * held by the pull limit with the bass arriving early, one the engine could
- * not measure at strength 0, two cut modes of one main, a main with no
- * mode to cut, a rotation unwound in full, one the delay limit kept part of,
- * and a channel with no room above the band to unwind it.
+ * Line shapes for each case the text renderer handles (not service output):
+ * a main aligned in full, one held by the pull limit with the bass arriving
+ * early, one the engine could not measure at strength 0, two cut modes of
+ * one main, a main with no mode to cut, a rotation unwound in full, one the
+ * delay limit kept part of, and a channel with no room above the band to
+ * unwind it.
  */
 export const lfNoteCases: Notice[] = [
   { code: "lf_align", params: { role: "L", strength: "1", arrival_ms: "0.4", limited: "false" } },
@@ -852,8 +780,10 @@ export const lfNoteCases: Notice[] = [
 ];
 
 /**
- * The RC line for every kind of evidence the service's rc_limit note carries
- * (secs-service `scalar_notice`), and a note from before the bases.
+ * RC line shapes for every kind of evidence an rc_limit note can carry
+ * (secs-service `scalar_notice`), and a note from before the bases: cases
+ * for the text renderer, not service output (the recorded ones are in
+ * `rangeViews`).
  */
 export const rcLimitNotes: Notice[] = [
   { code: "rc_limit", params: { hz: "154", auto: "true", schroeder_hz: "154", basis: "strict", factor: "1" } },

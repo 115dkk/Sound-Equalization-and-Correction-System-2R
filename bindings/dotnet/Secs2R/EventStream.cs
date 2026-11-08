@@ -30,9 +30,8 @@ public sealed class EventStream : IAsyncEnumerable<JsonElement>, IAsyncDisposabl
 
     /// <summary>
     /// Gets how many events the native queue of this stream dropped because they were read too
-    /// slowly, as of its latest poll. A dropped event can be a job's terminal event, so a caller
-    /// that sees this grow should ask for the job's state, for example with
-    /// <see cref="Engine.WaitJob"/>.
+    /// slowly, as of its latest poll. Terminal, lagged and closed events wait for queue space and
+    /// are not included in this count.
     /// </summary>
     public ulong DroppedEvents => unchecked((ulong)Interlocked.Read(ref _droppedEvents));
 

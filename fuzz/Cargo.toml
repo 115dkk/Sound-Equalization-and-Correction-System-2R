@@ -18,6 +18,14 @@ secs-jos = { path = "../crates/secs-jos" }
 secs-mdat = { path = "../crates/secs-mdat" }
 secs-dirac = { path = "../crates/secs-dirac" }
 secs-project = { path = "../crates/secs-project" }
+secs-audio = { path = "../crates/secs-audio" }
+
+[[bin]]
+name = "cal_parse"
+path = "fuzz_targets/cal_parse.rs"
+test = false
+doc = false
+bench = false
 
 [[bin]]
 name = "jos_parse"
@@ -43,6 +51,13 @@ bench = false
 [[bin]]
 name = "project_load_text"
 path = "fuzz_targets/project_load_text.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "source_info_parse"
+path = "fuzz_targets/source_info_parse.rs"
 test = false
 doc = false
 bench = false

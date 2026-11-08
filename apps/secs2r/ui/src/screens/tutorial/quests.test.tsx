@@ -32,7 +32,7 @@ function useQuestHost() {
   const state = useHost();
   const system = useSystemScreen();
   const connect = useConnectScreen(false);
-  const measure = useMeasureScreen();
+  const measure = useMeasureScreen(false);
   const calibrate = useCalibrateScreen();
   const exporting = useExportScreen();
   return { state, system, connect, measure, calibrate, exporting };

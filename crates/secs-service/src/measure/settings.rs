@@ -1,5 +1,4 @@
 // Port of wizard/step5_measure.py::plan and step1_devices.py::_store (SECS 2, GPL-3.0-only).
-use super::json::JsonExt;
 use super::{MeasureError, positive};
 use secs_project::{MeasurementPlan, Project, PyJson, TimingReference};
 
@@ -8,7 +7,7 @@ use secs_project::{MeasurementPlan, Project, PyJson, TimingReference};
 /// with a native loopback input channel. The native path no longer reads that
 /// channel (U15): the screen shows the timing reference only for REW, and a
 /// native session already keeps every channel's arrival time on one clock.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct MeasurementSettings {
     pub positions: Option<Vec<i64>>,
     pub loopback_input_channel: Option<u16>,
@@ -17,25 +16,6 @@ pub struct MeasurementSettings {
     pub calibration: Option<secs_audio::MicCalibration>,
     pub calibration_file: Option<secs_mdat::CalFile>,
     pub spl_reference: Option<secs_audio::SplReference>,
-}
-impl Clone for MeasurementSettings {
-    fn clone(&self) -> Self {
-        Self {
-            positions: self.positions.clone(),
-            loopback_input_channel: self.loopback_input_channel,
-            share: self.share,
-            window: self.window,
-            calibration: self.calibration.clone(),
-            calibration_file: self
-                .calibration_file
-                .as_ref()
-                .map(|file| secs_mdat::CalFile {
-                    path: file.path.clone(),
-                    text: file.text.clone(),
-                }),
-            spl_reference: self.spl_reference,
-        }
-    }
 }
 impl Default for MeasurementSettings {
     fn default() -> Self {
@@ -77,7 +57,13 @@ impl MeasurementSettings {
             n("max_latency_seconds", settings.window.max_latency_seconds);
         settings.window.noise_seconds = n("noise_seconds", settings.window.noise_seconds);
         if let Some(text) = get("mic_calibration").and_then(PyJson::str) {
-            settings.calibration = Some(secs_audio::MicCalibration::parse(text)?);
+            settings.calibration =
+                Some(secs_audio::MicCalibration::parse(text).map_err(|error| {
+                    MeasureError::InputField {
+                        field: "mic_calibration",
+                        detail: error.to_string(),
+                    }
+                })?);
             let path = get("mic_calibration_path")
                 .and_then(PyJson::str)
                 .filter(|value| !value.is_empty())
@@ -109,6 +95,15 @@ fn devices(project: &Project) -> Option<&PyJson> {
         .iter()
         .find(|(k, _)| k == "devices")
         .map(|(_, v)| v)
+}
+/// The REW executable the project names (`devices.rew_executable`), when the
+/// value is not empty (audit #186 TD-221).
+pub fn rew_executable(project: &Project) -> Option<std::path::PathBuf> {
+    devices(project)
+        .and_then(|d| d.get("rew_executable"))
+        .and_then(PyJson::str)
+        .filter(|path| !path.is_empty())
+        .map(std::path::PathBuf::from)
 }
 fn number(value: Option<&PyJson>, default: f64) -> f64 {
     match value {
@@ -219,7 +214,7 @@ pub fn store_devices(project: &mut Project, values: Vec<(String, PyJson)>) {
     }
 }
 pub fn to_rew_plan(p: &MeasurementPlan) -> Result<secs_rew::MeasurementPlan, MeasureError> {
-    Ok(secs_rew::MeasurementPlan {
+    let plan = secs_rew::MeasurementPlan {
         roles: p.roles.clone(),
         outputs: p
             .outputs
@@ -246,7 +241,11 @@ pub fn to_rew_plan(p: &MeasurementPlan) -> Result<secs_rew::MeasurementPlan, Mea
         start_frequency: p.start_frequency,
         end_frequency: p.end_frequency,
         sample_rate: positive(p.sample_rate, "sample rate")?,
-    })
+    };
+    if let Some(error) = plan.validate().first() {
+        return Err(MeasureError::Input((*error).into()));
+    }
+    Ok(plan)
 }
 pub fn to_audio_plan(
     p: &MeasurementPlan,
@@ -306,4 +305,30 @@ pub fn to_audio_plan(
         share: settings.share,
         window: settings.window,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rew_plan_rejects_invalid_sweep_settings_from_project() {
+        for (field, value, code) in [
+            ("start_frequency", f64::NAN, "rew.plan.frequency"),
+            ("end_frequency", 20.0, "rew.plan.frequency"),
+            ("sweep_level_db", 1.0, "rew.plan.level"),
+            ("sweep_level_db", f64::NAN, "rew.plan.level"),
+        ] {
+            let mut project = Project::default();
+            store_devices(&mut project, vec![(field.into(), PyJson::Float(value))]);
+            let mut plan = plan_for(&project, &MeasurementSettings::default());
+            plan.roles = vec!["L".into()];
+            plan.outputs = std::collections::BTreeMap::from([("L".into(), 1)]);
+            let result = to_rew_plan(&plan);
+            assert!(
+                matches!(&result, Err(MeasureError::Input(message)) if message == code),
+                "{field}={value}: {result:?}"
+            );
+        }
+    }
 }

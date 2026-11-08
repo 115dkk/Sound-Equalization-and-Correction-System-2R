@@ -1,5 +1,5 @@
 import type { IpcError } from "../ipc/bindings/IpcError";
-import { IpcFailure } from "../ipc/client";
+import { IpcFailure, internalError } from "../ipc/client";
 
 export function createStore<T>(initial: T) {
   let value = initial;
@@ -9,6 +9,16 @@ export function createStore<T>(initial: T) {
     subscribe: (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
     set(next: T) { if (Object.is(value, next)) return; value = next; for (const listener of listeners) listener(); },
   };
+}
+
+/** A store of named fields set by patch. A patch that changes nothing keeps the snapshot, so subscribers do not render again (TD-176). */
+export function createPatchStore<T extends object>(initial: T) {
+  const store = createStore(initial);
+  return { ...store, set: (patch: Partial<T>) => {
+    const current = store.getSnapshot();
+    if ((Object.keys(patch) as (keyof T)[]).every((key) => Object.is(current[key], patch[key]))) return;
+    store.set({ ...current, ...patch });
+  } };
 }
 
 export type ResourceLoadState<T> =
@@ -38,7 +48,7 @@ export function createResource<T>(read: () => Promise<T>, failed: (error: unknow
         if (ticket === generation) { store.set(value); loadState.set({ status: "ready", value }); }
       } catch (error) {
         if (ticket === generation) {
-          const typed = error instanceof IpcFailure ? error.error : { code: "internal" as const, params: {}, retryable: false, detail: String(error) };
+          const typed = error instanceof IpcFailure ? error.error : internalError(String(error));
           if (store.getSnapshot() === null) loadState.set({ status: "failed", error: typed });
           failed(error);
         }

@@ -7,6 +7,7 @@ fuzz_target!(|data: &[u8]| {
     let Ok(text) = std::str::from_utf8(data) else {
         return;
     };
+    let _ = secs_project::pyjson::loads_with_budget(text, 256);
     if let Ok(project) = Project::load_text(text) {
         let saved = project.save_text();
         let reloaded = Project::load_text(&saved).expect("saved project must load");

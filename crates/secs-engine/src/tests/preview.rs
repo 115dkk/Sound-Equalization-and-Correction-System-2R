@@ -94,7 +94,7 @@ fn preview_xo_cached_curves() {
 
 #[test]
 fn preview_sub_combine_replayed_designs() {
-    for name in cases::names() {
+    for name in cases::names(&crate::tests::Oracle) {
         let design = replay(&name);
         let fx = Fixture::load("engine_xo", &format!("{name}_sub"));
         let got = sub_combine(&design).unwrap();

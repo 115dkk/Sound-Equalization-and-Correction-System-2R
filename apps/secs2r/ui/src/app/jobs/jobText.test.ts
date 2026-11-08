@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { translate, type Locale } from "../../i18n";
 import { ipcError } from "../../ipc/mock";
 import { failureText } from "../../screens/export/apply";
-import { JOB_NAME, errorText, isVisibleLog } from "./jobText";
+import { JOB_NAME, WARNING_LOGS, errorText, isVisibleLog, logText, stageText } from "./jobText";
 
 it("excludes calibration settings diagnostics without hiding unknown user notices", () => {
   expect(isVisibleLog("calibration_settings")).toBe(false);
@@ -111,5 +111,45 @@ describe.each(["ko", "en"] as const)("적용's job and error codes (%s)", (local
     expect(failureText(t, "eqapo", ipcError("unsupported", "Equalizer APO is not installed", { target: "equalizer_apo" })))
       .toEqual({ cause: t("export.apply.eqapo.not_installed.cause"), next: t("export.apply.eqapo.not_installed.next") });
     expect(failureText(t, "camilla", ipcError("apply_failed", "connect 127.0.0.1:1234: refused"))).toEqual({ cause: t("error.apply_failed"), next: t("error.apply_failed.next") });
+  });
+});
+
+describe.each(["ko", "en"] as const)("reasons, logs and stages the service names (%s)", (locale) => {
+  const t = (key: Parameters<typeof translate>[1], values?: Parameters<typeof translate>[2]) => translate(locale, key, values);
+
+  it("gives a reason with its params its own sentence, and its code's sentence without them", () => {
+    const missing = errorText(t, ipcError("project_io", "No such file", { reason: "not_found", path: "C:/rooms/a.secs" }));
+    expect(missing.cause).toBe(t("error.project_io.not_found", { path: "C:/rooms/a.secs" }));
+    expect(missing.next).toBe(t("error.project_io.not_found.next"));
+    expect(missing.cause).not.toContain("No such file");
+    expect(errorText(t, ipcError("project_io", "", { reason: "not_found" })).cause).toBe(t("error.project_io"));
+    expect(errorText(t, ipcError("invalid_request", "", { reason: "relative_folder", field: "folder" })).cause).toBe(t("error.invalid_request.relative_folder"));
+    expect(errorText(t, ipcError("measurement_input", "", { reason: "non_finite", row: "L P1" })).cause).toBe(t("error.measurement_input.non_finite", { row: "L P1" }));
+  });
+
+  it("adds the lost REW subscription after a REW failure's cause", () => {
+    const text = errorText(t, ipcError("rew_failed", "", { subscribe_error: "websocket closed" }));
+    expect(text.cause).toBe(`${t("error.rew_failed")} ${t("error.rew.subscribe_error")}`);
+    expect(text.cause).not.toContain("websocket closed");
+  });
+
+  it("writes a failed level check burst with its error code's sentence, never the raw detail", () => {
+    const { text, known } = logText(t, "level_play_end", { role: "Tfl", outcome: "failed", error_code: "device_unavailable", detail: "WASAPI 0x88890004" });
+    expect(known).toBe(true);
+    expect(text).toBe(t("jobs.log.level_play_end.failed", { code: "Ltf", cause: t("error.device_unavailable") }));
+    expect(logText(t, "level_play_end", { role: "L", outcome: "done" }).text).toBe(t("jobs.log.level_play_end"));
+  });
+
+  it("knows the measurement and sidecar logs and counts them as warnings", () => {
+    for (const code of ["measurement_calibration_too_large", "measurement_calibration_unreadable", "measurement_subscribe_failed", "measurement_source_missing", "measurement.source.skipped", "measurement.source.budget"]) {
+      expect(logText(t, code, { role: "L", position: "2", path: "C:/mic.txt", entry: "pos1/L.mdat.json", detail: "x" }).known, code).toBe(true);
+      expect(WARNING_LOGS.has(code), code).toBe(true);
+    }
+  });
+
+  it("names the sweep's phases and the CamillaDSP preparation instead of reading them as roles", () => {
+    for (const stage of ["sweep", "running", "process", "done", "cancelled"]) expect(stageText(t, "measure", stage)).toBe(t(`jobs.stage.${stage}` as Parameters<typeof translate>[1]));
+    expect(stageText(t, "measure", "Tfl")).toBe(t("jobs.stage.measure_role", { code: "Ltf" }));
+    expect(stageText(t, "export", "export.camilla.prepare")).toBe(t("jobs.stage.export.camilla.prepare"));
   });
 });

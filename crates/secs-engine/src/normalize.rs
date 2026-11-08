@@ -81,7 +81,7 @@ pub fn normalize_measurements(
         .acquire(bytes, ctx.cancel())
         .map_err(|error| match error {
             MemoryError::Cancelled => EngineError::Cancelled,
-            other => EngineError::Input(other.to_string()),
+            MemoryError::TooLarge { requested, total } => EngineError::Memory { requested, total },
         })?;
     let progress = ctx.stage("engine.resample", count);
     let mut normalized = irs.clone();

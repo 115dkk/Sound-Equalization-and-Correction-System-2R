@@ -313,6 +313,27 @@
   display: none;
 }
 
+/* The first read of the curves: the plot's place, sunken, with a busy pill. */
+.measure-graph__loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+}
+
+/* A reread's pill in the header: the slot has no height of its own, so the
+   header does not move when the pill comes and goes. */
+.measure-graph__refreshing {
+  display: flex;
+  align-items: center;
+  height: 0;
+}
+
+.measure-graph__refreshing .ui-pill {
+  animation: ui-fade-in var(--dur-base) var(--ease-out);
+}
+
 /* What 0 dB means, read with the legend: the graph's own gap, not the card's. */
 .measure-graph__reference {
   margin: calc(var(--space-3) - var(--space-4)) 0 0;

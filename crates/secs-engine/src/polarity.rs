@@ -17,6 +17,7 @@ pub const LAG_MS: f64 = 1.0;
 pub const DECISION: f64 = 0.5;
 
 const FFT_LEN: usize = 4096;
+type WindowSpectrum = Option<(u32, Vec<Complex64>)>;
 
 fn samples(milliseconds: f64, sample_rate: u32) -> usize {
     (milliseconds * f64::from(sample_rate) / 1000.0).round() as usize
@@ -87,21 +88,17 @@ fn weighted_energy(spectrum: &[Complex64], weights: &[f64]) -> f64 {
         / FFT_LEN as f64
 }
 
-/// Return the strongest normalized band-limited direct-sound correlation within
-/// ±[`LAG_MS`], or `None` when either response cannot supply a usable window.
-pub fn pair_correlation(a: &Samples, b: &Samples, sample_rate: u32) -> Option<f64> {
-    let a = fft::rfft(&direct_window(a, sample_rate)?);
-    let b = fft::rfft(&direct_window(b, sample_rate)?);
+fn pair_spectra_correlation(a: &[Complex64], b: &[Complex64], sample_rate: u32) -> Option<f64> {
     let weights = (0..a.len())
         .map(|index| band_weight(index as f64 * f64::from(sample_rate) / FFT_LEN as f64))
         .collect::<Vec<_>>();
-    let energy = (weighted_energy(&a, &weights) * weighted_energy(&b, &weights)).sqrt();
+    let energy = (weighted_energy(a, &weights) * weighted_energy(b, &weights)).sqrt();
     if !energy.is_finite() || energy <= f64::EPSILON {
         return None;
     }
     let cross = a
         .iter()
-        .zip(&b)
+        .zip(b)
         .zip(&weights)
         .map(|((a, b), weight)| a * b.conj() * *weight)
         .collect::<Vec<_>>();
@@ -120,27 +117,48 @@ pub fn pair_correlation(a: &Samples, b: &Samples, sample_rate: u32) -> Option<f6
         .map(|value| value.clamp(-1.0, 1.0))
 }
 
+/// Return the strongest normalized band-limited direct-sound correlation within
+/// ±[`LAG_MS`], or `None` when either response cannot supply a usable window.
+#[cfg(test)]
+pub fn pair_correlation(a: &Samples, b: &Samples, sample_rate: u32) -> Option<f64> {
+    let a = fft::rfft(&direct_window(a, sample_rate)?);
+    let b = fft::rfft(&direct_window(b, sample_rate)?);
+    pair_spectra_correlation(&a, &b, sample_rate)
+}
+
 fn pair_results(
     set: &MeasurementSet,
     mains: &[String],
     main_position: u32,
 ) -> Vec<Vec<Option<f64>>> {
+    let spectra: Vec<Vec<WindowSpectrum>> = set
+        .positions
+        .iter()
+        .map(|(position, _)| {
+            mains
+                .iter()
+                .map(|role| {
+                    let measurement = set.get(*position, role)?;
+                    let window = direct_window(&measurement.samples, measurement.sample_rate)?;
+                    Some((measurement.sample_rate, fft::rfft(&window)))
+                })
+                .collect()
+        })
+        .collect();
     let mut result = vec![vec![None; mains.len()]; mains.len()];
     for left in 0..mains.len() {
         for right in left + 1..mains.len() {
             let mut total = 0.0;
             let mut total_weight = 0.0;
-            for (position, _) in &set.positions {
-                let (Some(a), Some(b)) = (
-                    set.get(*position, &mains[left]),
-                    set.get(*position, &mains[right]),
-                ) else {
+            for ((position, _), spectra) in set.positions.iter().zip(&spectra) {
+                let (Some((a_rate, a)), Some((b_rate, b))) = (&spectra[left], &spectra[right])
+                else {
                     continue;
                 };
-                if a.sample_rate != b.sample_rate {
+                if a_rate != b_rate {
                     continue;
                 }
-                if let Some(value) = pair_correlation(&a.samples, &b.samples, a.sample_rate) {
+                if let Some(value) = pair_spectra_correlation(a, b, *a_rate) {
                     let weight = levels::weights(&[*position], main_position)[0];
                     total += weight * value;
                     total_weight += weight;
@@ -250,10 +268,10 @@ pub fn check(set: &MeasurementSet, mains: &[String], main_position: u32) -> Vec<
             .filter_map(|(left, right)| pairs[left][right].map(f64::abs))
             .collect::<Vec<_>>();
         notes.push(Note::PolaritySplit {
-            groups: (
-                a.iter().map(|&index| mains[index].clone()).collect(),
-                b.iter().map(|&index| mains[index].clone()).collect(),
-            ),
+            groups: secs_types::notes::PolarityGroups {
+                a: a.iter().map(|&index| mains[index].clone()).collect(),
+                b: b.iter().map(|&index| mains[index].clone()).collect(),
+            },
             confidence: levels::median(confidence),
         });
     }
@@ -344,7 +362,7 @@ mod tests {
         );
         assert!(
             matches!(notes.as_slice(), [Note::PolaritySplit { groups, .. }]
-            if groups.0 == ["L", "R"] && groups.1 == ["C", "Ls"])
+            if groups.a == ["L", "R"] && groups.b == ["C", "Ls"])
         );
     }
 
@@ -372,7 +390,7 @@ mod tests {
         );
         assert!(
             matches!(notes.as_slice(), [Note::PolaritySplit { groups, .. }]
-            if groups.0 == ["L"] && groups.1 == ["R"])
+            if groups.a == ["L"] && groups.b == ["R"])
         );
 
         // Two reversed mains among five: each is opposite to the three normal
@@ -428,7 +446,7 @@ mod tests {
         );
         assert!(
             matches!(notes.as_slice(), [Note::PolaritySplit { groups, .. }]
-            if groups.0 == ["L"] && groups.1 == ["R"])
+            if groups.a == ["L"] && groups.b == ["R"])
         );
     }
 

@@ -1,6 +1,7 @@
 // Adapted from Impulcifer-pip313 crates/impulcifer-dsp/src/estimator.rs, cac2217.
 // MIT; original copyright and license in ../THIRD_PARTY_LICENSES.txt.
 //! Fixed-sample exponential sweeps and Farina inverse deconvolution.
+use std::cell::{Ref, RefCell};
 use std::f64::consts::PI;
 
 use secs_dsp::fft;
@@ -18,12 +19,20 @@ pub fn sweep_length_samples(length: &str) -> Result<usize, AudioError> {
 }
 
 #[derive(Clone, Debug)]
+struct SpectrumCache {
+    n: usize,
+    signal: Vec<fft::Complex64>,
+    inverse: Vec<fft::Complex64>,
+}
+
+#[derive(Clone, Debug)]
 pub struct SweepEstimator {
     pub fs: u32,
     pub low: f64,
     pub high: f64,
     pub test_signal: Vec<f64>,
     pub inverse_filter: Vec<f64>,
+    spectrum_cache: RefCell<Option<SpectrumCache>>,
 }
 
 impl SweepEstimator {
@@ -96,12 +105,42 @@ impl SweepEstimator {
             high,
             test_signal,
             inverse_filter,
+            spectrum_cache: RefCell::new(None),
+        })
+    }
+
+    fn spectra(&self, n: usize) -> Ref<'_, SpectrumCache> {
+        let needs_refresh = self
+            .spectrum_cache
+            .borrow()
+            .as_ref()
+            .is_none_or(|cached| cached.n != n);
+        if needs_refresh {
+            let signal = spectrum(&self.test_signal, n);
+            let inverse = spectrum(&self.inverse_filter, n);
+            self.spectrum_cache
+                .replace(Some(SpectrumCache { n, signal, inverse }));
+        }
+        Ref::map(self.spectrum_cache.borrow(), |cached| {
+            cached.as_ref().expect("spectrum cache was just filled")
         })
     }
 
     /// Linear Farina convolution with zero-delay at `test_signal.len()-1`.
     pub fn estimate_raw(&self, recording: &[f64]) -> Vec<f64> {
-        convolve(recording, &self.inverse_filter)
+        if recording.is_empty() || self.inverse_filter.is_empty() {
+            return Vec::new();
+        }
+        let length = recording.len() + self.inverse_filter.len() - 1;
+        let n = length.next_power_of_two();
+        let cached = self.spectra(n);
+        let mut raw_spectrum = spectrum(recording, n);
+        for (x, y) in raw_spectrum.iter_mut().zip(&cached.inverse) {
+            *x *= y;
+        }
+        let mut raw = fft::irfft(&raw_spectrum, n);
+        raw.truncate(length);
+        raw
     }
 
     /// Remove the known sweep/inverse colour after Farina deconvolution.
@@ -119,27 +158,37 @@ impl SweepEstimator {
         recording: &[f64],
         noise_power: f64,
     ) -> Result<Vec<f64>, AudioError> {
+        self.estimate_with_noise_and_raw(recording, noise_power, false)
+            .map(|(ir, _)| ir)
+    }
+
+    pub(crate) fn estimate_with_noise_and_raw(
+        &self,
+        recording: &[f64],
+        noise_power: f64,
+        include_raw: bool,
+    ) -> Result<(Vec<f64>, Option<Vec<f64>>), AudioError> {
         if !noise_power.is_finite() || noise_power < 0.0 {
             return Err(invalid("invalid noise power"));
         }
         if recording.is_empty() || !recording.iter().all(|x| x.is_finite()) {
             return Err(invalid("empty or nonfinite recording"));
         }
-        let n = (recording.len() + self.test_signal.len() - 1).next_power_of_two();
-        let spectrum = |x: &[f64]| {
-            let mut padded = vec![0.0; n];
-            padded[..x.len()].copy_from_slice(x);
-            fft::rfft(&padded)
-        };
-        let signal = spectrum(&self.test_signal);
-        let inverse = spectrum(&self.inverse_filter);
-        let recorded = spectrum(recording);
-        let floor = (signal.iter().map(|x| x.norm_sqr()).fold(0.0_f64, f64::max) * 1e-18)
+        let raw_length = recording.len() + self.test_signal.len() - 1;
+        let n = raw_length.next_power_of_two();
+        let cached = self.spectra(n);
+        let recorded = spectrum(recording, n);
+        let floor = (cached
+            .signal
+            .iter()
+            .map(|x| x.norm_sqr())
+            .fold(0.0_f64, f64::max)
+            * 1e-18)
             .max(noise_power * recording.len() as f64);
         let response: Vec<_> = recorded
             .iter()
-            .zip(&signal)
-            .zip(&inverse)
+            .zip(&cached.signal)
+            .zip(&cached.inverse)
             .enumerate()
             .map(|(bin, ((y, x), i))| {
                 let frequency = bin as f64 * f64::from(self.fs) / n as f64;
@@ -160,10 +209,25 @@ impl SweepEstimator {
                 }
             })
             .collect();
+        let raw = include_raw.then(|| {
+            let mut raw_spectrum = recorded;
+            for (x, y) in raw_spectrum.iter_mut().zip(&cached.inverse) {
+                *x *= y;
+            }
+            let mut raw = fft::irfft(&raw_spectrum, n);
+            raw.truncate(raw_length);
+            raw
+        });
         let mut ir = fft::irfft(&response, n);
         ir.truncate(recording.len());
-        Ok(ir)
+        Ok((ir, raw))
     }
+}
+
+fn spectrum(samples: &[f64], n: usize) -> Vec<fft::Complex64> {
+    let mut padded = vec![0.0; n];
+    padded[..samples.len()].copy_from_slice(samples);
+    fft::rfft(&padded)
 }
 
 pub(crate) fn convolve(a: &[f64], b: &[f64]) -> Vec<f64> {

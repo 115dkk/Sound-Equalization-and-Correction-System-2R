@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { AppFrame } from "../app/AppFrame";
 import { JobTray } from "../app/jobs/JobTray";
+import { isActiveJob } from "../state/jobRetention";
 import { initialLedger, ledgerReducer, type LedgerAction, type LedgerState } from "../state/jobLedger";
 import { LOGOS, SMALL_LOGOS } from "../app/logo";
 import { trayState, useJobs, type JobsApi } from "../app/jobs/useJobs";
@@ -209,7 +210,7 @@ function LiveFrame() {
 
 function LiveFrameInner({ start, label }: { start: () => void; label: string }) {
   const api = useJobs();
-  const running = api.state.jobs.some((job) => job.kind === "calibrate" && (job.status === "running" || job.status === "cancel_requested"));
+  const running = api.state.jobs.some((job) => job.kind === "calibrate" && isActiveJob(job.status));
   const [current, setCurrent] = useState<StepId>("calibrate");
   return (
     <AppFrame
@@ -315,6 +316,17 @@ export const frameSpecimens: SpecimenDef[] = [
         jobs={initialLedger}
         onRemeasure={() => {}}
       >
+        <MeasureContent />
+      </FrameBox>
+    ),
+  },
+  {
+    id: "frame.settings_notice",
+    title: "Frame · app settings notice (ADR 0051: a newer settings file kept, defaults in use)",
+    width: 1280,
+    height: 800,
+    render: () => (
+      <FrameBox frame={model("measure", { ...filledProject, settingsNotice: { code: "app_settings_newer", params: { version: "2" } } })} jobs={initialLedger}>
         <MeasureContent />
       </FrameBox>
     ),

@@ -2,7 +2,7 @@
 // see it: the view they draw, the actions they call, and the pure checks
 // both share (the state line, the port draft, the request reference).
 import { useEffect, useMemo, useRef, useState } from "react";
-import { IpcFailure } from "../ipc/client";
+import { IpcFailure, internalError } from "../ipc/client";
 import { useOptionalSession } from "../state/react";
 import { useT } from "../i18n/react";
 import { useToast } from "../ui/Toast";
@@ -14,10 +14,10 @@ import type { LocalApiStatus } from "../ipc/bindings/LocalApiStatus";
 export const PORT_MIN = 1024;
 export const PORT_MAX = 65535;
 /** `secs_types::local_api::DEFAULT_PORT`. */
-export const DEFAULT_PORT = 4712;
+const DEFAULT_PORT = 4712;
 
 /** The call in flight: the switch, a port change or a new token. */
-export type LocalApiPending = "toggle" | "port" | "token";
+type LocalApiPending = "toggle" | "port" | "token";
 
 export type LocalApiView = {
   /** The last status read; null before the first read answers or when it failed. */
@@ -98,7 +98,7 @@ export function parsePort(text: string): number | null {
 /* ── Request reference ──────────────────────────────────────────────────── */
 
 /** The three entry points (ADR 0016) and the catalog line that says what each does. */
-export const ENDPOINTS = [
+const ENDPOINTS = [
   { method: "POST", path: "/v1/call", what: "frame.local_api.reference.call" },
   { method: "GET", path: "/v1/status", what: "frame.local_api.reference.status" },
   { method: "GET", path: "/v1/events", what: "frame.local_api.reference.events" },
@@ -205,5 +205,5 @@ export function useLocalApi(open: boolean): LocalApi {
 }
 
 function typedError(error: unknown): IpcError {
-  return error instanceof IpcFailure ? error.error : { code: "internal", params: {}, retryable: false, detail: String(error) };
+  return error instanceof IpcFailure ? error.error : internalError(String(error));
 }

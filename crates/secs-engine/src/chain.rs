@@ -173,6 +173,53 @@ pub fn stage_responses(
     })
 }
 
+pub(crate) fn stage_top(
+    design: &crate::design::Design,
+    role: &str,
+    spectra: &crate::measurement::Spectra,
+    position: u32,
+    indices: &[usize],
+) -> Option<Vec<C>> {
+    use crate::{
+        grid::{BINS, design_freqs},
+        measurement::delay_response,
+    };
+    use secs_dsp::response::lr4;
+    let main = design.mains.iter().find(|main| main.role == role)?;
+    let measured = spectra.get(position, role)?;
+    if measured.len() != BINS {
+        return None;
+    }
+    let delay = delay_response(main.align_delay_ms);
+    let gain = C::new(10f64.powf(main.gain_db / 20.0), 0.0);
+    let mut top: Vec<_> = indices
+        .iter()
+        .map(|&index| measured[index] * delay[index] * gain)
+        .collect();
+    if let Some(response) = &main.top_response {
+        for (value, &index) in top.iter_mut().zip(indices) {
+            if let Some(response) = response.get(index) {
+                *value *= response;
+            }
+        }
+    }
+    if let (Some(xo), Some(sub)) = (main.xo_hz.filter(|xo| *xo != 0.0), &design.subs) {
+        let valid_subs = sub.rows.iter().all(|(role, _)| {
+            spectra
+                .get(position, role)
+                .is_some_and(|response| response.len() == BINS)
+        });
+        if !valid_subs {
+            return None;
+        }
+        let highpass = lr4(design_freqs(), xo, "HP");
+        for (value, &index) in top.iter_mut().zip(indices) {
+            *value *= highpass[index];
+        }
+    }
+    Some(top)
+}
+
 pub fn input_response(
     design: &crate::design::Design,
     role: &str,

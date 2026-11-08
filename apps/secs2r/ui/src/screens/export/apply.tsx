@@ -47,13 +47,13 @@ import {
 } from "./types";
 
 /** The address field's id; the header's primary points at `${ADDRESS_ID}-error` while the address is invalid. */
-export const ADDRESS_ID = "export.apply.camilla.address";
+const ADDRESS_ID = "export.apply.camilla.address";
 /** Why Equalizer APO's 적용 is off (not installed); its button points here. */
-export const EQAPO_REASON_ID = "export.apply.eqapo.reason";
+const EQAPO_REASON_ID = "export.apply.eqapo.reason";
 /** The CamillaDSP executable field (관리). */
-export const EXE_ID = "export.manage.camilla.exe";
+const EXE_ID = "export.manage.camilla.exe";
 /** Why the service cannot take `target` over (not installed, stopped, not answering); the row's 관리 button points here. */
-export const serviceReasonId = (target: ApplyTarget) => `export.manage.${target}.service.reason`;
+const serviceReasonId = (target: ApplyTarget) => `export.manage.${target}.service.reason`;
 
 const LEVEL_TEXT: Record<ScreenApplyLevel, MessageKey> = { files: "export.apply.level.files", apply: "export.apply.level.apply", manage: "export.apply.level.manage" };
 

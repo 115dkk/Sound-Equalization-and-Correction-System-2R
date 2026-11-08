@@ -1,12 +1,21 @@
 import { useEffect, useMemo, useRef } from "react";
 import { IpcFailure } from "../../ipc/client";
-import { useHost, useResource, useSession } from "../../state/react";
+import { useHost, useLevelMonitor, useResource, useSession } from "../../state/react";
 import { levelRoles, pathReady } from "./state";
-import type { ConnectActions, ConnectView, RewProblem } from "./types";
+import type { ConnectActions, ConnectState, ConnectView, LiveLevel, RewProblem } from "./types";
 
-export function useConnectScreen(active: boolean): { view: ConnectView | null; actions: ConnectActions } {
+/**
+ * 연결·점검's state and actions. The level monitor's live fields are not in
+ * it: the frame runs this hook with the other screens' hooks, and a Meter
+ * event would run them all again (TD-176). `useLiveLevel` reads them where
+ * the meter is drawn.
+ */
+export function useConnectScreen(active: boolean): { view: ConnectState | null; actions: ConnectActions } {
   const session = useSession();
   const host = useHost();
+  const playing = useLevelMonitor((level) => level.playing);
+  const playingAll = useLevelMonitor((level) => level.playingAll);
+  const masterDbfs = useLevelMonitor((level) => level.masterDbfs);
   const config = useResource("config");
   const methods = useResource("methods");
   const settings = useResource("measurementSettings");
@@ -29,7 +38,7 @@ export function useConnectScreen(active: boolean): { view: ConnectView | null; a
     return () => {
       queue.current++;
       cancelWait.current?.();
-      session.host.set({ playing: null, playingAll: false });
+      session.stores.monitor.set({ playing: null, playingAll: false });
       session.run(() => Promise.all([
         session.call({ method: "level_stop" }),
         session.monitor(false),
@@ -43,7 +52,7 @@ export function useConnectScreen(active: boolean): { view: ConnectView | null; a
     const stop = async () => {
       queue.current++;
       cancelWait.current?.();
-      session.host.set({ playing: null, playingAll: false });
+      session.stores.monitor.set({ playing: null, playingAll: false });
       await session.call({ method: "level_stop" });
     };
     const play = (roles: string[], all: boolean) => {
@@ -51,9 +60,9 @@ export function useConnectScreen(active: boolean): { view: ConnectView | null; a
       cancelWait.current?.();
       // A stop, another play, or the monitor job failing ends the queue; the
       // failure stays on the mic panel until the monitor starts again.
-      const ended = () => epoch !== queue.current || session.host.getSnapshot().monitorError !== null;
+      const ended = () => epoch !== queue.current || session.stores.monitor.getSnapshot().monitorError !== null;
       session.run(async () => {
-        session.host.set({ playingAll: all });
+        session.stores.monitor.set({ playingAll: all });
         try {
           await session.call({ method: "level_stop" });
           if (epoch !== queue.current) return;
@@ -61,7 +70,7 @@ export function useConnectScreen(active: boolean): { view: ConnectView | null; a
           await session.monitor(true);
           for (const role of roles) {
             if (ended()) break;
-            session.host.set({ playing: role });
+            session.stores.monitor.set({ playing: role });
             // level_play only enqueues the 2.5 s burst; the monitor job says
             // when it ended (level_play_end), after storing the level. Listen
             // before asking, and give up after 8 s so a lost event cannot stall the queue.
@@ -76,12 +85,12 @@ export function useConnectScreen(active: boolean): { view: ConnectView | null; a
               off = session.ipc.events.subscribe((event) => {
                 if (event.event === "log" && event.code === "level_play_end" && event.params.role === role) finish();
               });
-              offFailure = session.host.subscribe(() => { if (session.host.getSnapshot().monitorError !== null) finish(); });
+              offFailure = session.stores.monitor.subscribe(() => { if (session.stores.monitor.getSnapshot().monitorError !== null) finish(); });
               timer = setTimeout(finish, 8000);
               cancelWait.current = finish;
             });
             try {
-              await session.call({ method: "level_play", params: { role, master_dbfs: session.host.getSnapshot().masterDbfs } });
+              await session.call({ method: "level_play", params: { role, master_dbfs: session.stores.monitor.getSnapshot().masterDbfs } });
               if (ended()) break;
               await burst;
             } finally { release(); }
@@ -89,7 +98,7 @@ export function useConnectScreen(active: boolean): { view: ConnectView | null; a
             await Promise.all([session.stores.levels.load(), session.stores.project.load()]);
           }
         } finally {
-          if (epoch === queue.current) session.host.set({ playing: null, playingAll: false });
+          if (epoch === queue.current) session.stores.monitor.set({ playing: null, playingAll: false });
         }
       });
     };
@@ -140,6 +149,8 @@ export function useConnectScreen(active: boolean): { view: ConnectView | null; a
         try { await session.call({ method: "rew_driver_set", params: { driver } }); }
         finally { session.host.set({ switchingRewDriver: false }); }
       }),
+      // The method the service holds, with the path ("" for the installed REW); a refusal stays at the field.
+      setRewExecutable: (rew_executable) => session.run(() => session.writers.measurement.edit({ rew_executable })),
       // On the REW path measure_configure also opens the device in REW; read REW again for its channels.
       setInputDevice: (input_device) => session.run(async () => {
         if (!await session.writers.measurement.edit({ input_device })) return;
@@ -157,7 +168,7 @@ export function useConnectScreen(active: boolean): { view: ConnectView | null; a
         const current = session.stores.config.getSnapshot();
         if (current) play(levelRoles({ config: current }), true);
       },
-      setMasterLevel: (masterDbfs) => session.host.set({ masterDbfs }),
+      setMasterLevel: (masterDbfs) => session.stores.monitor.set({ masterDbfs }),
       skipLevels: () => session.run(() => session.call({ method: "levels_fill_defaults" })),
       next: () => session.navigate("measure"),
     };
@@ -173,9 +184,20 @@ export function useConnectScreen(active: boolean): { view: ConnectView | null; a
   } : {};
   return { view: config ? {
     path: host.path, methods, settings, config, sampleRate: settings?.sample_rate ?? 48000,
-    rew: { launch: host.rewLaunch, problem: host.rewProblem, problemDetail: host.rewProblemDetail, readingSettings: host.readingRew, switchingDriver: host.switchingRewDriver, details },
+    rew: { launch: host.rewLaunch, problem: host.rewProblem, problemDetail: host.rewProblemDetail, readingSettings: host.readingRew, switchingDriver: host.switchingRewDriver, details, executableError: host.rewExecutableError },
     micCalibration: { status: micCalibration, busy: host.micCalBusy, error: host.micCalError },
     levels: levels?.levels ?? {},
-    level: { monitor: host.monitor, error: host.monitorError, reading: host.meter, playing: host.playing, playingAll: host.playingAll, masterDbfs: host.masterDbfs },
+    level: { playing, playingAll, masterDbfs },
   } : null, actions };
+}
+
+/** The level monitor's fields the mic meter draws, read in the component that draws it, which alone renders again on a Meter event (TD-176). */
+export function useLiveLevel(): LiveLevel {
+  const level = useResource("monitor");
+  return useMemo(() => ({ monitor: level.monitor, error: level.monitorError, reading: level.meter }), [level.monitor, level.monitorError, level.meter]);
+}
+
+/** 연결·점검's whole view: the hook's state with the live level fields. */
+export function withLiveLevel(state: ConnectState, live: LiveLevel): ConnectView {
+  return { ...state, level: { ...state.level, ...live } };
 }

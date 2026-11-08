@@ -10,15 +10,12 @@ use secs_project::{
 use secs_types::calibration::{CalibrationSettings, mode_params};
 use secs_types::ipc::*;
 use secs_types::role::{role_group, role_label};
-use secs_types::rules::{ARRANGEMENT_COUNTS, CONFIG_GROUPS, RECENT_PROJECTS_MAX};
-use serde::{Deserialize, Serialize};
+use secs_types::rules::{ARRANGEMENT_COUNTS, CONFIG_GROUPS};
 
-use crate::measure::json::JsonExt;
 use crate::measure::store_devices;
 use crate::{Service, lock, session};
 
 const FILE_LIMIT: u64 = 1024 * 1024;
-const APP_SETTINGS_VERSION: u32 = 1;
 
 fn invalid(field: &str, detail: impl Into<String>) -> IpcError {
     IpcError::new(ErrorCode::InvalidRequest, detail).with_param("field", field)
@@ -45,14 +42,12 @@ fn confirm_required(project: &Project) -> IpcError {
 }
 
 fn clear_measurements(open: &mut session::OpenProject) -> Option<String> {
-    let count = measurement_count(open.store.project());
+    let count = measurement_count(open.project());
     if count == 0 {
         return None;
     }
-    let previous = std::mem::replace(
-        &mut open.store.project_mut().measurements,
-        PyJson::Array(Vec::new()),
-    );
+    let previous = open
+        .edit(|project| std::mem::replace(&mut project.measurements, PyJson::Array(Vec::new())));
     Some(session::push_measurements_undo(open, previous))
 }
 
@@ -364,16 +359,10 @@ fn read_bounded(path: &Path) -> Result<Vec<u8>, IpcError> {
     Ok(bytes)
 }
 
-fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), IpcError> {
-    let parent = path.parent().unwrap_or_else(|| Path::new("."));
-    fs::create_dir_all(parent).map_err(|error| project_io(path, error))?;
-    secs_types::fs::write_atomic_bytes(path, bytes).map_err(|error| project_io(path, error))
-}
-
 impl Service {
     pub(crate) fn config_get(&self) -> Result<ConfigResult, IpcError> {
         let session = lock(&self.session);
-        Ok(config_result(session.require()?.store.project()))
+        Ok(config_result(session.require()?.project()))
     }
 
     pub(crate) fn config_apply_preset(
@@ -382,10 +371,10 @@ impl Service {
     ) -> Result<ConfigMutationResult, IpcError> {
         let mut session = lock(&self.session);
         let open = session.require_mut()?;
-        if measurement_count(open.store.project()) > 0 && !params.confirm {
-            return Err(confirm_required(open.store.project()));
+        if measurement_count(open.project()) > 0 && !params.confirm {
+            return Err(confirm_required(open.project()));
         }
-        let current = &open.store.project().config;
+        let current = &open.project().config;
         let config = if params.preset == "custom" {
             SpeakerConfig {
                 speakers: Vec::new(),
@@ -398,10 +387,9 @@ impl Service {
                 .map_err(|error| invalid("preset", error.to_string()))?
         };
         let undo_token = clear_measurements(open);
-        open.store.project_mut().config = config;
-        open.dirty = true;
+        open.edit(|project| project.config = config);
         Ok(ConfigMutationResult {
-            config: config_result(open.store.project()),
+            config: config_result(open.project()),
             undo_token,
         })
     }
@@ -413,19 +401,18 @@ impl Service {
         let mut session = lock(&self.session);
         let open = session.require_mut()?;
         let requested = params.count.clamp(0, 8) as usize;
-        let changed = open.store.project().config.sub_count() != requested;
-        if changed && measurement_count(open.store.project()) > 0 && !params.confirm {
-            return Err(confirm_required(open.store.project()));
+        let changed = open.project().config.sub_count() != requested;
+        if changed && measurement_count(open.project()) > 0 && !params.confirm {
+            return Err(confirm_required(open.project()));
         }
         let undo_token = if changed {
             clear_measurements(open)
         } else {
             None
         };
-        open.store.project_mut().config.set_sub_count(params.count);
-        open.dirty = true;
+        open.edit(|project| project.config.set_sub_count(params.count));
         Ok(ConfigMutationResult {
-            config: config_result(open.store.project()),
+            config: config_result(open.project()),
             undo_token,
         })
     }
@@ -436,32 +423,32 @@ impl Service {
     ) -> Result<ConfigResult, IpcError> {
         let mut session = lock(&self.session);
         let open = session.require_mut()?;
-        open.store
-            .project_mut()
-            .config
-            .set_speaker(
+        open.edit_if(|project| {
+            let result = project.config.set_speaker(
                 params.index,
                 params.role,
                 params.size,
                 params.band_index,
                 params.out,
                 params.pol,
-            )
-            .map_err(|error| invalid("speaker", error.to_string()))?;
-        open.dirty = true;
-        Ok(config_result(open.store.project()))
+            );
+            let changed = result.is_ok();
+            (result, changed)
+        })
+        .map_err(|error| invalid("speaker", error.to_string()))?;
+        Ok(config_result(open.project()))
     }
 
     pub(crate) fn config_add_speaker(&self) -> Result<ConfigResult, IpcError> {
         let mut session = lock(&self.session);
         let open = session.require_mut()?;
-        open.store
-            .project_mut()
-            .config
-            .add_speaker()
-            .map_err(|error| invalid("speaker", error.to_string()))?;
-        open.dirty = true;
-        Ok(config_result(open.store.project()))
+        open.edit_if(|project| {
+            let result = project.config.add_speaker();
+            let changed = result.is_ok();
+            (result, changed)
+        })
+        .map_err(|error| invalid("speaker", error.to_string()))?;
+        Ok(config_result(open.project()))
     }
 
     pub(crate) fn config_remove_speaker(
@@ -470,36 +457,30 @@ impl Service {
     ) -> Result<ConfigResult, IpcError> {
         let mut session = lock(&self.session);
         let open = session.require_mut()?;
-        open.store
-            .project_mut()
-            .config
-            .remove_speaker(params.index)
-            .map_err(|error| invalid("index", error.to_string()))?;
-        open.dirty = true;
-        Ok(config_result(open.store.project()))
+        open.edit_if(|project| {
+            let result = project.config.remove_speaker(params.index);
+            let changed = result.is_ok();
+            (result, changed)
+        })
+        .map_err(|error| invalid("index", error.to_string()))?;
+        Ok(config_result(open.project()))
     }
 
     pub(crate) fn config_renumber(&self) -> Result<ConfigResult, IpcError> {
         let mut session = lock(&self.session);
         let open = session.require_mut()?;
-        open.store.project_mut().config.renumber();
-        open.dirty = true;
-        Ok(config_result(open.store.project()))
+        open.edit(|project| project.config.renumber());
+        Ok(config_result(open.project()))
     }
 
     pub(crate) fn config_validate(&self) -> Result<Vec<Notice>, IpcError> {
         let session = lock(&self.session);
-        Ok(session
-            .require()?
-            .store
-            .project()
-            .config
-            .validation_notices())
+        Ok(session.require()?.project().config.validation_notices())
     }
 
     pub(crate) fn patch_sheet_csv(&self, params: PathParams) -> Result<PathResult, IpcError> {
         let session = lock(&self.session);
-        let project = session.require()?.store.project();
+        let project = session.require()?.project();
         let mut text = String::from("역할,이름,크기,대역,측정 출력,극성\n");
         for speaker in &project.config.speakers {
             for band in &speaker.bands {
@@ -517,7 +498,10 @@ impl Service {
         let path = PathBuf::from(params.path);
         let mut bytes = vec![0xef, 0xbb, 0xbf];
         bytes.extend_from_slice(text.as_bytes());
-        atomic_write(&path, &bytes)?;
+        let parent = path.parent().unwrap_or_else(|| Path::new("."));
+        fs::create_dir_all(parent)
+            .map_err(|error| crate::fs::io_failure(&path, &error, ErrorCode::ProjectIo))?;
+        crate::fs::write_atomic(&path, &bytes, ErrorCode::ProjectIo)?;
         Ok(PathResult {
             path: path.to_string_lossy().into_owned(),
         })
@@ -525,7 +509,7 @@ impl Service {
 
     pub(crate) fn dsp_get(&self) -> Result<DspResult, IpcError> {
         let session = lock(&self.session);
-        Ok(dsp_result(session.require()?.store.project()))
+        Ok(dsp_result(session.require()?.project()))
     }
 
     pub(crate) fn dsp_set(&self, params: DspSetParams) -> Result<DspResult, IpcError> {
@@ -539,16 +523,17 @@ impl Service {
         let open = session.require_mut()?;
         if let Some(preset) = params.preset {
             let mut presets = DspProfile::presets();
-            open.store.project_mut().dsp = presets
+            let dsp = presets
                 .remove(preset.as_str())
                 .ok_or_else(|| invalid("preset", "unknown DSP preset"))?;
+            open.edit(|project| project.dsp = dsp);
         } else if let Some(fields) = params.fields {
             if let OutputRateChoice::Fixed(rate) = fields.output_rate
                 && !secs_dsp::rate::is_output_rate(rate)
             {
                 return Err(invalid("output_rate", "unsupported output sample rate"));
             }
-            let current = &open.store.project().dsp;
+            let current = &open.project().dsp;
             if fields.output_rate != current.output_rate
                 && !matches!(current.profile.as_str(), "camilla" | "custom")
             {
@@ -576,24 +561,25 @@ impl Service {
                 && fields.iir_bands == current.iir_bands
                 && fields.allpass_bands == current.allpass_bands
                 && fields.bm_path_delays == current.bm_path_delays;
-            let dsp = &mut open.store.project_mut().dsp;
-            if !only_rate {
-                dsp.profile = "custom".into();
-            }
-            dsp.output_rate = fields.output_rate;
-            dsp.fir_taps = fields.fir_taps;
-            dsp.fir_budget = fields.fir_budget;
-            dsp.iir_bands = fields.iir_bands;
-            dsp.allpass_bands = fields.allpass_bands;
-            dsp.bm_path_delays = fields.bm_path_delays;
+            open.edit(|project| {
+                let dsp = &mut project.dsp;
+                if !only_rate {
+                    dsp.profile = "custom".into();
+                }
+                dsp.output_rate = fields.output_rate;
+                dsp.fir_taps = fields.fir_taps;
+                dsp.fir_budget = fields.fir_budget;
+                dsp.iir_bands = fields.iir_bands;
+                dsp.allpass_bands = fields.allpass_bands;
+                dsp.bm_path_delays = fields.bm_path_delays;
+            });
         }
-        open.dirty = true;
-        Ok(dsp_result(open.store.project()))
+        Ok(dsp_result(open.project()))
     }
 
     pub(crate) fn layout_get(&self) -> Result<LayoutResult, IpcError> {
         let session = lock(&self.session);
-        Ok(layout_result(session.require()?.store.project()))
+        Ok(layout_result(session.require()?.project()))
     }
 
     pub(crate) fn layout_set(
@@ -620,46 +606,46 @@ impl Service {
         }
         let mut session = lock(&self.session);
         let open = session.require_mut()?;
-        let old_count = layout_result(open.store.project()).count;
+        let old_count = layout_result(open.project()).count;
         let arrangement_changed = params.count.is_some_and(|count| count != old_count);
-        if arrangement_changed && measurement_count(open.store.project()) > 0 && !params.confirm {
-            return Err(confirm_required(open.store.project()));
+        if arrangement_changed && measurement_count(open.project()) > 0 && !params.confirm {
+            return Err(confirm_required(open.project()));
         }
         let undo_token = if arrangement_changed {
             clear_measurements(open)
         } else {
             None
         };
-        let project = open.store.project_mut();
-        if let Some(count) = params.count {
-            set_extra(project, "array", PyJson::Int(count.to_string()));
-        }
-        if let Some(delay) = params.start_delay {
-            set_extra(project, "start_delay", PyJson::Str(delay));
-        }
-        if let Some(timing) = params.timing {
-            store_devices(
-                project,
-                vec![
-                    ("timing_reference".into(), PyJson::Str(timing.reference)),
-                    ("timing_ref_role".into(), PyJson::Str(timing.role)),
-                    (
-                        "timing_ref_output".into(),
-                        PyJson::Int(timing.output.to_string()),
-                    ),
-                ],
-            );
-        }
-        open.dirty = true;
+        open.edit(|project| {
+            if let Some(count) = params.count {
+                set_extra(project, "array", PyJson::Int(count.to_string()));
+            }
+            if let Some(delay) = params.start_delay {
+                set_extra(project, "start_delay", PyJson::Str(delay));
+            }
+            if let Some(timing) = params.timing {
+                store_devices(
+                    project,
+                    vec![
+                        ("timing_reference".into(), PyJson::Str(timing.reference)),
+                        ("timing_ref_role".into(), PyJson::Str(timing.role)),
+                        (
+                            "timing_ref_output".into(),
+                            PyJson::Int(timing.output.to_string()),
+                        ),
+                    ],
+                );
+            }
+        });
         Ok(LayoutMutationResult {
-            layout: layout_result(open.store.project()),
+            layout: layout_result(open.project()),
             undo_token,
         })
     }
 
     pub(crate) fn position_estimate(&self) -> Result<PositionEstimateResult, IpcError> {
         let session = lock(&self.session);
-        let project = session.require()?.store.project();
+        let project = session.require()?.project();
         let positions = layout_result(project).count;
         let per_position_seconds = position_seconds(project);
         Ok(PositionEstimateResult {
@@ -671,7 +657,7 @@ impl Service {
 
     pub(crate) fn target_get(&self) -> Result<TargetResult, IpcError> {
         let session = lock(&self.session);
-        Ok(target_result(session.require()?.store.project()))
+        Ok(target_result(session.require()?.project()))
     }
 
     pub(crate) fn target_set_points(
@@ -681,10 +667,11 @@ impl Service {
         let target = checked_target(params.points)?;
         let mut session = lock(&self.session);
         let open = session.require_mut()?;
-        open.store.project_mut().target = target;
-        set_target_preset(open.store.project_mut(), None);
-        open.dirty = true;
-        Ok(target_result(open.store.project()))
+        open.edit(|project| {
+            project.target = target;
+            set_target_preset(project, None);
+        });
+        Ok(target_result(open.project()))
     }
 
     pub(crate) fn target_apply_preset(
@@ -697,18 +684,22 @@ impl Service {
             .ok_or_else(|| invalid("preset", "unknown target preset"))?;
         let mut session = lock(&self.session);
         let open = session.require_mut()?;
-        open.store.project_mut().target = target;
-        set_target_preset(open.store.project_mut(), Some(&params.preset));
-        open.dirty = true;
-        Ok(target_result(open.store.project()))
+        open.edit(|project| {
+            project.target = target;
+            set_target_preset(project, Some(&params.preset));
+        });
+        Ok(target_result(open.project()))
     }
 
     pub(crate) fn target_save(&self, params: PathParams) -> Result<PathResult, IpcError> {
         let session = lock(&self.session);
-        let project = session.require()?.store.project();
+        let project = session.require()?.project();
         let path = PathBuf::from(params.path);
         let text = dumps(&project.target.to_json());
-        atomic_write(&path, text.as_bytes())?;
+        let parent = path.parent().unwrap_or_else(|| Path::new("."));
+        fs::create_dir_all(parent)
+            .map_err(|error| crate::fs::io_failure(&path, &error, ErrorCode::ProjectIo))?;
+        crate::fs::write_atomic(&path, text.as_bytes(), ErrorCode::ProjectIo)?;
         Ok(PathResult {
             path: path.to_string_lossy().into_owned(),
         })
@@ -723,15 +714,16 @@ impl Service {
         let target = checked_target(parsed.points)?;
         let mut session = lock(&self.session);
         let open = session.require_mut()?;
-        open.store.project_mut().target = target;
-        set_target_preset(open.store.project_mut(), None);
-        open.dirty = true;
-        Ok(target_result(open.store.project()))
+        open.edit(|project| {
+            project.target = target;
+            set_target_preset(project, None);
+        });
+        Ok(target_result(open.project()))
     }
 
     pub(crate) fn calibration_settings_get(&self) -> Result<CalibrationSettings, IpcError> {
         let session = lock(&self.session);
-        Ok(calibration_from_project(session.require()?.store.project()))
+        Ok(calibration_from_project(session.require()?.project()))
     }
 
     pub(crate) fn calibration_settings_set(
@@ -740,9 +732,8 @@ impl Service {
     ) -> Result<CalibrationSettings, IpcError> {
         let mut session = lock(&self.session);
         let open = session.require_mut()?;
-        store_calibration(open.store.project_mut(), &params.settings);
-        open.dirty = true;
-        Ok(calibration_from_project(open.store.project()))
+        open.edit(|project| store_calibration(project, &params.settings));
+        Ok(calibration_from_project(open.project()))
     }
 
     pub(crate) fn mode_spec(&self, params: ModeSpecParams) -> ModeSpecResult {
@@ -767,69 +758,16 @@ impl Service {
     }
 
     pub(crate) fn app_settings_get(&self) -> AppSettings {
-        lock(&self.app_settings).clone()
-    }
-
-    /// Returns settings and the revision assigned to their successful save.
-    pub fn revised_app_settings(&self) -> crate::RevisedAppSettings {
-        let settings = lock(&self.app_settings);
-        crate::RevisedAppSettings {
-            revision: self
-                .app_settings_revision
-                .load(std::sync::atomic::Ordering::SeqCst),
-            settings: settings.clone(),
-        }
+        self.app_settings.get()
     }
 
     pub(crate) fn app_settings_set(
         &self,
-        mut params: AppSettingsParams,
+        params: AppSettingsParams,
     ) -> Result<AppSettings, IpcError> {
-        params
-            .settings
-            .recent_projects
-            .truncate(RECENT_PROJECTS_MAX);
-        if let Some((width, height)) = params.settings.last_window_size
-            && (width == 0 || height == 0)
-        {
-            return Err(invalid(
-                "last_window_size",
-                "window dimensions must be positive",
-            ));
-        }
-        let bytes = serde_json::to_vec_pretty(&AppSettingsFile {
-            version: APP_SETTINGS_VERSION,
-            settings: params.settings.clone(),
-        })
-        .map_err(|error| invalid("settings", error.to_string()))?;
-        // Saved settings above the read cap would be dropped at the next start.
-        if bytes.len() as u64 > FILE_LIMIT {
-            return Err(invalid("settings", "settings exceed 1 MiB"));
-        }
-        // One critical section for the file and memory, so what is read now
-        // is what a restart restores even when requests run in parallel (TD-39).
-        let mut current = lock(&self.app_settings);
-        let revision = self
-            .app_settings_revision
-            .try_update(
-                std::sync::atomic::Ordering::SeqCst,
-                std::sync::atomic::Ordering::SeqCst,
-                |revision| revision.checked_add(1),
-            )
-            .map(|revision| revision + 1)
-            .map_err(|_| IpcError::new(ErrorCode::Internal, "app settings revision exhausted"))?;
-        if let Some(path) = self.deps.app_settings_path.as_deref() {
-            atomic_write(path, &bytes)?;
-        }
-        *current = params.settings.clone();
-        drop(current);
-        let mut effects = lock(&self.app_effects);
-        if let Some(previous) = effects.accept(revision, &params.settings)
-            && previous.updates != params.settings.updates
-        {
-            self.deps.updates.set_policy(params.settings.updates);
-        }
-        Ok(params.settings)
+        self.app_settings
+            .set(params.settings)
+            .map(|revised| revised.settings)
     }
 
     /// Opens `releases/tag/v<version>` of this repository. Only a plain
@@ -849,33 +787,9 @@ impl Service {
         mut status: secs_types::ipc::UpdateStatus,
     ) -> secs_types::ipc::UpdateStatus {
         status.current = self.deps.app_version.to_string();
-        status.policy = self.app_settings_get().updates;
+        status.policy = self.app_settings.updates();
         status
     }
-}
-
-#[derive(Serialize, Deserialize)]
-struct AppSettingsFile {
-    version: u32,
-    settings: AppSettings,
-}
-
-pub(crate) fn load_app_settings(path: Option<&Path>) -> AppSettings {
-    let Some(path) = path else {
-        return AppSettings::default();
-    };
-    let Ok(bytes) = read_bounded(path) else {
-        return AppSettings::default();
-    };
-    let Ok(file) = serde_json::from_slice::<AppSettingsFile>(&bytes) else {
-        return AppSettings::default();
-    };
-    if file.version != APP_SETTINGS_VERSION {
-        return AppSettings::default();
-    }
-    let mut settings = file.settings;
-    settings.recent_projects.truncate(RECENT_PROJECTS_MAX);
-    settings
 }
 
 /// `MAJOR.MINOR.PATCH`, optionally followed by `-` and dot-separated

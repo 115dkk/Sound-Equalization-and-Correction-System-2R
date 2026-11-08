@@ -392,7 +392,14 @@ fn rc_bands_inverted_primary_grids_skip_it_and_gd_cuts_stay_in_the_bands() {
     let bands = rc::band_set(150.0, 126.0, &[(15000.0, 20000.0)]);
     assert_eq!(bands, [(150.0, 126.0), (15000.0, 20000.0)]);
     let h = noisy_phase(100.0, 200.0);
-    let cuts = fit::fit_gd_cuts_bands_until(design_freqs(), &h, &bands, 6, 3.0, &|| false);
+    let cuts = fit::fit_gd_cuts_bands_until(
+        design_freqs(),
+        &h,
+        &bands,
+        6,
+        3.0,
+        &secs_compute::Context::serial(),
+    );
     assert!(
         cuts.iter()
             .all(|&(f, _, _)| (15000.0..=20000.0).contains(&f)),
@@ -419,7 +426,7 @@ fn rc_bands_inverted_primary_grids_skip_it_and_gd_cuts_stay_in_the_bands() {
             positions: &[1],
         },
         &mut fit::fit_peq,
-        &|| false,
+        &secs_compute::Context::serial(),
     )
     .unwrap();
     assert!(
@@ -604,7 +611,10 @@ fn rc_bands_agreement_probe_ignores_extras_and_reports_merged_bands() {
         multi
             .notes
             .iter()
-            .any(|n| matches!(n, Note::RcBands { bands } if bands == &multi.rc_bands))
+            .any(|n| matches!(n, Note::RcBands { bands } if bands
+                .iter()
+                .map(|band| (band.lo_hz, band.hi_hz))
+                .eq(multi.rc_bands.iter().copied())))
     );
     assert_eq!(multi.replay.config(), &config);
     let requests = requests.lock().unwrap();

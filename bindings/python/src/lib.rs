@@ -1,16 +1,17 @@
 #![forbid(unsafe_code)]
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, mpsc};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use pyo3::create_exception;
-use pyo3::exceptions::{PyException, PyValueError};
+use pyo3::exceptions::{PyException, PyTimeoutError, PyValueError};
 use pyo3::prelude::*;
-use secs::types::ipc::{Envelope, JobEvent, JobId};
+use secs::types::ipc::{Envelope, JobId};
 use secs::{
     Client as RustClient, DroppedEventCount, Engine as RustEngine, EngineBuilder,
-    Error as RustError,
+    Error as RustError, Event, SubscriptionCloser,
 };
 use serde_json::Value;
 
@@ -60,23 +61,36 @@ impl Engine {
         rust_to_python!(py, event)
     }
 
-    fn events(&self) -> EngineEvents {
-        let (receiver, dropped) = self.inner.subscribe_with_drop_count();
-        EngineEvents {
-            receiver: Mutex::new(receiver),
-            dropped,
+    #[pyo3(signature = (timeout=None))]
+    fn events(&self, py: Python<'_>, timeout: Option<f64>) -> PyResult<Events> {
+        let timeout = event_timeout(timeout)?;
+        let subscription = self
+            .inner
+            .subscribe()
+            .map_err(|error| secs_error(py, error))?;
+        Ok(Events::new(subscription, timeout))
+    }
+}
+
+#[pyclass(name = "_Events", module = "secs2r._secs2r")]
+struct Events {
+    receiver: EventReceiver<Event>,
+    dropped: DroppedEventCount,
+    closer: SubscriptionCloser,
+}
+
+impl Events {
+    fn new(subscription: secs::Subscription, timeout: Option<Duration>) -> Self {
+        Self {
+            receiver: EventReceiver::new(subscription.receiver, timeout),
+            dropped: subscription.dropped,
+            closer: subscription.closer,
         }
     }
 }
 
-#[pyclass(name = "_EngineEvents", module = "secs2r._secs2r")]
-struct EngineEvents {
-    receiver: Mutex<mpsc::Receiver<JobEvent>>,
-    dropped: DroppedEventCount,
-}
-
 #[pymethods]
-impl EngineEvents {
+impl Events {
     fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
         slf
     }
@@ -86,15 +100,33 @@ impl EngineEvents {
     }
 
     fn __next__(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
-        match py.detach(|| {
-            self.receiver
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
-                .recv()
-        }) {
-            Ok(event) => rust_to_python!(py, event).map(Some),
-            Err(_) => Ok(None),
+        match self.receiver.next(py) {
+            Ok(Some(event)) => rust_to_python!(py, event).map(Some),
+            Ok(None) => {
+                self.close();
+                Ok(None)
+            }
+            Err(error) => {
+                self.close();
+                Err(error)
+            }
         }
+    }
+
+    fn close(&self) {
+        self.closer.close();
+        self.receiver.close();
+    }
+
+    #[getter]
+    fn closed(&self) -> bool {
+        self.receiver.closed.load(Ordering::Acquire)
+    }
+}
+
+impl Drop for Events {
+    fn drop(&mut self) {
+        self.close();
     }
 }
 
@@ -143,30 +175,92 @@ impl Client {
         rust_to_python!(py, status)
     }
 
-    fn events(&self, py: Python<'_>) -> PyResult<ClientEvents> {
-        let events = py
-            .detach(|| self.inner.events())
+    #[pyo3(signature = (timeout=None))]
+    fn events(&self, py: Python<'_>, timeout: Option<f64>) -> PyResult<Events> {
+        let timeout = event_timeout(timeout)?;
+        let subscription = py
+            .detach(|| self.inner.subscribe())
             .map_err(|error| secs_error(py, error))?;
-        Ok(ClientEvents { inner: events })
+        Ok(Events::new(subscription, timeout))
     }
 }
 
-#[pyclass(name = "_ClientEvents", module = "secs2r._secs2r")]
-struct ClientEvents {
-    inner: secs::Events,
+fn event_timeout(timeout: Option<f64>) -> PyResult<Option<Duration>> {
+    timeout
+        .map(|seconds| {
+            let duration = Duration::try_from_secs_f64(seconds)
+                .map_err(|error| PyValueError::new_err(format!("invalid timeout: {error}")))?;
+            if Instant::now().checked_add(duration).is_none() {
+                return Err(PyValueError::new_err("timeout is out of range"));
+            }
+            Ok(duration)
+        })
+        .transpose()
 }
 
-#[pymethods]
-impl ClientEvents {
-    fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
-        slf
+struct EventReceiver<T> {
+    receiver: Mutex<Option<mpsc::Receiver<T>>>,
+    closed: AtomicBool,
+    timeout: Option<Duration>,
+}
+
+impl<T: Send> EventReceiver<T> {
+    fn new(receiver: mpsc::Receiver<T>, timeout: Option<Duration>) -> Self {
+        Self {
+            receiver: Mutex::new(Some(receiver)),
+            closed: AtomicBool::new(false),
+            timeout,
+        }
     }
 
-    fn __next__(&mut self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
-        match py.detach(|| self.inner.next()) {
-            Some(Ok(event)) => rust_to_python!(py, event).map(Some),
-            Some(Err(error)) => Err(secs_error(py, error)),
-            None => Ok(None),
+    fn close(&self) {
+        self.closed.store(true, Ordering::Release);
+        self.receiver
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .take();
+    }
+
+    fn next(&self, py: Python<'_>) -> PyResult<Option<T>> {
+        let started = Instant::now();
+        loop {
+            py.check_signals()?;
+            if self.closed.load(Ordering::Acquire) {
+                return Ok(None);
+            }
+            let remaining = self
+                .timeout
+                .map(|timeout| timeout.saturating_sub(started.elapsed()));
+            let poll = remaining
+                .unwrap_or(Duration::from_millis(100))
+                .min(Duration::from_millis(100));
+            let result = py.detach(|| {
+                let receiver = self
+                    .receiver
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                receiver
+                    .as_ref()
+                    .map(|receiver| receiver.recv_timeout(poll))
+            });
+            py.check_signals()?;
+            if self.closed.load(Ordering::Acquire) {
+                return Ok(None);
+            }
+            match result {
+                Some(Ok(event)) => return Ok(Some(event)),
+                Some(Err(mpsc::RecvTimeoutError::Timeout))
+                    if self
+                        .timeout
+                        .is_none_or(|timeout| started.elapsed() < timeout) => {}
+                Some(Err(mpsc::RecvTimeoutError::Timeout)) => {
+                    return Err(PyTimeoutError::new_err("event wait timed out"));
+                }
+                _ => {
+                    self.close();
+                    return Ok(None);
+                }
+            }
         }
     }
 }
@@ -187,27 +281,27 @@ fn json_to_python(py: Python<'_>, value: Value) -> PyResult<Py<PyAny>> {
 }
 
 fn secs_error(py: Python<'_>, error: RustError) -> PyErr {
-    let (code, detail) = match &error {
-        RustError::Api(error) => {
-            let code = serde_json::to_value(error.code)
-                .ok()
-                .and_then(|value| value.as_str().map(str::to_owned))
-                .unwrap_or_else(|| "internal".to_owned());
-            (code, Some(error.detail.clone()))
-        }
-        RustError::Transport(detail) => ("transport_error".to_owned(), Some(detail.clone())),
-        RustError::Protocol(detail) => ("protocol_error".to_owned(), Some(detail.clone())),
-    };
-    let message = error.to_string();
+    let wire = secs::WireError::from(&error);
+    let message = wire.message;
     let exception = SecsError::new_err(message.clone());
     let value = exception.value(py);
-    if let Err(error) = value.setattr("code", code) {
+    if let Err(error) = value.setattr("code", wire.code) {
         return error;
     }
     if let Err(error) = value.setattr("message", message) {
         return error;
     }
-    if let Err(error) = value.setattr("detail", detail) {
+    if let Err(error) = value.setattr("detail", wire.detail) {
+        return error;
+    }
+    let params = match rust_to_python!(py, wire.params) {
+        Ok(params) => params,
+        Err(error) => return error,
+    };
+    if let Err(error) = value.setattr("params", params) {
+        return error;
+    }
+    if let Err(error) = value.setattr("retryable", wire.retryable) {
         return error;
     }
     exception
@@ -218,27 +312,7 @@ fn _secs2r(py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add("__version__", env!("CARGO_PKG_VERSION"))?;
     module.add("SecsError", py.get_type::<SecsError>())?;
     module.add_class::<Engine>()?;
-    module.add_class::<EngineEvents>()?;
+    module.add_class::<Events>()?;
     module.add_class::<Client>()?;
-    module.add_class::<ClientEvents>()?;
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn dropped_event_count_does_not_lock_the_blocking_receiver_td127() {
-        let (_sender, receiver) = mpsc::channel();
-        let events = EngineEvents {
-            receiver: Mutex::new(receiver),
-            dropped: DroppedEventCount::default(),
-        };
-        let _receiver = events
-            .receiver
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        assert_eq!(events.dropped_events(), 0);
-    }
 }

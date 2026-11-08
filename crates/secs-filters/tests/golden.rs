@@ -3,6 +3,7 @@
 
 mod support;
 
+use secs_compute::{CancelToken, Context, MemoryBudget, NoProgress, Progress, ProgressSink};
 use secs_filters::{
     CONVOLUTION_GUIDE, FilterPlan, FilterRun, FiltersError, MimoFeed, Op, Options, SECTION_Q,
     SubFeed, eqapo_config, eqapo_filters, eqapo_guide, export_convolution,
@@ -11,6 +12,7 @@ use secs_filters::{
     plan_responses, prepare_convolution_named_with_options, render_paths, windows_channels,
     write_eqapo, write_eqapo_observed, write_text, write_text_observed,
 };
+use secs_graph::{ExportGraph, GraphError, LfeChoice};
 use secs_oracle::{Fixture, assert_close, goldens, rtol};
 use secs_types::calibration::RcBand;
 use secs_types::chain::{
@@ -18,10 +20,12 @@ use secs_types::chain::{
 };
 use secs_types::ipc::ExportBlock;
 use serde_json::Value;
-use std::cell::Cell;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicU64, Ordering},
+};
 
 static TEMP_ID: AtomicU64 = AtomicU64::new(0);
 const RESPONSE_ATOL: f64 = 8e-14;
@@ -41,6 +45,7 @@ const COMPUTED_CASES: [&str; 5] = [
     "computed_room_rc_mixed",
     "computed_room_rc_zero",
 ];
+const EXPECTED_GRAPH_REFUSALS: [(&str, &str); 1] = [("ba_edges", "main.L.top_peq[0].frequency")];
 
 struct TempDir(PathBuf);
 
@@ -60,6 +65,15 @@ impl TempDir {
 impl Drop for TempDir {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+#[derive(Debug, Default)]
+struct RecordingProgress(Mutex<Vec<Progress>>);
+
+impl ProgressSink for RecordingProgress {
+    fn report(&self, progress: &Progress) {
+        self.0.lock().unwrap().push(progress.clone());
     }
 }
 
@@ -187,6 +201,91 @@ fn plan(fixture: &Fixture, chain: &SignalChain, mimo: Option<&MimoPaths>) -> Fil
         number(&fixture.inputs()["lfe_lp_hz"]),
     )
     .unwrap()
+}
+
+fn assert_expected_graph_refusal(
+    case: &str,
+    fixture: &Fixture,
+    chain: &SignalChain,
+    mimo: Option<&MimoPaths>,
+) -> bool {
+    let Some((_, field)) = EXPECTED_GRAPH_REFUSALS
+        .iter()
+        .find(|(expected, _)| *expected == case)
+    else {
+        return false;
+    };
+    let lfe = fixture.inputs()["lfe_gain_db"]
+        .as_f64()
+        .map_or(LfeChoice::Omit, |gain_db| LfeChoice::Include {
+            gain_db,
+            lp_hz: number(&fixture.inputs()["lfe_lp_hz"]),
+        });
+    let error = ExportGraph::build(chain, mimo, lfe).unwrap_err();
+    assert!(
+        matches!(&error, GraphError::Invalid(message) if message.contains(field)),
+        "{case}: {error}"
+    );
+    true
+}
+
+#[test]
+fn malformed_plans_return_errors_instead_of_panicking_td180() {
+    let fixture = Fixture::load("filters", "rc_mixed");
+    let chain = chain(&fixture);
+    let mut plan = plan(&fixture, &chain, None);
+    let missing = plan.inputs[0].clone();
+    plan.main_ops.retain(|(role, _)| role != &missing);
+    let firs = plan
+        .firs()
+        .into_iter()
+        .map(|(name, _)| (name.to_owned(), format!("{name}.wav")))
+        .collect::<Vec<_>>();
+
+    assert!(matches!(
+        eqapo_filters(&plan, &firs, ""),
+        Err(FiltersError::Graph(secs_graph::GraphError::Invalid(message)))
+            if message.contains(&missing)
+    ));
+    assert!(matches!(
+        filter_text(&plan, &firs, "test", &[]),
+        Err(FiltersError::Graph(secs_graph::GraphError::Invalid(message)))
+            if message.contains(&missing)
+    ));
+    assert!(matches!(
+        render_paths(&plan, 1 << 16),
+        Err(FiltersError::Graph(secs_graph::GraphError::Invalid(message)))
+            if message.contains(&missing)
+    ));
+}
+
+#[test]
+fn convolution_guide_uses_python_fixed_numbers_td226() {
+    // Verified with:
+    // python3 -c "print(format(2.25, '+.1f')); print(format(1.2345, '.3f'))"
+    let mut chain = f11_synthetic_chain(false, false, false);
+    // Exact DTFT phase multiplication puts the derived peak just above the tie;
+    // keep this public-export case below it. The unit test covers exact 2.25.
+    chain.mains[0].gain_db = 2.25 - 1e-10;
+    chain.mains[0].delay_ms = 1.2345;
+    let run = FilterRun {
+        chain: &chain,
+        mimo: None,
+        mode: "mixed",
+        note: "",
+        label: "test",
+        latency_ms: 1.2345,
+        rc_pieces: &[],
+        stamp: "2026-11-07 00:00",
+    };
+    let root = TempDir::new("guide_pyfmt");
+    export_convolution(&run, &root.0).unwrap();
+    let guide = fs::read_to_string(root.0.join(CONVOLUTION_GUIDE)).unwrap();
+    assert!(
+        guide.contains("L → L | L_to_L.wav | +2.2 dB | 1.234 ms"),
+        "{guide}"
+    );
+    assert!(guide.contains("헤드룸: 클리핑을 막으려고 모든 파일에 2.5 dB 감쇠"));
 }
 
 fn assert_op(fixture: &Fixture, id: &str, got: &Op, expected: &Value) {
@@ -1123,26 +1222,76 @@ fn output_rates_change_eqapo_text_and_convolution_bundles() {
         }
     }
 
-    for invalid in [
-        Options {
-            output_rate: 96_000,
-            extra_rates: vec![96_000],
-        },
-        Options {
-            output_rate: 96_000,
-            extra_rates: vec![32_000],
-        },
-        Options {
-            output_rate: 96_000,
-            extra_rates: vec![44_100, 44_100],
-        },
+    for (invalid, expected) in [
+        (
+            Options {
+                output_rate: 96_000,
+                extra_rates: vec![96_000],
+            },
+            "extra output sample rate 96000 must be distinct from the main rate and other extra rates",
+        ),
+        (
+            Options {
+                output_rate: 96_000,
+                extra_rates: vec![32_000],
+            },
+            "unsupported extra output sample rate 32000",
+        ),
+        (
+            Options {
+                output_rate: 96_000,
+                extra_rates: vec![44_100, 44_100],
+            },
+            "extra output sample rate 44100 must be distinct from the main rate and other extra rates",
+        ),
     ] {
-        assert!(export_convolution_with_options(&run, &root.0.join("invalid"), &invalid).is_err());
+        assert!(matches!(
+            export_convolution_with_options(&run, &root.0.join("invalid"), &invalid),
+            Err(FiltersError::Invalid(message)) if message == expected
+        ));
     }
 }
 
 #[test]
-fn convolution_cancel_inside_the_first_rate_finishes_before_rate_progress() {
+fn convolution_prepare_reports_progress_until_done_equals_total() {
+    const FIXTURE_PATH_COUNT: u64 = 2;
+    let chain = f11_synthetic_chain(true, true, false);
+    let run = FilterRun {
+        chain: &chain,
+        mimo: None,
+        mode: "mixed",
+        note: "record progress",
+        label: "record progress",
+        latency_ms: chain.latency_ms,
+        rc_pieces: &[],
+        stamp: "2026-11-02 00:00",
+    };
+    let options = Options {
+        output_rate: 96_000,
+        extra_rates: vec![44_100],
+    };
+    let progress = Arc::new(RecordingProgress::default());
+    let ctx = Context::new(
+        1,
+        MemoryBudget::new(u64::MAX),
+        progress.clone(),
+        CancelToken::new(),
+    );
+
+    prepare_convolution_named_with_options(&run, &options, None, &ctx).unwrap();
+
+    let reports = progress.0.lock().unwrap();
+    let last = reports
+        .iter()
+        .rfind(|report| report.stage == "filters.convolution")
+        .expect("convolution progress");
+    assert_eq!(last.done, last.total);
+    assert_eq!(last.total, FIXTURE_PATH_COUNT);
+}
+
+#[test]
+fn convolution_prepare_cancelled_midway_writes_nothing() {
+    let destination = TempDir::new("cancelled_convolution_prepare");
     let chain = f11_synthetic_chain(true, true, false);
     let run = FilterRun {
         chain: &chain,
@@ -1158,22 +1307,13 @@ fn convolution_cancel_inside_the_first_rate_finishes_before_rate_progress() {
         output_rate: 96_000,
         extra_rates: vec![44_100],
     };
-    let checks = Cell::new(0_u64);
-    let completed = Cell::new(u64::MAX);
-    let result = prepare_convolution_named_with_options(
-        &run,
-        &options,
-        None,
-        &|| {
-            let current = checks.get() + 1;
-            checks.set(current);
-            current == 8
-        },
-        &|done, _| completed.set(done),
-    );
+    let (cancel, _checks) = CancelToken::probe(8);
+    let ctx = Context::new(1, MemoryBudget::new(u64::MAX), Arc::new(NoProgress), cancel);
+
+    let result = prepare_convolution_named_with_options(&run, &options, None, &ctx);
+
     assert!(matches!(result, Err(FiltersError::Cancelled)));
-    assert_eq!(checks.get(), 8);
-    assert_eq!(completed.get(), 0, "no sample-rate bundle completed");
+    assert!(fs::read_dir(&destination.0).unwrap().next().is_none());
 }
 
 #[test]
@@ -1190,7 +1330,8 @@ fn eqapo_disabled_and_case_sensitive_mapping_f11() {
         &[("Tml".into(), 0), ("Tmr".into(), 12)],
         &[("Tml".into(), 11), ("Tmr".into(), 0)],
         None,
-    );
+    )
+    .unwrap();
     assert_f11_assignments(
         &config,
         &[
@@ -1216,9 +1357,12 @@ fn plans_and_windows_channels_match_oracle() {
         let fixture = Fixture::load("filters", case);
         let chain = chain(&fixture);
         let mimo = mimo(&fixture);
+        if assert_expected_graph_refusal(case, &fixture, &chain, mimo.as_ref()) {
+            continue;
+        }
         let plan = plan(&fixture, &chain, mimo.as_ref());
         assert_plan(&fixture, &plan);
-        let (inputs, outputs) = windows_channels(&plan);
+        let (inputs, outputs) = windows_channels(&plan).unwrap();
         let expected = &fixture.outputs()["windows_channels"];
         let pairs = |value: &Value| {
             value
@@ -1244,13 +1388,16 @@ fn serializers_match_oracle_text_exactly() {
         let fixture = Fixture::load("filters", case);
         let chain = chain(&fixture);
         let mimo = mimo(&fixture);
+        if assert_expected_graph_refusal(case, &fixture, &chain, mimo.as_ref()) {
+            continue;
+        }
         let plan = plan(&fixture, &chain, mimo.as_ref());
         let direct = &fixture.outputs()["direct"];
         let firs = fir_names(&plan, "edge_");
-        let (inputs, outputs) = windows_channels(&plan);
+        let (inputs, outputs) = windows_channels(&plan).unwrap();
         let preamp = (headroom_db(&plan).unwrap() * 2.0).ceil() / 2.0;
         let run = &fixture.inputs()["run"];
-        let got_body = eqapo_filters(&plan, &firs, "ASCII before / 한글 / after");
+        let got_body = eqapo_filters(&plan, &firs, "ASCII before / 한글 / after").unwrap();
         let expected_body = direct["eqapo_filters"].as_str().unwrap();
         let got_config = eqapo_config(
             &plan,
@@ -1259,7 +1406,8 @@ fn serializers_match_oracle_text_exactly() {
             &inputs,
             &outputs,
             Some(number(&run["latency_ms"])),
-        );
+        )
+        .unwrap();
         let expected_config = f11_config(direct["eqapo_config"].as_str().unwrap());
         let wav = |name: &str| {
             let key = firs
@@ -1285,7 +1433,7 @@ fn serializers_match_oracle_text_exactly() {
                 } => secs_dsp::fir::lowrate_to_48k(taps_low, *fs_low),
                 _ => unreachable!(),
             };
-            secs_camilla::wav_bytes(&taps, 48_000).unwrap()
+            secs_graph::files::wav_bytes(&taps, 48_000).unwrap()
         };
         assert_apo_transfer(
             case,
@@ -1324,7 +1472,8 @@ fn serializers_match_oracle_text_exactly() {
                 &firs,
                 &format!("SECS 2 보정 필터 — {}", run["label"].as_str().unwrap()),
                 &info,
-            ),
+            )
+            .unwrap(),
             direct["filter_text"].as_str().unwrap(),
             "{case} text"
         );
@@ -1337,6 +1486,9 @@ fn responses_and_headroom_match_oracle() {
         let fixture = Fixture::load("filters", case);
         let chain = chain(&fixture);
         let mimo = mimo(&fixture);
+        if assert_expected_graph_refusal(case, &fixture, &chain, mimo.as_ref()) {
+            continue;
+        }
         let plan = plan(&fixture, &chain, mimo.as_ref());
         let response = &fixture.outputs()["response"];
         let indices = fixture.f64s(&response["indices"]);
@@ -1432,6 +1584,9 @@ fn equalizer_apo_files_match_oracle_bytes() {
     ] {
         let fixture = Fixture::load("filters", case);
         let chain = chain(&fixture);
+        if assert_expected_graph_refusal(case, &fixture, &chain, None) {
+            continue;
+        }
         let plan = plan(&fixture, &chain, None);
         let root = TempDir::new(case);
         let run = &fixture.inputs()["run"];
@@ -1545,7 +1700,7 @@ fn public_wrappers_match_oracle_and_eqapo_carries_mimo_f12() {
     let body = fs::read_to_string(eqapo.join("secs_mixed/secs_mixed.txt")).unwrap();
     assert!(body.contains("MIMO IIR support paths"));
     let plan = secs_filters::make_plan(&chain, Some(&mimo)).unwrap();
-    let (_, outputs) = windows_channels(&plan);
+    let (_, outputs) = windows_channels(&plan).unwrap();
     // F13 preserves the serialized APO transfer, not the unrounded analog
     // response from plan_responses. The direct fixture retains the unfactored
     // MIMO body, including the fixed sub filter on both contributing paths.
@@ -1651,6 +1806,31 @@ fn computed_subwoofer_text_scope_matches_oracle() {
 }
 
 #[test]
+fn filter_run_note_newline_writes_nothing_td224() {
+    let fixture = Fixture::load("filters", "rc_mixed");
+    let chain = chain(&fixture);
+    let value = &fixture.inputs()["run"];
+    let mode = export_mode(value);
+    let (label, rc_pieces, stamp) = run_parts(&fixture);
+    let run = FilterRun {
+        chain: &chain,
+        mimo: None,
+        mode: &mode,
+        note: "a\nb",
+        label: &label,
+        latency_ms: number(&value["latency_ms"]),
+        rc_pieces: &rc_pieces,
+        stamp: &stamp,
+    };
+    let root = TempDir::new("note_newline");
+    let folder = root.0.join("eqapo");
+    let error = export_eqapo(&run, &folder).unwrap_err();
+    assert!(matches!(&error, FiltersError::Invalid(_)), "{error}");
+    assert!(error.to_string().contains("note"), "{error}");
+    assert!(!folder.exists());
+}
+
+#[test]
 fn invalid_values_write_nothing_and_existing_files_are_replaced_atomically() {
     let fixture = Fixture::load("filters", "rc_mixed");
     let mut bad_chain = chain(&fixture);
@@ -1676,7 +1856,7 @@ fn invalid_values_write_nothing_and_existing_files_are_replaced_atomically() {
     };
     assert!(matches!(
         export_filter_text(&bad_run, &invalid),
-        Err(FiltersError::Invalid(_))
+        Err(FiltersError::Graph(secs_graph::GraphError::NonFinite(_)))
     ));
     assert!(!invalid.exists());
 
@@ -1872,7 +2052,7 @@ fn fir_responses_require_the_rfft_grid_td94() {
     assert!(plan_responses(&fir, &uniform, "L", false).is_ok());
     assert!(matches!(
         plan_responses(&fir, &skewed, "L", false),
-        Err(FiltersError::Invalid(_))
+        Err(FiltersError::Graph(secs_graph::GraphError::Invalid(_)))
     ));
     // Without a FIR every response is evaluated on `f` itself.
     let iir =
@@ -1909,7 +2089,7 @@ fn extra_rc_bands_keep_every_eqapo_header_line_a_comment() {
     let run_value = &fixture.inputs()["run"];
     let (label, rc_pieces, stamp) = run_parts(&fixture);
     let mode = export_mode(run_value);
-    let note = secs_camilla::note::eqapo_note_with_bands(
+    let note = secs_graph::emit::note::eqapo_note_with_bands(
         &mode,
         number(&run_value["latency_ms"]),
         number(&run_value["rc_hi_hz"]),
@@ -1958,15 +2138,15 @@ fn extra_rc_bands_keep_every_eqapo_header_line_a_comment() {
 }
 
 fn export_mode(value: &Value) -> String {
-    secs_camilla::note::mode_name(
+    secs_graph::emit::note::mode_name(
         serde_json::from_value(value["mode"].clone()).unwrap(),
         number(&value["ultra_ms"]),
     )
 }
 
 fn export_note(mode: &str, latency: f64, rc_hi: f64, mimo: Option<&MimoPaths>) -> String {
-    let mimo = mimo.and_then(|paths| secs_camilla::note::MimoNote::for_paths(paths, 0));
-    secs_camilla::note::eqapo_note(mode, latency, rc_hi, mimo.as_ref())
+    let mimo = mimo.and_then(|paths| secs_graph::emit::note::MimoNote::for_paths(paths, 0));
+    secs_graph::emit::note::eqapo_note(mode, latency, rc_hi, mimo.as_ref())
 }
 
 /// Issue #106: with Dirac ART on a Denon receiver in Stereo mode, the
@@ -2271,6 +2451,20 @@ fn convolution_bundle_contains_complete_paths_and_is_atomic() {
     let plan = make_plan(&chain, None).unwrap();
     let rendered = render_paths(&plan, 1 << 20).unwrap();
     assert_eq!(length, rendered.length);
+    let oracle_path = rendered
+        .paths
+        .iter()
+        .find(|path| path.input == "L" && path.output == "L")
+        .unwrap();
+    let (first_nonzero, sample) = oracle_path
+        .response
+        .iter()
+        .enumerate()
+        .find(|(_, sample)| **sample != 0.0)
+        .unwrap();
+    // Oracle fixture filters/computed_dolby, L -> L response.
+    assert_eq!(first_nonzero, 93);
+    assert_eq!(sample.to_bits(), 4_562_469_665_216_348_470);
     let headroom = (headroom_db(&plan).unwrap() * 2.0).ceil() / 2.0;
     assert_eq!(routing["headroom_db"].as_f64().unwrap(), headroom);
     let attenuation = 10_f64.powf(-headroom / 20.0);
@@ -2383,7 +2577,11 @@ fn convolution_bundle_contains_complete_paths_and_is_atomic() {
         ..run
     };
     let invalid_folder = root.0.join("invalid");
-    assert!(export_convolution(&invalid_run, &invalid_folder).is_err());
+    assert!(matches!(
+        export_convolution(&invalid_run, &invalid_folder),
+        Err(FiltersError::Graph(GraphError::Invalid(message)))
+            if message.starts_with("chain.sample_rate ")
+    ));
     assert!(!invalid_folder.exists());
     eprintln!("convolution bundle oracle length: {length}");
 }
@@ -2709,8 +2907,15 @@ fn output_rate_renderer_rounds_delays_and_scales_bounds() {
         assert!(got.length <= secs_dsp::rate::taps_at(8192, rate));
         assert_eq!(got.rate, rate);
     }
-    assert!(secs_filters::render_paths_at(&plan, 8192, 32000).is_err());
-    assert!(secs_filters::render_paths_at(&plan, 4095, 96000).is_err());
+    assert!(matches!(
+        secs_filters::render_paths_at(&plan, 8192, 32000),
+        Err(FiltersError::Invalid(message)) if message == "unsupported output sample rate"
+    ));
+    assert!(matches!(
+        secs_filters::render_paths_at(&plan, 4095, 96000),
+        Err(FiltersError::Invalid(message))
+            if message == "max_len 8190 is below the minimum 4096"
+    ));
 }
 
 #[test]

@@ -8,7 +8,10 @@ use secs_service::{Deps, EventSink, NoEvents, Service};
 use secs_types::ipc::*;
 use std::{
     path::PathBuf,
-    sync::{Arc, Condvar, Mutex},
+    sync::{
+        Arc, Condvar, Mutex, Weak,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+    },
     time::{Duration, Instant},
 };
 
@@ -110,7 +113,7 @@ fn measurement_curves_match_oracle_and_selection() {
                 .unwrap();
             let (samples, rate) =
                 secs_project::load_ir(&path, &curve.role, curve.position).unwrap();
-            let upstream = secs_engine::display::magnitude_db(
+            let upstream = secs_engine::Design::magnitude_db(
                 &samples
                     .iter()
                     .map(|&sample| f64::from(sample))
@@ -128,7 +131,7 @@ fn measurement_curves_match_oracle_and_selection() {
             );
             // U17 preserves upstream's curve shape while sharing one reference:
             // applying its per-curve midrange reference recovers magnitude_db.
-            let own_reference = secs_engine::display::midrange_reference(&curve.values);
+            let own_reference = secs_engine::Design::midrange_reference(&curve.values);
             let normalized: Vec<_> = curve
                 .values
                 .iter()
@@ -279,7 +282,7 @@ fn measurement_curves_share_the_configured_reference() {
     let sub_curve = curve_at(&result, "SW1", 1);
     let sub_passband = value_at(&result, sub_curve, 40.0);
     assert!((-1.0..0.5).contains(&sub_passband), "{sub_passband}");
-    let upstream_sub = secs_engine::display::magnitude_db(
+    let upstream_sub = secs_engine::Design::magnitude_db(
         &sub_f32
             .iter()
             .map(|&sample| f64::from(sample))
@@ -420,7 +423,7 @@ fn measurement_curves_use_the_corrected_ir() {
     let corrected = secs_audio::ResponseCorrection::new(Some(curve), vec![], false)
         .apply(&raw, 48_000)
         .unwrap();
-    let expected = secs_engine::display::magnitude_db(
+    let expected = secs_engine::Design::magnitude_db(
         &corrected
             .iter()
             .map(|sample| f64::from(*sample))
@@ -442,7 +445,7 @@ fn measurement_curves_use_the_corrected_ir() {
         result.curves[0]
             .values
             .iter()
-            .zip(secs_engine::display::magnitude_db(
+            .zip(secs_engine::Design::magnitude_db(
                 &raw.iter()
                     .map(|sample| f64::from(*sample))
                     .collect::<Vec<_>>(),
@@ -614,6 +617,50 @@ fn input_hp_result_curves_show_the_cut_without_changing_the_verdict() {
 }
 
 #[test]
+fn result_lines_summary_and_lines_come_from_one_lock_td213() {
+    let root = root("result-lines-one-lock");
+    let (path, _) = case_project::write(&root, "room_dba");
+    let armed = Arc::new(AtomicBool::new(false));
+    let calls = Arc::new(AtomicUsize::new(0));
+    let service_slot = Arc::new(Mutex::new(Weak::<Service>::new()));
+    let fallback = Deps::default().acceleration;
+    let deps = Deps {
+        acceleration: Arc::new({
+            let armed = armed.clone();
+            let calls = calls.clone();
+            let service_slot = service_slot.clone();
+            move |preference| {
+                if armed.load(Ordering::SeqCst) && calls.fetch_add(1, Ordering::SeqCst) == 1 {
+                    let service = service_slot.lock().unwrap().upgrade().unwrap();
+                    let response = service.call(
+                        Request::PositionClear(PositionClearParams { position: 1 }),
+                        Arc::new(NoEvents),
+                    );
+                    assert!(matches!(response, Envelope::Ok(_)), "{response:?}");
+                }
+                fallback(preference)
+            }
+        }),
+        ..Deps::default()
+    };
+    let service = Arc::new(Service::new(deps));
+    *service_slot.lock().unwrap() = Arc::downgrade(&service);
+    open(&service, &path);
+    calibrate(&service, false);
+
+    calls.store(0, Ordering::SeqCst);
+    armed.store(true, Ordering::SeqCst);
+    let Response::ResultLines(lines) = call(&service, Request::ResultLines) else {
+        panic!()
+    };
+    armed.store(false, Ordering::SeqCst);
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert!(!lines.stale);
+
+    std::fs::remove_dir_all(root).ok();
+}
+
+#[test]
 fn result_curves_lines_take_values_and_staleness() {
     let name = "room_dba";
     let root = root("results");
@@ -725,7 +772,7 @@ fn curve_requests_validate_and_require_project() {
         ));
     }
     assert_eq!(
-        secs_engine::display::magnitude_db(&[], 48000.0),
+        secs_engine::Design::magnitude_db(&[], 48000.0),
         vec![0.0; 280]
     );
 }

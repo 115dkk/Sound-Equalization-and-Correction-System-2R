@@ -16,12 +16,13 @@ pub use render::{
     RenderedPath, RenderedPaths, render_paths, render_paths_at, render_paths_at_cancellable,
 };
 
-use secs_camilla::pyfmt::{format_fixed, round_ndigits};
 use secs_dsp::Complex64;
-use secs_graph::files::{safe_name, wav_bytes, write_bundle_observed};
+use secs_graph::emit::guard::find_ops;
+use secs_graph::emit::pyfmt::{format_fixed, round_ndigits};
+use secs_graph::emit::{grouped, guard};
+use secs_graph::files::{wav_bytes, write_bundle_observed};
 use secs_graph::{
-    ExportGraph, FirView, GraphError, LFE_GAIN_DB, LFE_LP_HZ, LfeChoice, SAMPLE_RATE,
-    is_negative_delay,
+    ExportGraph, GraphError, LFE_GAIN_DB, LFE_LP_HZ, LfeChoice, SAMPLE_RATE, is_negative_delay,
 };
 pub use secs_graph::{FilterPlan, MimoFeed, Op, SubFeed};
 use secs_types::chain::{BandType, MimoPaths, SignalChain};
@@ -94,6 +95,13 @@ impl Default for Options {
     }
 }
 
+/// Files installed by an observed writer and any backup it could not remove.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Installed {
+    pub files: Vec<PathBuf>,
+    pub leftover_backup: Option<(PathBuf, String)>,
+}
+
 /// Values read by upstream's calibration-level filter export wrappers.
 #[derive(Debug, Clone, Copy)]
 pub struct FilterRun<'a> {
@@ -101,9 +109,9 @@ pub struct FilterRun<'a> {
     pub chain: &'a SignalChain,
     /// MIMO paths only when the run includes MIMO.
     pub mimo: Option<&'a MimoPaths>,
-    /// Mode name (`secs_camilla::note::mode_name`).
+    /// Mode name (`secs_graph::emit::note::mode_name`).
     pub mode: &'a str,
-    /// Equalizer APO's ASCII header note (`secs_camilla::note::eqapo_note`).
+    /// Equalizer APO's ASCII header note (`secs_graph::emit::note::eqapo_note`).
     pub note: &'a str,
     /// Human-facing mode label.
     pub label: &'a str,
@@ -124,6 +132,9 @@ pub enum FiltersError {
     /// Validation failed before any filesystem change.
     #[error("invalid filter export: {0}")]
     Invalid(String),
+    /// Validation of the shared export graph failed.
+    #[error(transparent)]
+    Graph(#[from] GraphError),
     /// The caller cancelled a long-running calculation before installation.
     #[error("filter export cancelled")]
     Cancelled,
@@ -132,13 +143,9 @@ pub enum FiltersError {
     Io(#[from] std::io::Error),
 }
 
-impl From<GraphError> for FiltersError {
-    fn from(error: GraphError) -> Self {
-        Self::Invalid(match error {
-            GraphError::NonAscii(detail) => format!("non-ASCII {detail}"),
-            GraphError::NonFinite(detail) => format!("non-finite {detail}"),
-            GraphError::Invalid(detail) => detail,
-        })
+impl From<secs_compute::Cancelled> for FiltersError {
+    fn from(_: secs_compute::Cancelled) -> Self {
+        Self::Cancelled
     }
 }
 
@@ -167,13 +174,6 @@ fn validate_options(options: &Options, convolution: bool) -> Result<(), FiltersE
         }
     }
     Ok(())
-}
-
-fn find_ops<'a>(items: &'a [(String, Vec<Op>)], role: &str) -> Option<&'a [Op]> {
-    items
-        .iter()
-        .find(|(key, _)| key == role)
-        .map(|(_, value)| value.as_slice())
 }
 
 /// Convert a signal-chain value into the upstream filter plan, with
@@ -233,7 +233,10 @@ fn position(role: &str) -> Option<usize> {
 pub type ChannelNumbers = Vec<(String, usize)>;
 
 /// Return default one-based Windows input and output channel numbers.
-pub fn windows_channels(plan: &FilterPlan) -> (ChannelNumbers, ChannelNumbers) {
+pub fn windows_channels(
+    plan: &FilterPlan,
+) -> Result<(ChannelNumbers, ChannelNumbers), FiltersError> {
+    plan.check_structure()?;
     let subs = plan
         .outputs
         .iter()
@@ -258,12 +261,13 @@ pub fn windows_channels(plan: &FilterPlan) -> (ChannelNumbers, ChannelNumbers) {
     let mut outputs = placed
         .into_iter()
         .map(|(role, value)| {
-            (
-                role,
-                used.iter().position(|item| *item == value).expect("used") + 1,
-            )
+            let number =
+                used.iter().position(|item| *item == value).ok_or_else(|| {
+                    FiltersError::Invalid(format!("unnumbered output role {role}"))
+                })? + 1;
+            Ok((role, number))
         })
-        .collect::<Vec<_>>();
+        .collect::<Result<Vec<_>, FiltersError>>()?;
     let mut next = used.len();
     for role in &plan.outputs {
         if !outputs.iter().any(|(name, _)| name == role) {
@@ -278,19 +282,19 @@ pub fn windows_channels(plan: &FilterPlan) -> (ChannelNumbers, ChannelNumbers) {
             let number = if role == "LFE" {
                 used.iter()
                     .position(|item| *item == 3)
-                    .expect("LFE position")
+                    .ok_or_else(|| FiltersError::Invalid("missing LFE channel position".into()))?
                     + 1
             } else {
                 outputs
                     .iter()
                     .find(|(name, _)| name == role)
-                    .expect("main output")
+                    .ok_or_else(|| FiltersError::Invalid(format!("missing main output {role}")))?
                     .1
             };
-            (role.clone(), number)
+            Ok((role.clone(), number))
         })
-        .collect();
-    (inputs, outputs)
+        .collect::<Result<Vec<_>, FiltersError>>()?;
+    Ok((inputs, outputs))
 }
 
 /// Windows speaker-position name for the guide, or `-` when none exists.
@@ -329,26 +333,26 @@ fn input_channel(role: &str) -> String {
         virtual_channel("main", role)
     }
 }
-fn q_values(kind: BandType) -> &'static [f64] {
+fn q_values(kind: BandType) -> Result<&'static [f64], FiltersError> {
     SECTION_Q
         .iter()
         .find(|(name, _)| *name == kind.name())
-        .expect("known band type")
-        .1
+        .map(|(_, values)| *values)
+        .ok_or_else(|| FiltersError::Invalid(format!("unknown band type {}", kind.name())))
 }
-fn map_number(items: &[(String, usize)], role: &str) -> usize {
+fn map_number(items: &[(String, usize)], role: &str) -> Result<usize, FiltersError> {
     items
         .iter()
         .find(|(name, _)| name == role)
-        .expect("numbered role")
-        .1
+        .map(|(_, number)| *number)
+        .ok_or_else(|| FiltersError::Invalid(format!("unnumbered role {role}")))
 }
 
 fn eqapo_ops<'a>(
     ops: impl IntoIterator<Item = &'a Op>,
     channel: &str,
     firs: &[(String, String)],
-) -> Vec<String> {
+) -> Result<Vec<String>, FiltersError> {
     let mut lines = Vec::new();
     for op in ops {
         match op {
@@ -367,7 +371,7 @@ fn eqapo_ops<'a>(
                 "Convolution: {}",
                 firs.iter()
                     .find(|(key, _)| key == name)
-                    .expect("FIR name")
+                    .ok_or_else(|| FiltersError::Invalid(format!("missing FIR {name}")))?
                     .1
             )),
             Op::Gain { db, .. } if db.abs() >= 0.005 => {
@@ -386,7 +390,7 @@ fn eqapo_ops<'a>(
                 } else {
                     "LPQ"
                 };
-                for q in q_values(*kind) {
+                for q in q_values(*kind)? {
                     lines.push(format!(
                         "Filter: ON {prefix} Fc {} Hz Q {}",
                         format_fixed(*frequency, 2, false),
@@ -405,73 +409,40 @@ fn eqapo_ops<'a>(
             Op::Delay { .. } => {}
         }
     }
-    lines
+    Ok(lines)
 }
 
-/// Build the ASCII Equalizer APO filter body.
-pub fn eqapo_filters(plan: &FilterPlan, firs: &[(String, String)], note: &str) -> String {
-    let mut lines = vec![
-        "# SECS 2 calibration filters for Equalizer APO (generated - do not edit).".into(),
-        "# Included by config.txt between the input Copy and the output Copy.".into(),
-    ];
-    if !note.is_empty() {
-        lines.push(format!(
-            "# {}",
-            note.chars().filter(char::is_ascii).collect::<String>()
-        ));
-    }
-    if !plan.pre_ops.is_empty() {
-        lines.extend([
-            String::new(),
-            "# Common input high-pass (before MIMO copies)".into(),
-        ]);
-        for role in &plan.inputs {
-            let channel = input_channel(role);
-            lines.push(format!("Channel: {channel}"));
-            lines.extend(eqapo_ops(&plan.pre_ops, &channel, firs));
-        }
-    }
-    if !plan.mimo.is_empty() {
-        lines.extend([
-            String::new(),
-            "# Raw input copies for MIMO support".into(),
-            format!(
-                "Copy: {}",
-                plan.mimo
-                    .iter()
-                    .enumerate()
-                    .map(|(index, path)| format!(
-                        "{}={}",
-                        path_channel(index),
-                        virtual_channel("main", &path.input)
-                    ))
-                    .collect::<Vec<_>>()
-                    .join(" ")
-            ),
-        ]);
-    }
-    lines.extend([String::new(), "# 1) input correction (PEQ -> FIR)".into()]);
-    for (role, ops) in &plan.input_ops {
-        let channel = virtual_channel("main", role);
-        let body = eqapo_ops(ops, &channel, firs);
-        if !body.is_empty() {
-            lines.push(format!("Channel: {channel}"));
-            lines.extend(body);
-        }
-    }
+struct SendGroup<'a> {
+    ops: &'a [Op],
+    signature: Vec<String>,
+    members: Vec<&'a str>,
+    membership: Vec<usize>,
+}
 
+struct BassGroup {
+    sources: Vec<String>,
+    signature: Vec<String>,
+    channel: String,
+}
+
+struct ApoSupportGroup {
+    support: String,
+    common: Vec<Op>,
+    signature: Vec<String>,
+    members: Vec<usize>,
+}
+
+fn send_groups<'a>(
+    plan: &'a FilterPlan,
+    firs: &[(String, String)],
+    lines: &mut Vec<String>,
+) -> Result<Vec<SendGroup<'a>>, FiltersError> {
     // Compare rendered coefficients, so merging cannot change the writer's
     // existing Fc/Q rounding. Membership also guards hand-constructed plans
     // in which different sub outputs use different subsets of the inputs.
-    struct SendGroup<'a> {
-        ops: &'a [Op],
-        signature: Vec<String>,
-        members: Vec<&'a str>,
-        membership: Vec<usize>,
-    }
     let mut sends: Vec<SendGroup<'_>> = Vec::new();
     for (role, ops) in &plan.send_ops {
-        let signature = eqapo_ops(ops, "VX", firs);
+        let signature = eqapo_ops(ops, "VX", firs)?;
         let membership = plan
             .subs
             .iter()
@@ -509,8 +480,303 @@ pub fn eqapo_filters(plan: &FilterPlan, firs: &[(String, String)], note: &str) -
                 .join("+")
         ));
         lines.push(format!("Channel: {channel}"));
-        lines.extend(eqapo_ops(group.ops, &channel, firs));
+        lines.extend(eqapo_ops(group.ops, &channel, firs)?);
     }
+    Ok(sends)
+}
+
+fn bass_buses(
+    plan: &FilterPlan,
+    firs: &[(String, String)],
+    sends: &[SendGroup<'_>],
+    fixed: &[Vec<Op>],
+    lines: &mut Vec<String>,
+) -> Result<(), FiltersError> {
+    let mut buses: Vec<BassGroup> = Vec::new();
+    for (sub_index, (role, feed)) in plan.subs.iter().enumerate() {
+        let prefix = feed
+            .ops
+            .iter()
+            .take_while(|op| matches!(op, Op::Peq { fixed: false, .. }))
+            .count();
+        let signature = eqapo_ops(&feed.ops[..prefix], "VBASS", firs)?;
+        let mut sources = Vec::new();
+        for (index, group) in sends.iter().enumerate() {
+            for _ in 0..group.membership[sub_index] {
+                sources.push(format!("VX{}", index + 1));
+            }
+        }
+        sources.extend(
+            feed.sources
+                .iter()
+                .filter(|source| source.as_str() == "LFE")
+                .map(|_| "VLFE".to_owned()),
+        );
+        let bus_index = if let Some(index) = buses
+            .iter()
+            .position(|bus| bus.sources == sources && bus.signature == signature)
+        {
+            index
+        } else {
+            let channel = format!("VBASS{}", buses.len() + 1);
+            lines.extend([
+                String::new(),
+                format!(
+                    "Copy: {channel}={}",
+                    if sources.is_empty() {
+                        "0.0".to_owned()
+                    } else {
+                        sources.join("+")
+                    }
+                ),
+                format!("Channel: {channel}"),
+            ]);
+            lines.extend(eqapo_ops(&feed.ops[..prefix], &channel, firs)?);
+            buses.push(BassGroup {
+                sources,
+                signature,
+                channel,
+            });
+            buses.len() - 1
+        };
+        let channel = virtual_channel("sub", role);
+        let factor = f64::from(feed.polarity) * 10_f64.powf(feed.gain_db / 20.0);
+        // Keep the old six-place linear gain exactly, moving its application
+        // after the common bass sum and PEQ.
+        lines.extend([
+            format!(
+                "Copy: {channel}={}*{}",
+                format_fixed(factor, 6, false),
+                buses[bus_index].channel
+            ),
+            format!("Channel: {channel}"),
+        ]);
+        let ops = feed.ops[prefix..]
+            .iter()
+            .filter(|op| fixed[sub_index].is_empty() || !op.is_fixed())
+            .cloned()
+            .collect::<Vec<_>>();
+        lines.extend(eqapo_ops(&ops, &channel, firs)?);
+    }
+
+    Ok(())
+}
+
+fn share_delay(
+    plan: &FilterPlan,
+    members: &[usize],
+    firs: &[(String, String)],
+) -> Result<(bool, Vec<Op>), FiltersError> {
+    let delays = |index: usize| {
+        plan.mimo[index]
+            .ops
+            .iter()
+            .filter(|op| matches!(op, Op::Delay { fixed: false, .. }))
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+    let common_delays = delays(members[0]);
+    let delay_key = eqapo_ops(&common_delays, "VG", firs)?;
+    for &index in members {
+        if eqapo_ops(&delays(index), "VG", firs)? != delay_key {
+            return Ok((false, common_delays));
+        }
+    }
+    Ok((true, common_delays))
+}
+
+fn move_fixed(
+    plan: &FilterPlan,
+    path: &MimoFeed,
+    main_fixed: &[(&str, Vec<Op>)],
+    fixed: &[Vec<Op>],
+) -> bool {
+    main_fixed
+        .iter()
+        .find(|(role, _)| *role == path.support)
+        .is_some_and(|(_, ops)| !ops.is_empty())
+        || plan
+            .subs
+            .iter()
+            .position(|(role, _)| *role == path.support)
+            .is_some_and(|sub_index| !fixed[sub_index].is_empty())
+}
+
+fn support_groups_apo(
+    plan: &FilterPlan,
+    firs: &[(String, String)],
+    main_fixed: &[(&str, Vec<Op>)],
+    fixed: &[Vec<Op>],
+    lines: &mut Vec<String>,
+) -> Result<(), FiltersError> {
+    // The export graph's support groups key on output, family and exact low
+    // edge. This writer renders the shared HP (and an IIR path's Fsiso LP) at
+    // two decimals and shares one VG channel among the paths of one support
+    // whose rendered filters coincide, which only joins graph groups. Its
+    // entry points take a FilterPlan, which may be built by hand, so it
+    // buckets the plan's MIMO feeds by that rendered text itself; for a plan
+    // from `ExportGraph::build` the buckets are the graph's groups joined by
+    // rendered text.
+    let mut groups: Vec<ApoSupportGroup> = Vec::new();
+    for (index, path) in plan.mimo.iter().enumerate() {
+        let common = path
+            .ops
+            .iter()
+            .filter(|op| {
+                matches!(
+                    op,
+                    Op::Hp { fixed: false, .. } | Op::Lp { fixed: false, .. }
+                )
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        let signature = eqapo_ops(&common, "VG", firs)?;
+        if let Some(group) = groups
+            .iter_mut()
+            .find(|group| group.support == path.support && group.signature == signature)
+        {
+            group.members.push(index);
+        } else {
+            groups.push(ApoSupportGroup {
+                support: path.support.clone(),
+                common,
+                signature,
+                members: vec![index],
+            });
+        }
+    }
+    for (group_index, group) in groups.iter().enumerate() {
+        let (share_delay, common_delays) = share_delay(plan, &group.members, firs)?;
+        for &index in &group.members {
+            let path = &plan.mimo[index];
+            let channel = path_channel(index);
+            let move_fixed = move_fixed(plan, path, main_fixed, fixed);
+            let private = path
+                .ops
+                .iter()
+                .filter(|op| {
+                    !(matches!(
+                        op,
+                        Op::Hp { fixed: false, .. } | Op::Lp { fixed: false, .. }
+                    ) || (share_delay && matches!(op, Op::Delay { fixed: false, .. }))
+                        || (move_fixed && op.is_fixed()))
+                })
+                .collect::<Vec<_>>();
+            lines.extend([
+                String::new(),
+                format!("# support {} -> {}", path.input, path.support),
+                format!("Channel: {channel}"),
+            ]);
+            lines.extend(eqapo_ops(private, &channel, firs)?);
+        }
+        let channel = format!("VG{}", group_index + 1);
+        lines.extend([
+            format!(
+                "Copy: {channel}={}",
+                group
+                    .members
+                    .iter()
+                    .map(|&index| path_channel(index))
+                    .collect::<Vec<_>>()
+                    .join("+")
+            ),
+            format!("Channel: {channel}"),
+        ]);
+        if share_delay {
+            lines.extend(eqapo_ops(&common_delays, &channel, firs)?);
+        }
+        lines.extend(eqapo_ops(&group.common, &channel, firs)?);
+    }
+    // Fold support sums into the ordinary output channels before applying the
+    // speaker's fixed chain. config.txt then routes one channel per output.
+    for role in &plan.outputs {
+        let sub_index = plan.subs.iter().position(|(name, _)| name == role);
+        let channel = virtual_channel(if sub_index.is_some() { "sub" } else { "main" }, role);
+        let additions = groups
+            .iter()
+            .enumerate()
+            .filter(|(_, group)| group.support == *role)
+            .map(|(index, _)| format!("VG{}", index + 1))
+            .collect::<Vec<_>>();
+        if !additions.is_empty() {
+            lines.push(format!("Copy: {channel}={channel}+{}", additions.join("+")));
+        }
+        let output_fixed = if let Some(index) = sub_index.filter(|&index| !fixed[index].is_empty())
+        {
+            Some(fixed[index].as_slice())
+        } else {
+            main_fixed
+                .iter()
+                .find(|(name, _)| *name == role)
+                .map(|(_, ops)| ops.as_slice())
+                .filter(|ops| !ops.is_empty())
+        };
+        if let Some(ops) = output_fixed {
+            lines.push(format!("Channel: {channel}"));
+            lines.extend(eqapo_ops(ops, &channel, firs)?);
+        }
+    }
+    Ok(())
+}
+
+/// Build the ASCII Equalizer APO filter body.
+pub fn eqapo_filters(
+    plan: &FilterPlan,
+    firs: &[(String, String)],
+    note: &str,
+) -> Result<String, FiltersError> {
+    plan.check_structure()?;
+    let mut lines = vec![
+        "# SECS 2 calibration filters for Equalizer APO (generated - do not edit).".into(),
+        "# Included by config.txt between the input Copy and the output Copy.".into(),
+    ];
+    if !note.is_empty() {
+        lines.push(format!(
+            "# {}",
+            note.chars().filter(char::is_ascii).collect::<String>()
+        ));
+    }
+    if !plan.pre_ops.is_empty() {
+        lines.extend([
+            String::new(),
+            "# Common input high-pass (before MIMO copies)".into(),
+        ]);
+        for role in &plan.inputs {
+            let channel = input_channel(role);
+            lines.push(format!("Channel: {channel}"));
+            lines.extend(eqapo_ops(&plan.pre_ops, &channel, firs)?);
+        }
+    }
+    if !plan.mimo.is_empty() {
+        lines.extend([
+            String::new(),
+            "# Raw input copies for MIMO support".into(),
+            format!(
+                "Copy: {}",
+                plan.mimo
+                    .iter()
+                    .enumerate()
+                    .map(|(index, path)| format!(
+                        "{}={}",
+                        path_channel(index),
+                        virtual_channel("main", &path.input)
+                    ))
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            ),
+        ]);
+    }
+    lines.extend([String::new(), "# 1) input correction (PEQ -> FIR)".into()]);
+    for (role, ops) in &plan.input_ops {
+        let channel = virtual_channel("main", role);
+        let body = eqapo_ops(ops, &channel, firs)?;
+        if !body.is_empty() {
+            lines.push(format!("Channel: {channel}"));
+            lines.extend(body);
+        }
+    }
+
+    let sends = send_groups(plan, firs, &mut lines)?;
     let main_fixed = plan
         .main_ops
         .iter()
@@ -527,7 +793,7 @@ pub fn eqapo_filters(plan: &FilterPlan, firs: &[(String, String)], note: &str) -
     lines.extend([String::new(), "# 3) main output paths".into()]);
     for (role, ops) in &plan.main_ops {
         let channel = virtual_channel("main", role);
-        let body = eqapo_ops(ops.iter().filter(|op| !op.is_fixed()), &channel, firs);
+        let body = eqapo_ops(ops.iter().filter(|op| !op.is_fixed()), &channel, firs)?;
         if !body.is_empty() {
             lines.push(format!("Channel: {channel}"));
             lines.extend(body);
@@ -539,7 +805,7 @@ pub fn eqapo_filters(plan: &FilterPlan, firs: &[(String, String)], note: &str) -
             "# 4) LFE input".into(),
             "Channel: VLFE".into(),
         ]);
-        lines.extend(eqapo_ops(&plan.lfe_ops, "VLFE", firs));
+        lines.extend(eqapo_ops(&plan.lfe_ops, "VLFE", firs)?);
     }
 
     // Fixed sub filters can move past the final sum only if every contributing
@@ -572,217 +838,11 @@ pub fn eqapo_filters(plan: &FilterPlan, firs: &[(String, String)], note: &str) -
             }
         })
         .collect();
-    struct BassGroup {
-        sources: Vec<String>,
-        signature: Vec<String>,
-        channel: String,
-    }
-    let mut buses: Vec<BassGroup> = Vec::new();
-    for (sub_index, (role, feed)) in plan.subs.iter().enumerate() {
-        let prefix = feed
-            .ops
-            .iter()
-            .take_while(|op| matches!(op, Op::Peq { fixed: false, .. }))
-            .count();
-        let signature = eqapo_ops(&feed.ops[..prefix], "VBASS", firs);
-        let mut sources = Vec::new();
-        for (index, group) in sends.iter().enumerate() {
-            for _ in 0..group.membership[sub_index] {
-                sources.push(format!("VX{}", index + 1));
-            }
-        }
-        sources.extend(
-            feed.sources
-                .iter()
-                .filter(|source| source.as_str() == "LFE")
-                .map(|_| "VLFE".to_owned()),
-        );
-        let bus_index = if let Some(index) = buses
-            .iter()
-            .position(|bus| bus.sources == sources && bus.signature == signature)
-        {
-            index
-        } else {
-            let channel = format!("VBASS{}", buses.len() + 1);
-            lines.extend([
-                String::new(),
-                format!(
-                    "Copy: {channel}={}",
-                    if sources.is_empty() {
-                        "0.0".to_owned()
-                    } else {
-                        sources.join("+")
-                    }
-                ),
-                format!("Channel: {channel}"),
-            ]);
-            lines.extend(eqapo_ops(&feed.ops[..prefix], &channel, firs));
-            buses.push(BassGroup {
-                sources,
-                signature,
-                channel,
-            });
-            buses.len() - 1
-        };
-        let channel = virtual_channel("sub", role);
-        let factor = f64::from(feed.polarity) * 10_f64.powf(feed.gain_db / 20.0);
-        // Keep the old six-place linear gain exactly, moving its application
-        // after the common bass sum and PEQ.
-        lines.extend([
-            format!(
-                "Copy: {channel}={}*{}",
-                format_fixed(factor, 6, false),
-                buses[bus_index].channel
-            ),
-            format!("Channel: {channel}"),
-        ]);
-        let ops = feed.ops[prefix..]
-            .iter()
-            .filter(|op| fixed[sub_index].is_empty() || !op.is_fixed())
-            .cloned()
-            .collect::<Vec<_>>();
-        lines.extend(eqapo_ops(&ops, &channel, firs));
-    }
+    bass_buses(plan, firs, &sends, &fixed, &mut lines)?;
 
-    // The export graph's support groups key on output, family and exact low
-    // edge. This writer renders the shared HP (and an IIR path's Fsiso LP) at
-    // two decimals and shares one VG channel among the paths of one support
-    // whose rendered filters coincide, which only joins graph groups. Its
-    // entry points take a FilterPlan, which may be built by hand, so it
-    // buckets the plan's MIMO feeds by that rendered text itself; for a plan
-    // from `ExportGraph::build` the buckets are the graph's groups joined by
-    // rendered text.
-    struct SupportGroup {
-        support: String,
-        common: Vec<Op>,
-        signature: Vec<String>,
-        members: Vec<usize>,
-    }
-    let mut groups: Vec<SupportGroup> = Vec::new();
-    for (index, path) in plan.mimo.iter().enumerate() {
-        let common = path
-            .ops
-            .iter()
-            .filter(|op| {
-                matches!(
-                    op,
-                    Op::Hp { fixed: false, .. } | Op::Lp { fixed: false, .. }
-                )
-            })
-            .cloned()
-            .collect::<Vec<_>>();
-        let signature = eqapo_ops(&common, "VG", firs);
-        if let Some(group) = groups
-            .iter_mut()
-            .find(|group| group.support == path.support && group.signature == signature)
-        {
-            group.members.push(index);
-        } else {
-            groups.push(SupportGroup {
-                support: path.support.clone(),
-                common,
-                signature,
-                members: vec![index],
-            });
-        }
-    }
-    for (group_index, group) in groups.iter().enumerate() {
-        // Equalizer APO receives millisecond delays rounded to three places.
-        // Share an identical rendered delay without assuming the host's
-        // ms-to-sample tie rule or rounding two split pieces independently.
-        let delays = |index: usize| {
-            plan.mimo[index]
-                .ops
-                .iter()
-                .filter(|op| matches!(op, Op::Delay { fixed: false, .. }))
-                .cloned()
-                .collect::<Vec<_>>()
-        };
-        let common_delays = delays(group.members[0]);
-        let delay_key = eqapo_ops(&common_delays, "VG", firs);
-        let share_delay = group
-            .members
-            .iter()
-            .all(|&index| eqapo_ops(&delays(index), "VG", firs) == delay_key);
-        for &index in &group.members {
-            let path = &plan.mimo[index];
-            let channel = path_channel(index);
-            let move_fixed = main_fixed
-                .iter()
-                .find(|(role, _)| *role == path.support)
-                .is_some_and(|(_, ops)| !ops.is_empty())
-                || plan
-                    .subs
-                    .iter()
-                    .position(|(role, _)| *role == path.support)
-                    .is_some_and(|sub_index| !fixed[sub_index].is_empty());
-            let private = path
-                .ops
-                .iter()
-                .filter(|op| {
-                    !(matches!(
-                        op,
-                        Op::Hp { fixed: false, .. } | Op::Lp { fixed: false, .. }
-                    ) || (share_delay && matches!(op, Op::Delay { fixed: false, .. }))
-                        || (move_fixed && op.is_fixed()))
-                })
-                .collect::<Vec<_>>();
-            lines.extend([
-                String::new(),
-                format!("# support {} -> {}", path.input, path.support),
-                format!("Channel: {channel}"),
-            ]);
-            lines.extend(eqapo_ops(private, &channel, firs));
-        }
-        let channel = format!("VG{}", group_index + 1);
-        lines.extend([
-            format!(
-                "Copy: {channel}={}",
-                group
-                    .members
-                    .iter()
-                    .map(|&index| path_channel(index))
-                    .collect::<Vec<_>>()
-                    .join("+")
-            ),
-            format!("Channel: {channel}"),
-        ]);
-        if share_delay {
-            lines.extend(eqapo_ops(&common_delays, &channel, firs));
-        }
-        lines.extend(eqapo_ops(&group.common, &channel, firs));
-    }
-    // Fold support sums into the ordinary output channels before applying the
-    // speaker's fixed chain. config.txt then routes one channel per output.
-    for role in &plan.outputs {
-        let sub_index = plan.subs.iter().position(|(name, _)| name == role);
-        let channel = virtual_channel(if sub_index.is_some() { "sub" } else { "main" }, role);
-        let additions = groups
-            .iter()
-            .enumerate()
-            .filter(|(_, group)| group.support == *role)
-            .map(|(index, _)| format!("VG{}", index + 1))
-            .collect::<Vec<_>>();
-        if !additions.is_empty() {
-            lines.push(format!("Copy: {channel}={channel}+{}", additions.join("+")));
-        }
-        let output_fixed = if let Some(index) = sub_index.filter(|&index| !fixed[index].is_empty())
-        {
-            Some(fixed[index].as_slice())
-        } else {
-            main_fixed
-                .iter()
-                .find(|(name, _)| *name == role)
-                .map(|(_, ops)| ops.as_slice())
-                .filter(|ops| !ops.is_empty())
-        };
-        if let Some(ops) = output_fixed {
-            lines.push(format!("Channel: {channel}"));
-            lines.extend(eqapo_ops(ops, &channel, firs));
-        }
-    }
+    support_groups_apo(plan, firs, &main_fixed, &fixed, &mut lines)?;
     lines.extend([String::new(), "Channel: all".into()]);
-    lines.join("\n") + "\n"
+    Ok(lines.join("\n") + "\n")
 }
 
 fn guarded(var: &str, count: &str, line: String) -> [String; 3] {
@@ -801,7 +861,7 @@ pub fn eqapo_config(
     in_num: &[(String, usize)],
     out_num: &[(String, usize)],
     latency_ms: Option<f64>,
-) -> String {
+) -> Result<String, FiltersError> {
     eqapo_config_at(
         plan,
         include,
@@ -821,32 +881,34 @@ fn eqapo_config_at(
     out_num: &[(String, usize)],
     latency_ms: Option<f64>,
     output_rate: u32,
-) -> String {
+) -> Result<String, FiltersError> {
+    plan.check_structure()?;
     let mut rows = plan
         .inputs
         .iter()
         .map(|role| {
-            format!(
+            Ok(format!(
                 "#   {role:<6} input {:>2}{}",
-                map_number(in_num, role),
+                map_number(in_num, role)?,
                 if plan.outputs.iter().any(|item| item == role) {
-                    format!("   output {:>2}", map_number(out_num, role))
+                    format!("   output {:>2}", map_number(out_num, role)?)
                 } else {
                     String::new()
                 }
-            )
+            ))
         })
-        .collect::<Vec<_>>();
+        .collect::<Result<Vec<_>, FiltersError>>()?;
     rows.extend(
         plan.outputs
             .iter()
             .filter(|role| !plan.inputs.iter().any(|item| item == *role))
             .map(|role| {
-                format!(
+                Ok(format!(
                     "#   {role:<6}            output {:>2}",
-                    map_number(out_num, role)
-                )
-            }),
+                    map_number(out_num, role)?
+                ))
+            })
+            .collect::<Result<Vec<_>, FiltersError>>()?,
     );
     let mut lines = vec!["# SECS 2 calibration - Equalizer APO config (generated)".into(),
         "# Copy everything in this folder into the Equalizer APO config folder".into(),
@@ -861,10 +923,10 @@ fn eqapo_config_at(
     // F11: Equalizer APO's expression parser accepts one assignment per Eval.
     // A semicolon-separated list fails before the routing variables are set.
     for role in &plan.inputs {
-        lines.push(format!("Eval: in{role} = {}", map_number(in_num, role)));
+        lines.push(format!("Eval: in{role} = {}", map_number(in_num, role)?));
     }
     for role in &plan.outputs {
-        lines.push(format!("Eval: out{role} = {}", map_number(out_num, role)));
+        lines.push(format!("Eval: out{role} = {}", map_number(out_num, role)?));
     }
     lines.extend(["# ==== do not edit below ====".into(), String::new(), "# Headroom for the largest boost of the correction (avoids clipping).".into(), "Channel: all".into(),
         if preamp_db > 0.0 { format!("Preamp: -{} dB", format_fixed(preamp_db, 1, false)) } else { "Preamp: 0.0 dB".into() }, String::new(),
@@ -899,7 +961,7 @@ fn eqapo_config_at(
         ));
     }
     lines.push("Channel: all".into());
-    lines.join("\n") + "\n"
+    Ok(lines.join("\n") + "\n")
 }
 
 /// Build the Korean Equalizer APO application guide.
@@ -991,17 +1053,6 @@ fn db(value: f64) -> String {
     let rounded = round_ndigits(value, 2) + 0.0;
     format_fixed(rounded, 2, true)
 }
-fn comma(value: usize) -> String {
-    let text = value.to_string();
-    let mut out = String::new();
-    for (index, ch) in text.chars().enumerate() {
-        if index > 0 && (text.len() - index).is_multiple_of(3) {
-            out.push(',');
-        }
-        out.push(ch);
-    }
-    out
-}
 fn format_rate_khz(rate: u32) -> String {
     if rate.is_multiple_of(1000) {
         (rate / 1000).to_string()
@@ -1009,7 +1060,11 @@ fn format_rate_khz(rate: u32) -> String {
         format!("{:.1}", f64::from(rate) / 1000.0)
     }
 }
-fn text_ops(ops: &[Op], firs: &[(String, String)], output_rate: u32) -> Vec<String> {
+fn text_ops(
+    ops: &[Op],
+    firs: &[(String, String)],
+    output_rate: u32,
+) -> Result<Vec<String>, FiltersError> {
     let mut lines = Vec::new();
     let mut peq = 0;
     for op in ops {
@@ -1033,9 +1088,9 @@ fn text_ops(ops: &[Op], firs: &[(String, String)], output_rate: u32) -> Vec<Stri
                 "  FIR      {} ({} 탭, {} kHz)",
                 firs.iter()
                     .find(|(key, _)| key == name)
-                    .expect("FIR name")
+                    .ok_or_else(|| FiltersError::Invalid(format!("missing FIR {name}")))?
                     .1,
-                comma(secs_dsp::rate::taps_at(taps.len(), output_rate)),
+                grouped(secs_dsp::rate::taps_at(taps.len(), output_rate)),
                 format_rate_khz(output_rate)
             )),
             Op::FirLowRate {
@@ -1047,9 +1102,11 @@ fn text_ops(ops: &[Op], firs: &[(String, String)], output_rate: u32) -> Vec<Stri
                 "  FIR      {} ({} 탭, {} kHz)",
                 firs.iter()
                     .find(|(key, _)| key == name)
-                    .expect("FIR name")
+                    .ok_or_else(|| FiltersError::Invalid(format!("missing FIR {name}")))?
                     .1,
-                comma((taps_low.len() as f64 * (f64::from(output_rate) / fs_low)).ceil() as usize),
+                grouped(
+                    (taps_low.len() as f64 * (f64::from(output_rate) / fs_low)).ceil() as usize
+                ),
                 format_rate_khz(output_rate)
             )),
             Op::Gain { db: value, .. } => lines.push(format!("  게인     {} dB", db(*value))),
@@ -1083,11 +1140,11 @@ fn text_ops(ops: &[Op], firs: &[(String, String)], output_rate: u32) -> Vec<Stri
             )),
         }
     }
-    if lines.is_empty() {
+    Ok(if lines.is_empty() {
         vec!["  (없음)".into()]
     } else {
         lines
-    }
+    })
 }
 
 /// Build the human-readable Korean filter-value text.
@@ -1096,7 +1153,7 @@ pub fn filter_text(
     firs: &[(String, String)],
     title: &str,
     info: &[String],
-) -> String {
+) -> Result<String, FiltersError> {
     filter_text_at(plan, firs, title, info, SAMPLE_RATE)
 }
 
@@ -1106,7 +1163,8 @@ fn filter_text_at(
     title: &str,
     info: &[String],
     output_rate: u32,
-) -> String {
+) -> Result<String, FiltersError> {
+    plan.check_structure()?;
     let mut lines = vec![title.into()];
     lines.extend_from_slice(info);
     lines.extend([
@@ -1160,26 +1218,30 @@ fn filter_text_at(
         if rc_only {
             lines.push(format!("== {role} =="));
             let mut ops = input.clone();
-            ops.extend_from_slice(find_ops(&plan.main_ops, role).expect("main ops"));
-            lines.extend(text_ops(&ops, firs, output_rate));
+            ops.extend_from_slice(find_ops(&plan.main_ops, role).ok_or_else(|| {
+                FiltersError::Invalid(format!("missing main operations for input {role}"))
+            })?);
+            lines.extend(text_ops(&ops, firs, output_rate)?);
         } else {
             lines.extend([format!("== 메인 {role} =="), "입력 보정".into()]);
-            lines.extend(text_ops(input, firs, output_rate));
+            lines.extend(text_ops(input, firs, output_rate)?);
             lines.push("메인 경로".into());
             lines.extend(text_ops(
-                find_ops(&plan.main_ops, role).expect("main ops"),
+                find_ops(&plan.main_ops, role).ok_or_else(|| {
+                    FiltersError::Invalid(format!("missing main operations for input {role}"))
+                })?,
                 firs,
                 output_rate,
-            ));
+            )?);
             if let Some(send) = find_ops(&plan.send_ops, role) {
                 lines.push("서브 센드".into());
-                lines.extend(text_ops(send, firs, output_rate));
+                lines.extend(text_ops(send, firs, output_rate)?);
             }
         }
     }
     if !plan.lfe_ops.is_empty() {
         lines.extend([String::new(), "== LFE 입력 ==".into()]);
-        lines.extend(text_ops(&plan.lfe_ops, firs, output_rate));
+        lines.extend(text_ops(&plan.lfe_ops, firs, output_rate)?);
     }
     for (role, feed) in &plan.subs {
         let source = if feed.sources.is_empty() {
@@ -1211,7 +1273,7 @@ fn filter_text_at(
                 }
             ),
         ]);
-        lines.extend(text_ops(&feed.ops, firs, output_rate));
+        lines.extend(text_ops(&feed.ops, firs, output_rate)?);
     }
     for (index, path) in plan.mimo.iter().enumerate() {
         lines.extend([
@@ -1223,9 +1285,9 @@ fn filter_text_at(
                 path.support
             ),
         ]);
-        lines.extend(text_ops(&path.ops, firs, output_rate));
+        lines.extend(text_ops(&path.ops, firs, output_rate)?);
     }
-    lines.join("\n") + "\n"
+    Ok(lines.join("\n") + "\n")
 }
 
 type FirNames = Vec<(String, String)>;
@@ -1236,42 +1298,29 @@ fn fir_files(
     prefix: &str,
     output_rate: u32,
 ) -> Result<(FirNames, ExportFiles), FiltersError> {
-    let mut names = Vec::new();
-    let mut files = Vec::new();
-    for (stem, taps) in plan.firs() {
-        taps.validate()?;
-        let filename = format!("{prefix}{stem}.wav");
-        let materialized = match taps {
-            FirView::Full(taps) => secs_dsp::rate::fir_to_rate(taps, output_rate),
-            FirView::LowRate(taps, fs_low) => {
-                secs_dsp::rate::lowrate_to_rate(taps, fs_low, output_rate)
-            }
-        }
-        .map_err(|error| FiltersError::Invalid(format!("{stem}: {error}")))?;
-        let bytes = wav_bytes(&materialized, output_rate)
-            .map_err(|error| FiltersError::Invalid(format!("{stem}: {error}")))?;
-        files.push((filename.clone(), bytes));
-        names.push((stem.to_owned(), filename));
-    }
+    let files = secs_graph::emit::fir_files(plan, prefix, output_rate)
+        .map_err(|error| FiltersError::Invalid(error.to_string()))?;
+    let names = plan
+        .firs()
+        .into_iter()
+        .zip(&files)
+        .map(|((stem, _), (filename, _))| (stem.to_owned(), filename.clone()))
+        .collect();
     Ok((names, files))
 }
+
 fn utf8_bom(text: &str) -> Vec<u8> {
     let mut bytes = vec![0xef, 0xbb, 0xbf];
     bytes.extend_from_slice(text.as_bytes());
     bytes
 }
 fn ensure_safe_component(name: &str) -> Result<String, FiltersError> {
-    let safe = safe_name(name);
-    if safe == "." || safe == ".." {
-        Err(FiltersError::Invalid(format!(
-            "unsafe output name {name:?}"
-        )))
-    } else {
-        Ok(safe)
-    }
+    guard::safe_component(name).map_err(|error| FiltersError::Invalid(error.to_string()))
 }
 
 /// Write a filter-value text file and its FIR WAV files.
+///
+/// This plain variant returns the files and discards a leftover-backup warning.
 pub fn write_text(
     plan: &FilterPlan,
     out: &Path,
@@ -1280,7 +1329,7 @@ pub fn write_text(
     title: &str,
     info: &[String],
 ) -> Result<Vec<PathBuf>, FiltersError> {
-    write_text_observed_at(
+    Ok(write_text_observed_at(
         plan,
         out,
         file_name,
@@ -1289,7 +1338,8 @@ pub fn write_text(
         info,
         SAMPLE_RATE,
         &|_, _| Ok(()),
-    )
+    )?
+    .files)
 }
 
 /// Audit-only staging seam invoked after each complete staged file.
@@ -1302,7 +1352,7 @@ pub fn write_text_observed(
     title: &str,
     info: &[String],
     after_stage_write: &dyn Fn(usize, &Path) -> std::io::Result<()>,
-) -> Result<Vec<PathBuf>, FiltersError> {
+) -> Result<Installed, FiltersError> {
     write_text_observed_at(
         plan,
         out,
@@ -1325,7 +1375,7 @@ fn write_text_observed_at(
     info: &[String],
     output_rate: u32,
     after_stage_write: &dyn Fn(usize, &Path) -> std::io::Result<()>,
-) -> Result<Vec<PathBuf>, FiltersError> {
+) -> Result<Installed, FiltersError> {
     if file_name.contains(['/', '\\', '\0']) || matches!(file_name, "." | "..") {
         return Err(FiltersError::Invalid(format!(
             "unsafe text filename {file_name:?}"
@@ -1334,21 +1384,26 @@ fn write_text_observed_at(
     let prefix = format!("{}_", ensure_safe_component(wav_prefix)?);
     validate_plan_delays(plan)?;
     let (firs, wavs) = fir_files(plan, &prefix, output_rate)?;
-    let text = utf8_bom(&filter_text_at(plan, &firs, title, info, output_rate));
+    let text = utf8_bom(&filter_text_at(plan, &firs, title, info, output_rate)?);
     let entry = PathBuf::from(file_name);
     let mut bundle = wavs
         .iter()
         .map(|(name, bytes)| (PathBuf::from(name), bytes.clone()))
         .collect::<Vec<_>>();
     bundle.push((entry.clone(), text));
-    write_bundle_observed(out, &bundle, &entry, after_stage_write, &|_, _| Ok(()))?;
+    let installed = write_bundle_observed(out, &bundle, &entry, after_stage_write, &|_, _| Ok(()))?;
     let path = out.join(file_name);
     let mut written = vec![path];
     written.extend(wavs.into_iter().map(|(name, _)| out.join(name)));
-    Ok(written)
+    Ok(Installed {
+        files: written,
+        leftover_backup: installed.leftover_backup,
+    })
 }
 
 /// Write a complete Equalizer APO folder.
+///
+/// This plain variant returns the files and discards a leftover-backup warning.
 pub fn write_eqapo(
     plan: &FilterPlan,
     out: &Path,
@@ -1357,7 +1412,7 @@ pub fn write_eqapo(
     note: &str,
     latency_ms: Option<f64>,
 ) -> Result<Vec<PathBuf>, FiltersError> {
-    write_eqapo_observed_at(
+    Ok(write_eqapo_observed_at(
         plan,
         out,
         name,
@@ -1366,7 +1421,8 @@ pub fn write_eqapo(
         latency_ms,
         SAMPLE_RATE,
         &|_, _| Ok(()),
-    )
+    )?
+    .files)
 }
 
 /// Audit-only staging seam invoked after each complete staged file.
@@ -1379,7 +1435,7 @@ pub fn write_eqapo_observed(
     note: &str,
     latency_ms: Option<f64>,
     after_stage_write: &dyn Fn(usize, &Path) -> std::io::Result<()>,
-) -> Result<Vec<PathBuf>, FiltersError> {
+) -> Result<Installed, FiltersError> {
     write_eqapo_observed_at(
         plan,
         out,
@@ -1402,14 +1458,14 @@ fn write_eqapo_observed_at(
     latency_ms: Option<f64>,
     output_rate: u32,
     after_stage_write: &dyn Fn(usize, &Path) -> std::io::Result<()>,
-) -> Result<Vec<PathBuf>, FiltersError> {
+) -> Result<Installed, FiltersError> {
     let safe = ensure_safe_component(name)?;
     validate_plan_delays(plan)?;
     let sub = out.join(&safe);
     let (firs, wavs) = fir_files(plan, &format!("{safe}_"), output_rate)?;
-    let body = eqapo_filters(plan, &firs, note).into_bytes();
-    let (inputs, outputs) = windows_channels(plan);
-    let preamp = (headroom_db(plan)? * 2.0).ceil() / 2.0;
+    let body = eqapo_filters(plan, &firs, note)?.into_bytes();
+    let (inputs, outputs) = windows_channels(plan)?;
+    let preamp = secs_graph::headroom_db_half_db(plan)?;
     let config = eqapo_config_at(
         plan,
         &format!("{safe}\\{safe}.txt"),
@@ -1418,7 +1474,7 @@ fn write_eqapo_observed_at(
         &outputs,
         latency_ms,
         output_rate,
-    )
+    )?
     .into_bytes();
     let guide = utf8_bom(&eqapo_guide_at(
         plan,
@@ -1442,7 +1498,7 @@ fn write_eqapo_observed_at(
         (guide_relative.clone(), guide),
         (config_relative.clone(), config),
     ]);
-    write_bundle_observed(
+    let installed = write_bundle_observed(
         out,
         &bundle,
         &config_relative,
@@ -1454,7 +1510,10 @@ fn write_eqapo_observed_at(
     let guide_path = out.join(&guide_relative);
     let mut written = vec![config_path, body_path, guide_path];
     written.extend(wavs.into_iter().map(|(name, _)| sub.join(name)));
-    Ok(written)
+    Ok(Installed {
+        files: written,
+        leftover_backup: installed.leftover_backup,
+    })
 }
 
 /// Calibration-level filter-value export wrapper.
@@ -1466,11 +1525,22 @@ pub fn export_filter_text(
 }
 
 /// Export filter values at an explicit output rate.
+///
+/// This plain variant returns the files and discards a leftover-backup warning.
 pub fn export_filter_text_with_options(
     run: &FilterRun<'_>,
     folder: &Path,
     options: &Options,
 ) -> Result<Vec<PathBuf>, FiltersError> {
+    Ok(export_filter_text_observed_with_options(run, folder, options)?.files)
+}
+
+/// Export filter values and report an undeletable backup.
+pub fn export_filter_text_observed_with_options(
+    run: &FilterRun<'_>,
+    folder: &Path,
+    options: &Options,
+) -> Result<Installed, FiltersError> {
     validate_options(options, false)?;
     if let Some(block) = filter_export_block(
         ExportKind::FilterText,
@@ -1512,11 +1582,22 @@ pub fn export_eqapo(run: &FilterRun<'_>, folder: &Path) -> Result<Vec<PathBuf>, 
 }
 
 /// Export Equalizer APO files at an explicit output rate.
+///
+/// This plain variant returns the files and discards a leftover-backup warning.
 pub fn export_eqapo_with_options(
     run: &FilterRun<'_>,
     folder: &Path,
     options: &Options,
 ) -> Result<Vec<PathBuf>, FiltersError> {
+    Ok(export_eqapo_observed_with_options(run, folder, options)?.files)
+}
+
+/// Export Equalizer APO files and report an undeletable backup.
+pub fn export_eqapo_observed_with_options(
+    run: &FilterRun<'_>,
+    folder: &Path,
+    options: &Options,
+) -> Result<Installed, FiltersError> {
     validate_options(options, false)?;
     if let Some(block) = filter_export_block(
         ExportKind::EqualizerApo,
@@ -1582,7 +1663,7 @@ fn exact_dtft_cancellable(
     samples: &[f64],
     frequency: f64,
     rate: u32,
-    cancelled: &dyn Fn() -> bool,
+    ctx: &secs_compute::Context,
 ) -> Result<Complex64, FiltersError> {
     let step = Complex64::from_polar(
         1.0,
@@ -1591,8 +1672,8 @@ fn exact_dtft_cancellable(
     let mut phase = Complex64::new(1.0, 0.0);
     let mut response = Complex64::new(0.0, 0.0);
     for (index, &sample) in samples.iter().enumerate() {
-        if index.is_multiple_of(4096) && cancelled() {
-            return Err(FiltersError::Cancelled);
+        if index.is_multiple_of(4096) {
+            ctx.cancel().check()?;
         }
         response += phase * sample;
         phase *= step;
@@ -1604,12 +1685,16 @@ fn convolution_csv(
     samples: &[f64],
     frequencies: &[f64],
     rate: u32,
-    cancelled: &dyn Fn() -> bool,
-) -> Result<String, FiltersError> {
+    ctx: &secs_compute::Context,
+) -> Result<(String, f64), FiltersError> {
     let mut text = String::from("frequency_hz,magnitude_db,phase_deg\n");
+    let mut peak = 0.0_f64;
     for &frequency in frequencies {
-        let response = exact_dtft_cancellable(samples, frequency, rate, cancelled)?;
+        let response = exact_dtft_cancellable(samples, frequency, rate, ctx)?;
         let magnitude = response.norm();
+        if (20.0..=20_000.0).contains(&frequency) {
+            peak = peak.max(magnitude);
+        }
         let magnitude_db = if magnitude == 0.0 {
             -200.0
         } else {
@@ -1628,7 +1713,7 @@ fn convolution_csv(
             phase + 0.0
         ));
     }
-    Ok(text)
+    Ok((text, peak))
 }
 
 fn convolution_guide(
@@ -1638,12 +1723,13 @@ fn convolution_guide(
     paths: &[ConvolutionRoute],
     extra_rates: &[u32],
 ) -> String {
+    let headroom = format_fixed(headroom_db, 1, false);
     let mut lines = vec![
         "SECS 2R 컨볼루션 IR".to_owned(),
         String::new(),
         "이 폴더의 WAV는 보정 필터 전체(FIR, PEQ, 크로스오버, 올패스, 게인, 극성, 딜레이)를 입력과 출력 쌍마다 하나로 합친 임펄스 응답입니다.".to_owned(),
         format!("형식: {rate} Hz, 32비트 float, 모노. 모든 파일의 길이는 {length} 샘플로 같습니다."),
-        format!("헤드룸: 클리핑을 막으려고 모든 파일에 {headroom_db:.1} dB 감쇠를 넣었습니다. 컨볼버에서 따로 줄이지 않아도 됩니다."),
+        format!("헤드룸: 클리핑을 막으려고 모든 파일에 {headroom} dB 감쇠를 넣었습니다. 컨볼버에서 따로 줄이지 않아도 됩니다."),
         String::new(),
         "거는 법".to_owned(),
         "- 아래 표의 한 줄은 입력 채널 하나를 그 WAV로 컨볼루션해 출력 채널 하나로 보내는 연결입니다.".to_owned(),
@@ -1668,8 +1754,12 @@ fn convolution_guide(
     }
     lines.extend(paths.iter().map(|path| {
         format!(
-            "{} → {} | {} | {:+.1} dB | {:.2} ms",
-            path.input, path.output, path.wav, path.peak_gain_db, path.delay_ms
+            "{} → {} | {} | {} dB | {} ms",
+            path.input,
+            path.output,
+            path.wav,
+            format_fixed(path.peak_gain_db, 1, true),
+            format_fixed(path.delay_ms, 3, false)
         )
     }));
     lines.extend([
@@ -1773,27 +1863,34 @@ pub struct PreparedConvolution {
 
 impl PreparedConvolution {
     /// Install every prepared file, switching `routing.json` last.
+    ///
+    /// This plain variant returns the files and discards a leftover-backup warning.
     pub fn install(self, folder: &Path) -> Result<Vec<PathBuf>, FiltersError> {
+        Ok(self.install_observed(folder)?.files)
+    }
+
+    /// Install every prepared file and report an undeletable backup.
+    pub fn install_observed(self, folder: &Path) -> Result<Installed, FiltersError> {
         let entry = PathBuf::from("routing.json");
-        write_bundle_observed(folder, &self.files, &entry, &|_, _| Ok(()), &|_, _| Ok(()))?;
-        Ok(self
-            .files
-            .into_iter()
-            .map(|(relative, _)| folder.join(relative))
-            .collect())
+        let installed =
+            write_bundle_observed(folder, &self.files, &entry, &|_, _| Ok(()), &|_, _| Ok(()))?;
+        Ok(Installed {
+            files: self
+                .files
+                .into_iter()
+                .map(|(relative, _)| folder.join(relative))
+                .collect(),
+            leftover_backup: installed.leftover_backup,
+        })
     }
 }
 
 /// Compute convolution bundles without changing the filesystem.
-///
-/// `cancelled` is checked inside rendering and DTFT loops. `progress` reports
-/// completed sample-rate bundles out of the main rate plus all extra rates.
 pub fn prepare_convolution_named_with_options(
     run: &FilterRun<'_>,
     options: &Options,
     design_name: Option<&str>,
-    cancelled: &dyn Fn() -> bool,
-    progress: &dyn Fn(u64, u64),
+    ctx: &secs_compute::Context,
 ) -> Result<PreparedConvolution, FiltersError> {
     validate_options(options, true)?;
     if let Some(block) = filter_export_block(
@@ -1806,13 +1903,11 @@ pub fn prepare_convolution_named_with_options(
     validate_run(run)?;
     let graph = ExportGraph::build(run.chain, run.mimo, LfeChoice::DOLBY)?;
     let plan = graph.plan();
-    let headroom_db = (headroom_db(plan)? * 2.0).ceil() / 2.0;
+    let headroom_db = secs_graph::headroom_db_half_db(plan)?;
     let attenuation = 10_f64.powf(-headroom_db / 20.0);
     let total = 1 + options.extra_rates.len() as u64;
-    progress(0, total);
-    if cancelled() {
-        return Err(FiltersError::Cancelled);
-    }
+    let progress = ctx.stage("filters.convolution", total);
+    ctx.cancel().check()?;
     let mut files = Vec::new();
     for (rate_index, (rate, prefix)) in std::iter::once((options.output_rate, PathBuf::new()))
         .chain(
@@ -1823,13 +1918,11 @@ pub fn prepare_convolution_named_with_options(
         )
         .enumerate()
     {
-        let rendered = render_paths_at_cancellable(plan, CONVOLUTION_MAX_LEN, rate, cancelled)?;
+        let rendered = render_paths_at_cancellable(plan, CONVOLUTION_MAX_LEN, rate, ctx)?;
         let frequencies = convolution_grid(rate);
         let mut routes = Vec::with_capacity(rendered.paths.len());
         for path in &rendered.paths {
-            if cancelled() {
-                return Err(FiltersError::Cancelled);
-            }
+            ctx.cancel().check()?;
             let stem = format!("{}_to_{}", path.input, path.output);
             let wav = format!("{stem}.wav");
             let csv = format!("{stem}.csv");
@@ -1838,15 +1931,8 @@ pub fn prepare_convolution_named_with_options(
                 .iter()
                 .map(|sample| f64::from((*sample * attenuation) as f32))
                 .collect::<Vec<_>>();
-            let mut peak = 0.0_f64;
-            for &frequency in frequencies
-                .iter()
-                .filter(|&&frequency| (20.0..=20_000.0).contains(&frequency))
-            {
-                peak = peak.max(
-                    exact_dtft_cancellable(&path.response, frequency, rate, cancelled)?.norm(),
-                );
-            }
+            let (csv_text, written_peak) = convolution_csv(&written, &frequencies, rate, ctx)?;
+            let peak = written_peak / attenuation;
             let peak_gain_db = if peak == 0.0 {
                 -200.0
             } else {
@@ -1857,10 +1943,7 @@ pub fn prepare_convolution_named_with_options(
                 wav_bytes(&written, rate)
                     .map_err(|error| FiltersError::Invalid(format!("{stem}: {error}")))?,
             ));
-            files.push((
-                prefix.join(&csv),
-                convolution_csv(&written, &frequencies, rate, cancelled)?.into_bytes(),
-            ));
+            files.push((prefix.join(&csv), csv_text.into_bytes()));
             routes.push(ConvolutionRoute {
                 input: path.input.clone(),
                 output: path.output.clone(),
@@ -1899,7 +1982,7 @@ pub fn prepare_convolution_named_with_options(
             .map_err(|error| FiltersError::Invalid(format!("routing.json: {error}")))?;
         routing_bytes.push(b'\n');
         files.push((entry, routing_bytes));
-        progress(rate_index as u64 + 1, total);
+        progress.set(rate_index as u64 + 1);
     }
     Ok(PreparedConvolution { files })
 }
@@ -1912,17 +1995,19 @@ pub fn export_convolution_named_with_options(
     options: &Options,
     design_name: Option<&str>,
 ) -> Result<Vec<PathBuf>, FiltersError> {
-    prepare_convolution_named_with_options(run, options, design_name, &|| false, &|_, _| {})?
-        .install(folder)
+    prepare_convolution_named_with_options(
+        run,
+        options,
+        design_name,
+        &secs_compute::Context::serial(),
+    )?
+    .install(folder)
 }
 
 fn finite(name: &str, value: f64) -> Result<(), FiltersError> {
-    if value.is_finite() {
-        Ok(())
-    } else {
-        Err(FiltersError::Invalid(format!("non-finite {name}")))
-    }
+    guard::finite(name, value).map_err(|_| FiltersError::Invalid(format!("non-finite {name}")))
 }
+
 /// A delay the writers emit: finite and not negative, by the export graph's
 /// rule ([`is_negative_delay`], #92 TD-94).
 fn emitted_delay(name: &str, channel: &str, ms: f64) -> Result<(), FiltersError> {
@@ -1938,6 +2023,7 @@ fn emitted_delay(name: &str, channel: &str, ms: f64) -> Result<(), FiltersError>
 /// every delay again before their first file. A plan from
 /// [`ExportGraph::build`] always passes.
 fn validate_plan_delays(plan: &FilterPlan) -> Result<(), FiltersError> {
+    plan.check_structure()?;
     let channels = plan
         .input_ops
         .iter()
@@ -1970,12 +2056,10 @@ fn validate_plan_delays(plan: &FilterPlan) -> Result<(), FiltersError> {
 }
 /// A run's mode names the export files.
 fn identifier(name: &str, value: &str) -> Result<(), FiltersError> {
-    if value.is_empty() || !value.chars().all(|ch| ch.is_ascii_alphanumeric()) {
-        Err(FiltersError::Invalid(format!("unsafe {name} {value:?}")))
-    } else {
-        Ok(())
-    }
+    guard::identifier(name, value, b"")
+        .map_err(|_| FiltersError::Invalid(format!("unsafe {name} {value:?}")))
 }
+
 /// The text and Equalizer APO formats take roles as plain names: letters and
 /// digits only, stricter than the export graph's rule (`_` and `-`), which
 /// the CamillaDSP writer shares.
@@ -1996,6 +2080,8 @@ fn validate_run(run: &FilterRun<'_>) -> Result<(), FiltersError> {
     identifier("mode", run.mode)?;
     plain_roles(run.chain, run.mimo)?;
     finite("latency_ms", run.latency_ms)?;
+    guard::no_line_breaks("note", run.note)
+        .map_err(|_| FiltersError::Invalid(format!("unsafe note {:?}", run.note)))?;
     if run.label.contains(['\0', '/', '\\']) {
         return Err(FiltersError::Invalid(format!(
             "unsafe label {:?}",
@@ -2019,6 +2105,38 @@ mod generation_entry_tests {
             super::generation_entry("design-2"),
             "Include: design-2\\config.txt\r\n"
         );
+    }
+
+    #[test]
+    fn graph_errors_keep_their_variants_td225() {
+        let error = super::FiltersError::from(secs_graph::GraphError::NonFinite("x".into()));
+        assert!(matches!(
+            error,
+            super::FiltersError::Graph(secs_graph::GraphError::NonFinite(ref field)) if field == "x"
+        ));
+        for error in [
+            secs_graph::GraphError::NonAscii("name".into()),
+            secs_graph::GraphError::NonFinite("value".into()),
+            secs_graph::GraphError::Invalid("structure".into()),
+        ] {
+            let expected = error.to_string();
+            assert_eq!(super::FiltersError::from(error).to_string(), expected);
+        }
+    }
+
+    #[test]
+    fn convolution_guide_formats_exact_ties_like_python_td226() {
+        let route = super::ConvolutionRoute {
+            input: "L".into(),
+            output: "L".into(),
+            wav: "L_to_L.wav".into(),
+            csv: "L_to_L.csv".into(),
+            peak_gain_db: 2.25,
+            delay_ms: 1.2345,
+        };
+        let guide = super::convolution_guide(48_000, 4096, 2.25, &[route], &[]);
+        assert!(guide.contains("모든 파일에 2.2 dB 감쇠"));
+        assert!(guide.contains("L → L | L_to_L.wav | +2.2 dB | 1.234 ms"));
     }
 }
 

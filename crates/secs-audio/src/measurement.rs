@@ -238,38 +238,40 @@ pub fn measure_position(
             detail: "capture contained non-finite samples".into(),
         });
     }
-    let channel = |c: u16| -> Vec<f64> {
-        recording
-            .interleaved
-            .chunks_exact(usize::from(input_channels))
-            .map(|f| f64::from(f[usize::from(c - 1)]))
+    let channels = usize::from(input_channels);
+    let channel_range = |channel: u16, start: usize, end: usize| -> Vec<f64> {
+        recording.interleaved[start * channels..end * channels]
+            .chunks_exact(channels)
+            .map(|frame| f64::from(frame[usize::from(channel - 1)]))
             .collect()
     };
-    let mic = channel(plan.input_channel);
     let rate = f64::from(plan.sample_rate);
     let pre = (plan.window.pre_roll_seconds * rate).round() as usize;
     let post = (plan.window.post_onset_seconds * rate).ceil() as usize;
     let max_latency = (plan.window.max_latency_seconds * rate).ceil() as usize;
-    let baseline = &mic[..sequence.baseline_frames.saturating_sub(pre)];
-    let noise_power = power(baseline);
-    let loopback = plan.loopback_input_channel.map(channel);
+    let baseline_end = sequence.baseline_frames.saturating_sub(pre);
+    let baseline = channel_range(plan.input_channel, 0, baseline_end);
+    let noise_power = power(&baseline);
     let mut latency_samples = None;
     let mut roles = Vec::new();
     for (index, role) in plan.roles.iter().enumerate() {
         check_cancel(cancel)?;
         let start = sequence.sweep_starts[index] - pre;
         let end = start + sequence.stride;
-        if let Some(loopback) = &loopback
+        if let Some(loopback_channel) = plan.loopback_input_channel
             && index == 0
         {
-            let ir = estimator.estimate(&loopback[start..end])?;
+            let loopback = channel_range(loopback_channel, start, end);
+            let ir = estimator.estimate(&loopback)?;
             let peak = peak_index(&ir[..(pre + max_latency).min(ir.len())]);
             if ir[peak].abs() < 1e-8 || peak < pre {
                 return Err(invalid("missing loopback reference"));
             }
             latency_samples = Some(peak - pre);
         }
-        let ir = estimator.estimate_with_noise(&mic[start..end], noise_power)?;
+        let mic = channel_range(plan.input_channel, start, end);
+        let (ir, raw) = estimator.estimate_with_noise_and_raw(&mic, noise_power, true)?;
+        let raw = raw.expect("raw estimate was requested");
         check_cancel(cancel)?;
         let search = &ir[..(pre + max_latency).min(ir.len())];
         let peak = peak_index(search);
@@ -293,7 +295,6 @@ pub fn measure_position(
         // SNR is measured on the Farina IR before colour flattening: stationary
         // white baseline noise has variance sigma² * sum(inverse²). This avoids
         // spuriously treating the inverse's processing gain as microphone gain.
-        let raw = estimator.estimate_raw(&mic[start..end]);
         let noise_ir_power =
             noise_power * estimator.inverse_filter.iter().map(|x| x * x).sum::<f64>();
         let raw_origin = estimator.test_signal.len() - 1;

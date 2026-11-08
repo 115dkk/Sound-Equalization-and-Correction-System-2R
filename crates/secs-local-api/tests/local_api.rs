@@ -496,3 +496,299 @@ fn ui_only_error_has_the_public_code() {
         "ui_only"
     );
 }
+
+#[test]
+fn slow_reader_receives_lagged_before_the_1013_close_td161() {
+    use secs_service::EventSink;
+    use secs_types::ipc::JobId;
+    use tokio_tungstenite::tungstenite::Message;
+
+    tokio::runtime::Runtime::new().unwrap().block_on(async {
+        let (service, hub) = service_with(Arc::new(secs_service::NullHost));
+        let server = running(service, hub.clone());
+        let mut request = format!("ws://127.0.0.1:{}/v1/events", server.port())
+            .into_client_request()
+            .unwrap();
+        request
+            .headers_mut()
+            .insert(AUTHORIZATION, format!("Bearer {TOKEN}").parse().unwrap());
+        let (mut socket, _) = tokio_tungstenite::connect_async(request).await.unwrap();
+        // Large frames exhaust the socket buffer while the client does not read.
+        // Use several ring capacities because the server can drain some concurrently.
+        for _ in 0..1024 {
+            hub.send(JobEvent::Progress {
+                job: JobId(1),
+                stage: "x".repeat(128 * 1024),
+                done: 0,
+                total: 1,
+            });
+        }
+        let mut saw_lagged = false;
+        loop {
+            let frame = tokio::time::timeout(Duration::from_secs(10), socket.next())
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap();
+            match frame {
+                Message::Text(text) => {
+                    assert!(!saw_lagged, "lagged must be the final text frame");
+                    let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+                    if value["kind"] == "lagged" {
+                        assert!(value["missed"].as_u64().unwrap() >= 5);
+                        saw_lagged = true;
+                    }
+                }
+                Message::Close(frame) => {
+                    assert!(saw_lagged, "missing lagged text before the close frame");
+                    assert_eq!(u16::from(frame.unwrap().code), 1013);
+                    break;
+                }
+                _ => {}
+            }
+        }
+        server.stop();
+    });
+}
+
+#[test]
+fn stop_returns_within_the_shutdown_bound_while_a_request_runs_td214() {
+    let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+    let (finished_tx, finished_rx) = std::sync::mpsc::channel();
+    let service = Arc::new(Service::new(Deps {
+        eqapo_install: Arc::new(move || {
+            entered_tx.send(()).unwrap();
+            std::thread::sleep(Duration::from_secs(10));
+            let _ = finished_tx.send(());
+            None
+        }),
+        ..Deps::default()
+    }));
+    let server = running(service, EventHub::default());
+    let port = server.port();
+    let caller = std::thread::spawn(move || {
+        let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(20)))
+            .unwrap();
+        stream
+            .write_all(&request(
+                port,
+                "POST",
+                "/v1/call",
+                &format!("127.0.0.1:{port}"),
+                Some(TOKEN),
+                None,
+                br#"{"method":"apply_status"}"#,
+            ))
+            .unwrap();
+        let _ = stream.read_to_end(&mut Vec::new());
+    });
+    entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    let started = Instant::now();
+    server.stop();
+    let elapsed = started.elapsed();
+    // Let the injected blocking operation finish before the test exits.
+    finished_rx.recv_timeout(Duration::from_secs(12)).unwrap();
+    caller.join().unwrap();
+    assert!(
+        elapsed < Duration::from_secs(3),
+        "stop waited {elapsed:?} for a blocking request"
+    );
+}
+
+fn managed_runtime(name: &str) -> (secs_local_api::Runtime, PathBuf) {
+    let root = root(name);
+    let (service, hub) = service_with(Arc::new(secs_service::NullHost));
+    let runtime = secs_local_api::Runtime::new(
+        root.clone(),
+        service,
+        hub,
+        Arc::new(|_| {}),
+        Arc::new(|_, _| {}),
+    );
+    (runtime, root)
+}
+
+fn local_settings(enabled: bool, port: u16) -> secs_types::ipc::LocalApiSettings {
+    secs_types::ipc::LocalApiSettings { enabled, port }
+}
+
+#[test]
+fn runtime_startup_enabled_serves_and_disabled_only_makes_a_token() {
+    let (enabled, enabled_root) = managed_runtime("runtime-enabled");
+    enabled.startup(local_settings(true, 0));
+    let status = enabled.status().unwrap();
+    assert!(status.running);
+    assert_ne!(status.port, 0);
+    assert_eq!(
+        exchange(
+            status.port,
+            request(
+                status.port,
+                "GET",
+                "/v1/status",
+                &format!("127.0.0.1:{}", status.port),
+                Some(&status.token),
+                None,
+                &[],
+            ),
+        )
+        .0,
+        200
+    );
+    enabled.stop();
+
+    let (disabled, disabled_root) = managed_runtime("runtime-disabled");
+    disabled.startup(local_settings(false, 0));
+    let status = disabled.status().unwrap();
+    assert!(!status.running);
+    assert_eq!(status.token.len(), 64);
+    assert!(std::path::Path::new(&status.token_path).is_file());
+    let _ = std::fs::remove_dir_all(enabled_root);
+    let _ = std::fs::remove_dir_all(disabled_root);
+}
+
+#[test]
+fn runtime_apply_settings_moves_port_stops_and_keeps_an_unchanged_server() {
+    let (runtime, root) = managed_runtime("runtime-apply");
+    runtime.startup(local_settings(true, 0));
+    let first = runtime.status().unwrap();
+    runtime.apply_settings(local_settings(true, 0), local_settings(true, 0));
+    let unchanged = runtime.status().unwrap();
+    assert_eq!(unchanged.port, first.port);
+    let probe = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let moved_port = probe.local_addr().unwrap().port();
+    drop(probe);
+    runtime.apply_settings(local_settings(true, 0), local_settings(true, moved_port));
+    let moved = runtime.status().unwrap();
+    assert!(moved.running);
+    assert_eq!(moved.port, moved_port);
+    assert!(TcpStream::connect(("127.0.0.1", first.port)).is_err());
+    runtime.apply_settings(
+        local_settings(true, moved_port),
+        local_settings(false, moved_port),
+    );
+    assert!(!runtime.status().unwrap().running);
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn runtime_regenerate_token_invalidates_the_old_token() {
+    let (runtime, root) = managed_runtime("runtime-token");
+    runtime.startup(local_settings(true, 0));
+    let old = runtime.status().unwrap();
+    let new = runtime.regenerate_token().unwrap();
+    assert_ne!(new.token, old.token);
+    assert_eq!(
+        exchange(
+            new.port,
+            request(
+                new.port,
+                "GET",
+                "/v1/status",
+                &format!("127.0.0.1:{}", new.port),
+                Some(&old.token),
+                None,
+                &[],
+            ),
+        )
+        .0,
+        401
+    );
+    assert_eq!(
+        exchange(
+            new.port,
+            request(
+                new.port,
+                "GET",
+                "/v1/status",
+                &format!("127.0.0.1:{}", new.port),
+                Some(&new.token),
+                None,
+                &[],
+            ),
+        )
+        .0,
+        200
+    );
+    runtime.stop();
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn runtime_stop_returns_within_three_seconds_while_a_request_runs() {
+    let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+    let service = Arc::new(Service::new(Deps {
+        eqapo_install: Arc::new(move || {
+            entered_tx.send(()).unwrap();
+            std::thread::sleep(Duration::from_secs(10));
+            None
+        }),
+        ..Deps::default()
+    }));
+    let root = root("runtime-stop");
+    let runtime = Arc::new(secs_local_api::Runtime::new(
+        root.clone(),
+        service,
+        EventHub::default(),
+        Arc::new(|_| {}),
+        Arc::new(|_, _| {}),
+    ));
+    runtime.startup(local_settings(true, 0));
+    let status = runtime.status().unwrap();
+    let caller = std::thread::spawn(move || {
+        let body = br#"{"method":"apply_status"}"#;
+        let mut stream = TcpStream::connect(("127.0.0.1", status.port)).unwrap();
+        stream
+            .write_all(&request(
+                status.port,
+                "POST",
+                "/v1/call",
+                &format!("127.0.0.1:{}", status.port),
+                Some(&status.token),
+                None,
+                body,
+            ))
+            .unwrap();
+        let _ = stream.read_to_end(&mut Vec::new());
+    });
+    entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    let started = Instant::now();
+    runtime.stop();
+    assert!(started.elapsed() < Duration::from_secs(3));
+    caller.join().unwrap();
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn read_only_token_folder_is_a_token_error() {
+    let root = root("runtime-token-error");
+    std::fs::write(&root, b"not a directory").unwrap();
+    let (service, hub) = service_with(Arc::new(secs_service::NullHost));
+    let runtime = secs_local_api::Runtime::new(
+        root.clone(),
+        service,
+        hub,
+        Arc::new(|_| {}),
+        Arc::new(|_, _| {}),
+    );
+    assert!(matches!(runtime.status(), Err(LocalApiError::Token { .. })));
+    let _ = std::fs::remove_file(root);
+}
+
+#[test]
+fn calibration_summary_notes_are_typed_on_the_wire() {
+    let note = secs_types::notes::Note::DipLimit {
+        role: "L".into(),
+        dips: vec![secs_types::notes::Dip {
+            hz: 80.0,
+            depth_db: 6.1,
+            fill_db: 3.0,
+        }],
+    };
+    let value = serde_json::to_value(note).unwrap();
+    assert_eq!(value["code"], "dip_limit");
+    assert_eq!(value["role"], "L");
+    assert_eq!(value["dips"][0]["hz"], 80.0);
+}

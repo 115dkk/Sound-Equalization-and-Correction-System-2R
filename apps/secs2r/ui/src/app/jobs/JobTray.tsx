@@ -5,6 +5,7 @@
 // results; errors carry the cause and the next step, the raw text behind 자세히.
 import { useId, useState } from "react";
 import { isActiveJob } from "../../state/jobRetention";
+import { internalError } from "../../ipc/client";
 import { formatDuration, useT } from "../../i18n/react";
 import { Button } from "../../ui/Button";
 import { Icon, Spinner } from "../../ui/Icon";
@@ -156,7 +157,7 @@ function HistoryItem({ entry }: { entry: HistoryEntry }) {
       </li>
     );
   }
-  const error = entry.error ?? { code: "internal" as const, params: {}, retryable: false, detail: "" };
+  const error = entry.error ?? internalError("");
   const text = errorText(t, error);
   return (
     <li className="job-entry job-entry--error">

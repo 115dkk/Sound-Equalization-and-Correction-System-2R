@@ -226,6 +226,10 @@ pub fn input_meter(
     }
 }
 
+#[deprecated(
+    since = "0.23.0",
+    note = "no caller; removed in the next minor (audit #186 TD-219)"
+)]
 pub fn level_check(
     backend: &dyn AudioBackend,
     output: &LevelOutput,

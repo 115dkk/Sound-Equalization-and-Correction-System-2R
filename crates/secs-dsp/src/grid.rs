@@ -13,6 +13,18 @@ pub fn freqs(n: usize, sr: f64) -> Result<Vec<f64>, DspError> {
     Ok((0..=n / 2).map(|k| k as f64 * step).collect())
 }
 
+/// Base-10 geometric spacing with exact caller-supplied endpoints.
+pub fn geomspace(lo: f64, hi: f64, n: usize) -> Vec<f64> {
+    let start = lo.log10();
+    let step = (hi.log10() - start) / (n - 1) as f64;
+    let mut values: Vec<_> = (0..n)
+        .map(|index| 10_f64.powf(index as f64 * step + start))
+        .collect();
+    values[0] = lo;
+    values[n - 1] = hi;
+    values
+}
+
 /// 1/24 below 200 Hz, log-interpolated to 1/6 above 2 kHz. NaNs propagate.
 pub fn frac_for(f: &[f64]) -> Vec<f64> {
     f.iter()

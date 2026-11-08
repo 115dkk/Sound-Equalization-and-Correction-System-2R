@@ -23,7 +23,7 @@ fn metrics_match_oracle() {
         } else {
             let name = i["case"].as_str().unwrap();
             let (prep, target) = cache.entry(name.to_owned()).or_insert_with(|| {
-                let case = cases::load(name);
+                let case = cases::load(&crate::tests::Oracle, name);
                 let setup = Setup::new(&case.config);
                 (
                     prepare(&case.measurements, &case.config, &setup).unwrap(),

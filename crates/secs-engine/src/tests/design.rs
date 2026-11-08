@@ -1,5 +1,12 @@
 use super::cases;
-pub(super) use crate::test_support::{replay, replay_with_context};
+use crate::notes::MimoOracleText;
+pub(super) fn replay(name: &str) -> crate::Design {
+    crate::testkit::replay(&crate::tests::Oracle, name)
+}
+
+fn replay_with_context(name: &str, context: &Context) -> crate::Design {
+    crate::testkit::replay_with_context(&crate::tests::Oracle, name, context)
+}
 use crate::{
     C,
     design::{self, DesignRequest},
@@ -47,9 +54,13 @@ fn note_value(note: &crate::notes::Note) -> Value {
         Note::PolaritySplit { groups, confidence } => {
             json!({"PolaritySplit": {"groups": groups, "confidence": confidence}})
         }
-        Note::PairPhase { a, b, bands } => {
-            json!({"PairPhase": {"a": a, "b": b, "bands": bands}})
-        }
+        Note::PairPhase { a, b, bands } => json!({"PairPhase": {
+            "a": a,
+            "b": b,
+            "bands": bands.iter().map(|band| (
+                band.lo_hz, band.hi_hz, band.phase_deg, band.loss_db
+            )).collect::<Vec<_>>()
+        }}),
         Note::LowProtect {
             role,
             rolloff_hz,
@@ -65,17 +76,24 @@ fn note_value(note: &crate::notes::Note) -> Value {
             taps,
             lift_ms,
         } => json!({"LiftCapped": {"from_ms": from_ms, "taps": taps, "lift_ms": lift_ms}}),
-        Note::SubFilters(filters) => json!({"SubFilters": filters.iter().map(|(r, f)| (r, json!({
-            "hp_hz": f.hp_hz, "hp_type": f.hp_type.name(), "lp_hz": f.lp_hz,
-            "lp_type": f.lp_type.name(), "peq": f.peq
-        }))).collect::<Vec<_>>()}),
+        Note::SubFilters { filters } => json!({"SubFilters": filters.iter().map(|entry| (
+            &entry.role,
+            json!({
+                "hp_hz": entry.value.hp_hz,
+                "hp_type": entry.value.hp_type.name(),
+                "lp_hz": entry.value.lp_hz,
+                "lp_type": entry.value.lp_type.name(),
+                "peq": entry.value.peq.iter().map(|peq| (peq.hz, peq.q, peq.gain_db)).collect::<Vec<_>>()
+            })
+        )).collect::<Vec<_>>()}),
         Note::RcLimit {
             hz,
             auto,
             schroeder_hz,
             ..
         } => json!({"RcLimit": {"hz": hz, "auto": auto, "schroeder_hz": schroeder_hz}}),
-        Note::RcBands { bands } => json!({"RcBands": {"bands": bands}}),
+        Note::RcBands { bands } => json!({"RcBands": {"bands": bands
+            .iter().map(|band| (band.lo_hz, band.hi_hz)).collect::<Vec<_>>()}}),
         Note::LfAlign {
             role,
             strength,
@@ -88,15 +106,20 @@ fn note_value(note: &crate::notes::Note) -> Value {
             role,
             target_t60_s,
             modes,
-        } => json!({"ModeDecay": {"role": role, "target_t60_s": target_t60_s, "modes": modes}}),
+        } => json!({"ModeDecay": {
+            "role": role,
+            "target_t60_s": target_t60_s,
+            "modes": modes.iter().map(|mode| (mode.hz, mode.t60_s, mode.cut_db)).collect::<Vec<_>>()
+        }}),
         Note::HfPhase {
             role,
             rotation_deg,
             limited,
         } => json!({"HfPhase": {"role": role, "rotation_deg": rotation_deg, "limited": limited}}),
-        Note::DipLimit { role, dips } => {
-            json!({"DipLimit": {"role": role, "dips": dips}})
-        }
+        Note::DipLimit { role, dips } => json!({"DipLimit": {
+            "role": role,
+            "dips": dips.iter().map(|dip| (dip.hz, dip.depth_db, dip.fill_db)).collect::<Vec<_>>()
+        }}),
         Note::InputHp { hz } => json!({"InputHp": {"hz": hz}}),
         Note::Latency {
             latency_ms,
@@ -105,28 +128,34 @@ fn note_value(note: &crate::notes::Note) -> Value {
         } => {
             json!({"Latency": {"latency_ms": latency_ms, "lift_ms": lift_ms, "main_extra_ms": main_extra_ms}})
         }
-        Note::PhaseStrength(v) => json!({"PhaseStrength": v}),
-        Note::PhaseBand(v) => json!({"PhaseBand": v}),
-        Note::LongModeBoost { cap_db, modes } => {
-            json!({"LongModeBoost": {"cap_db": cap_db, "modes": modes}})
-        }
-        Note::GdCuts { role, cuts } => json!({"GdCuts": {"role": role, "cuts": cuts}}),
-        Note::BaCost(v) => json!({"BaCost": v}),
+        Note::PhaseStrength { values } => json!({"PhaseStrength": values
+            .iter().map(|entry| (&entry.role, entry.value)).collect::<Vec<_>>() }),
+        Note::PhaseBand { values } => json!({"PhaseBand": values
+            .iter().map(|entry| (&entry.role, entry.hz)).collect::<Vec<_>>() }),
+        Note::LongModeBoost { cap_db, modes } => json!({"LongModeBoost": {
+            "cap_db": cap_db,
+            "modes": modes.iter().map(|mode| (mode.hz, mode.t60_s)).collect::<Vec<_>>()
+        }}),
+        Note::GdCuts { role, cuts } => json!({"GdCuts": {
+            "role": role,
+            "cuts": cuts.iter().map(|peq| (peq.hz, peq.q, peq.gain_db)).collect::<Vec<_>>()
+        }}),
+        Note::BaCost { value } => json!({"BaCost": value}),
         Note::BaBusPass {
             first,
             second,
             kept_first,
         } => json!({"BaBusPass": {"first": first, "second": second, "kept_first": kept_first}}),
         Note::BaManual => json!("BaManual"),
-        Note::LayoutFallback(v) => json!({"LayoutFallback": v}),
-        Note::Layout(v) => json!({"Layout": v}),
+        Note::LayoutFallback { value } => json!({"LayoutFallback": value}),
+        Note::Layout { value } => json!({"Layout": value}),
         Note::TwoWay {
             roles,
             gain_db,
             xo_hz,
         } => json!({"TwoWay": {"roles": roles, "gain_db": gain_db, "xo_hz": xo_hz}}),
-        Note::BusGainAnchored(v) => json!({"BusGainAnchored": v}),
-        Note::Mimo(v) => json!({"Mimo": v.oracle_text()}),
+        Note::BusGainAnchored { value } => json!({"BusGainAnchored": value}),
+        Note::Mimo { note } => json!({"Mimo": note.oracle_text()}),
     }
 }
 
@@ -181,8 +210,8 @@ fn complex(fx: &Fixture, name: &str, h: &[C], expected: &Value, gate: bool) {
 }
 #[test]
 fn replay_case_linear_matches_checked_engine_replay() {
-    let case = cases::load("dolby_linear");
-    let replay = crate::test_support::Replay::for_case("dolby_linear");
+    let case = cases::load(&crate::tests::Oracle, "dolby_linear");
+    let replay = crate::testkit::Replay::for_case(&crate::tests::Oracle, "dolby_linear");
     let expected = design::design(
         &DesignRequest {
             measurements: &case.measurements,
@@ -196,7 +225,7 @@ fn replay_case_linear_matches_checked_engine_replay() {
     )
     .unwrap();
     replay.finish();
-    let actual = crate::test_support::replay_case("dolby_linear").design;
+    let actual = crate::testkit::replay_case(&crate::tests::Oracle, "dolby_linear").design;
     assert_eq!(actual.chain, expected.chain);
     assert_eq!(actual.notes, expected.notes);
     assert_eq!(actual.adapter_notes, expected.adapter_notes);
@@ -237,7 +266,7 @@ fn replay_case_linear_matches_checked_engine_replay() {
 
 #[test]
 fn polarity_check_runs_once_on_the_final_pass() {
-    let mut case = cases::load("room");
+    let mut case = cases::load(&crate::tests::Oracle, "room");
     case.config.rc_range.1 = None;
     case.config.rc_hi_basis = secs_types::calibration::RcHiBasis::Agreement;
     for (_, roles) in &mut case.measurements.positions {
@@ -261,7 +290,7 @@ fn polarity_check_runs_once_on_the_final_pass() {
         }
     }
     let context = Context::serial();
-    let fitters = design::production_fitters(context.cancel());
+    let fitters = design::production_fitters(&context);
     let result = design::design(
         &DesignRequest {
             measurements: &case.measurements,
@@ -314,7 +343,7 @@ fn pair_phase_runs_once_on_the_final_pass_and_reports_dolby() {
             assert!(
                 bands
                     .iter()
-                    .all(|band| band.3 <= crate::pair_phase::LOSS_DB)
+                    .all(|band| band.loss_db <= crate::pair_phase::LOSS_DB)
             );
             eprintln!("PAIR_PHASE {label} {a}/{b} {bands:?}");
         }
@@ -355,7 +384,7 @@ fn pair_phase_runs_once_on_the_final_pass_and_reports_dolby() {
             assert!(
                 bands
                     .iter()
-                    .any(|band| band.0 >= 70.0 && band.1 <= 113.0 && band.3 <= -12.0),
+                    .any(|band| band.lo_hz >= 70.0 && band.hi_hz <= 113.0 && band.loss_db <= -12.0),
                 "{bands:?}"
             );
         } else {
@@ -371,11 +400,11 @@ fn pair_phase_runs_once_on_the_final_pass_and_reports_dolby() {
             runs.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         }
     };
-    let mut case = cases::load("room");
+    let mut case = cases::load(&crate::tests::Oracle, "room");
     case.config.rc_range.1 = None;
     case.config.rc_hi_basis = secs_types::calibration::RcHiBasis::Agreement;
     let context = Context::serial();
-    let fitters = design::production_fitters(context.cancel());
+    let fitters = design::production_fitters(&context);
     let result = design::design_observed(
         &DesignRequest {
             measurements: &case.measurements,
@@ -411,7 +440,7 @@ fn pair_phase_runs_once_on_the_final_pass_and_reports_dolby() {
 fn design_reserves_preparation_and_one_channel_before_allocating() {
     use secs_compute::{CancelToken, MemoryBudget, NoProgress};
     let name = "room_dba";
-    let case = cases::load(name);
+    let case = cases::load(&crate::tests::Oracle, name);
     let setup = crate::setup::Setup::new(&case.config);
     let bytes = design::DesignBytes::new(&case.measurements, &case.config, &setup, false);
     let needed = crate::measurement::preparation_bytes(&case.measurements, &setup)
@@ -453,7 +482,7 @@ fn design_reserves_preparation_and_one_channel_before_allocating() {
     // One byte less is refused before `measurement::prepare` allocates.
     let ctx = budget(needed - 1);
     let built = crate::measurement::SPECTRA_BUILT.with(std::cell::Cell::get);
-    let fitters = design::production_fitters(ctx.cancel());
+    let fitters = design::production_fitters(&ctx);
     let result = design::design(
         &DesignRequest {
             measurements: &case.measurements,
@@ -466,8 +495,8 @@ fn design_reserves_preparation_and_one_channel_before_allocating() {
         &*fitters,
     );
     assert!(
-        matches!(&result, Err(crate::EngineError::Input(message))
-            if message.contains("exceeds memory budget")),
+        matches!(&result, Err(crate::EngineError::Memory { requested, total })
+            if requested > total),
         "{:?}",
         result.err()
     );
@@ -536,7 +565,7 @@ fn design_parallel_progress_counts_completed_channels() {
 
 #[test]
 fn design_empty_subs_and_subs_only_keep_axes_and_shared_spectra() {
-    let mut c = cases::load("room_manual");
+    let mut c = cases::load(&crate::tests::Oracle, "room_manual");
     let notes = vec!["adapter note".to_owned()];
     c.config.subs.clear();
     c.config.sub_manual.clear();
@@ -551,7 +580,7 @@ fn design_empty_subs_and_subs_only_keep_axes_and_shared_spectra() {
             adapter_notes: &notes,
         },
         &context,
-        &*design::production_fitters(context.cancel()),
+        &*design::production_fitters(&context),
     )
     .unwrap();
     assert!(run.mains.is_empty() && run.chain.mains.is_empty() && run.scores.is_empty());
@@ -572,7 +601,7 @@ fn design_empty_subs_and_subs_only_keep_axes_and_shared_spectra() {
 fn design_rejects_taps_beyond_the_design_fft() {
     // TD-50: RC truncates the N_FFT-point FIR to `taps`; more taps than that
     // used to panic on a slice (2·N_FFT) or taper garbage (N_FFT + 1).
-    let mut c = cases::load("room");
+    let mut c = cases::load(&crate::tests::Oracle, "room");
     c.config.subs.clear();
     c.config.sub_manual.clear();
     c.config.bundle_layouts.clear();
@@ -589,7 +618,7 @@ fn design_rejects_taps_beyond_the_design_fft() {
                 adapter_notes: &[],
             },
             &context,
-            &*design::production_fitters(context.cancel()),
+            &*design::production_fitters(&context),
         );
         assert!(
             matches!(&result, Err(crate::EngineError::Input(message))
@@ -609,7 +638,7 @@ fn design_rejects_an_input_cut_outside_its_limits() {
     // ADR 0031: a config built without the settings edit (a calculation
     // override, the public engine) keeps the cut inside 10–50 Hz too; 0 Hz
     // used to make every export response non-finite.
-    let mut c = cases::load("room");
+    let mut c = cases::load(&crate::tests::Oracle, "room");
     for hz in [0.0, -25.0, 9.9, 50.1, f64::NAN, f64::INFINITY] {
         c.config.input_hp_hz = Some(hz);
         let context = Context::serial();
@@ -622,7 +651,7 @@ fn design_rejects_an_input_cut_outside_its_limits() {
                 adapter_notes: &[],
             },
             &context,
-            &*design::production_fitters(context.cancel()),
+            &*design::production_fitters(&context),
         );
         assert!(
             matches!(&result, Err(crate::EngineError::Input(message))
@@ -648,7 +677,7 @@ fn design_cancellation_returns_within_one_second() {
         thread,
         time::{Duration, Instant},
     };
-    let case = cases::load("dolby");
+    let case = cases::load(&crate::tests::Oracle, "dolby");
     let mut failures = Vec::new();
     let request = DesignRequest {
         measurements: &case.measurements,
@@ -666,11 +695,11 @@ fn design_cancellation_returns_within_one_second() {
     // finished before its last mark), and cancelling 20 ms into a fit
     // exercises the in-flight path.
     fn counting<'c>(
-        cancel: &'c CancelToken,
+        ctx: &'c Context,
         calls: &'c AtomicUsize,
         signal: Option<(usize, mpsc::Sender<()>)>,
     ) -> Box<design::FitterFactory<'c>> {
-        let production = design::production_fitters(cancel);
+        let production = design::production_fitters(ctx);
         let signal = Arc::new(std::sync::Mutex::new(signal));
         Box::new(move |stage| {
             let mut fitter = production(stage);
@@ -689,7 +718,7 @@ fn design_cancellation_returns_within_one_second() {
     let calls = AtomicUsize::new(0);
     let total = {
         let context = two(CancelToken::new());
-        let factory = counting(context.cancel(), &calls, None);
+        let factory = counting(&context, &calls, None);
         let start = Instant::now();
         design::design(&request, &context, &*factory).expect("uncancelled design");
         eprintln!("MEASURE design uncancelled={:?}", start.elapsed());
@@ -703,7 +732,7 @@ fn design_cancellation_returns_within_one_second() {
         let token = CancelToken::new();
         let context = two(token.clone());
         let (tx, rx) = mpsc::channel();
-        let factory = counting(context.cancel(), &calls, Some((target, tx)));
+        let factory = counting(&context, &calls, Some((target, tx)));
         thread::scope(|scope| {
             let canceller = scope.spawn(move || {
                 rx.recv_timeout(Duration::from_secs(600)).ok()?;
@@ -732,7 +761,7 @@ fn design_cancellation_returns_within_one_second() {
 
 #[test]
 fn design_matches_recorded_stages() {
-    for name in cases::names() {
+    for name in cases::names(&crate::tests::Oracle) {
         let started = std::time::Instant::now();
         let result = replay(&name);
         let fx = Fixture::load("engine_design", &name);
@@ -811,7 +840,7 @@ fn design_matches_recorded_stages() {
             if matches!(
                 note,
                 crate::notes::Note::LiftCapped { .. }
-                    | crate::notes::Note::SubFilters(_)
+                    | crate::notes::Note::SubFilters { .. }
                     | crate::notes::Note::RcLimit { .. }
             ) {
                 compare_value(
@@ -839,7 +868,7 @@ fn design_matches_recorded_stages() {
                 crate::notes::Note::PairPhase { .. } => "PairPhase",
                 crate::notes::Note::LowProtect { .. } => "LowProtect",
                 crate::notes::Note::LiftCapped { .. } => "LiftCapped",
-                crate::notes::Note::SubFilters(_) => "SubFilters",
+                crate::notes::Note::SubFilters { .. } => "SubFilters",
                 crate::notes::Note::RcLimit { .. } => "RcLimit",
                 crate::notes::Note::RcBands { .. } => "RcBands",
                 crate::notes::Note::LfAlign { .. } => "LfAlign",
@@ -848,18 +877,18 @@ fn design_matches_recorded_stages() {
                 crate::notes::Note::DipLimit { .. } => "DipLimit",
                 crate::notes::Note::InputHp { .. } => "InputHp",
                 crate::notes::Note::Latency { .. } => "Latency",
-                crate::notes::Note::PhaseStrength(_) => "PhaseStrength",
-                crate::notes::Note::PhaseBand(_) => "PhaseBand",
+                crate::notes::Note::PhaseStrength { .. } => "PhaseStrength",
+                crate::notes::Note::PhaseBand { .. } => "PhaseBand",
                 crate::notes::Note::LongModeBoost { .. } => "LongModeBoost",
                 crate::notes::Note::GdCuts { .. } => "GdCuts",
-                crate::notes::Note::BaCost(_) => "BaCost",
+                crate::notes::Note::BaCost { .. } => "BaCost",
                 crate::notes::Note::BaBusPass { .. } => "BaBusPass",
                 crate::notes::Note::BaManual => "BaManual",
-                crate::notes::Note::LayoutFallback(_) => "LayoutFallback",
-                crate::notes::Note::Layout(_) => "Layout",
+                crate::notes::Note::LayoutFallback { .. } => "LayoutFallback",
+                crate::notes::Note::Layout { .. } => "Layout",
                 crate::notes::Note::TwoWay { .. } => "TwoWay",
-                crate::notes::Note::BusGainAnchored(_) => "BusGainAnchored",
-                crate::notes::Note::Mimo(_) => "Mimo",
+                crate::notes::Note::BusGainAnchored { .. } => "BusGainAnchored",
+                crate::notes::Note::Mimo { .. } => "Mimo",
             })
             .collect();
         if gate {
@@ -1109,7 +1138,7 @@ fn design_matches_recorded_stages() {
 fn simulator_matches_recorded_stages() {
     for name in ["dolby", "room_dba"] {
         let d = replay(name);
-        let case = cases::load(name);
+        let case = cases::load(&crate::tests::Oracle, name);
         let setup = crate::setup::Setup::new(&case.config);
         let prep = crate::measurement::prepare(&case.measurements, &case.config, &setup).unwrap();
         let filters = d
@@ -1160,4 +1189,160 @@ fn simulator_matches_recorded_stages() {
         }
         assert!(crate::chain::stage_responses(&d, "missing", &h, 1).is_none());
     }
+}
+
+#[test]
+fn design_memory_refusal_preserves_requested_and_total_bytes() {
+    use secs_compute::{CancelToken, MemoryBudget, NoProgress};
+    let case = cases::load(&crate::tests::Oracle, "room_dba");
+    let ctx = Context::new(
+        1,
+        MemoryBudget::new(1024),
+        Arc::new(NoProgress),
+        CancelToken::new(),
+    );
+    let error = crate::design(
+        &DesignRequest {
+            measurements: &case.measurements,
+            config: &case.config,
+            tuning: &case.tuning,
+            subs_only: false,
+            adapter_notes: &[],
+        },
+        &ctx,
+        &*design::production_fitters(&ctx),
+    )
+    .unwrap_err();
+    assert!(
+        matches!(error, crate::EngineError::Memory { requested, total: 1024 } if requested > 1024),
+        "a 1024-byte budget must return structured requested and total bytes: {error:?}"
+    );
+}
+
+#[test]
+fn design_missing_reference_sub_returns_structured_error() {
+    let mut case = cases::load(&crate::tests::Oracle, "room_manual");
+    let role = case.config.subs[0].clone();
+    let position = case.config.main_position;
+    case.measurements
+        .positions
+        .iter_mut()
+        .find(|(p, _)| *p == position)
+        .unwrap()
+        .1
+        .retain(|(r, _)| r != &role);
+    let ctx = Context::serial();
+    let error = crate::design(
+        &DesignRequest {
+            measurements: &case.measurements,
+            config: &case.config,
+            tuning: &case.tuning,
+            subs_only: false,
+            adapter_notes: &[],
+        },
+        &ctx,
+        &*design::production_fitters(&ctx),
+    )
+    .unwrap_err();
+    assert!(matches!(error, crate::EngineError::MissingSubMeasurement {
+        position: actual, role: missing,
+    } if actual == position && missing == role));
+}
+
+#[test]
+fn design_rejects_invalid_settings_before_allocation() {
+    use secs_compute::{CancelToken, MemoryBudget, NoProgress};
+    let case = cases::load(&crate::tests::Oracle, "room_manual");
+    let mut bad = Vec::new();
+    for volume in [-1.0, f64::NAN, f64::INFINITY] {
+        let mut config = case.config.clone();
+        config.room_volume_m3 = Some(volume);
+        bad.push(("room_volume_m3 ".to_owned(), config));
+    }
+    let mut config = case.config.clone();
+    config.max_boost_db = f64::NAN;
+    bad.push(("max_boost_db ".into(), config));
+    let mut config = case.config.clone();
+    config.lift_ms = 201.0;
+    bad.push(("lift_ms ".into(), config));
+    let mut config = case.config.clone();
+    config.rc_range = (500.0, Some(100.0));
+    bad.push(("rc_range ".into(), config));
+    let mut config = case.config.clone();
+    config.peq_bands = Some(usize::MAX);
+    bad.push(("peq_bands ".into(), config));
+    let mut config = case.config.clone();
+    let (role, sub) = config.sub_manual.first_mut().expect("manual sub fixture");
+    sub.hp_hz = 100.0;
+    sub.lp_hz = 50.0;
+    let field = format!("sub_manual.{role}.hp_hz ");
+    bad.push((field, config));
+    let mut config = case.config.clone();
+    config.rc_hi_transition = 3;
+    config.rc_range.1 = Some(300.0);
+    bad.push(("rc_hi_transition ".into(), config));
+    let mut failures = Vec::new();
+    for (prefix, config) in bad {
+        let context = Context::new(
+            1,
+            MemoryBudget::new(1024),
+            Arc::new(NoProgress),
+            CancelToken::new(),
+        );
+        let result = design::design(
+            &DesignRequest {
+                measurements: &case.measurements,
+                config: &config,
+                tuning: &case.tuning,
+                subs_only: false,
+                adapter_notes: &[],
+            },
+            &context,
+            &*design::production_fitters(&context),
+        );
+        if !matches!(&result, Err(crate::EngineError::Input(m)) if m.starts_with(&prefix)) {
+            failures.push(format!("{prefix}: {:?}", result.err()));
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "{}",
+        failures.join(
+            "
+"
+        )
+    );
+    for lift_ms in [0.0, 8.0, 28.0, 198.0] {
+        let mut config = case.config.clone();
+        config.lift_ms = lift_ms;
+        assert!(design::check_config(&config).is_ok(), "{lift_ms}");
+    }
+    let mut config = case.config.clone();
+    config.rc_range.0 = 10.0;
+    assert!(design::check_config(&config).is_ok());
+    for peq_bands in [None, Some(0), Some(16), Some(64)] {
+        config.peq_bands = peq_bands;
+        assert!(design::check_config(&config).is_ok(), "{peq_bands:?}");
+    }
+    for volume in [None, Some(0.0), Some(120.0)] {
+        config.room_volume_m3 = volume;
+        assert!(design::check_config(&config).is_ok(), "{volume:?}");
+    }
+}
+
+#[test]
+fn room_volume_predicate_ignores_zero_and_nonfinite() {
+    let mut config = cases::load(&crate::tests::Oracle, "room").config;
+    for volume in [
+        None,
+        Some(0.0),
+        Some(-1.0),
+        Some(f64::NAN),
+        Some(f64::INFINITY),
+    ] {
+        config.room_volume_m3 = volume;
+        assert_eq!(crate::levels::room_volume(&config), None, "{volume:?}");
+    }
+    config.room_volume_m3 = Some(120.0);
+    assert_eq!(crate::levels::room_volume(&config), Some(120.0));
 }

@@ -126,51 +126,107 @@ pub struct PipeClientIdentity {
     pub session_id: u32,
 }
 
+/// One managed-host pipe instance retained across accept polls.
+#[cfg(windows)]
+#[derive(Debug)]
+pub struct PipeServerSlot {
+    server: win_custody::PipeServer,
+}
+
+#[cfg(windows)]
+fn pipe_security_descriptor() -> Result<&'static win_custody::SecurityDescriptor, IpcError> {
+    static DESCRIPTOR: std::sync::OnceLock<Result<win_custody::SecurityDescriptor, String>> =
+        std::sync::OnceLock::new();
+    DESCRIPTOR
+        .get_or_init(|| {
+            win_custody::SecurityDescriptor::from_sddl(PIPE_SDDL).map_err(|error| error.to_string())
+        })
+        .as_ref()
+        .map_err(|error| ipc_error(format!("pipe security descriptor: {error}")))
+}
+
+#[cfg(windows)]
+impl PipeServerSlot {
+    pub fn create(pipe_name: &str) -> Result<Self, IpcError> {
+        let server = win_custody::PipeServer::create(
+            pipe_name,
+            win_custody::PipeDirection::Duplex,
+            pipe_security_descriptor()?,
+        )
+        .map_err(|error| ipc_error(format!("create managed-host pipe: {error}")))?;
+        Ok(Self { server })
+    }
+}
+
 /// Serves one pipe connection. `Ok(false)` means no client arrived before
 /// `accept_timeout`; callers use a short timeout to poll their stop signal.
-#[cfg(target_os = "windows")]
+#[cfg(windows)]
 pub fn pipe_server(
-    pipe_name: &str,
+    slot: &mut PipeServerSlot,
     accept_timeout: Duration,
     handler: impl FnOnce(PipeClientIdentity, HostRequest) -> HostResponse,
 ) -> Result<bool, IpcError> {
-    use win_custody::{PipeDirection, PipeError, PipeServer, PipeWait, SecurityDescriptor};
+    use win_custody::{PipeError, PipeWait};
 
-    let descriptor = SecurityDescriptor::from_sddl(PIPE_SDDL)
-        .map_err(|error| ipc_error(format!("pipe security descriptor: {error}")))?;
-    let server = PipeServer::create(pipe_name, PipeDirection::Duplex, &descriptor)
-        .map_err(|error| ipc_error(format!("create managed-host pipe: {error}")))?;
-    match server.connect(&PipeWait::within(accept_timeout)) {
+    match slot.server.connect(&PipeWait::within(accept_timeout)) {
         Ok(()) => {}
         Err(PipeError::TimedOut) => return Ok(false),
         Err(error) => return Err(ipc_error(format!("accept managed-host pipe: {error}"))),
     }
-    let process_id = server
-        .client_process_id()
-        .map_err(|error| ipc_error(format!("identify managed-host client: {error}")))?;
-    let session_id = win_custody::process_session_id(process_id)
-        .map_err(|error| ipc_error(format!("identify managed-host client session: {error}")))?;
-    let identity = PipeClientIdentity {
-        process_id,
-        session_id,
-    };
-    let wait = PipeWait::within(PIPE_TIMEOUT);
-    let request_bytes = read_frame(|buffer| {
-        server
-            .read(buffer, &wait)
-            .map_err(|error| ipc_error(format!("read managed-host request: {error}")))
-    })?;
-    let request = parse_frame::<HostRequest>(&request_bytes)?;
-    let response = frame(&handler(identity, request))?;
-    server
-        .write_all(&response, &wait)
-        .map_err(|error| ipc_error(format!("write managed-host response: {error}")))?;
+    let served: Result<(), IpcError> = (|| {
+        let process_id = slot
+            .server
+            .client_process_id()
+            .map_err(|error| ipc_error(format!("identify managed-host client: {error}")))?;
+        let session_id = win_custody::process_session_id(process_id)
+            .map_err(|error| ipc_error(format!("identify managed-host client session: {error}")))?;
+        let identity = PipeClientIdentity {
+            process_id,
+            session_id,
+        };
+        let request_wait = PipeWait::within(PIPE_TIMEOUT);
+        let request_bytes = read_frame(|buffer| {
+            slot.server
+                .read(buffer, &request_wait)
+                .map_err(|error| ipc_error(format!("read managed-host request: {error}")))
+        })?;
+        let request = parse_frame::<HostRequest>(&request_bytes)?;
+        let response = frame(&handler(identity, request))?;
+        let response_wait = PipeWait::within(PIPE_RESPONSE_TIMEOUT);
+        slot.server
+            .write_all(&response, &response_wait)
+            .map_err(|error| ipc_error(format!("write managed-host response: {error}")))?;
+        // DisconnectNamedPipe discards unread bytes. Wait until the client has
+        // read the response and closed its handle before reusing this instance.
+        let mut trailing = [0_u8; 1];
+        let _ = slot
+            .server
+            .read(&mut trailing, &PipeWait::within(PIPE_TIMEOUT));
+        Ok(())
+    })();
+    let disconnected = slot
+        .server
+        .disconnect()
+        .map_err(|error| ipc_error(format!("disconnect managed-host pipe: {error}")));
+    served?;
+    disconnected?;
     Ok(true)
 }
 
 #[cfg(not(target_os = "windows"))]
+#[derive(Debug)]
+pub struct PipeServerSlot;
+
+#[cfg(not(target_os = "windows"))]
+impl PipeServerSlot {
+    pub fn create(_pipe_name: &str) -> Result<Self, IpcError> {
+        Err(unsupported("managed-host pipe server"))
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
 pub fn pipe_server(
-    _pipe_name: &str,
+    _slot: &mut PipeServerSlot,
     _accept_timeout: Duration,
     _handler: impl FnOnce(PipeClientIdentity, HostRequest) -> HostResponse,
 ) -> Result<bool, IpcError> {
@@ -200,7 +256,7 @@ pub fn listener_pid_from_netstat(text: &str, port: u16) -> Option<u32> {
 /// The PID listening on TCP `port`, from netstat. A connect probe cannot
 /// tell: Windows retries a refused loopback SYN for about two seconds, so a
 /// free port and a hung listener both time out under a short deadline.
-#[cfg(target_os = "windows")]
+#[cfg(windows)]
 pub fn tcp_listener_pid(port: u16) -> Result<Option<u32>, IpcError> {
     use std::process::{Command, Stdio};
 
@@ -221,7 +277,7 @@ pub fn tcp_listener_pid(port: u16) -> Result<Option<u32>, IpcError> {
 }
 
 /// What [`terminate_camilla_listener`] found on the port.
-#[cfg(target_os = "windows")]
+#[cfg(windows)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ListenerOutcome {
     /// The CamillaDSP with this PID was ended.
@@ -236,7 +292,7 @@ pub enum ListenerOutcome {
 /// `camilladsp.exe` (maintainer's decision, 2026-10-30: a CamillaDSP that
 /// ignored `Exit` keeps the port, as 4.1.3 does when a capture thread
 /// blocks).
-#[cfg(target_os = "windows")]
+#[cfg(windows)]
 pub fn terminate_camilla_listener(port: u16) -> Result<ListenerOutcome, IpcError> {
     let Some(pid) = tcp_listener_pid(port)? else {
         return Ok(ListenerOutcome::NotFound);
@@ -263,14 +319,69 @@ pub fn terminate_camilla_listener(port: u16) -> Result<ListenerOutcome, IpcError
     Ok(ListenerOutcome::Terminated(pid))
 }
 
+#[cfg(windows)]
+fn verify_managed_service_server(process_id: u32) -> Result<(), IpcError> {
+    let session_id = win_custody::process_session_id(process_id)
+        .map_err(|error| ipc_error(format!("identify managed-host server session: {error}")))?;
+    if session_id != 0 {
+        return Err(ipc_error(format!(
+            "pipe server process {process_id} is not the managed service (session {session_id})"
+        )));
+    }
+
+    let process = win_custody::Process::open(process_id, win_custody::ProcessAccess::QueryLimited)
+        .map_err(|error| ipc_error(format!("open managed-host server {process_id}: {error}")))?;
+    let image = process.image_path().map_err(|error| {
+        ipc_error(format!(
+            "read managed-host server {process_id} image: {error}"
+        ))
+    })?;
+    let program_files = std::env::var_os("ProgramW6432")
+        .or_else(|| std::env::var_os("ProgramFiles"))
+        .ok_or_else(|| ipc_error("ProgramW6432 and ProgramFiles are unavailable"))?;
+    let expected = Path::new(&program_files)
+        .join("SECS 2R Host")
+        .join("secs2r-host.exe");
+    let normalized = |path: &Path| {
+        path.to_string_lossy()
+            .replace('/', "\\")
+            .trim_end_matches('\\')
+            .to_ascii_lowercase()
+    };
+    if normalized(&image) != normalized(&expected) {
+        return Err(ipc_error(format!(
+            "pipe server process {process_id} is not the managed service (image {})",
+            image.display()
+        )));
+    }
+    Ok(())
+}
+
 /// Makes one request and reads one response from the default host pipe.
 pub fn pipe_call(request: &HostRequest) -> Result<HostResponse, IpcError> {
     pipe_call_at(DEFAULT_PIPE_NAME, request)
 }
 
 /// Makes one request against an explicitly injected pipe name.
-#[cfg(target_os = "windows")]
+#[cfg(windows)]
 pub fn pipe_call_at(pipe_name: &str, request: &HostRequest) -> Result<HostResponse, IpcError> {
+    pipe_call_at_impl(pipe_name, request, true)
+}
+
+#[cfg(all(target_os = "windows", test))]
+fn pipe_call_at_unchecked(
+    pipe_name: &str,
+    request: &HostRequest,
+) -> Result<HostResponse, IpcError> {
+    pipe_call_at_impl(pipe_name, request, false)
+}
+
+#[cfg(windows)]
+fn pipe_call_at_impl(
+    pipe_name: &str,
+    request: &HostRequest,
+    verify_server: bool,
+) -> Result<HostResponse, IpcError> {
     use std::time::Instant;
     use win_custody::{PipeAccess, PipeClient, PipeWait};
 
@@ -288,9 +399,12 @@ pub fn pipe_call_at(pipe_name: &str, request: &HostRequest) -> Result<HostRespon
             Duration::from_millis(10),
         )
         .map_err(|error| ipc_error(format!("open managed-host pipe: {error}")))?;
-        client
+        let server_process_id = client
             .server_process_id()
             .map_err(|error| ipc_error(format!("identify managed-host server: {error}")))?;
+        if verify_server {
+            verify_managed_service_server(server_process_id)?;
+        }
         let wait = PipeWait::until(deadline);
         if let Err(error) = client.write_all(&request, &wait) {
             if Instant::now() < deadline {
@@ -323,14 +437,14 @@ pub fn pipe_call_at(_pipe_name: &str, _request: &HostRequest) -> Result<HostResp
     Err(unsupported("managed-host pipe client"))
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(windows)]
 #[derive(Debug)]
 pub struct ManagedChild {
     process: win_custody::Process,
     job: win_custody::Job,
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(windows)]
 impl ManagedChild {
     pub fn pid(&self) -> Result<u32, IpcError> {
         self.process
@@ -367,7 +481,7 @@ pub struct ManagedChild;
 
 /// Launches CamillaDSP in the active console user's session and assigns it to a
 /// kill-on-close job before its first instruction runs.
-#[cfg(target_os = "windows")]
+#[cfg(windows)]
 pub fn launch_camilla(
     executable: &Path,
     config: &Path,
@@ -406,7 +520,7 @@ pub fn launch_camilla(
 }
 
 /// Starts the Equalizer APO repair helper as the managing user.
-#[cfg(target_os = "windows")]
+#[cfg(windows)]
 pub fn launch_eqapo_repair(
     host_executable: &Path,
     config_folder: &Path,
@@ -437,7 +551,7 @@ pub fn launch_eqapo_repair(
 }
 
 /// Whether one of the named executables runs in the caller's interactive session.
-#[cfg(target_os = "windows")]
+#[cfg(windows)]
 pub fn process_running_in_current_session(names: &[&str]) -> Result<bool, IpcError> {
     let session = win_custody::current_session_id()
         .map_err(|error| ipc_error(format!("read current session: {error}")))?;
@@ -460,7 +574,7 @@ pub fn process_running_in_current_session(_names: &[&str]) -> Result<bool, IpcEr
 
 #[must_use]
 pub fn active_console_session() -> Option<u32> {
-    #[cfg(target_os = "windows")]
+    #[cfg(windows)]
     {
         win_custody::active_console_session_id()
     }
@@ -471,7 +585,7 @@ pub fn active_console_session() -> Option<u32> {
 }
 
 /// Canonical `S-1-...` SID of the user represented by the session token.
-#[cfg(target_os = "windows")]
+#[cfg(windows)]
 pub fn session_user_identity(session: u32) -> Result<String, IpcError> {
     let token = win_custody::PrimaryToken::for_session_user(session)
         .map_err(|error| ipc_error(format!("open session {session} user token: {error}")))?;
@@ -485,7 +599,7 @@ pub fn session_user_identity(_session: u32) -> Result<String, IpcError> {
     Err(unsupported("session user identity"))
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(windows)]
 #[derive(Debug)]
 pub struct ConfigWatcher {
     _watcher: notify::RecommendedWatcher,
@@ -497,7 +611,7 @@ pub struct ConfigWatcher;
 
 /// Watches one configuration file and calls `on_change` after relevant file
 /// events. The returned guard must stay alive while watching.
-#[cfg(target_os = "windows")]
+#[cfg(windows)]
 pub fn watch_config(
     path: &Path,
     mut on_change: impl FnMut() + Send + 'static,
@@ -549,7 +663,7 @@ pub struct ServiceDirectoryFacts {
 }
 
 /// Whether a file or directory carries the Windows reparse-point attribute.
-#[cfg(target_os = "windows")]
+#[cfg(windows)]
 pub fn is_reparse_point(path: &Path) -> Result<bool, IpcError> {
     use std::os::windows::fs::MetadataExt;
     use windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT;
@@ -566,7 +680,7 @@ pub fn is_reparse_point(_path: &Path) -> Result<bool, IpcError> {
 
 /// Reads the kind and owner of an existing state directory without following a
 /// directory reparse point as an acceptable host root.
-#[cfg(target_os = "windows")]
+#[cfg(windows)]
 pub fn inspect_state_directory(path: &Path) -> Result<StateDirectoryFacts, IpcError> {
     use std::fs::OpenOptions;
     use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
@@ -610,7 +724,7 @@ pub fn inspect_state_directory(_path: &Path) -> Result<StateDirectoryFacts, IpcE
 }
 
 /// Reads the kind and owner of an existing Program Files service directory.
-#[cfg(target_os = "windows")]
+#[cfg(windows)]
 pub fn inspect_service_directory(path: &Path) -> Result<ServiceDirectoryFacts, IpcError> {
     // The installer creates this folder directly under Program Files, so its ACL
     // inherits Program Files protection. We reject reparse points and
@@ -664,7 +778,7 @@ pub fn inspect_service_directory(_path: &Path) -> Result<ServiceDirectoryFacts, 
 }
 
 /// Applies the protected host-state DACL to a newly created or accepted root.
-#[cfg(target_os = "windows")]
+#[cfg(windows)]
 pub fn secure_state_directory(path: &Path) -> Result<(), IpcError> {
     let descriptor = win_custody::SecurityDescriptor::from_sddl(
         "D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FR;;;BU)",
@@ -681,7 +795,7 @@ pub fn secure_state_directory(_path: &Path) -> Result<(), IpcError> {
 }
 
 /// Queries the registered Windows service without changing it.
-#[cfg(target_os = "windows")]
+#[cfg(windows)]
 pub fn service_state() -> ServiceState {
     use windows_service::service::{ServiceAccess, ServiceState as WindowsState};
     use windows_service::service_manager::{ServiceManager, ServiceManagerAccess};
@@ -710,7 +824,7 @@ pub fn service_state() -> ServiceState {
 }
 
 /// Starts the host executable's privileged installer through the GUI UAC flow.
-#[cfg(target_os = "windows")]
+#[cfg(windows)]
 pub fn install_service_elevated(executable: &Path) -> Result<(), IpcError> {
     elevated(executable, "install")
 }
@@ -721,7 +835,7 @@ pub fn install_service_elevated(_executable: &Path) -> Result<(), IpcError> {
 }
 
 /// Starts the host executable's privileged uninstaller through the GUI UAC flow.
-#[cfg(target_os = "windows")]
+#[cfg(windows)]
 pub fn uninstall_service_elevated(executable: &Path) -> Result<(), IpcError> {
     elevated(executable, "uninstall")
 }
@@ -731,7 +845,7 @@ pub fn uninstall_service_elevated(_executable: &Path) -> Result<(), IpcError> {
     Err(unsupported("service removal"))
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(windows)]
 fn elevated(executable: &Path, argument: &str) -> Result<(), IpcError> {
     let status = runas::Command::new(executable)
         .arg(argument)
@@ -747,9 +861,9 @@ fn elevated(executable: &Path, argument: &str) -> Result<(), IpcError> {
     }
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(windows)]
 const SHELL_AUTOSTART_VALUE: &str = "SECS2RHostShell";
-#[cfg(target_os = "windows")]
+#[cfg(windows)]
 const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
 
 /// Builds the per-user Run value used to start the host shell without its window.
@@ -759,7 +873,7 @@ pub fn shell_autostart_value(executable: &Path) -> String {
 }
 
 /// Enables or disables the current user's host-shell logon start.
-#[cfg(target_os = "windows")]
+#[cfg(windows)]
 pub fn set_shell_autostart(executable: Option<&Path>) -> Result<(), IpcError> {
     const ERROR_FILE_NOT_FOUND: u32 = 0x8007_0002;
 
@@ -802,7 +916,7 @@ pub fn set_shell_autostart(_executable: Option<&Path>) -> Result<(), IpcError> {
 }
 
 /// Starts a GUI companion without a shell and returns after process creation.
-#[cfg(target_os = "windows")]
+#[cfg(windows)]
 pub fn spawn_detached(executable: &Path, args: &[&str]) -> Result<(), IpcError> {
     use std::os::windows::process::CommandExt;
     use std::process::{Command, Stdio};
@@ -826,7 +940,7 @@ pub fn spawn_detached(_executable: &Path, _args: &[&str]) -> Result<(), IpcError
 
 /// Stops the existing host service before its protected executable is replaced.
 /// Returns whether the service was registered.
-#[cfg(target_os = "windows")]
+#[cfg(windows)]
 pub fn stop_service_for_update() -> Result<bool, IpcError> {
     use windows_service::service::{ServiceAccess, ServiceState as WindowsState};
     use windows_service::service_manager::{ServiceManager, ServiceManagerAccess};
@@ -879,7 +993,7 @@ pub fn stop_service_for_update() -> Result<bool, IpcError> {
 }
 
 /// Registers or updates an automatic LocalSystem service. The caller must already be elevated.
-#[cfg(target_os = "windows")]
+#[cfg(windows)]
 pub fn register_service(executable: &Path, service_exists: bool) -> Result<(), IpcError> {
     use std::ffi::{OsStr, OsString};
     use windows_service::service::{
@@ -934,7 +1048,7 @@ pub fn register_service(_executable: &Path, _service_exists: bool) -> Result<(),
 }
 
 /// Starts the already registered host service without changing its configuration.
-#[cfg(target_os = "windows")]
+#[cfg(windows)]
 pub fn start_service() -> Result<(), IpcError> {
     use std::ffi::OsStr;
     use windows_service::service::ServiceAccess;
@@ -956,7 +1070,7 @@ pub fn start_service() -> Result<(), IpcError> {
 }
 
 /// Stops and deletes the service. The caller must already be elevated.
-#[cfg(target_os = "windows")]
+#[cfg(windows)]
 pub fn unregister_service() -> Result<(), IpcError> {
     use windows_service::service::ServiceAccess;
     use windows_service::service_manager::{ServiceManager, ServiceManagerAccess};
@@ -1022,9 +1136,11 @@ pub enum ServiceEvent {
     Stop,
     SessionLogon(u32),
     SessionLogoff(u32),
+    ConsoleConnect(u32),
+    ConsoleDisconnect(u32),
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(windows)]
 mod service_dispatch {
     use std::ffi::OsString;
     use std::sync::{Mutex, OnceLock, mpsc};
@@ -1039,9 +1155,10 @@ mod service_dispatch {
         self, ServiceControlHandlerResult, ServiceStatusHandle,
     };
 
-    use super::{SERVICE_NAME, ServiceEvent};
+    use super::{IpcError, SERVICE_NAME, ServiceEvent};
 
-    type Worker = Box<dyn FnOnce(mpsc::Receiver<ServiceEvent>) + Send + 'static>;
+    type Worker =
+        Box<dyn FnOnce(mpsc::Receiver<ServiceEvent>) -> Result<(), IpcError> + Send + 'static>;
     static WORKER: OnceLock<Mutex<Option<Worker>>> = OnceLock::new();
 
     define_windows_service!(ffi_service_main, service_main);
@@ -1056,7 +1173,33 @@ mod service_dispatch {
         let _ = run_inner();
     }
 
-    fn status(handle: &ServiceStatusHandle, state: ServiceState) -> windows_service::Result<()> {
+    pub(super) fn exit_code_for<E>(result: &Result<(), E>) -> ServiceExitCode {
+        match result {
+            Ok(()) => ServiceExitCode::Win32(0),
+            Err(_) => ServiceExitCode::ServiceSpecific(1),
+        }
+    }
+
+    pub(super) fn session_event(
+        reason: SessionChangeReason,
+        session_id: u32,
+    ) -> Option<ServiceEvent> {
+        match reason {
+            SessionChangeReason::SessionLogon => Some(ServiceEvent::SessionLogon(session_id)),
+            SessionChangeReason::SessionLogoff => Some(ServiceEvent::SessionLogoff(session_id)),
+            SessionChangeReason::ConsoleConnect => Some(ServiceEvent::ConsoleConnect(session_id)),
+            SessionChangeReason::ConsoleDisconnect => {
+                Some(ServiceEvent::ConsoleDisconnect(session_id))
+            }
+            _ => None,
+        }
+    }
+
+    fn status(
+        handle: &ServiceStatusHandle,
+        state: ServiceState,
+        exit_code: ServiceExitCode,
+    ) -> windows_service::Result<()> {
         handle.set_service_status(ServiceStatus {
             service_type: ServiceType::OWN_PROCESS,
             current_state: state,
@@ -1065,7 +1208,7 @@ mod service_dispatch {
             } else {
                 ServiceControlAccept::empty()
             },
-            exit_code: ServiceExitCode::Win32(0),
+            exit_code,
             checkpoint: 0,
             wait_hint: Duration::ZERO,
             process_id: None,
@@ -1082,15 +1225,7 @@ mod service_dispatch {
                 ServiceControlHandlerResult::NoError
             }
             ServiceControl::SessionChange(change) => {
-                let event = match change.reason {
-                    SessionChangeReason::SessionLogon => {
-                        Some(ServiceEvent::SessionLogon(change.notification.session_id))
-                    }
-                    SessionChangeReason::SessionLogoff => {
-                        Some(ServiceEvent::SessionLogoff(change.notification.session_id))
-                    }
-                    _ => None,
-                };
+                let event = session_event(change.reason, change.notification.session_id);
                 if let Some(event) = event {
                     let _ = event_sender.send(event);
                 }
@@ -1099,19 +1234,30 @@ mod service_dispatch {
             _ => ServiceControlHandlerResult::NotImplemented,
         };
         let status_handle = service_control_handler::register(SERVICE_NAME, handler)?;
-        status(&status_handle, ServiceState::Running)?;
-        if let Some(worker) = WORKER.get().and_then(|worker| worker.lock().ok()?.take()) {
-            worker(receiver);
-        }
-        status(&status_handle, ServiceState::Stopped)
+        status(
+            &status_handle,
+            ServiceState::Running,
+            ServiceExitCode::Win32(0),
+        )?;
+        let result = WORKER
+            .get()
+            .and_then(|worker| worker.lock().ok()?.take())
+            .map_or(Ok(()), |worker| worker(receiver));
+        status(
+            &status_handle,
+            ServiceState::Stopped,
+            exit_code_for(&result),
+        )
     }
 }
 
 /// Runs a closure as the Windows service body. The closure returns only after a
-/// stop event and receives logon/logoff notifications through the channel.
-#[cfg(target_os = "windows")]
+/// stop event and receives logon, logoff, and console-switch notifications.
+#[cfg(windows)]
 pub fn run_service(
-    worker: impl FnOnce(std::sync::mpsc::Receiver<ServiceEvent>) + Send + 'static,
+    worker: impl FnOnce(std::sync::mpsc::Receiver<ServiceEvent>) -> Result<(), IpcError>
+    + Send
+    + 'static,
 ) -> Result<(), IpcError> {
     service_dispatch::run(Box::new(worker))
         .map_err(|error| ipc_error(format!("run {SERVICE_NAME}: {error}")))
@@ -1119,7 +1265,9 @@ pub fn run_service(
 
 #[cfg(not(target_os = "windows"))]
 pub fn run_service(
-    _worker: impl FnOnce(std::sync::mpsc::Receiver<ServiceEvent>) + Send + 'static,
+    _worker: impl FnOnce(std::sync::mpsc::Receiver<ServiceEvent>) -> Result<(), IpcError>
+    + Send
+    + 'static,
 ) -> Result<(), IpcError> {
     Err(unsupported("Windows service dispatcher"))
 }
@@ -1127,6 +1275,36 @@ pub fn run_service(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn worker_error_reports_nonzero_service_exit() {
+        use windows_service::service::ServiceExitCode;
+
+        assert_eq!(
+            service_dispatch::exit_code_for(&Ok::<(), IpcError>(())),
+            ServiceExitCode::Win32(0)
+        );
+        assert_eq!(
+            service_dispatch::exit_code_for(&Err::<(), _>(ipc_error("worker failed"))),
+            ServiceExitCode::ServiceSpecific(1)
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn service_session_change_maps_console_switch_events() {
+        use windows_service::service::SessionChangeReason;
+
+        assert_eq!(
+            service_dispatch::session_event(SessionChangeReason::ConsoleConnect, 8),
+            Some(ServiceEvent::ConsoleConnect(8))
+        );
+        assert_eq!(
+            service_dispatch::session_event(SessionChangeReason::ConsoleDisconnect, 8),
+            Some(ServiceEvent::ConsoleDisconnect(8))
+        );
+    }
 
     #[test]
     fn shell_autostart_value_quotes_the_executable_and_hides_the_window() {
@@ -1178,7 +1356,7 @@ mod tests {
         assert!(error.detail.contains("deadline"));
     }
 
-    #[cfg(target_os = "windows")]
+    #[cfg(windows)]
     #[test]
     fn real_pipe_round_trip_uses_a_unique_name() {
         let name = format!(
@@ -1191,16 +1369,172 @@ mod tests {
         );
         let server_name = name.clone();
         let server = std::thread::spawn(move || {
-            pipe_server(&server_name, PIPE_TIMEOUT, |_, _| HostResponse::Ok)
+            let mut slot = PipeServerSlot::create(&server_name).unwrap();
+            pipe_server(&mut slot, PIPE_TIMEOUT, |_, _| HostResponse::Ok)
         });
         assert_eq!(
-            pipe_call_at(&name, &HostRequest::Status).unwrap(),
+            pipe_call_at_unchecked(&name, &HostRequest::Status).unwrap(),
             HostResponse::Ok
         );
         assert!(server.join().unwrap().unwrap());
     }
 
-    #[cfg(target_os = "windows")]
+    #[cfg(windows)]
+    #[test]
+    fn slow_handler_gets_a_response_with_a_fresh_write_deadline() {
+        use std::collections::BTreeMap;
+        use std::time::Instant;
+        use win_custody::{PipeAccess, PipeClient, PipeWait};
+
+        let name = format!(
+            r"\\.\pipe\secs2r-host-slow-handler-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let response = HostResponse::Log(vec![secs_types::ipc::HostLogLine {
+            timestamp: "2026-11-06T00:00:00Z".into(),
+            event: "slow_handler".into(),
+            fields: BTreeMap::from([("payload".into(), "x".repeat(256 * 1024))]),
+        }]);
+        let server_response = response.clone();
+        let server_name = name.clone();
+        let server = std::thread::spawn(move || {
+            let mut slot = PipeServerSlot::create(&server_name).unwrap();
+            pipe_server(&mut slot, PIPE_TIMEOUT, |_, _| {
+                std::thread::sleep(Duration::from_secs(6));
+                server_response
+            })
+        });
+
+        let client = PipeClient::open(
+            &name,
+            PipeAccess::ReadWrite,
+            Instant::now() + PIPE_TIMEOUT,
+            Duration::from_millis(10),
+        )
+        .unwrap();
+        client
+            .write_all(
+                &frame(&HostRequest::Status).unwrap(),
+                &PipeWait::within(PIPE_TIMEOUT),
+            )
+            .unwrap();
+        std::thread::sleep(Duration::from_secs(7));
+        let answer_wait = PipeWait::within(PIPE_RESPONSE_TIMEOUT);
+        let answer = read_frame(|buffer| {
+            client
+                .read(buffer, &answer_wait)
+                .map_err(|error| ipc_error(format!("read slow response: {error}")))
+        })
+        .and_then(|bytes| parse_frame::<HostResponse>(&bytes));
+
+        assert_eq!(answer.unwrap(), response);
+        drop(client);
+        assert!(server.join().unwrap().unwrap());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn real_pipe_slot_never_releases_name_between_accept_polls() {
+        use std::sync::mpsc;
+        use win_custody::{PipeDirection, PipeServer, SecurityDescriptor};
+
+        let name = format!(
+            r"\\.\pipe\secs2r-host-slot-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let server_name = name.clone();
+        let (ready_sender, ready_receiver) = mpsc::channel();
+        let (poll_sender, poll_receiver) = mpsc::channel();
+        let (resume_sender, resume_receiver) = mpsc::channel();
+        let server = std::thread::spawn(move || {
+            let mut slot = PipeServerSlot::create(&server_name).unwrap();
+            ready_sender.send(()).unwrap();
+            let deadline = std::time::Instant::now() + Duration::from_secs(1);
+            let mut served = false;
+            let mut paused = false;
+            while std::time::Instant::now() < deadline || !served {
+                let accepted = pipe_server(&mut slot, Duration::from_millis(100), |_, _| {
+                    HostResponse::Ok
+                })?;
+                served |= accepted;
+                if !accepted && !paused {
+                    paused = true;
+                    poll_sender.send(()).unwrap();
+                    resume_receiver
+                        .recv_timeout(Duration::from_secs(5))
+                        .unwrap();
+                }
+            }
+            Ok::<_, IpcError>(served)
+        });
+        ready_receiver.recv_timeout(Duration::from_secs(5)).unwrap();
+        poll_receiver.recv_timeout(Duration::from_secs(5)).unwrap();
+
+        let descriptor = SecurityDescriptor::from_sddl("D:P(A;;GA;;;OW)").unwrap();
+        let attack_deadline = std::time::Instant::now() + Duration::from_millis(700);
+        let mut intruder = None;
+        while std::time::Instant::now() < attack_deadline {
+            if let Ok(candidate) = PipeServer::create(&name, PipeDirection::Duplex, &descriptor) {
+                intruder = Some(candidate);
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let name_was_taken = intruder.is_some();
+        drop(intruder);
+        resume_sender.send(()).unwrap();
+        assert!(
+            !name_was_taken,
+            "another first pipe instance was created between accept polls"
+        );
+
+        assert_eq!(
+            pipe_call_at_unchecked(&name, &HostRequest::Status).unwrap(),
+            HostResponse::Ok
+        );
+        assert!(server.join().unwrap().unwrap());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn checked_pipe_call_rejects_a_test_process_server() {
+        let name = format!(
+            r"\\.\pipe\secs2r-host-identity-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let server_name = name.clone();
+        let server = std::thread::spawn(move || {
+            let mut slot = PipeServerSlot::create(&server_name).unwrap();
+            pipe_server(&mut slot, PIPE_TIMEOUT, |_, _| HostResponse::Ok)
+        });
+
+        let error = pipe_call_at(&name, &HostRequest::Status).unwrap_err();
+        assert!(
+            error.detail.contains(&std::process::id().to_string()),
+            "{}",
+            error.detail
+        );
+        assert!(
+            error.detail.contains("not the managed service"),
+            "{}",
+            error.detail
+        );
+        assert!(server.join().unwrap().is_err());
+    }
+
+    #[cfg(windows)]
     #[test]
     fn pipe_deadline_is_reported_without_a_server() {
         let name = format!(

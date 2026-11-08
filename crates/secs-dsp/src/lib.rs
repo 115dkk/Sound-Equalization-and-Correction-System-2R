@@ -36,8 +36,8 @@ pub mod minphase;
 pub mod multirate;
 mod numeric;
 pub use numeric::divide as complex_div;
-pub use numeric::interp;
 pub use numeric::sum as pairwise_sum;
+pub use numeric::{gradient, interp, unwrap_phase};
 pub mod optimize;
 pub mod peaks;
 pub mod random;
@@ -45,6 +45,7 @@ pub mod rate;
 pub mod resample;
 pub mod response;
 pub mod smooth;
+pub mod stats;
 
 /// Data-dependent errors corresponding to upstream invalid inputs.
 #[derive(Debug, thiserror::Error)]

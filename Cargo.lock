@@ -4328,6 +4328,7 @@ version = "0.22.0"
 dependencies = [
  "secs-dsp",
  "secs-oracle",
+ "secs-types",
  "serde",
  "thiserror 2.0.21",
 ]
@@ -4336,10 +4337,6 @@ dependencies = [
 name = "secs-camilla"
 version = "0.22.0"
 dependencies = [
- "num-bigint",
- "num-integer",
- "num-traits",
- "ryu",
  "secs-apply",
  "secs-dsp",
  "secs-filters",
@@ -4405,9 +4402,12 @@ dependencies = [
  "faer",
  "secs-compute",
  "secs-dsp",
+ "secs-engine-testkit",
+ "secs-graph",
  "secs-oracle",
  "secs-types",
  "serde_json",
+ "sha2 0.11.1",
  "thiserror 2.0.21",
 ]
 
@@ -4416,10 +4416,8 @@ name = "secs-engine-testkit"
 version = "0.55.0"
 dependencies = [
  "secs-compute",
- "secs-dsp",
  "secs-engine",
  "secs-oracle",
- "secs-types",
  "serde_json",
 ]
 
@@ -4432,6 +4430,7 @@ dependencies = [
  "secs-dsp",
  "secs-engine",
  "secs-engine-testkit",
+ "secs-graph",
  "secs-jos",
  "secs-mdat",
  "secs-oracle",
@@ -4445,7 +4444,7 @@ dependencies = [
 name = "secs-filters"
 version = "0.22.0"
 dependencies = [
- "secs-camilla",
+ "secs-compute",
  "secs-dsp",
  "secs-graph",
  "secs-oracle",
@@ -4471,6 +4470,10 @@ dependencies = [
 name = "secs-graph"
 version = "0.22.0"
 dependencies = [
+ "num-bigint",
+ "num-integer",
+ "num-traits",
+ "ryu",
  "secs-dsp",
  "secs-types",
  "serde",
@@ -4609,6 +4612,7 @@ dependencies = [
  "secs-audio",
  "secs-compute",
  "secs-rew",
+ "secs-service",
  "secs-types",
  "serde",
  "serde_json",
@@ -4637,7 +4641,6 @@ version = "0.55.0"
 dependencies = [
  "secs-gpu",
  "secs-local-api",
- "secs-rew",
  "secs-service",
  "secs-sys",
  "secs-types",
@@ -4657,12 +4660,12 @@ dependencies = [
  "rayon",
  "secs-compute",
  "secs-gpu",
- "secs-rew",
  "secs-service",
  "secs-sys",
  "secs-types",
  "serde",
  "serde_json",
+ "sound-equalization-and-correction-system-rust-api",
 ]
 
 [[package]]
@@ -5075,6 +5078,7 @@ name = "sound-equalization-and-correction-system-rust-api"
 version = "0.22.0"
 dependencies = [
  "secs-audio",
+ "secs-compute",
  "secs-engine",
  "secs-engine-testkit",
  "secs-local-api",

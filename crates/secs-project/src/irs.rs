@@ -1,6 +1,7 @@
 use crate::{ProjectError, record::atomic_write};
 use std::fs;
 use std::io::Read;
+use std::ops::Range;
 use std::path::{Path, PathBuf};
 
 pub const MAX_IR_BYTES: u64 = 256 * 1024 * 1024;
@@ -17,6 +18,10 @@ pub fn ir_file(project: &Path, role: &str, pos: i64) -> PathBuf {
 /// For values that Python's `struct.pack('<I', ...)` cannot represent, the
 /// legacy infallible API returns an empty vector instead of panicking. Call
 /// [`try_write_wav_float32`] when the error must be reported.
+#[deprecated(
+    since = "0.23.0",
+    note = "no caller; removed in the next minor (audit #186 TD-219)"
+)]
 pub fn write_wav_float32(samples: &[f32], sample_rate: u32) -> Vec<u8> {
     try_write_wav_float32(samples, sample_rate).unwrap_or_default()
 }
@@ -64,7 +69,7 @@ struct WavFormat {
     bits: u16,
     valid_bits: u16,
 }
-type WavChunks = (WavFormat, Vec<u8>);
+type WavChunks = (WavFormat, Range<usize>);
 
 fn le_u16(bytes: &[u8], offset: usize) -> Result<u16, ProjectError> {
     let value = bytes
@@ -149,7 +154,7 @@ fn wav_chunks(data: &[u8], default_format: Option<WavFormat>) -> Result<WavChunk
         let end = declared_end.min(data.len());
         match &data[pos..pos + 4] {
             b"fmt " => format = Some(parse_wav_format(&data[header_end..end])?),
-            b"data" => payload = Some(data[header_end..end].to_vec()),
+            b"data" => payload = Some(header_end..end),
             _ => {}
         }
         if declared_end >= data.len() {
@@ -162,13 +167,21 @@ fn wav_chunks(data: &[u8], default_format: Option<WavFormat>) -> Result<WavChunk
             break;
         }
     }
+    let format = format
+        .or(default_format)
+        .ok_or_else(|| ProjectError::Wav("missing fmt chunk".into()))?;
+    if format.sample_rate == 0 {
+        return Err(ProjectError::Wav("WAV sample rate is zero".into()));
+    }
     Ok((
-        format
-            .or(default_format)
-            .ok_or_else(|| ProjectError::Wav("missing fmt chunk".into()))?,
+        format,
         payload.ok_or_else(|| ProjectError::Wav("missing data chunk".into()))?,
     ))
 }
+#[deprecated(
+    since = "0.23.0",
+    note = "no caller; removed in the next minor (audit #186 TD-219)"
+)]
 pub fn read_wav_float32(data: &[u8]) -> Result<(Vec<f32>, u32), ProjectError> {
     let default = WavFormat {
         tag: 3,
@@ -179,7 +192,20 @@ pub fn read_wav_float32(data: &[u8]) -> Result<(Vec<f32>, u32), ProjectError> {
         valid_bits: 32,
     };
     let (format, payload) = wav_chunks(data, Some(default))?;
-    if format.tag != 3 || format.bits != 32 || payload.len() % 4 != 0 {
+    let payload = &data[payload];
+    if format.channels != 1 {
+        return Err(ProjectError::Wav(format!(
+            "float32 WAV has {} channels (expected 1)",
+            format.channels
+        )));
+    }
+    if format.block_align != 4 {
+        return Err(ProjectError::Wav(format!(
+            "float32 WAV block alignment is {} (expected 4)",
+            format.block_align
+        )));
+    }
+    if format.tag != 3 || format.bits != 32 || !payload.len().is_multiple_of(4) {
         return Err(ProjectError::Wav(format!(
             "not 32-bit float WAV (fmt={}, bits={})",
             format.tag, format.bits
@@ -201,13 +227,14 @@ pub fn read_wav_float32(data: &[u8]) -> Result<(Vec<f32>, u32), ProjectError> {
 /// RF64, endian-swapped RIFX, multichannel audio, or containers other than WAV.
 pub fn read_mono_float_wav(data: &[u8]) -> Result<(Vec<f32>, u32), ProjectError> {
     let (format, payload) = wav_chunks(data, None)?;
+    let payload = &data[payload];
     if format.channels != 1 {
         return Err(ProjectError::Wav("WAV is not mono".into()));
     }
     let bytes_per_sample = usize::from(format.bits.div_ceil(8));
     if bytes_per_sample == 0
         || usize::from(format.block_align) != bytes_per_sample
-        || payload.len() % bytes_per_sample != 0
+        || !payload.len().is_multiple_of(bytes_per_sample)
     {
         return Err(ProjectError::Wav("invalid block alignment".into()));
     }
@@ -300,7 +327,8 @@ pub fn load_ir(project: &Path, role: &str, pos: i64) -> Result<(Vec<f32>, u32), 
         .map_err(|error| ProjectError::Wav(format!("{}: {error}", path.display())))
 }
 
-pub(crate) fn read_bounded(path: &Path, limit: u64, kind: &str) -> Result<Vec<u8>, ProjectError> {
+/// Reads at most `limit` bytes and reports an oversized file as invalid.
+pub fn read_bounded(path: &Path, limit: u64, kind: &str) -> Result<Vec<u8>, ProjectError> {
     let mut file = fs::File::open(path)?;
     let mut bytes = Vec::new();
     file.by_ref().take(limit + 1).read_to_end(&mut bytes)?;

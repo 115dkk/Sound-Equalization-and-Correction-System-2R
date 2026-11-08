@@ -133,6 +133,10 @@ impl<T: Transport> RewClient<T> {
             measuring: false,
         }
     }
+    #[deprecated(
+        since = "0.23.0",
+        note = "no caller; removed in the next minor (audit #186 TD-219)"
+    )]
     pub fn transport(&self) -> &T {
         &self.transport
     }
@@ -195,9 +199,17 @@ impl<T: Transport> RewClient<T> {
     ) -> Result<Value, RewError> {
         self.request(Request::new("POST", path, Some(body), timeout), false)
     }
+    #[deprecated(
+        since = "0.23.0",
+        note = "no caller; removed in the next minor (audit #186 TD-219)"
+    )]
     pub fn hold_offline(&mut self, duration: Duration) {
         self.down_until = Some(Instant::now() + duration);
     }
+    #[deprecated(
+        since = "0.23.0",
+        note = "no caller; removed in the next minor (audit #186 TD-219)"
+    )]
     pub fn probe(&mut self) -> bool {
         self.down_until = None;
         if self
@@ -231,12 +243,24 @@ impl<T: Transport> RewClient<T> {
         }
     }
     /// Legacy per-client hint. Service code keeps the authoritative observation.
+    #[deprecated(
+        since = "0.23.0",
+        note = "no caller; removed in the next minor (audit #186 TD-219)"
+    )]
     pub fn pro_state(&self) -> Option<bool> {
         self.pro_hint
     }
+    #[deprecated(
+        since = "0.23.0",
+        note = "no caller; removed in the next minor (audit #186 TD-219)"
+    )]
     pub fn is_pro(&self) -> bool {
         self.pro_hint.unwrap_or(true)
     }
+    #[deprecated(
+        since = "0.23.0",
+        note = "no caller; removed in the next minor (audit #186 TD-219)"
+    )]
     pub fn set_pro(&mut self, value: Option<bool>) {
         self.pro_hint = value;
     }
@@ -496,7 +520,7 @@ impl<T: Transport> RewClient<T> {
             reachable: true,
             running: true,
             driver,
-            pro: self.pro_state(),
+            pro: self.pro_hint,
             blocking,
             input_calibration_file,
             input_devices,
@@ -626,6 +650,10 @@ impl<T: Transport> RewClient<T> {
         self.post("/measure/notes", json!(notes))?;
         Ok(())
     }
+    #[deprecated(
+        since = "0.23.0",
+        note = "no caller; removed in the next minor (audit #186 TD-219)"
+    )]
     pub fn set_sequential_channels(&mut self, channels: &[String]) -> Result<(), RewError> {
         self.post("/measure/sequential-channels", json!({"channels":channels}))?;
         Ok(())
@@ -723,7 +751,7 @@ impl<T: Transport> RewClient<T> {
             .as_str()
             .ok_or_else(|| RewError::schema(&path, "missing data"))?;
         let rate = data.get("sampleRate").and_then(number).unwrap_or(48000.0);
-        if rate <= 0.0 || rate > f64::from(u32::MAX) {
+        if !(1.0..=f64::from(u32::MAX)).contains(&rate) || rate.fract() != 0.0 {
             return Err(RewError::schema(&path, "invalid sample rate"));
         }
         Ok(ImpulseResponse {
@@ -838,6 +866,10 @@ impl<T: Transport> RewClient<T> {
     }
     /// Prepare the callback address without registering a REW subscription. Useful
     /// for exact recorded scripts, since callback tokens are deliberately random.
+    #[deprecated(
+        since = "0.23.0",
+        note = "no caller; removed in the next minor (audit #186 TD-219)"
+    )]
     pub fn callback_url(&mut self, path: &str) -> Result<String, RewError> {
         Ok(self.ensure_callback()?.url_for(path))
     }
@@ -855,6 +887,10 @@ impl<T: Transport> RewClient<T> {
         self.post("/input-levels/command", json!({"command":"Start"}))?;
         Ok(())
     }
+    #[deprecated(
+        since = "0.23.0",
+        note = "no caller; removed in the next minor (audit #186 TD-219)"
+    )]
     pub fn last_levels(&mut self) -> Value {
         self.get_timeout(
             "/input-levels/last-levels",
@@ -914,6 +950,10 @@ impl<T: Transport> RewClient<T> {
             server.unroute("/measure-progress");
         }
     }
+    #[deprecated(
+        since = "0.23.0",
+        note = "no caller; removed in the next minor (audit #186 TD-219)"
+    )]
     pub fn process_result(&mut self) -> Value {
         self.get("/measurements/process-result")
             .ok()
@@ -1090,4 +1130,42 @@ fn segment(s: &str) -> String {
             }
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wait_for_new_measurement_propagates_the_first_transient_error() {
+        let request = Request::new(
+            "GET",
+            "/measurements",
+            None,
+            READ_TIMEOUT.max(Duration::from_secs(10)),
+        );
+        let transport = RecordedTransport::new([RecordedExchange {
+            request,
+            response: Err(RewError::connection(
+                "/measurements",
+                "transient connection failure",
+            )),
+        }]);
+        let copy = transport.clone();
+        let mut client = RewClient::new(transport);
+        client.poll_interval = Duration::ZERO;
+        let error = client
+            .wait_for_new_measurement(
+                &BTreeSet::new(),
+                Duration::from_secs(1),
+                &CancelToken::default(),
+            )
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            RewError::Connection { ref path, .. } if path == "/measurements"
+        ));
+        copy.assert_finished();
+        assert_eq!(copy.calls().len(), 1);
+    }
 }

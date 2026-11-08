@@ -12,19 +12,18 @@
 //! interpolation filters change the response from the historically cropped FIR.
 //! Both modes reuse transforms between routes and allocate only at construction.
 
-use secs_camilla::pyfmt::round_ndigits;
 use secs_dsp::{
     DspError,
     convolution::{FirRoute, MatrixConvolver},
     fir::lowrate_to_48k,
-    iir::{BType, Sos, butter},
+    iir::{BType, Biquad, Sos, Tdf2, butter, rbj_peaking},
     multirate::MultirateMatrixConvolver,
 };
-use secs_graph::{ExportGraph, LfeChoice, round_ties_even_i64};
-use secs_types::chain::{BandType, MimoFilter, MimoPaths, SignalChain};
-use std::f64::consts::PI;
+use secs_graph::emit::pyfmt::round_ndigits;
+use secs_graph::{ExportGraph, LfeChoice};
+use secs_types::chain::{BandFamily, BandType, MimoFilter, MimoPaths, SignalChain};
 
-const SAMPLE_RATE: f64 = 48_000.0;
+const SAMPLE_RATE: f64 = secs_dsp::rate::DESIGN_RATE as f64;
 /// The reference renderer accepts output delays up to one minute.
 pub const MAX_OUTPUT_DELAY_SAMPLES: usize = 60 * 48_000;
 
@@ -74,26 +73,23 @@ impl Delay {
 
 #[derive(Debug, Default)]
 struct Biquads {
-    rows: Vec<[f64; 6]>,
-    state: Vec<[f64; 2]>,
+    sections: Vec<Tdf2>,
 }
 impl Biquads {
     fn append(&mut self, sos: &Sos) {
-        self.rows.extend_from_slice(&sos.0);
-        self.state.resize(self.rows.len(), [0.0; 2]);
+        self.sections.extend(sos.0.iter().map(|row| {
+            Tdf2::new(Biquad::from_sos(*row).expect("butter returns normalized finite sections"))
+        }));
     }
     fn band(&mut self, frequency: f64, kind: BandType, high: bool) -> Result<(), DspError> {
         if frequency == 0.0 {
             return Ok(());
         }
-        let (order, copies) = match kind {
-            BandType::Lr12 => (1, 2),
-            BandType::Lr24 => (2, 2),
-            BandType::Lr48 => (4, 2),
-            BandType::Bw12 => (2, 1),
-            BandType::Bw24 => (4, 1),
-            BandType::Bw48 => (8, 1),
+        let order = match kind.family() {
+            BandFamily::LinkwitzRiley => usize::from(kind.order() / 2),
+            BandFamily::Butterworth => usize::from(kind.order()),
         };
+        let copies = kind.cascades();
         let sos = butter(
             order,
             &[frequency],
@@ -123,36 +119,24 @@ impl Biquads {
         {
             return Err(invalid("invalid playback peaking EQ"));
         }
-        let a = 10_f64.powf(gain_db / 40.0);
-        let w = 2.0 * PI * frequency / SAMPLE_RATE;
-        let alpha = w.sin() / (2.0 * q);
-        let a0 = 1.0 + alpha / a;
-        let row = [
-            (1.0 + alpha * a) / a0,
-            -2.0 * w.cos() / a0,
-            (1.0 - alpha * a) / a0,
-            1.0,
-            -2.0 * w.cos() / a0,
-            (1.0 - alpha / a) / a0,
-        ];
-        if row.iter().any(|x| !x.is_finite()) {
+        let section = rbj_peaking(SAMPLE_RATE, frequency, q, gain_db);
+        if !section.is_finite() {
             return Err(invalid("invalid playback peaking coefficients"));
         }
-        self.append(&Sos(vec![row]));
+        self.sections.push(Tdf2::new(section));
         Ok(())
     }
     fn process(&mut self, values: &mut [f64]) {
-        for (row, state) in self.rows.iter().zip(&mut self.state) {
+        for section in &mut self.sections {
             for value in values.iter_mut() {
-                let input = *value;
-                *value = row[0] * input + state[0];
-                state[0] = row[1] * input - row[4] * *value + state[1];
-                state[1] = row[2] * input - row[5] * *value;
+                *value = section.process(*value);
             }
         }
     }
     fn reset(&mut self) {
-        self.state.fill([0.0; 2]);
+        for section in &mut self.sections {
+            section.reset();
+        }
     }
 }
 
@@ -275,8 +259,9 @@ impl MimoFirPlayback {
         // CamillaDSP writer emits it, and one whole-sample delay per group: it
         // joins graph groups whose rounded cutoff coincides and splits them by
         // each path's rounded delay, in path order.
+        let rounded_groups = graph.support_groups_rounded();
         let mut support_group = vec![0; mimo.paths.len()];
-        for (index, group) in graph.support_groups().iter().enumerate() {
+        for (index, group) in rounded_groups.iter().enumerate() {
             for &member in &group.members {
                 support_group[member] = index;
             }
@@ -284,7 +269,7 @@ impl MimoFirPlayback {
         let mut groups: Vec<Group> = Vec::new();
         let mut routes = Vec::with_capacity(mimo.paths.len());
         for (path_index, path) in mimo.paths.iter().enumerate() {
-            let shared = &graph.support_groups()[support_group[path_index]];
+            let shared = &rounded_groups[support_group[path_index]];
             let input = inputs
                 .iter()
                 .position(|r| r == &path.input)
@@ -296,9 +281,9 @@ impl MimoFirPlayback {
                 return Err(invalid("invalid playback high-pass or output delay"));
             }
             let output = shared.output;
-            let low_hz = round_ndigits(shared.low_hz, 3);
+            let low_hz = shared.low_hz;
             // Preserve the writer's floating-point evaluation order at half samples.
-            let delay_samples = round_ties_even_i64(path.delay_ms * SAMPLE_RATE / 1000.0) as usize;
+            let delay_samples = (path.delay_ms * SAMPLE_RATE / 1000.0).round_ties_even() as usize;
             let group = if let Some(index) = groups.iter().position(|g| {
                 g.output == output && g.low_hz == low_hz && g.delay_samples == delay_samples
             }) {
@@ -776,10 +761,13 @@ mod tests {
 
     #[test]
     fn playback_groups_match_per_path_reference_and_reset() {
-        let chain = chain();
+        let mut chain = chain();
+        let mut center = chain.mains[0].clone();
+        center.role = "C".into();
+        chain.mains.push(center);
         let paths = MimoPaths {
             fsiso: 150.0,
-            paths: [("L", 40.12345, 2.5), ("R", 40.12345, 2.5), ("L", 55.0, 5.5)]
+            paths: [("L", 40.12345, 2.5), ("R", 40.12345, 2.5), ("C", 55.0, 5.5)]
                 .iter()
                 .map(|&(input, low_hz, samples)| MimoPath {
                     input: input.into(),
@@ -795,8 +783,8 @@ mod tests {
         let mut renderer =
             MimoFirPlayback::new(&chain, &paths, PlaybackMode::FullRate { block_size: 32 })
                 .unwrap();
-        assert_eq!(renderer.transforms_per_block(), (2, 2));
-        let input: Vec<Vec<f64>> = (0..2)
+        assert_eq!(renderer.transforms_per_block(), (3, 2));
+        let input: Vec<Vec<f64>> = (0..3)
             .map(|c| {
                 (0..1024)
                     .map(|n| ((n * (c + 1)) as f64 / 13.0).sin() * 0.5)
@@ -808,7 +796,10 @@ mod tests {
             let MimoFilter::Fir { taps_48k } = &path.filter else {
                 unreachable!()
             };
-            let index = usize::from(path.input == "R");
+            let index = ["L", "R", "C"]
+                .iter()
+                .position(|role| *role == path.input)
+                .unwrap();
             let mut response = direct(&input[index], taps_48k);
             let hp = butter(
                 2,
@@ -818,7 +809,7 @@ mod tests {
             )
             .unwrap();
             response = sosfilt(&hp, &sosfilt(&hp, &response).unwrap()).unwrap();
-            let delay = round_ties_even_i64(path.delay_ms * SAMPLE_RATE / 1000.0) as usize;
+            let delay = (path.delay_ms * SAMPLE_RATE / 1000.0).round_ties_even() as usize;
             for n in delay..expected.len() {
                 expected[n] += response[n - delay];
             }
@@ -832,13 +823,20 @@ mod tests {
         for pass in 0..2 {
             let mut rendered = Vec::new();
             for n in (0..1024).step_by(32) {
-                let mut outputs = [vec![0.0; 32], vec![0.0; 32], vec![0.0; 32]];
+                let mut outputs = [vec![0.0; 32], vec![0.0; 32], vec![0.0; 32], vec![0.0; 32]];
                 let mut views: Vec<_> = outputs.iter_mut().map(Vec::as_mut_slice).collect();
                 renderer
-                    .process(&[&input[0][n..n + 32], &input[1][n..n + 32]], &mut views)
+                    .process(
+                        &[
+                            &input[0][n..n + 32],
+                            &input[1][n..n + 32],
+                            &input[2][n..n + 32],
+                        ],
+                        &mut views,
+                    )
                     .unwrap();
-                assert!(outputs[..2].iter().flatten().all(|x| *x == 0.0));
-                rendered.extend_from_slice(&outputs[2]);
+                assert!(outputs[..3].iter().flatten().all(|x| *x == 0.0));
+                rendered.extend_from_slice(&outputs[3]);
             }
             for (a, b) in rendered.iter().zip(&expected) {
                 assert!((a - b).abs() < 2e-12, "{a} != {b}");

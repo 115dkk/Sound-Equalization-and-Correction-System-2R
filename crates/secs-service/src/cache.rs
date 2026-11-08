@@ -1,3 +1,11 @@
+//! 저장된 결과의 키는 판이 바뀌어도 고정되는 형식이 아닙니다.
+//!
+//! `config_key`, `run_key`, `xo_rec_key`에는 `SpeakerConfig`와 `XoSettings`의
+//! `Debug` 표현이 들어갑니다. 두 구조체에 필드를 추가하면 업그레이드 뒤 저장된
+//! 결과와 크로스오버 추천은 모두 낡음이 됩니다. 이는 유지보수자가 승인한 정책입니다
+//! (감사 #186 TD-166, 2026-11-06). 캐시를 무효화하지 않아야 하는 변경에서는
+//! 두 구조체의 `Debug` 출력을 그대로 유지하십시오. 캐시 파일의 `VERSION`과는 별개입니다.
+
 use std::fs;
 use std::io::{BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
@@ -265,6 +273,7 @@ mod tests {
                 late_energy: vec![],
                 latency_ms: 4.0,
                 notes: vec![],
+                notices: vec![],
                 main_roles: vec![],
                 sub_roles: vec![],
             },
@@ -467,6 +476,7 @@ mod tests {
             support_count: 0,
             fir_taps_total: 0,
             notes: vec![],
+            notices: vec![],
             input_count: 0,
             scorecard: vec![],
             late_energy: vec![],
@@ -550,6 +560,7 @@ mod tests {
             input_count: path_count.div_ceil(12),
             fir_taps_total: path_count * taps,
             notes: vec![],
+            notices: vec![],
             scorecard: vec![],
             late_energy: vec![],
         });
@@ -580,7 +591,7 @@ mod tests {
         })
         .unwrap();
         assert!(summary.len() < 4096);
-        eprintln!(
+        println!(
             "132 x 8000 cache_bytes={bytes} summary_bytes={}",
             summary.len()
         );

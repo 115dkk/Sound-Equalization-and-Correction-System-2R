@@ -6,7 +6,7 @@ use std::sync::OnceLock;
 
 /// Design sample rate in Hz. Every measurement must use it (upstream checks
 /// only the main position; SECS 2R checks all, D2).
-pub const SR: u32 = 48_000;
+pub const SR: u32 = secs_dsp::rate::DESIGN_RATE;
 /// [`SR`] as a float, for arithmetic.
 pub const SR_F: f64 = 48_000.0;
 /// Design FFT length, 2^17 (0.366 Hz bins), enough to resolve low room modes.

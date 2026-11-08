@@ -1,0 +1,810 @@
+[
+  {
+    "params": {
+      "method": "app_settings_set",
+      "policy": "auto",
+      "phase": "off"
+    },
+    "data": {
+      "policy": "auto",
+      "phase": "checking"
+    }
+  },
+  {
+    "params": {
+      "method": "app_settings_set",
+      "policy": "notify",
+      "phase": "off"
+    },
+    "data": {
+      "policy": "notify",
+      "phase": "checking"
+    }
+  },
+  {
+    "params": {
+      "method": "app_settings_set",
+      "policy": "off",
+      "phase": "off"
+    },
+    "data": {
+      "policy": "off",
+      "phase": "off"
+    }
+  },
+  {
+    "params": {
+      "method": "update_check",
+      "policy": "off",
+      "phase": "off"
+    },
+    "data": {
+      "policy": "off",
+      "phase": "checking"
+    }
+  },
+  {
+    "params": {
+      "method": "update_download",
+      "policy": "off",
+      "phase": "off"
+    },
+    "data": {
+      "error": {
+        "code": "invalid_request",
+        "detail": "No update is available to download"
+      }
+    }
+  },
+  {
+    "params": {
+      "method": "update_restart",
+      "policy": "off",
+      "phase": "off"
+    },
+    "data": {
+      "error": {
+        "code": "invalid_request",
+        "detail": "No update is ready to install"
+      }
+    }
+  },
+  {
+    "params": {
+      "method": "update_notice_dismiss",
+      "policy": "off",
+      "phase": "off"
+    },
+    "data": {
+      "policy": "off",
+      "phase": "off"
+    }
+  },
+  {
+    "params": {
+      "method": "app_settings_set",
+      "policy": "auto",
+      "phase": "idle"
+    },
+    "data": {
+      "policy": "auto",
+      "phase": "idle"
+    }
+  },
+  {
+    "params": {
+      "method": "app_settings_set",
+      "policy": "notify",
+      "phase": "idle"
+    },
+    "data": {
+      "policy": "notify",
+      "phase": "idle"
+    }
+  },
+  {
+    "params": {
+      "method": "app_settings_set",
+      "policy": "off",
+      "phase": "idle"
+    },
+    "data": {
+      "policy": "off",
+      "phase": "off"
+    }
+  },
+  {
+    "params": {
+      "method": "update_check",
+      "policy": "notify",
+      "phase": "idle"
+    },
+    "data": {
+      "policy": "notify",
+      "phase": "checking"
+    }
+  },
+  {
+    "params": {
+      "method": "update_download",
+      "policy": "notify",
+      "phase": "idle"
+    },
+    "data": {
+      "error": {
+        "code": "invalid_request",
+        "detail": "No update is available to download"
+      }
+    }
+  },
+  {
+    "params": {
+      "method": "update_restart",
+      "policy": "notify",
+      "phase": "idle"
+    },
+    "data": {
+      "error": {
+        "code": "invalid_request",
+        "detail": "No update is ready to install"
+      }
+    }
+  },
+  {
+    "params": {
+      "method": "update_notice_dismiss",
+      "policy": "notify",
+      "phase": "idle"
+    },
+    "data": {
+      "policy": "notify",
+      "phase": "idle"
+    }
+  },
+  {
+    "params": {
+      "method": "app_settings_set",
+      "policy": "auto",
+      "phase": "checking"
+    },
+    "data": {
+      "policy": "auto",
+      "phase": "checking"
+    }
+  },
+  {
+    "params": {
+      "method": "app_settings_set",
+      "policy": "notify",
+      "phase": "checking"
+    },
+    "data": {
+      "policy": "notify",
+      "phase": "checking"
+    }
+  },
+  {
+    "params": {
+      "method": "app_settings_set",
+      "policy": "off",
+      "phase": "checking"
+    },
+    "data": {
+      "policy": "off",
+      "phase": "off"
+    }
+  },
+  {
+    "params": {
+      "method": "update_check",
+      "policy": "notify",
+      "phase": "checking"
+    },
+    "data": {
+      "policy": "notify",
+      "phase": "checking"
+    }
+  },
+  {
+    "params": {
+      "method": "update_download",
+      "policy": "notify",
+      "phase": "checking"
+    },
+    "data": {
+      "error": {
+        "code": "invalid_request",
+        "detail": "No update is available to download"
+      }
+    }
+  },
+  {
+    "params": {
+      "method": "update_restart",
+      "policy": "notify",
+      "phase": "checking"
+    },
+    "data": {
+      "error": {
+        "code": "invalid_request",
+        "detail": "No update is ready to install"
+      }
+    }
+  },
+  {
+    "params": {
+      "method": "update_notice_dismiss",
+      "policy": "notify",
+      "phase": "checking"
+    },
+    "data": {
+      "policy": "notify",
+      "phase": "checking"
+    }
+  },
+  {
+    "params": {
+      "method": "app_settings_set",
+      "policy": "auto",
+      "phase": "up_to_date"
+    },
+    "data": {
+      "policy": "auto",
+      "phase": "up_to_date"
+    }
+  },
+  {
+    "params": {
+      "method": "app_settings_set",
+      "policy": "notify",
+      "phase": "up_to_date"
+    },
+    "data": {
+      "policy": "notify",
+      "phase": "up_to_date"
+    }
+  },
+  {
+    "params": {
+      "method": "app_settings_set",
+      "policy": "off",
+      "phase": "up_to_date"
+    },
+    "data": {
+      "policy": "off",
+      "phase": "off"
+    }
+  },
+  {
+    "params": {
+      "method": "update_check",
+      "policy": "notify",
+      "phase": "up_to_date"
+    },
+    "data": {
+      "policy": "notify",
+      "phase": "checking"
+    }
+  },
+  {
+    "params": {
+      "method": "update_download",
+      "policy": "notify",
+      "phase": "up_to_date"
+    },
+    "data": {
+      "error": {
+        "code": "invalid_request",
+        "detail": "No update is available to download"
+      }
+    }
+  },
+  {
+    "params": {
+      "method": "update_restart",
+      "policy": "notify",
+      "phase": "up_to_date"
+    },
+    "data": {
+      "error": {
+        "code": "invalid_request",
+        "detail": "No update is ready to install"
+      }
+    }
+  },
+  {
+    "params": {
+      "method": "update_notice_dismiss",
+      "policy": "notify",
+      "phase": "up_to_date"
+    },
+    "data": {
+      "policy": "notify",
+      "phase": "up_to_date"
+    }
+  },
+  {
+    "params": {
+      "method": "app_settings_set",
+      "policy": "auto",
+      "phase": "available"
+    },
+    "data": {
+      "policy": "auto",
+      "phase": "downloading"
+    }
+  },
+  {
+    "params": {
+      "method": "app_settings_set",
+      "policy": "notify",
+      "phase": "available"
+    },
+    "data": {
+      "policy": "notify",
+      "phase": "available"
+    }
+  },
+  {
+    "params": {
+      "method": "app_settings_set",
+      "policy": "off",
+      "phase": "available"
+    },
+    "data": {
+      "policy": "off",
+      "phase": "off"
+    }
+  },
+  {
+    "params": {
+      "method": "update_check",
+      "policy": "notify",
+      "phase": "available"
+    },
+    "data": {
+      "policy": "notify",
+      "phase": "checking"
+    }
+  },
+  {
+    "params": {
+      "method": "update_download",
+      "policy": "notify",
+      "phase": "available"
+    },
+    "data": {
+      "policy": "notify",
+      "phase": "downloading"
+    }
+  },
+  {
+    "params": {
+      "method": "update_restart",
+      "policy": "notify",
+      "phase": "available"
+    },
+    "data": {
+      "error": {
+        "code": "invalid_request",
+        "detail": "No update is ready to install"
+      }
+    }
+  },
+  {
+    "params": {
+      "method": "update_notice_dismiss",
+      "policy": "notify",
+      "phase": "available"
+    },
+    "data": {
+      "policy": "notify",
+      "phase": "available"
+    }
+  },
+  {
+    "params": {
+      "method": "app_settings_set",
+      "policy": "auto",
+      "phase": "downloading"
+    },
+    "data": {
+      "policy": "auto",
+      "phase": "downloading"
+    }
+  },
+  {
+    "params": {
+      "method": "app_settings_set",
+      "policy": "notify",
+      "phase": "downloading"
+    },
+    "data": {
+      "policy": "notify",
+      "phase": "available"
+    }
+  },
+  {
+    "params": {
+      "method": "app_settings_set",
+      "policy": "off",
+      "phase": "downloading"
+    },
+    "data": {
+      "policy": "off",
+      "phase": "off"
+    }
+  },
+  {
+    "params": {
+      "method": "update_check",
+      "policy": "auto",
+      "phase": "downloading"
+    },
+    "data": {
+      "policy": "auto",
+      "phase": "checking"
+    }
+  },
+  {
+    "params": {
+      "method": "update_download",
+      "policy": "auto",
+      "phase": "downloading"
+    },
+    "data": {
+      "error": {
+        "code": "invalid_request",
+        "detail": "No update is available to download"
+      }
+    }
+  },
+  {
+    "params": {
+      "method": "update_restart",
+      "policy": "auto",
+      "phase": "downloading"
+    },
+    "data": {
+      "error": {
+        "code": "invalid_request",
+        "detail": "No update is ready to install"
+      }
+    }
+  },
+  {
+    "params": {
+      "method": "update_notice_dismiss",
+      "policy": "auto",
+      "phase": "downloading"
+    },
+    "data": {
+      "policy": "auto",
+      "phase": "downloading"
+    }
+  },
+  {
+    "params": {
+      "method": "app_settings_set",
+      "policy": "auto",
+      "phase": "ready"
+    },
+    "data": {
+      "policy": "auto",
+      "phase": "ready"
+    }
+  },
+  {
+    "params": {
+      "method": "app_settings_set",
+      "policy": "notify",
+      "phase": "ready"
+    },
+    "data": {
+      "policy": "notify",
+      "phase": "ready"
+    }
+  },
+  {
+    "params": {
+      "method": "app_settings_set",
+      "policy": "off",
+      "phase": "ready"
+    },
+    "data": {
+      "policy": "off",
+      "phase": "off"
+    }
+  },
+  {
+    "params": {
+      "method": "update_check",
+      "policy": "auto",
+      "phase": "ready"
+    },
+    "data": {
+      "policy": "auto",
+      "phase": "checking"
+    }
+  },
+  {
+    "params": {
+      "method": "update_download",
+      "policy": "auto",
+      "phase": "ready"
+    },
+    "data": {
+      "error": {
+        "code": "invalid_request",
+        "detail": "No update is available to download"
+      }
+    }
+  },
+  {
+    "params": {
+      "method": "update_restart",
+      "policy": "auto",
+      "phase": "ready"
+    },
+    "data": {
+      "policy": "auto",
+      "phase": "installing"
+    }
+  },
+  {
+    "params": {
+      "method": "update_notice_dismiss",
+      "policy": "auto",
+      "phase": "ready"
+    },
+    "data": {
+      "policy": "auto",
+      "phase": "ready"
+    }
+  },
+  {
+    "params": {
+      "method": "app_settings_set",
+      "policy": "auto",
+      "phase": "installing"
+    },
+    "data": {
+      "policy": "auto",
+      "phase": "installing"
+    }
+  },
+  {
+    "params": {
+      "method": "app_settings_set",
+      "policy": "notify",
+      "phase": "installing"
+    },
+    "data": {
+      "policy": "notify",
+      "phase": "installing"
+    }
+  },
+  {
+    "params": {
+      "method": "app_settings_set",
+      "policy": "off",
+      "phase": "installing"
+    },
+    "data": {
+      "policy": "off",
+      "phase": "installing"
+    }
+  },
+  {
+    "params": {
+      "method": "update_check",
+      "policy": "auto",
+      "phase": "installing"
+    },
+    "data": {
+      "error": {
+        "code": "invalid_request",
+        "detail": "The app is closing"
+      }
+    }
+  },
+  {
+    "params": {
+      "method": "update_download",
+      "policy": "auto",
+      "phase": "installing"
+    },
+    "data": {
+      "error": {
+        "code": "invalid_request",
+        "detail": "No update is available to download"
+      }
+    }
+  },
+  {
+    "params": {
+      "method": "update_restart",
+      "policy": "auto",
+      "phase": "installing"
+    },
+    "data": {
+      "error": {
+        "code": "invalid_request",
+        "detail": "No update is ready to install"
+      }
+    }
+  },
+  {
+    "params": {
+      "method": "update_notice_dismiss",
+      "policy": "auto",
+      "phase": "installing"
+    },
+    "data": {
+      "policy": "auto",
+      "phase": "installing"
+    }
+  },
+  {
+    "params": {
+      "method": "app_settings_set",
+      "policy": "auto",
+      "phase": "portable"
+    },
+    "data": {
+      "policy": "auto",
+      "phase": "portable"
+    }
+  },
+  {
+    "params": {
+      "method": "app_settings_set",
+      "policy": "notify",
+      "phase": "portable"
+    },
+    "data": {
+      "policy": "notify",
+      "phase": "portable"
+    }
+  },
+  {
+    "params": {
+      "method": "app_settings_set",
+      "policy": "off",
+      "phase": "portable"
+    },
+    "data": {
+      "policy": "off",
+      "phase": "off"
+    }
+  },
+  {
+    "params": {
+      "method": "update_check",
+      "policy": "auto",
+      "phase": "portable"
+    },
+    "data": {
+      "policy": "auto",
+      "phase": "checking"
+    }
+  },
+  {
+    "params": {
+      "method": "update_download",
+      "policy": "auto",
+      "phase": "portable"
+    },
+    "data": {
+      "error": {
+        "code": "invalid_request",
+        "detail": "No update is available to download"
+      }
+    }
+  },
+  {
+    "params": {
+      "method": "update_restart",
+      "policy": "auto",
+      "phase": "portable"
+    },
+    "data": {
+      "error": {
+        "code": "invalid_request",
+        "detail": "No update is ready to install"
+      }
+    }
+  },
+  {
+    "params": {
+      "method": "update_notice_dismiss",
+      "policy": "auto",
+      "phase": "portable"
+    },
+    "data": {
+      "policy": "auto",
+      "phase": "portable"
+    }
+  },
+  {
+    "params": {
+      "method": "app_settings_set",
+      "policy": "auto",
+      "phase": "failed"
+    },
+    "data": {
+      "policy": "auto",
+      "phase": "failed"
+    }
+  },
+  {
+    "params": {
+      "method": "app_settings_set",
+      "policy": "notify",
+      "phase": "failed"
+    },
+    "data": {
+      "policy": "notify",
+      "phase": "failed"
+    }
+  },
+  {
+    "params": {
+      "method": "app_settings_set",
+      "policy": "off",
+      "phase": "failed"
+    },
+    "data": {
+      "policy": "off",
+      "phase": "off"
+    }
+  },
+  {
+    "params": {
+      "method": "update_check",
+      "policy": "auto",
+      "phase": "failed"
+    },
+    "data": {
+      "policy": "auto",
+      "phase": "checking"
+    }
+  },
+  {
+    "params": {
+      "method": "update_download",
+      "policy": "auto",
+      "phase": "failed"
+    },
+    "data": {
+      "error": {
+        "code": "invalid_request",
+        "detail": "No update is available to download"
+      }
+    }
+  },
+  {
+    "params": {
+      "method": "update_restart",
+      "policy": "auto",
+      "phase": "failed"
+    },
+    "data": {
+      "error": {
+        "code": "invalid_request",
+        "detail": "No update is ready to install"
+      }
+    }
+  },
+  {
+    "params": {
+      "method": "update_notice_dismiss",
+      "policy": "auto",
+      "phase": "failed"
+    },
+    "data": {
+      "policy": "auto",
+      "phase": "failed"
+    }
+  }
+]

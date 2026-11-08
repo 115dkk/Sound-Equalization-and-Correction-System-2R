@@ -6,7 +6,9 @@
 //! and export assembly. Applications provide platform dependencies and an event
 //! sink; they do not implement domain policy.
 
+mod app_settings;
 mod apply;
+pub use app_settings::SettingsEffect;
 mod cache;
 mod calibration;
 mod clock;
@@ -17,33 +19,40 @@ mod design_export;
 pub mod dirac_import;
 mod export;
 pub mod export_folder;
+mod export_plan;
+#[cfg(test)]
+mod export_plan_tests;
 mod export_run;
-mod host;
+mod fs;
 mod ipc;
 mod jobs;
 pub mod mdat_import;
-pub mod measure;
+mod measure;
+pub use measure::{
+    CancelToken, Device, MeasureError, MeasurementSettings, MockMeasurer, RewMeasurer, Status,
+    plan_for, sample, store_devices, to_audio_plan, to_rew_plan,
+};
 mod measurement;
-mod measurement_file;
+pub mod measurement_file;
 mod mic_calibration;
 mod monitor;
 mod project_edit;
 mod results;
 mod session;
 mod settings_edit;
+pub mod update_machine;
 mod watch;
 
 use std::borrow::Cow;
 use std::fmt::Debug;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::time::{Duration, SystemTime};
 
 use secs_compute::MemoryProbe;
 use secs_types::ipc::{
     ApplyOutcome, BootstrapInfo, CamillaStatus, Envelope, ErrorCode, IncludeState, IpcError,
-    JobEvent, LocalApiStatus, Platform, Request, UpdatePhase, UpdatePolicy, UpdateStatus,
+    JobEvent, LocalApiStatus, Notice, Platform, Request, UpdatePhase, UpdatePolicy, UpdateStatus,
     UpstreamBase,
 };
 
@@ -72,6 +81,16 @@ pub fn upstream() -> &'static UpstreamBase {
         file.upstream
     })
 }
+
+/// Severity of a line the service writes to the embedder's log (TD-151).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LogLevel {
+    Warn,
+    Error,
+}
+
+/// Receives one line: level, a short static scope, and the text.
+pub type LogSink = Arc<dyn Fn(LogLevel, &'static str, &str) + Send + Sync>;
 
 /// Receives pushed job events. Implementations must return quickly.
 pub trait EventSink: Send + Sync + Debug {
@@ -150,8 +169,9 @@ pub trait Host: Send + Sync + Debug {
     fn home_dir(&self) -> Result<std::path::PathBuf, IpcError> {
         not_implemented("home directory")
     }
-    /// Starts REW in API mode without a shell.
-    fn launch_rew(&self) -> Result<(), RewLaunchError> {
+    /// Starts REW in API mode without a shell. `executable` is the path the
+    /// project names (TD-221); without one the host finds the installed REW.
+    fn launch_rew(&self, _executable: Option<&Path>) -> Result<(), RewLaunchError> {
         Err(RewLaunchError::CannotLaunch(
             "host REW launch is not implemented".into(),
         ))
@@ -380,7 +400,7 @@ pub struct Deps {
     pub app_version: Cow<'static, str>,
     /// Resolves a requested compute policy without platform dependencies in the service.
     pub acceleration: Arc<
-        dyn Fn(secs_types::compute::ComputePreference) -> secs_engine::mimo::AccelerationSelection
+        dyn Fn(secs_types::compute::ComputePreference) -> secs_engine::AccelerationSelection
             + Send
             + Sync,
     >,
@@ -388,7 +408,7 @@ pub struct Deps {
     pub compute_override: Option<secs_types::compute::ComputePreference>,
     /// Creates an audio backend adapter for one measurement operation.
     pub audio_backend: Arc<dyn Fn() -> Box<dyn secs_audio::AudioBackend> + Send + Sync>,
-    /// Creates the sample-room measurer; tests may inject explicit delayed rooms.
+    /// Test seam for the mock measurement method, separate from the real-device audio backend (audit #186 A28).
     pub mock_measurer: Arc<dyn Fn() -> measure::MockMeasurer + Send + Sync>,
     /// Creates a REW transport adapter for one operation.
     pub rew_transport: Arc<dyn Fn() -> Box<dyn secs_rew::Transport> + Send + Sync>,
@@ -408,6 +428,8 @@ pub struct Deps {
     pub app_data_path: PathBuf,
     /// App log directory exposed through bootstrap, or none when the embedder keeps no app log.
     pub log_dir: Option<PathBuf>,
+    /// Reports failures that do not fail the request.
+    pub log: LogSink,
     /// Detects the machine-wide Equalizer APO installation.
     pub eqapo_install: Arc<dyn Fn() -> Option<secs_types::ipc::EqApoInstall> + Send + Sync>,
     /// Connects the service to the unpublished application protocol crate.
@@ -442,6 +464,7 @@ impl Debug for Deps {
             .field("app_settings_path", &self.app_settings_path)
             .field("app_data_path", &self.app_data_path)
             .field("log_dir", &self.log_dir)
+            .field("log", &"sink")
             .field("eqapo_install", &"detector")
             .field("apply", &self.apply)
             .field("managed_host", &self.managed_host)
@@ -510,6 +533,13 @@ impl Default for Deps {
             app_settings_path: None,
             app_data_path: std::env::temp_dir().join("secs2r"),
             log_dir: None,
+            log: Arc::new(|level, scope, line| {
+                let level = match level {
+                    LogLevel::Warn => "warn",
+                    LogLevel::Error => "error",
+                };
+                eprintln!("[{level}] {scope}: {line}");
+            }),
             eqapo_install: Arc::new(|| None),
             apply: Arc::new(NoApplyAdapter),
             managed_host: Arc::new(NoManagedHost),
@@ -530,32 +560,60 @@ pub(crate) enum ServiceError {
     #[error("{0}")]
     InvalidRequest(String),
     #[error("project I/O: {0}")]
-    Project(String),
+    Project(#[from] secs_project::ProjectError),
+    #[error("project I/O: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("project I/O: {0}")]
+    ProjectMessage(String),
+    #[error("project I/O at {path:?}: {source}")]
+    ProjectOpen {
+        path: PathBuf,
+        #[source]
+        source: secs_project::ProjectError,
+    },
 }
 
-impl From<secs_project::ProjectError> for ServiceError {
-    fn from(value: secs_project::ProjectError) -> Self {
-        Self::Project(value.to_string())
-    }
+fn project_open_ipc(path: PathBuf, source: secs_project::ProjectError) -> IpcError {
+    let (code, reason) = match &source {
+        secs_project::ProjectError::Io(error)
+            if error.kind() == std::io::ErrorKind::PermissionDenied =>
+        {
+            (ErrorCode::PermissionDenied, "permission_denied")
+        }
+        secs_project::ProjectError::Io(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            (ErrorCode::ProjectIo, "not_found")
+        }
+        secs_project::ProjectError::Io(_) => (ErrorCode::ProjectIo, "io"),
+        secs_project::ProjectError::Json(_) => (ErrorCode::ProjectIo, "json"),
+        secs_project::ProjectError::Invalid(_) => (ErrorCode::ProjectIo, "invalid"),
+        secs_project::ProjectError::Wav(_) => (ErrorCode::ProjectIo, "wav"),
+        secs_project::ProjectError::IrPath { .. } => (ErrorCode::ProjectIo, "ir_path"),
+    };
+    // TD-208: use IpcError::io once P184 lands.
+    IpcError::new(code, source.to_string())
+        .with_param("path", path.to_string_lossy().into_owned())
+        .with_param("reason", reason)
 }
-impl From<std::io::Error> for ServiceError {
-    fn from(value: std::io::Error) -> Self {
-        Self::Project(value.to_string())
-    }
-}
+
 impl From<ServiceError> for IpcError {
     fn from(value: ServiceError) -> Self {
         match value {
             ServiceError::ProjectNotOpen => {
-                IpcError::new(ErrorCode::ProjectNotOpen, value.to_string())
+                IpcError::new(ErrorCode::ProjectNotOpen, "project is not open")
             }
-            ServiceError::TutorialBlocked => {
-                IpcError::new(ErrorCode::TutorialBlocked, value.to_string())
+            ServiceError::TutorialBlocked => IpcError::new(
+                ErrorCode::TutorialBlocked,
+                "tutorial sessions cannot write project data",
+            ),
+            ServiceError::InvalidRequest(detail) => {
+                IpcError::new(ErrorCode::InvalidRequest, detail)
             }
-            ServiceError::InvalidRequest(_) => {
-                IpcError::new(ErrorCode::InvalidRequest, value.to_string())
+            ServiceError::Project(source) => {
+                IpcError::new(ErrorCode::ProjectIo, source.to_string())
             }
-            ServiceError::Project(_) => IpcError::new(ErrorCode::ProjectIo, value.to_string()),
+            ServiceError::Io(source) => IpcError::new(ErrorCode::ProjectIo, source.to_string()),
+            ServiceError::ProjectMessage(detail) => IpcError::new(ErrorCode::ProjectIo, detail),
+            ServiceError::ProjectOpen { path, source } => project_open_ipc(path, source),
         }
     }
 }
@@ -573,66 +631,43 @@ impl EventSink for ObservedEvents {
     }
 }
 
-/// Rejects application-setting effects that belong to an older save.
-#[derive(Debug, Default)]
-pub struct AppEffects {
-    last: u64,
-    settings: Option<secs_types::ipc::AppSettings>,
-}
-
-impl AppEffects {
-    /// Starts effect ordering from settings already applied by the app.
-    #[must_use]
-    pub fn new(revision: u64, settings: secs_types::ipc::AppSettings) -> Self {
-        Self {
-            last: revision,
-            settings: Some(settings),
-        }
-    }
-
-    /// Accepts a newer revision and returns the settings whose effects are active.
-    pub fn accept(
-        &mut self,
-        revision: u64,
-        settings: &secs_types::ipc::AppSettings,
-    ) -> Option<secs_types::ipc::AppSettings> {
-        if revision <= self.last {
-            return None;
-        }
-        self.last = revision;
-        Some(self.settings.replace(settings.clone()).unwrap_or_default())
-    }
-}
-
 #[cfg(test)]
 mod app_effect_tests {
-    use super::AppEffects;
-
+    /// TD-208: the mapping itself, so the registration holds on every OS (the
+    /// ACL round trip stays a Windows-only integration test).
     #[test]
-    fn effects_compare_with_the_last_applied_settings_td115() {
-        let mut applied = secs_types::ipc::AppSettings {
-            updates: secs_types::ipc::UpdatePolicy::Notify,
-            ..Default::default()
-        };
-        let mut revision_two = applied.clone();
-        revision_two.updates = secs_types::ipc::UpdatePolicy::Off;
-        let mut revision_three = revision_two.clone();
-        revision_three.theme = secs_types::ipc::AppTheme::Dark;
-
-        let mut effects = AppEffects::new(1, applied.clone());
-        let previous = effects.accept(3, &revision_three).unwrap();
-        assert_eq!(previous.updates, secs_types::ipc::UpdatePolicy::Notify);
-        assert_ne!(previous.updates, revision_three.updates);
-        assert!(effects.accept(2, &revision_two).is_none());
-
-        applied.theme = secs_types::ipc::AppTheme::Light;
-        assert_eq!(effects.accept(4, &applied).unwrap(), revision_three);
+    fn project_open_permission_denied_maps_to_permission_denied_td208() {
+        let path = std::path::PathBuf::from("locked.secs");
+        let error = super::project_open_ipc(
+            path.clone(),
+            secs_project::ProjectError::Io(std::io::Error::from(
+                std::io::ErrorKind::PermissionDenied,
+            )),
+        );
+        assert_eq!(error.code, secs_types::ipc::ErrorCode::PermissionDenied);
+        assert_eq!(
+            error.params.get("reason").map(String::as_str),
+            Some("permission_denied")
+        );
+        assert_eq!(
+            error.params.get("path").map(String::as_str),
+            Some(path.to_string_lossy().as_ref())
+        );
+        let missing = super::project_open_ipc(
+            path,
+            secs_project::ProjectError::Io(std::io::Error::from(std::io::ErrorKind::NotFound)),
+        );
+        assert_eq!(missing.code, secs_types::ipc::ErrorCode::ProjectIo);
+        assert_eq!(
+            missing.params.get("reason").map(String::as_str),
+            Some("not_found")
+        );
     }
 }
 
 /// One coherent application-settings snapshot and its save revision.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RevisedAppSettings {
+pub(crate) struct RevisedAppSettings {
     /// Monotonically increasing within one service process.
     pub revision: u64,
     /// Settings stored by that revision.
@@ -644,32 +679,58 @@ pub struct RevisedAppSettings {
 pub struct Service {
     deps: Deps,
     session: Arc<Mutex<Session>>,
-    app_settings: Arc<Mutex<secs_types::ipc::AppSettings>>,
-    app_settings_revision: AtomicU64,
-    app_effects: Mutex<AppEffects>,
+    app_settings: app_settings::AppSettingsStore,
+    settings_notice: Option<Notice>,
+    side_mdat_queue: Arc<Mutex<session::SideMdatQueue>>,
+    scanned_mdat: Arc<Mutex<Option<mdat_import::ScannedMdat>>>,
+    curves_cache: curves::CurvesCache,
     jobs: JobRegistry,
     level: monitor::LevelState,
-    status_watch: watch::WatchState,
     rew: measure::RewLink,
 }
 
 impl Service {
     /// Creates a service from platform dependency factories.
     pub fn new(deps: Deps) -> Self {
-        let app_settings = project_edit::load_app_settings(deps.app_settings_path.as_deref());
-        let app_effects = AppEffects::new(1, app_settings.clone());
+        let opened = app_settings::AppSettingsStore::open(deps.app_settings_path.as_deref());
+        let settings_warning = opened.warning;
+        let settings_notice = opened.notice;
+        let app_settings = opened.store;
+        app_settings.register(Arc::new(app_settings::UpdatePolicyEffect(
+            deps.updates.clone(),
+        )));
         let rew = measure::RewLink::new(&deps);
-        Self {
+        let service = Self {
             deps,
             session: Arc::new(Mutex::new(Session::default())),
-            app_settings: Arc::new(Mutex::new(app_settings)),
-            app_settings_revision: AtomicU64::new(1),
-            app_effects: Mutex::new(app_effects),
+            app_settings,
+            settings_notice,
+            side_mdat_queue: Arc::new(Mutex::new(session::SideMdatQueue::default())),
+            scanned_mdat: Arc::new(Mutex::new(None)),
+            curves_cache: Mutex::new(std::collections::HashMap::new()),
             jobs: JobRegistry::default(),
             level: monitor::LevelState::default(),
-            status_watch: watch::WatchState::default(),
             rew,
+        };
+        if let Some(line) = settings_warning {
+            service.log(LogLevel::Warn, "settings", &line);
         }
+        service
+    }
+
+    /// Registers an application-owned effect before the service is shared.
+    pub fn register_settings_effect(&self, effect: Arc<dyn app_settings::SettingsEffect>) {
+        self.app_settings.register(effect);
+    }
+
+    pub(crate) fn log(&self, level: LogLevel, scope: &'static str, line: &str) {
+        (self.deps.log)(level, scope, line);
+    }
+
+    /// Returns the embedder's best-effort log sink for an app-owned companion server.
+    #[doc(hidden)]
+    pub fn log_sink(&self) -> LogSink {
+        self.deps.log.clone()
     }
 
     /// Handles one parsed request. Long work starts a job and pushes events.
@@ -683,12 +744,16 @@ impl Service {
 
     /// Returns the aggregate state used by the local status endpoint.
     pub fn status(&self) -> secs_types::local_api::Status {
-        let session = lock(&self.session);
-        let project = session.info().ok();
-        let results = session.require().ok().map(|open| {
-            let compute = crate::compute::ComputeIdentity::from(&self.acceleration().status);
-            open.results.summary(open.store.project(), &compute)
-        });
+        let compute = crate::compute::ComputeIdentity::from(&self.acceleration().status);
+        let (project, results, last_export) = {
+            let session = lock(&self.session);
+            let project = session.info().ok();
+            let results = session
+                .require()
+                .ok()
+                .map(|open| open.results.summary(open.project(), &compute));
+            (project, results, session.last_export())
+        };
         secs_types::local_api::Status {
             api: secs_types::local_api::API_VERSION,
             app_name: APP_NAME.to_owned(),
@@ -697,45 +762,21 @@ impl Service {
             project,
             jobs: self.jobs.snapshots(),
             results,
-            last_export: session.last_export(),
+            last_export,
         }
     }
 
-    /// Cancels every cancellable job and waits at most `timeout` for device access to stop.
+    /// Cancels every cancellable job except a side mdat save and waits at most
+    /// `timeout` for device access and side mdat saves to stop.
     pub fn shutdown(&self, timeout: std::time::Duration) -> bool {
         self.jobs.cancel_all();
-        self.jobs.wait_for_device(timeout)
+        // A side mdat still running at the deadline is abandoned when the process
+        // exits. `write_atomic_bytes` keeps the destination whole either way.
+        self.jobs.wait_for_device_and_side_mdat(timeout)
     }
 
     /// Parses and handles an untyped request. Malformed input cannot cross the seam.
     pub fn call_value(&self, request: serde_json::Value, events: Arc<dyn EventSink>) -> Envelope {
-        if request.get("method").and_then(serde_json::Value::as_str) == Some("recommend_xo") {
-            let params = match request.get("params") {
-                None | Some(serde_json::Value::Null) => {
-                    Ok(secs_types::ipc::RecommendXoParams::default())
-                }
-                Some(value) => {
-                    serde_json::from_value::<secs_types::ipc::RecommendXoParams>(value.clone())
-                }
-            };
-            return match params {
-                Ok(params) => {
-                    let events = Arc::new(ObservedEvents {
-                        caller: events,
-                        observer: self.deps.observer.clone(),
-                    });
-                    match self.start_xo(params.background, events) {
-                        Ok(started) => {
-                            Envelope::Ok(Box::new(secs_types::ipc::Response::RecommendXo(started)))
-                        }
-                        Err(error) => Envelope::Err(error),
-                    }
-                }
-                Err(error) => {
-                    Envelope::Err(IpcError::new(ErrorCode::InvalidRequest, error.to_string()))
-                }
-            };
-        }
         match serde_json::from_value::<Request>(request) {
             Ok(request) => self.call(request, events),
             Err(error) => {
@@ -759,6 +800,7 @@ impl Service {
                 .log_dir
                 .as_ref()
                 .map(|path| path.to_string_lossy().into_owned()),
+            settings_notice: self.settings_notice.clone(),
         }
     }
 }

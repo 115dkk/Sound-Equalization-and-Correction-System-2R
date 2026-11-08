@@ -1,10 +1,10 @@
 //! Compute policy injection and cache identity, independent of host hardware.
-use secs_engine::mimo::AccelerationSelection;
+use secs_engine::AccelerationSelection;
 use secs_types::compute::{ComputeBackend, ComputePreference, ComputeReason, ComputeStatus};
 use secs_types::ipc::{ErrorCode, IpcError};
 use serde::{Deserialize, Serialize};
 
-use crate::{Service, lock};
+use crate::Service;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct ComputeIdentity {
@@ -61,7 +61,7 @@ impl Service {
         let preference = self
             .deps
             .compute_override
-            .unwrap_or_else(|| lock(&self.app_settings).compute);
+            .unwrap_or_else(|| self.app_settings.compute());
         (self.deps.acceleration)(preference)
     }
 

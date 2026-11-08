@@ -2,6 +2,7 @@
 import type { ChannelScore } from "./ChannelScore";
 import type { LateEnergy } from "./LateEnergy";
 import type { Mode } from "./Mode";
+import type { Note } from "./Note";
 import type { Notice } from "./Notice";
 import type { VerdictSummary } from "./VerdictSummary";
 
@@ -47,9 +48,13 @@ late_energy: Array<LateEnergy>,
  */
 latency_ms: number, 
 /**
- * Informational codes and values translated by the screen.
+ * Typed engine notes translated by the screen.
  */
-notes: Array<Notice>, 
+notes: Array<Note>, 
+/**
+ * Notices produced by service adapters rather than the engine.
+ */
+notices: Array<Notice>, 
 /**
  * Main-channel roles in design order; filter coefficients stay in Rust.
  */

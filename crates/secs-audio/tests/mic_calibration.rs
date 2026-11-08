@@ -191,7 +191,16 @@ fn rew_headings_are_skipped_and_broken_rows_still_fail() {
     );
     let prefix = "20 0\n1000 0\n#";
     let at_limit = format!("{prefix}{}", " ".repeat(4 * 1024 * 1024 - prefix.len()));
-    assert!(MicCalibration::parse_checked(&at_limit).is_ok());
+    let parsed = MicCalibration::parse_checked(&at_limit).unwrap();
+    assert_eq!(parsed.points().len(), 2);
+    assert_eq!(
+        parsed
+            .points()
+            .iter()
+            .map(|point| point.frequency)
+            .collect::<Vec<_>>(),
+        [20.0, 1000.0]
+    );
     assert!(matches!(
         MicCalibration::parse("heading\n20 broken"),
         Err(AudioError::UnsupportedFormat(message)) if message == "invalid calibration line 2"
@@ -216,6 +225,37 @@ fn quoted_metadata_is_bounded_and_unknown_fields_are_ignored() {
         .unwrap();
     assert_eq!(mic.notes(), &["20 not a data row", "Sensitivity broken"]);
     assert_eq!(mic.sensitivity_dbfs_at_94(), None);
+}
+
+#[test]
+fn calibration_curve_validity_matches_embedded_point_parser_td262() {
+    let cases = vec![
+        (vec![20.0, 1_000.0], vec![-200.0, 200.0], true),
+        (vec![], vec![], false),
+        (vec![20.0], vec![0.0], false),
+        (vec![f64::NAN, 1_000.0], vec![0.0, 0.0], false),
+        (vec![20.0, 1_000.0], vec![0.0, f64::INFINITY], false),
+        (vec![0.0, 1_000.0], vec![0.0, 0.0], false),
+        (vec![20.0, 20.0], vec![0.0, 0.0], false),
+        (vec![1_000.0, 20.0], vec![0.0, 0.0], false),
+        (vec![20.0, 1_000.0], vec![0.0, 200.01], false),
+    ];
+    for (frequencies, gains, valid) in cases {
+        assert_eq!(
+            secs_types::calibration::calibration_curve_is_valid(&frequencies, &gains),
+            valid
+        );
+        let points = frequencies
+            .into_iter()
+            .zip(gains)
+            .map(|(frequency, gain_db)| point(frequency, gain_db, None))
+            .collect();
+        assert_eq!(MicCalibration::from_points(points).is_ok(), valid);
+    }
+    assert!(!secs_types::calibration::calibration_curve_is_valid(
+        &[20.0, 1_000.0],
+        &[0.0]
+    ));
 }
 
 #[test]

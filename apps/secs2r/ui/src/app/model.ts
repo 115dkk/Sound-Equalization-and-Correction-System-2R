@@ -1,14 +1,15 @@
 // What the frame shows, as plain data. The screens (P30–P32) and the IPC
 // wiring (P33) compute it from the service; the frame only draws it.
 import type { MessageKey } from "../i18n";
+import type { Notice } from "../ipc/bindings/Notice";
 
 export const STEPS = ["system", "connect", "measure", "calibrate", "export"] as const;
 export type StepId = (typeof STEPS)[number];
 
 /** done: finished; ready: can be worked on; blocked: needs an earlier step; skipped: not on this path (mdat import skips 연결·점검). */
-export type StepStatus = "done" | "ready" | "blocked" | "skipped";
+type StepStatus = "done" | "ready" | "blocked" | "skipped";
 
-export const BLOCKED_REASONS = ["no_project", "no_speakers", "config_invalid", "no_path", "no_measurements", "measuring", "no_result", "computing", "device_busy", "path_not_ready", "no_levels"] as const;
+const BLOCKED_REASONS = ["no_project", "no_speakers", "config_invalid", "no_path", "no_measurements", "measuring", "no_result", "computing", "device_busy", "path_not_ready", "no_levels"] as const;
 export type BlockedReason = (typeof BLOCKED_REASONS)[number];
 
 export type StepState = { status: StepStatus; reason?: BlockedReason; count?: number };
@@ -34,6 +35,12 @@ export type ProjectSummary = {
   warnings?: readonly ProjectWarning[];
   /** Changes with every project opened or created (the session's count). */
   opened?: number;
+  /**
+   * Why the app started from default settings (`BootstrapInfo.settings_notice`,
+   * ADR 0051). The app's, not the project's: it shows with or without one,
+   * beside the project warnings, until closed for the session.
+   */
+  settingsNotice?: Notice | null;
 };
 
 export type FrameModel = {

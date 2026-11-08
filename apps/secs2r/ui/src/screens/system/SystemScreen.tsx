@@ -37,7 +37,7 @@ import {
 } from "../../ui";
 import { ARRANGEMENT_COUNTS, PRESET_ROLES, ROLES, orderRoles, roleCode, roleKind, type MicPoint } from "../../ui/maps/geometry";
 import { OUTPUT_RATES, countedRate, rateChoice, rateText, rateValue } from "./outputRate";
-import { DSP_NAME, GROUP_NAME, durationText, isKnownRole, noticeText, outputLabel, roleLabel, roleName } from "./text";
+import { DSP_NAME, GROUP_NAME, durationText, isKnownRole, configNoticeText, outputLabel, roleLabel, roleName } from "./text";
 import type { SystemActions, SystemView } from "./types";
 import "./system.css";
 
@@ -311,7 +311,7 @@ function NoticeList({ view }: { view: SystemView }) {
       </p>
       <ul className="system-notices__list">
         {shown.map((notice, index) => {
-          const text = noticeText(t, notice);
+          const text = configNoticeText(t, notice);
           return (
             <li key={`${notice.code}-${index}`} className="system-notices__item" data-ui={`system.notices.${notice.code}`}>
               <span className="system-notices__cause">{text.cause}</span>

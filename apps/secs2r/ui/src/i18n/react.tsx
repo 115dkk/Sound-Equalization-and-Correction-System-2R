@@ -40,6 +40,20 @@ export const useT = (): Translate => useI18n().t;
 export const useLocale = (): Locale => useI18n().locale;
 export const useNumber = () => useI18n().number;
 
+/** The current language's number format, as `useNumber` gives it: `number(value, digits)`. */
+export type FormatNumber = (value: number, digits?: number) => string;
+
+/** "+1.5" / "−3.0": a sign on every value but one that rounds to zero. */
+export function signedNumber(number: FormatNumber, value: number, digits: number): string {
+  const text = number(value, digits);
+  return value > 0 && text !== number(0, digits) ? `+${text}` : text;
+}
+
+/** A value without group separators ("20000", not "20,000"), for numbers the user types back into a field. */
+export function plainNumber(number: FormatNumber, value: number, digits = 0): string {
+  return number(value, digits).replace(/,/g, "");
+}
+
 /** m:ss for elapsed and remaining time (h:mm:ss past an hour). */
 export function formatDuration(ms: number): string {
   const total = Math.max(0, Math.round(ms / 1000));

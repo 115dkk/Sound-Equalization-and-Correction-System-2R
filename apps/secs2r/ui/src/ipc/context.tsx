@@ -3,7 +3,7 @@ import type { makeClient } from "./client";
 import type { JobEventSource } from "./events";
 
 export type RequestFn = ReturnType<typeof makeClient>;
-export type ExternalChangeSource = {
+type ExternalChangeSource = {
   subscribe(listener: (method: string) => void): Promise<() => void>;
 };
 export type Ipc = { request: RequestFn; events: JobEventSource; externalChanges?: ExternalChangeSource };

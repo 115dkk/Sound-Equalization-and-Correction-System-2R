@@ -1,6 +1,6 @@
-import os
 import re
 import socket
+import threading
 import time
 from pathlib import Path
 
@@ -36,6 +36,29 @@ def test_engine_bootstrap_is_a_real_request(tmp_path: Path) -> None:
     assert events.dropped_events() == 0
 
 
+def test_dropped_events_does_not_block_while_next_is_waiting_td127() -> None:
+    engine = secs2r.Engine()
+    events = engine.events()
+    waiting = threading.Event()
+
+    def read() -> None:
+        waiting.set()
+        assert next(events, None) is None
+
+    worker = threading.Thread(target=read)
+    worker.start()
+    assert waiting.wait(1), "event receiver did not start"
+    time.sleep(0.1)
+
+    started = time.monotonic()
+    assert events.dropped_events() == 0
+    assert time.monotonic() - started < 1
+
+    events.close()
+    worker.join(timeout=1)
+    assert not worker.is_alive(), "close did not stop the blocked receiver"
+
+
 def test_engine_api_error_has_structured_fields() -> None:
     with pytest.raises(secs2r.SecsError) as raised:
         secs2r.Engine().call({"method": "results"})
@@ -62,21 +85,35 @@ def test_client_closed_port_fails_quickly_with_secs_error() -> None:
     assert elapsed < 5.0
 
 
-def test_oracle_project_round_trip_when_supplied(tmp_path: Path) -> None:
-    project = os.environ.get("SECS_ORACLE_PROJECT")
-    if not project:
-        pytest.skip("SECS_ORACLE_PROJECT is not available")
+def test_mock_room_calibrates_and_exports(tmp_path: Path) -> None:
+    project_directory = tmp_path / "project"
+    export_path = tmp_path / "equalizer-apo"
+    project_directory.mkdir()
+    export_path.mkdir()
+    engine = secs2r.Engine(tmp_path / "settings.json")
 
-    engine = secs2r.Engine()
-    opened = engine.call(
-        {"method": "project_open", "params": {"path": str(Path(project).resolve())}}
+    engine.call(
+        {
+            "method": "project_new",
+            "params": {
+                "path": str(project_directory / "mock.secs"),
+                "preset": "7.1.4",
+                "sub_count": 3,
+                "sample": True,
+                "tutorial": False,
+            },
+        }
     )
-    assert opened["method"] == "project_open"
+    engine.call({"method": "measure_configure", "params": {"method": "mock"}})
+    measured = engine.call(
+        {"method": "measure_position", "params": {"position": 1}}
+    )
+    assert engine.wait_job(measured["data"]["job"], 120.0)["status"] == "succeeded"
 
-    started = engine.call({"method": "calibrate", "params": {}})
-    finished = engine.wait_job(started["data"]["job"], 120.0)
-    assert finished["event"] == "finished"
-    assert finished["status"] == "succeeded"
+    calibrated = engine.call({"method": "calibrate", "params": {}})
+    terminal = engine.wait_job(calibrated["data"]["job"], 120.0)
+    assert terminal["event"] == "finished"
+    assert terminal["status"] == "succeeded"
 
     results = engine.call({"method": "results"})
     assert results["data"]["calibration"] is not None
@@ -84,15 +121,200 @@ def test_oracle_project_round_trip_when_supplied(tmp_path: Path) -> None:
     exported = engine.call(
         {
             "method": "export",
+            "params": {"kind": "equalizer_apo", "folder": str(export_path)},
+        }
+    )
+    assert engine.wait_job(exported["data"]["job"], 120.0)["status"] == "succeeded"
+    assert any(path.is_file() for path in export_path.rglob("*"))
+
+
+def test_calibration_notes_are_typed_td162(tmp_path: Path) -> None:
+    engine = secs2r.Engine(tmp_path / "settings.json")
+    engine.call(
+        {
+            "method": "project_new",
             "params": {
-                "kind": "camilla_dsp",
-                "folder": str(tmp_path),
-                "mdat_scope": None,
-                "design_name": None,
-                "camilla_devices": None,
+                "path": str(tmp_path / "typed-notes.secs"),
+                "preset": "2.0",
+                "sub_count": 0,
+                "sample": True,
+                "tutorial": False,
             },
         }
     )
-    terminal = engine.wait_job(exported["data"]["job"], 120.0)
-    assert terminal["status"] == "succeeded"
-    assert any(tmp_path.iterdir())
+    measured = engine.call({"method": "sample_load", "params": {"positions": 2}})
+    assert engine.wait_job(measured["data"]["job"], 600.0)["status"] == "succeeded"
+    calibrated = engine.call({"method": "calibrate", "params": {}})
+    assert engine.wait_job(calibrated["data"]["job"], 600.0)["status"] == "succeeded"
+
+    note = engine.call({"method": "results"})["data"]["calibration"]["notes"][0]
+    assert note["code"] == "rc_limit"
+    assert isinstance(note["hz"], float)
+    assert isinstance(note["auto"], bool)
+
+
+def test_python_error_carries_params_and_retryable_td160() -> None:
+    with pytest.raises(secs2r.SecsError) as raised:
+        secs2r.Engine().call({"method": "results"})
+    error = raised.value
+    assert error.code == "project_not_open"
+    assert getattr(error, "params", None) == {}
+    assert getattr(error, "retryable", None) is False
+    assert error.message.startswith("project_not_open: ")
+
+
+def _run_event_probe(source: str, client: bool) -> None:
+    import subprocess
+    import sys
+    import textwrap
+
+    source = textwrap.dedent(source)
+    if client:
+        source = source.replace("engine = secs2r.Engine()", "engine = secs2r.Client(port=port, token='test')")
+        source = textwrap.dedent(r"""
+            import base64, hashlib, socket, threading
+            listener = socket.socket()
+            listener.bind(("127.0.0.1", 0))
+            listener.listen(1)
+            port = listener.getsockname()[1]
+            disconnected = threading.Event()
+            def serve():
+                connection, _ = listener.accept()
+                with connection:
+                    request = b""
+                    while b"\r\n\r\n" not in request:
+                        request += connection.recv(4096)
+                    key = next(line.split(b":", 1)[1].strip() for line in request.split(b"\r\n") if line.lower().startswith(b"sec-websocket-key:"))
+                    accept = base64.b64encode(hashlib.sha1(key + b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11").digest())
+                    connection.sendall(b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: " + accept + b"\r\n\r\n")
+                    try:
+                        while connection.recv(4096):
+                            pass
+                    except ConnectionError:
+                        pass
+                disconnected.set()
+                listener.close()
+            threading.Thread(target=serve, daemon=True).start()
+        """) + source + "\nassert disconnected.wait(1), 'client socket must close'\n"
+    try:
+        result = subprocess.run(
+            [sys.executable, "-c", textwrap.dedent(source)],
+            capture_output=True, text=True, timeout=3,
+        )
+    except subprocess.TimeoutExpired:
+        pytest.fail("blocked next() did not return within three seconds")
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("client", [False, True])
+def test_events_close_ends_iteration_td150(client: bool) -> None:
+    _run_event_probe('''
+        import threading, time, secs2r
+        engine = secs2r.Engine()
+        events = engine.events()
+        ended = threading.Event()
+        def read():
+            assert next(events, None) is None
+            ended.set()
+        worker = threading.Thread(target=read, daemon=True)
+        worker.start()
+        time.sleep(0.1)
+        assert callable(getattr(events, "close", None)), "events need close()"
+        events.close()
+        assert ended.wait(1), "close must end a blocked next"
+        assert events.closed
+        assert next(events, None) is None
+        events.close()
+    ''', client)
+
+
+@pytest.mark.parametrize("client", [False, True])
+def test_events_timeout_raises_td150(client: bool) -> None:
+    _run_event_probe('''
+        import time, secs2r
+        engine = secs2r.Engine()
+        started = time.monotonic()
+        events = engine.events(timeout=0.2)
+        try:
+            next(events)
+        except TimeoutError:
+            pass
+        else:
+            raise AssertionError("event timeout must raise TimeoutError")
+        assert 0.15 <= time.monotonic() - started < 1
+        assert events.closed
+    ''', client)
+
+
+@pytest.mark.parametrize("client", [False, True])
+def test_keyboard_interrupt_reaches_a_blocked_next_td150(client: bool) -> None:
+    _run_event_probe('''
+        import _thread, threading, time, secs2r
+        engine = secs2r.Engine()
+        events = engine.events()
+        timer = threading.Timer(0.2, _thread.interrupt_main)
+        timer.start()
+        started = time.monotonic()
+        try:
+            next(events)
+        except KeyboardInterrupt:
+            assert time.monotonic() - started < 1
+        else:
+            raise AssertionError("KeyboardInterrupt must propagate")
+        finally:
+            timer.join()
+            events.close()
+    ''', client)
+
+
+
+def test_client_events_report_lagged_td161() -> None:
+    import base64
+    import hashlib
+    import json
+    import threading
+
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    port = listener.getsockname()[1]
+
+    def frame(payload: bytes) -> bytes:
+        assert len(payload) < 126
+        return bytes((0x81, len(payload))) + payload
+
+    def serve() -> None:
+        connection, _ = listener.accept()
+        with connection:
+            request = b""
+            while b"\r\n\r\n" not in request:
+                request += connection.recv(4096)
+            key = next(
+                line.split(b":", 1)[1].strip()
+                for line in request.split(b"\r\n")
+                if line.lower().startswith(b"sec-websocket-key:")
+            )
+            accept = base64.b64encode(
+                hashlib.sha1(
+                    key + b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+                ).digest()
+            )
+            connection.sendall(
+                b"HTTP/1.1 101 Switching Protocols\r\n"
+                b"Upgrade: websocket\r\nConnection: Upgrade\r\n"
+                b"Sec-WebSocket-Accept: " + accept + b"\r\n\r\n"
+            )
+            payload = json.dumps({"kind": "lagged", "missed": 7}).encode()
+            connection.sendall(frame(payload))
+            time.sleep(0.2)
+        listener.close()
+
+    worker = threading.Thread(target=serve)
+    worker.start()
+    events = secs2r.Client(port=port, token="test").events(timeout=2)
+    event = next(events)
+    assert event["kind"] == "lagged"
+    assert event["event"]["missed"] == 7
+    events.close()
+    worker.join(timeout=2)
+    assert not worker.is_alive()

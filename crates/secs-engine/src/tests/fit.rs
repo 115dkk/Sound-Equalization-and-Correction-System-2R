@@ -4,7 +4,16 @@ use crate::{fit::*, measurement, setup::Setup};
 use secs_dsp::optimize;
 use secs_oracle::{Fixture, assert_same, errors, integer, number, oracle_libm};
 
-pub(crate) use crate::test_support::{read_recorded_fit, same_recorded_fit};
+pub(crate) use crate::testkit::same_recorded_fit;
+
+pub(crate) fn read_recorded_fit(
+    fixture: &Fixture,
+    input: &serde_json::Value,
+    result: &serde_json::Value,
+) -> RecordedFit {
+    let (dir, name) = fixture.id.split_once('/').expect("fixture family/name");
+    crate::testkit::read_recorded_fit(&crate::tests::Oracle, dir, name, input, result)
+}
 
 fn recorded(fx: &Fixture) -> RecordedFit {
     read_recorded_fit(fx, fx.inputs(), &fx.outputs()["result"])
@@ -446,7 +455,11 @@ fn analytic_peq_results_within_secs2_spread() {
         );
         let cost = band_cost(
             &req,
-            &fit_peq_with(&req, &|| false, PeqDerivatives::Analytic),
+            &fit_peq_with(
+                &req,
+                &secs_compute::Context::serial(),
+                PeqDerivatives::Analytic,
+            ),
         );
         let c0 = number(&o["final_cost"]);
         let costs: Vec<_> = o["environments"]
@@ -498,7 +511,7 @@ fn analytic_peq_results_within_secs2_spread() {
 fn xo_target_rebuilt_inputs() {
     for fx in Fixture::all_calls("engine_fit", "xo_") {
         let i = fx.inputs();
-        let case = cases::load(i["case"].as_str().unwrap());
+        let case = cases::load(&crate::tests::Oracle, i["case"].as_str().unwrap());
         let setup = Setup::new(&case.config);
         let prep = measurement::prepare(&case.measurements, &case.config, &setup).unwrap();
         let role = i["role"].as_str().unwrap();

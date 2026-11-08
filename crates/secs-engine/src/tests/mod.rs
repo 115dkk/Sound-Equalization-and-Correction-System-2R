@@ -5,7 +5,7 @@
 
 mod calibration;
 pub(crate) mod cancel;
-pub(crate) use crate::test_support as cases;
+pub(crate) use crate::testkit as cases;
 mod chain;
 mod decay;
 mod design;
@@ -28,7 +28,10 @@ mod rc_upper;
 mod replay;
 mod replay_cached_mimo;
 mod scorecard;
+mod support;
 mod xo;
+
+pub(crate) use support::Oracle;
 
 /// Largest `|a - b|` over the element pairs (TD-52). Equal pairs, equal
 /// infinities included, count 0; a pair that differs where either side is

@@ -1,11 +1,11 @@
 #![forbid(unsafe_code)]
 
-use secs_camilla::pyfmt::format_fixed;
 use secs_dsp::Complex64;
 use secs_dsp::fft::{irfft, rfft};
 use secs_filters::{
     FilterPlan, FilterRun, Op, export_eqapo, make_plan, plan_responses, windows_channels,
 };
+use secs_graph::emit::pyfmt::format_fixed;
 use secs_oracle::Fixture;
 use secs_types::chain::{
     BandType, MainChannel, MimoFilter, MimoPath, MimoPaths, SignalChain, SubChannel,
@@ -820,7 +820,7 @@ fn assert_benchmark_matches_plan(
     let preamp = preamp_gain(generation_config);
     let plan = make_plan(chain, None).unwrap();
     let reference_plan = as_written(&plan);
-    let (inputs, outputs) = windows_channels(&plan);
+    let (inputs, outputs) = windows_channels(&plan).unwrap();
     let channels = inputs
         .iter()
         .chain(&outputs)
@@ -996,7 +996,7 @@ fn exported_configs_play_as_designed() {
         let preamp = preamp_gain(&config.join("config.txt"));
         let plan = make_plan(&case.chain, case.mimo.as_ref()).unwrap();
         let reference_plan = as_written(&plan);
-        let (inputs, outputs) = windows_channels(&plan);
+        let (inputs, outputs) = windows_channels(&plan).unwrap();
         let channels = inputs
             .iter()
             .chain(&outputs)
@@ -1492,6 +1492,6 @@ fn excitation_favours_the_low_band_and_its_level_follows_the_paths() {
 }
 
 fn playback_note(latency: f64, mimo: Option<&MimoPaths>) -> String {
-    let mimo = mimo.and_then(|paths| secs_camilla::note::MimoNote::for_paths(paths, 0));
-    secs_camilla::note::eqapo_note("mixed", latency, 100.0, mimo.as_ref())
+    let mimo = mimo.and_then(|paths| secs_graph::emit::note::MimoNote::for_paths(paths, 0));
+    secs_graph::emit::note::eqapo_note("mixed", latency, 100.0, mimo.as_ref())
 }

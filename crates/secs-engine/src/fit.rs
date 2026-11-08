@@ -5,8 +5,11 @@
 use crate::grid::{SR_F, design_freqs};
 use faer::Mat;
 use secs_dsp::{
-    Complex64 as C, optimize, response,
+    Complex64 as C,
+    grid::geomspace,
+    interp, optimize, response,
     smooth::{self, Fraction},
+    stats::median,
 };
 use secs_types::{chain::Peq, target::TargetCurve};
 use std::{cell::RefCell, f64::consts::PI};
@@ -152,6 +155,8 @@ pub(crate) fn seed(req: &FitRequest<'_>) -> Seed {
     Seed { bands, x0, lb, ub }
 }
 
+#[cfg(any(test, feature = "test-support"))]
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn residual(req: &FitRequest<'_>, x: &[f64]) -> Vec<f64> {
     let bands: Vec<_> = x
         .as_chunks::<3>()
@@ -320,23 +325,27 @@ pub(crate) fn result_bands(req: &FitRequest<'_>, x: &[f64]) -> Vec<Peq> {
 
 /// Fits the requested region, retaining upstream's out-of-region weight 0.15,
 /// default TRF tolerances, and 400/150 residual-evaluation caps.
+#[cfg(any(test, feature = "test-support"))]
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn fit_peq(req: &FitRequest<'_>) -> Vec<Peq> {
-    fit_peq_until(req, &|| false)
+    fit_peq_until(req, &secs_compute::Context::serial())
 }
 
-/// `fit_peq` that gives up once `cancelled()` turns true. From then on the
+/// `fit_peq` that gives up when the context token is cancelled. From then on the
 /// residual reads zero, so the trust-region solver stops at its next gradient
 /// test instead of running to its evaluation cap; the bands it returns are
 /// meaningless and the caller discards them. Until then the arithmetic is
 /// exactly `fit_peq`'s.
-pub fn fit_peq_until(req: &FitRequest<'_>, cancelled: &dyn Fn() -> bool) -> Vec<Peq> {
-    fit_peq_with(req, cancelled, PeqDerivatives::TwoPoint)
+#[cfg(any(test, feature = "test-support"))]
+#[cfg_attr(not(test), allow(dead_code))]
+pub fn fit_peq_until(req: &FitRequest<'_>, ctx: &secs_compute::Context) -> Vec<Peq> {
+    fit_peq_with(req, ctx, PeqDerivatives::TwoPoint)
 }
 
 /// `fit_peq_until` with a chosen derivative; `TwoPoint` is the same arithmetic.
 pub fn fit_peq_with(
     req: &FitRequest<'_>,
-    cancelled: &dyn Fn() -> bool,
+    ctx: &secs_compute::Context,
     derivatives: PeqDerivatives,
 ) -> Vec<Peq> {
     let seed = seed(req);
@@ -349,7 +358,7 @@ pub fn fit_peq_with(
             let mut cache = ResidualCache::new(req.g, seed.bands.len());
             optimize::least_squares(
                 |x| {
-                    if cancelled() {
+                    if ctx.cancel().is_cancelled() {
                         vec![0.0; req.g.len()]
                     } else {
                         cache.evaluate(req, x)
@@ -365,14 +374,14 @@ pub fn fit_peq_with(
             let cache = RefCell::new(AnalyticResidualCache::new(req.g, seed.bands.len()));
             optimize::least_squares_analytic(
                 |x| {
-                    if cancelled() {
+                    if ctx.cancel().is_cancelled() {
                         vec![0.0; req.g.len()]
                     } else {
                         cache.borrow_mut().evaluate(req, x)
                     }
                 },
                 |x| {
-                    if cancelled() {
+                    if ctx.cancel().is_cancelled() {
                         Mat::zeros(req.g.len(), x.len())
                     } else {
                         cache.borrow_mut().jacobian(req, x)
@@ -400,36 +409,6 @@ fn argmax(v: &[f64]) -> usize {
     assert!(!v.is_empty());
     (1..v.len()).fold(0, |k, i| if v[i] > v[k] { i } else { k })
 }
-fn geomspace(lo: f64, hi: f64, n: usize) -> Vec<f64> {
-    let start = lo.log10();
-    let step = (hi.log10() - start) / (n - 1) as f64;
-    let mut g: Vec<_> = (0..n)
-        .map(|i| 10_f64.powf(i as f64 * step + start))
-        .collect();
-    g[0] = lo;
-    g[n - 1] = hi;
-    g
-}
-fn interp(x: f64, f: &[f64], y: &[f64]) -> f64 {
-    let i = f.partition_point(|v| *v <= x).saturating_sub(1);
-    if x <= f[0] {
-        y[0]
-    } else if i + 1 == f.len() || x == f[i] {
-        y[i]
-    } else {
-        (y[i + 1] - y[i]) / (f[i + 1] - f[i]) * (x - f[i]) + y[i]
-    }
-}
-fn median(v: &[f64]) -> f64 {
-    let mut v = v.to_vec();
-    v.sort_by(f64::total_cmp);
-    let k = v.len() / 2;
-    if v.len().is_multiple_of(2) {
-        (v[k - 1] + v[k]) / 2.0
-    } else {
-        v[k]
-    }
-}
 // NumPy's pairwise contiguous sum, used by the GD improvement decision.
 fn sum(v: &[f64]) -> f64 {
     if v.len() < 8 {
@@ -450,11 +429,21 @@ fn sum(v: &[f64]) -> f64 {
     v[end..].iter().fold(s, |s, x| s + x)
 }
 
+#[cfg(any(test, feature = "test-support"))]
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn fit_gd_cuts(f: &[f64], h: &[C], lo: f64, hi: f64, n_max: usize, depth_db: f64) -> Vec<Peq> {
-    fit_gd_cuts_until(f, h, lo, hi, n_max, depth_db, &|| false)
+    fit_gd_cuts_until(
+        f,
+        h,
+        lo,
+        hi,
+        n_max,
+        depth_db,
+        &secs_compute::Context::serial(),
+    )
 }
 
-/// `fit_gd_cuts` that gives up once `cancelled()` turns true (TD-49), as
+/// `fit_gd_cuts` that gives up when the context token is cancelled (TD-49), as
 /// `fit_peq_until` does: no further cut starts, and the running fit's residual
 /// reads zero so the trust-region solver stops at its next gradient test. The
 /// cuts it returns are then meaningless and the caller discards them. Until
@@ -466,10 +455,10 @@ pub fn fit_gd_cuts_until(
     hi: f64,
     n_max: usize,
     depth_db: f64,
-    cancelled: &dyn Fn() -> bool,
+    ctx: &secs_compute::Context,
 ) -> Vec<Peq> {
     let g = geomspace(lo, hi, 1500);
-    gd_cuts_on_grid(f, h, &g, None, n_max, depth_db, cancelled)
+    gd_cuts_on_grid(f, h, &g, None, n_max, depth_db, ctx)
 }
 
 pub(crate) fn fit_gd_cuts_bands_until(
@@ -478,10 +467,10 @@ pub(crate) fn fit_gd_cuts_bands_until(
     bands: &[(f64, f64)],
     n_max: usize,
     depth_db: f64,
-    cancelled: &dyn Fn() -> bool,
+    ctx: &secs_compute::Context,
 ) -> Vec<Peq> {
     let g = crate::rc::band_grid(bands, 20.0, 1500);
-    gd_cuts_on_grid(f, h, &g, Some(bands), n_max, depth_db, cancelled)
+    gd_cuts_on_grid(f, h, &g, Some(bands), n_max, depth_db, ctx)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -492,7 +481,7 @@ fn gd_cuts_on_grid(
     bands: Option<&[(f64, f64)]>,
     n_max: usize,
     depth_db: f64,
-    cancelled: &dyn Fn() -> bool,
+    ctx: &secs_compute::Context,
 ) -> Vec<Peq> {
     let mut cur = h.to_vec();
     let mut cuts = Vec::new();
@@ -501,12 +490,16 @@ fn gd_cuts_on_grid(
         return cuts;
     }
     for _ in 0..n_max {
-        if cancelled() {
+        if ctx.cancel().is_cancelled() {
             break;
         }
         let gd = response::gd_curve(&cur, f, g, Fraction::Scalar(24.0)).expect("valid GD grid");
         let base: Vec<_> = (0..g.len())
-            .map(|i| median(&gd[i.saturating_sub(40)..(i + 40).min(g.len())]))
+            .map(|i| {
+                let values = &gd[i.saturating_sub(40)..(i + 40).min(g.len())];
+                assert!(!values.is_empty(), "GD median requires samples");
+                median(values)
+            })
             .collect();
         let mut exc: Vec<_> = gd.iter().zip(&base).map(|(g, b)| g - b).collect();
         // With correction bands, skip a peak that lies in no band or leaves
@@ -566,7 +559,7 @@ fn gd_cuts_on_grid(
         let ub = [centre_ub, 40_f64.ln(), 0.0];
         let sol = optimize::least_squares(
             |x| {
-                if cancelled() {
+                if ctx.cancel().is_cancelled() {
                     vec![0.0; 2 * gw.len()]
                 } else {
                     res(x)
@@ -578,7 +571,7 @@ fn gd_cuts_on_grid(
             60,
         )
         .expect("valid GD fit");
-        if cancelled() {
+        if ctx.cancel().is_cancelled() {
             break;
         }
         let band = (sol.x[0].exp(), sol.x[1].exp(), sol.x[2]);
@@ -833,7 +826,11 @@ mod analytic_tests {
 
         for result in [
             fit_peq(&req),
-            fit_peq_with(&req, &|| false, PeqDerivatives::Analytic),
+            fit_peq_with(
+                &req,
+                &secs_compute::Context::serial(),
+                PeqDerivatives::Analytic,
+            ),
         ] {
             assert_eq!(result.len(), 1);
             assert!(

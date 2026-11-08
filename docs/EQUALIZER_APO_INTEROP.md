@@ -100,7 +100,8 @@ Undefined token "; inR = 2" found at position 7.
 
 ## 유지하는 사용 조건
 
-FIR WAV는 48 kHz입니다. 장치 샘플레이트는 이 값과 맞춰야 하며,
+FIR WAV의 샘플레이트는 DSP 프로필에서 정한 내보내기 출력 레이트이며, 기본값은 48 kHz입니다(ADR 0017, 편차 F22).
+이 값은 `config.txt` 머리말과 안내 파일에 표시됩니다. 장치 샘플레이트는 이 값과 맞춰야 하며,
 `Convolution:` 상대 경로는 그 명령이 들어 있는 설정 파일을 기준으로 합니다.
 이는 [Equalizer APO 설정 규격](https://sourceforge.net/p/equalizerapo/wiki/Configuration%20reference/)의
 조건이며, 이번 변수 할당 수정과 별개입니다.

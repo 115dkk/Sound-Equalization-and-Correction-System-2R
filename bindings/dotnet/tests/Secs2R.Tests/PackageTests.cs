@@ -6,6 +6,8 @@ using System.Linq;
 using System.Net;
 using System.Net.Sockets;
 using System.Reflection;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -81,6 +83,21 @@ public sealed class PackageTests
     }
 
     [Fact]
+    public void SecsExceptionCarriesParams()
+    {
+        using var temp = new TestDirectory();
+        using var engine = new Engine(temp.SettingsPath);
+        SecsException error = Assert.Throws<SecsException>(() => Call(engine, "results"));
+        Assert.Equal("project_not_open", error.Code);
+        var property = typeof(SecsException).GetProperty("Params");
+        Assert.NotNull(property);
+        var parameters = Assert.IsAssignableFrom<IReadOnlyDictionary<string, string>>(property.GetValue(error));
+        Assert.Empty(parameters);
+        Assert.False(error.Retryable);
+        Assert.StartsWith("project_not_open: ", error.Message);
+    }
+
+    [Fact]
     public void ClosedPortClientFailsWithTransportErrorWithinFiveSeconds()
     {
         int port = ClosedPort();
@@ -104,6 +121,87 @@ public sealed class PackageTests
 
         Assert.Equal("transport_error", connecting.Code);
         Assert.Equal("transport_error", connectingAsync.Code);
+    }
+
+    [Fact]
+    public async Task EventStreamPassesLaggedThrough()
+    {
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        int port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        Task server = Task.Run(async () =>
+        {
+            using TcpClient accepted = await listener.AcceptTcpClientAsync();
+            using NetworkStream stream = accepted.GetStream();
+            var request = new List<byte>();
+            var buffer = new byte[4096];
+            while (!Encoding.ASCII.GetString(request.ToArray()).Contains("\r\n\r\n", StringComparison.Ordinal))
+            {
+                int read = await stream.ReadAsync(buffer, 0, buffer.Length);
+                request.AddRange(buffer.Take(read));
+            }
+            string headers = Encoding.ASCII.GetString(request.ToArray());
+            string key = headers.Split(new[] { "\r\n" }, StringSplitOptions.None)
+                .Single(line => line.StartsWith("Sec-WebSocket-Key:", StringComparison.OrdinalIgnoreCase))
+                .Split(':', 2)[1].Trim();
+            byte[] digest = SHA1.HashData(Encoding.ASCII.GetBytes(
+                key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"));
+            string accept = Convert.ToBase64String(digest);
+            byte[] response = Encoding.ASCII.GetBytes(
+                "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n" +
+                "Connection: Upgrade\r\nSec-WebSocket-Accept: " + accept + "\r\n\r\n");
+            await stream.WriteAsync(response, 0, response.Length);
+            byte[] payload = Encoding.UTF8.GetBytes("{\"kind\":\"lagged\",\"missed\":7}");
+            var frame = new byte[payload.Length + 2];
+            frame[0] = 0x81;
+            frame[1] = checked((byte)payload.Length);
+            payload.CopyTo(frame, 2);
+            await stream.WriteAsync(frame, 0, frame.Length);
+            await stream.FlushAsync();
+            await Task.Delay(200);
+        });
+
+        using var client = new Client(port, token: "test");
+        await using EventStream events = client.Events();
+        await using IAsyncEnumerator<JsonElement> enumerator = events.GetAsyncEnumerator();
+        Assert.True(await enumerator.MoveNextAsync());
+        JsonElement lagged = enumerator.Current;
+        Assert.Equal("lagged", lagged.GetProperty("kind").GetString());
+        Assert.Equal(7UL, lagged.GetProperty("event").GetProperty("missed").GetUInt64());
+        events.Dispose();
+        await server;
+        listener.Stop();
+    }
+
+    [Fact]
+    public void CalibrationNotesAreTyped()
+    {
+        using var temp = new TestDirectory();
+        using var engine = new Engine(temp.SettingsPath);
+        Call(engine, "project_new", new Dictionary<string, object?>
+        {
+            ["path"] = Path.Combine(temp.Path, "typed-notes.secs"),
+            ["preset"] = "2.0",
+            ["sub_count"] = 0,
+            ["sample"] = true,
+            ["tutorial"] = false,
+        });
+        Call(engine, "measure_configure", new Dictionary<string, object?>
+        {
+            ["method"] = "mock",
+        });
+        WaitForJob(engine, Call(engine, "measure_position", new Dictionary<string, object?>
+        {
+            ["position"] = 1,
+        }));
+        WaitForJob(engine, Call(engine, "calibrate", new Dictionary<string, object?>()));
+
+        JsonElement note = Call(engine, "results")
+            .GetProperty("data").GetProperty("calibration")
+            .GetProperty("notes")[0];
+        Assert.Equal("rc_limit", note.GetProperty("code").GetString());
+        Assert.Equal(JsonValueKind.Number, note.GetProperty("hz").ValueKind);
+        Assert.Equal(JsonValueKind.True, note.GetProperty("auto").ValueKind);
     }
 
     [Fact]
@@ -142,8 +240,13 @@ public sealed class PackageTests
                 .GetProperty("data").GetProperty("job").GetUInt64();
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(120));
             string? status = null;
-            await foreach (JsonElement jobEvent in events.WithCancellation(timeout.Token))
+            await foreach (JsonElement publicEvent in events.WithCancellation(timeout.Token))
             {
+                if (publicEvent.GetProperty("kind").GetString() != "job")
+                {
+                    continue;
+                }
+                JsonElement jobEvent = publicEvent.GetProperty("event");
                 if (jobEvent.GetProperty("event").GetString() == "finished"
                     && jobEvent.GetProperty("job").GetUInt64() == job)
                 {

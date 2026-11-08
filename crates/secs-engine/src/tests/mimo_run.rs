@@ -6,6 +6,7 @@ use crate::{
         self, IirSupport,
         run::{self, Support, Supports},
     },
+    notes::MimoOracleText,
 };
 use secs_compute::{CancelToken, Context, MemoryBudget, Progress, ProgressSink};
 use secs_dsp::fft;
@@ -56,17 +57,17 @@ fn ideal(fx: &Fixture) -> MimoDesign {
             .filter(|n| !n.starts_with("FIR 서포트") && !n.starts_with("입력당 서포트"))
             .map(|text| {
                 let note = if text.starts_with("서포트 대역 ") {
-                    crate::MimoNote::SupportRanges(
-                        pairs(&v["ranges"])
-                            .map(|(role, range)| {
-                                (
-                                    role.into(),
-                                    (!range.is_null())
-                                        .then(|| (number(&range[0]), number(&range[1]))),
-                                )
+                    crate::MimoNote::SupportRanges {
+                        ranges: pairs(&v["ranges"])
+                            .map(|(role, range)| crate::notes::RoleNote {
+                                role: role.into(),
+                                value: (!range.is_null()).then(|| crate::notes::Band {
+                                    lo_hz: number(&range[0]),
+                                    hi_hz: number(&range[1]),
+                                }),
                             })
                             .collect(),
-                    )
+                    }
                 } else {
                     // The recorded-support fixture carries only rounded legacy
                     // guard text and no cause; this adapter is test-only, never
@@ -100,7 +101,7 @@ fn ideal(fx: &Fixture) -> MimoDesign {
                     }
                 };
                 assert_eq!(note.oracle_text(), text);
-                Note::Mimo(note)
+                Note::Mimo { note }
             })
             .collect(),
     }
@@ -251,7 +252,7 @@ fn compare_curves(fx: &Fixture, run: &mimo::MimoRun, tolerance: f64) {
 #[test]
 fn mimo_run_assemble_recorded_supports_matches_oracle() {
     for name in ["room_dba", "room_filters"] {
-        let case = cases::load(name);
+        let case = cases::load(&crate::tests::Oracle, name);
         let d = design::replay(name);
         for fir in [false, true] {
             let fx = Fixture::load(
@@ -286,7 +287,7 @@ fn mimo_run_assemble_recorded_supports_matches_oracle() {
                 .notes
                 .iter()
                 .map(|n| match n {
-                    Note::Mimo(note) => note.oracle_text(),
+                    Note::Mimo { note } => note.oracle_text(),
                     _ => panic!("unexpected note"),
                 })
                 .collect();
@@ -307,11 +308,11 @@ fn input_hp_leaves_the_mimo_scorecard_as_without_it() {
     // response with the common input cut divided back out, so the cut never
     // changes a verdict; the applied responses themselves keep the cut.
     let name = "room_dba";
-    let case = cases::load(name);
+    let case = cases::load(&crate::tests::Oracle, name);
     let off = design::replay(name);
     let mut config = case.config.clone();
     config.input_hp_hz = Some(27.0);
-    let replay = cases::Replay::for_case(name);
+    let replay = cases::Replay::for_case(&crate::tests::Oracle, name);
     let on = crate::design(
         &crate::DesignRequest {
             measurements: &case.measurements,
@@ -370,7 +371,7 @@ fn input_hp_leaves_the_mimo_scorecard_as_without_it() {
 #[test]
 fn mimo_scorecard_matches_applied_response_and_reports_late_energy() {
     let name = "room_dba";
-    let case = cases::load(name);
+    let case = cases::load(&crate::tests::Oracle, name);
     let design = design::replay(name);
     let fixture = Fixture::load("engine_mimo_run", "room_dba_iir");
     let ideal = ideal(&fixture);
@@ -548,7 +549,7 @@ fn mimo_scorecard_matches_applied_response_and_reports_late_energy() {
 #[test]
 fn mimo_scorecard_and_late_energy_are_deterministic_across_threads() {
     let name = "room_dba";
-    let case = cases::load(name);
+    let case = cases::load(&crate::tests::Oracle, name);
     let design = design::replay(name);
     let fixture = Fixture::load("engine_mimo_run", "room_dba_iir");
     let ideal = ideal(&fixture);
@@ -591,7 +592,7 @@ impl ProgressSink for Events {
 #[test]
 fn mimo_run_compute_fir_and_iir_end_to_end() {
     for name in ["room_dba", "room_filters"] {
-        let case = cases::load(name);
+        let case = cases::load(&crate::tests::Oracle, name);
         let d = design::replay(name);
         for fir in [false, true] {
             let fx = Fixture::load(
@@ -720,8 +721,9 @@ fn mimo_run_compute_fir_and_iir_end_to_end() {
 
 #[test]
 fn mimo_seat_guard_off_keeps_goldens_bit_identical() {
-    let case = cases::load("room_filters");
-    let design = design::replay("room_filters");
+    let name = "room_filters";
+    let case = cases::load(&crate::tests::Oracle, name);
+    let design = design::replay(name);
     for fir in [false, true] {
         let explicit = settings(fir);
         let mut json = serde_json::to_value(&explicit).unwrap();
@@ -730,25 +732,50 @@ fn mimo_seat_guard_off_keeps_goldens_bit_identical() {
         assert!(!legacy.mimo_seat_guard);
         assert_eq!(legacy.mimo_key(), explicit.mimo_key());
 
-        let expected = mimo::compute(
-            &design,
-            &case.measurements,
-            &case.config,
-            &explicit,
-            &Tuning::default(),
-            &Context::serial(),
-        )
-        .unwrap();
-        let actual = mimo::compute(
-            &design,
-            &case.measurements,
-            &case.config,
-            &legacy,
-            &Tuning::default(),
-            &Context::serial(),
-        )
-        .unwrap();
-        assert_eq!(actual, expected, "fir={fir}");
+        if fir {
+            let fixture = Fixture::load("engine_mimo_run", "room_filters_fir");
+            let run = mimo::compute(
+                &design,
+                &case.measurements,
+                &case.config,
+                &legacy,
+                &Tuning {
+                    mimo_max_nfev: 0,
+                    ..Tuning::default()
+                },
+                &Context::serial(),
+            )
+            .unwrap();
+            let recorded = ideal(&fixture);
+            if oracle_libm() {
+                assert_eq!(run.ideal.ranges, recorded.ranges);
+            }
+            for ((role, supports), (expected_role, expected_supports)) in
+                run.ideal.supports.iter().zip(&recorded.supports)
+            {
+                assert_eq!(role, expected_role);
+                if oracle_libm() {
+                    assert_eq!(supports.len(), expected_supports.len());
+                    for ((support, taps), (expected_support, expected_taps)) in
+                        supports.iter().zip(expected_supports)
+                    {
+                        assert_eq!(support, expected_support);
+                        measure(
+                            "guard-off ideal FIR",
+                            error(taps, expected_taps),
+                            3e-9,
+                            true,
+                        );
+                    }
+                } else {
+                    eprintln!(
+                        "MEASURE MIMO_RUN {name}/{role} guard-off supports foreign-libm report-only"
+                    );
+                }
+            }
+            compare_paths(&run.paths, &paths(&fixture), 3e-7, true);
+            compare_curves(&fixture, &run, 3e-7);
+        }
     }
 }
 
@@ -864,7 +891,7 @@ fn mimo_run_helpers_settings_and_cancellation() {
         (key.fsiso, key.f_low, key.exclude),
         (150., Some(15.), vec!["SW1".to_string(), "SW2".to_string()])
     );
-    let case = cases::load("room_dba");
+    let case = cases::load(&crate::tests::Oracle, "room_dba");
     let mut d = design::replay("room_dba");
     let ctx = Context::serial();
     let off = CalibrationSettings::default();
@@ -919,7 +946,7 @@ fn mimo_run_helpers_settings_and_cancellation() {
 
 #[test]
 fn mimo_run_empty_supports_preserve_final_and_fallback_paths() {
-    let case = cases::load("room_dba");
+    let case = cases::load(&crate::tests::Oracle, "room_dba");
     let d = design::replay("room_dba");
     let key = mimo::MimoKey::from_settings(&settings(false));
     let ctx = Context::serial();
@@ -973,7 +1000,7 @@ fn mimo_run_empty_supports_preserve_final_and_fallback_paths() {
 
 #[test]
 fn mimo_compute_shared_preparation_bit_identical() {
-    let case = cases::load("room_dba");
+    let case = cases::load(&crate::tests::Oracle, "room_dba");
     let d = design::replay("room_dba");
     let ctx = Context::serial();
     for fir in [false, true] {
@@ -1087,7 +1114,7 @@ fn iir_acceleration_request_keeps_cpu_target_and_outputs_bit_identical() {
             panic!("IIR must retain the CPU reference target");
         }
     }
-    let case = cases::load("room");
+    let case = cases::load(&crate::tests::Oracle, "room");
     let d = design::replay("room");
     let ctx = Context::serial();
     let cpu = mimo::AccelerationSelection {
@@ -1141,7 +1168,7 @@ fn iir_acceleration_request_keeps_cpu_target_and_outputs_bit_identical() {
 
 #[test]
 fn mimo_preparation_budget_refuses_before_spectra() {
-    let case = cases::load("room_dba");
+    let case = cases::load(&crate::tests::Oracle, "room_dba");
     let d = design::replay("room_dba");
     let (peak, held) = mimo::prepared::Prepared::bytes(&case.measurements, &case.config);
     assert!(held > 0 && peak > 2 * held);
@@ -1161,8 +1188,8 @@ fn mimo_preparation_budget_refuses_before_spectra() {
         &ctx,
     );
     assert!(
-        matches!(&result, Err(crate::EngineError::Input(message))
-            if message.contains("exceeds memory budget")),
+        matches!(&result, Err(crate::EngineError::Memory { requested, total })
+            if requested > total),
         "{result:?}"
     );
     assert_eq!(

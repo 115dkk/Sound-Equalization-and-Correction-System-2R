@@ -17,11 +17,19 @@ workspace = true
 
 [features]
 default = ["engine"]
-engine = ["dep:secs-audio", "dep:secs-rew", "dep:secs-service"]
+engine = [
+    "dep:secs-audio",
+    "dep:secs-compute",
+    "dep:secs-engine",
+    "dep:secs-rew",
+    "dep:secs-service",
+]
 client = ["dep:tungstenite", "dep:ureq"]
 
 [dependencies]
 secs-audio = { workspace = true, optional = true }
+secs-compute = { workspace = true, optional = true }
+secs-engine = { workspace = true, optional = true }
 secs-rew = { workspace = true, optional = true }
 secs-service = { workspace = true, optional = true }
 secs-types.workspace = true

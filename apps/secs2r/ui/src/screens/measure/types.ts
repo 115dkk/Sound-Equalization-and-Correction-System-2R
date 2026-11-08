@@ -18,6 +18,7 @@ import type { PositionRecord } from "../../ipc/bindings/PositionRecord";
 import type { PositionEstimateResult } from "../../ipc/bindings/PositionEstimateResult";
 import type { ProjectInfo } from "../../ipc/bindings/ProjectInfo";
 import type { AxisRangeValue } from "../../ui/plot/AxisRange";
+import { isActiveJob } from "../../state/jobRetention";
 
 /**
  * How this project gets its measurements. `measure`: a measurement method is
@@ -25,7 +26,7 @@ import type { AxisRangeValue } from "../../ui/plot/AxisRange";
  * `import`: the stored method is `mdat`, where
  * 연결·점검 is skipped and the primary action imports instead of measuring.
  */
-export type MeasurePath = "measure" | "none" | "import";
+type MeasurePath = "measure" | "none" | "import";
 
 /** `measurement_records.records`: per-position roles, completion and sources. */
 export type { PositionRecord } from "../../ipc/bindings/PositionRecord";
@@ -60,7 +61,7 @@ export type DeviceJob = {
 };
 
 /** The low S/N notices (`measurement_low_snr`) of the last measurement of one position. */
-export type PositionWarnings = { position: number; notices: Notice[] };
+type PositionWarnings = { position: number; notices: Notice[] };
 
 /** An mdat file picked and scanned, waiting in the assignment dialog. */
 export type MdatPending = {
@@ -90,13 +91,15 @@ export type MeasureView = {
   config: MeasureConfigResult;
   /** See MeasurePath. */
   path: MeasurePath;
-  /** Recorded positions (service gap, see PositionRecord). */
+  /** `measurement_records().records`: each position with its recorded roles. */
   records: PositionRecord[];
   /** `measurement_curves { positions: null, roles: null }`; null or no curves before anything is measured. */
   curves: MeasurementCurvesResult | null;
-  /** Sweep length choices (service gap, see SweepOption). */
+  /** A `measurement_curves` read is in flight: with `curves` null the first one (drawn as loading, not as empty), else a reread while the held curves stay drawn. */
+  curvesLoading: boolean;
+  /** Sweep length choices from `measure_configure`'s `sweep_lengths` at its sample rate. */
   sweepOptions: SweepOption[];
-  /** Sweep repetitions 1/2/4/8 (`extra.devices.repetitions`). Service gap: no IPC reads or writes it yet. */
+  /** Sweep repetitions 1/2/4/8 (`extra.devices.repetitions`), read from `measure_configure`'s result. */
   repetitions: number;
   /** The running device-group job, or null. */
   job: DeviceJob | null;
@@ -138,7 +141,7 @@ export type MeasureActions = {
   setStartDelay: (delay: StartDelay) => void | Promise<void>;
   /** `measure_configure { method: view.config.method, sweep_length, output_channels: [], every other field null }`. */
   setSweepLength: (samples: number) => void | Promise<void>;
-  /** Stores `extra.devices.repetitions`. Service gap: no IPC method yet. */
+  /** Stores `extra.devices.repetitions` with `measure_configure { repetitions }`. */
   setRepetitions: (count: number) => void | Promise<void>;
   /**
    * `dialog_pick_mdat`, then `mdat_scan { path }`; the result goes to
@@ -156,7 +159,7 @@ export type MeasureActions = {
   openCalibrate: () => void;
 };
 
-export const isRunning = (job: DeviceJob | null): job is DeviceJob => !!job && (job.status === "running" || job.status === "cancel_requested");
+export const isRunning = (job: DeviceJob | null): job is DeviceJob => !!job && isActiveJob(job.status);
 
 /** Positions measured with every role of the plan. */
 export function donePositions(view: MeasureView): number[] {

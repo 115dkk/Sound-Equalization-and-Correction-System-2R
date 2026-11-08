@@ -66,7 +66,7 @@ pub(super) fn correct(h: Arc<[C]>, config: &EngineConfig, setup: &Setup) -> rc::
         },
         &mut fit::fit_peq,
         &mut |_, _, _| vec![],
-        &|| false,
+        &secs_compute::Context::serial(),
     )
     .unwrap()
     .out

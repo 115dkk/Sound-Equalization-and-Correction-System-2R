@@ -1,9 +1,15 @@
+import type { JobKind } from "../ipc/bindings/JobKind";
 import type { JobStatus } from "../ipc/bindings/JobStatus";
 import { JOB_HISTORY_MAX } from "../ipc/bindings/rules";
 
 /** Finished jobs the service keeps beside the active ones (ADR 0009). */
 export const TERMINAL_JOB_LIMIT = JOB_HISTORY_MAX;
 export const isActiveJob = (status: JobStatus) => status === "running" || status === "cancel_requested";
+/** Jobs that watch rather than work: the level monitor and the status watch. The tray hides them and they lock nothing. */
+const MONITOR_KINDS: readonly JobKind[] = ["level_monitor", "status_watch"];
+export const isMonitorJob = (kind: JobKind) => MONITOR_KINDS.includes(kind);
+/** Jobs that hold the measurement device (secs-service jobs.rs `device` group). */
+export const MEASURING_KINDS: readonly JobKind[] = ["measure", "sample_load", "mdat_import", "level_monitor"];
 
 /** Job ids are allocated monotonically, but events can arrive out of order.
  * These scalars fence old snapshot replies, not fresh Started events or an

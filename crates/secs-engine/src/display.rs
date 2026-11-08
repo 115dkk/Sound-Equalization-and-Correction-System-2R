@@ -7,17 +7,17 @@ use secs_dsp::{
 
 /// Measurement plot's logarithmic 280-point grid, in Hz.
 pub fn measurement_grid() -> Vec<f64> {
-    crate::design::geomspace(5.0, 22000.0, 280)
+    secs_dsp::grid::geomspace(5.0, 22000.0, 280)
 }
 
 /// Calibration SPL plot's 1390-point grid, in Hz.
 pub fn spl_grid() -> Vec<f64> {
-    crate::design::geomspace(5.0, 20000.0, 1390)
+    secs_dsp::grid::geomspace(5.0, 20000.0, 1390)
 }
 
 /// Calibration GD plot's 1070-point grid, in Hz.
 pub fn gd_grid() -> Vec<f64> {
-    crate::design::geomspace(5.0, 5000.0, 1070)
+    secs_dsp::grid::geomspace(5.0, 5000.0, 1070)
 }
 
 fn spectrum(samples: &[f64], sample_rate: f64, minimum: usize) -> (Vec<f64>, Vec<crate::C>) {

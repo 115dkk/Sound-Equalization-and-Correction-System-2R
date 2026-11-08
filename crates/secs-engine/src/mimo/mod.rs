@@ -9,19 +9,24 @@ pub(crate) mod iir;
 pub(crate) mod prepared;
 pub(crate) mod run;
 pub(crate) mod solve;
-pub use iir::{
-    IirDerivatives, IirSolveOptions, IirSolver, IirSupport, MimoIir, design_mimo_iir,
-    design_mimo_iir_with_options,
-};
-pub use run::{
-    MimoKey, MimoRoleLateEnergy, MimoRoleScore, MimoRun, availability, cap_text, compute,
-    compute_with_acceleration, estimate_seconds, fir_budget_text, fir_to_48k, kind_text,
-};
+pub use iir::{IirDerivatives, IirSolveOptions, IirSupport};
+#[cfg(any(test, feature = "test-support"))]
+pub use iir::{IirSolver, MimoIir, design_mimo_iir, design_mimo_iir_with_options};
+pub use run::{MimoKey, MimoRun, availability, cap_text, compute_with_acceleration};
+#[cfg(any(test, feature = "test-support"))]
+pub use run::{compute, estimate_seconds, fir_budget_text, fir_to_48k, kind_text};
 
-pub use design::{
-    MimoDesign, MimoRequest, design_mimo, lowpass_fir, support_path, support_ranges,
-    worst_t60_change,
-};
+pub use design::{MimoDesign, MimoRequest, support_path};
+#[cfg(any(test, feature = "test-support"))]
+pub use design::{design_mimo, lowpass_fir, support_ranges, worst_t60_change};
 
 #[cfg(feature = "test-support")]
 pub use acceleration::{RidgeReplayInput, RidgeReplayOutput, replay_ridge};
+
+fn validate_field(field: &str, valid: bool) -> Result<(), crate::EngineError> {
+    if valid {
+        Ok(())
+    } else {
+        Err(crate::EngineError::Input(format!("invalid MIMO {field}")))
+    }
+}

@@ -13,7 +13,7 @@ use secs_types::ipc::{
     JobStatus,
 };
 
-use crate::EventSink;
+use crate::{EventSink, Service};
 
 const TERMINAL_HISTORY_LIMIT: usize = secs_types::rules::JOB_HISTORY_MAX;
 
@@ -22,16 +22,36 @@ enum JobGroup {
     Device,
     Compute,
     Export,
+    SideMdat,
     StatusWatch,
 }
-fn group(kind: JobKind) -> JobGroup {
+fn kind_name(kind: JobKind) -> &'static str {
     match kind {
-        JobKind::Measure | JobKind::SampleLoad | JobKind::MdatImport | JobKind::LevelMonitor => {
-            JobGroup::Device
-        }
-        JobKind::Calibrate | JobKind::RecommendXo | JobKind::Mimo => JobGroup::Compute,
-        JobKind::Export | JobKind::Apply => JobGroup::Export,
-        JobKind::StatusWatch => JobGroup::StatusWatch,
+        JobKind::Measure => "measure",
+        JobKind::SampleLoad => "sample_load",
+        JobKind::MdatImport => "mdat_import",
+        JobKind::LevelMonitor => "level_monitor",
+        JobKind::Calibrate => "calibrate",
+        JobKind::RecommendXo => "recommend_xo",
+        JobKind::Mimo => "mimo",
+        JobKind::Export => "export",
+        JobKind::Apply => "apply",
+        JobKind::StatusWatch => "status_watch",
+    }
+}
+
+fn group(kind: JobKind) -> JobGroup {
+    let name = kind_name(kind);
+    let group = secs_types::rules::JOB_GROUPS
+        .iter()
+        .find_map(|(group, kinds)| kinds.contains(&name).then_some(*group))
+        .expect("every foreground job kind belongs to an exported group");
+    match group {
+        "device" => JobGroup::Device,
+        "compute" => JobGroup::Compute,
+        "export" => JobGroup::Export,
+        "status_watch" => JobGroup::StatusWatch,
+        _ => unreachable!("rules.rs contains a known job group"),
     }
 }
 
@@ -52,6 +72,7 @@ struct JobRecord {
     group: JobGroup,
     cancel: CancelToken,
     measurement_cancel: crate::measure::CancelToken,
+    attached: Option<crate::measure::CancelToken>,
 }
 
 impl Default for JobRegistry {
@@ -65,12 +86,21 @@ impl Default for JobRegistry {
 }
 
 #[derive(Clone)]
-pub(crate) struct JobContext {
+pub struct JobContext {
     id: JobId,
     registry: JobRegistry,
     events: Arc<dyn EventSink>,
     cancel: CancelToken,
     measurement_cancel: crate::measure::CancelToken,
+    available_memory: u64,
+}
+impl std::fmt::Debug for JobContext {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("JobContext")
+            .field("id", &self.id)
+            .finish_non_exhaustive()
+    }
 }
 impl JobContext {
     pub fn cancel(&self) -> &CancelToken {
@@ -81,19 +111,35 @@ impl JobContext {
     }
 
     pub fn report_progress(&self, stage: &'static str, done: u64, total: u64) {
-        self.progress_sink().report(&Progress {
-            stage,
-            done,
-            total,
-            eta: None,
-        });
+        self.progress(stage, done, total);
     }
 
     pub fn measurement_cancel(&self) -> &crate::measure::CancelToken {
         &self.measurement_cancel
     }
 
+    pub fn available_memory(&self) -> u64 {
+        self.available_memory
+    }
+
+    pub fn attach_cancel(&self, token: crate::measure::CancelToken) {
+        if let Some(job) = lock(&self.registry.inner)
+            .jobs
+            .iter_mut()
+            .find(|job| job.snapshot.job == self.id && !job.snapshot.status.is_terminal())
+        {
+            if job.snapshot.status == JobStatus::CancelRequested {
+                token.cancel();
+            }
+            job.attached = Some(token);
+        }
+    }
+
     pub fn role_progress(&self, stage: &str, done: u64, total: u64) {
+        self.progress(stage, done, total);
+    }
+
+    fn progress(&self, stage: &str, done: u64, total: u64) {
         let value = JobProgress {
             stage: stage.into(),
             done,
@@ -138,6 +184,27 @@ impl JobContext {
         Ok(())
     }
 }
+impl Service {
+    pub(crate) fn start_job(
+        &self,
+        kind: JobKind,
+        events: Arc<dyn EventSink>,
+        body: impl FnOnce(JobContext) -> Result<JobResult, IpcError> + Send + 'static,
+    ) -> Result<JobStarted, IpcError> {
+        self.jobs
+            .start(kind, events, self.deps.memory.clone(), body)
+    }
+
+    pub(crate) fn start_side_mdat_job(
+        &self,
+        events: Arc<dyn EventSink>,
+        body: impl FnOnce(JobContext) -> Result<JobResult, IpcError> + Send + 'static,
+    ) -> Result<JobStarted, IpcError> {
+        self.jobs
+            .start_side_mdat(events, self.deps.memory.clone(), body)
+    }
+}
+
 struct JobProgressSink(JobContext);
 impl std::fmt::Debug for JobProgressSink {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -146,18 +213,8 @@ impl std::fmt::Debug for JobProgressSink {
 }
 impl ProgressSink for JobProgressSink {
     fn report(&self, progress: &Progress) {
-        let value = JobProgress {
-            stage: progress.stage.into(),
-            done: progress.done,
-            total: progress.total,
-        };
-        self.0.registry.progress(self.0.id, value.clone());
-        self.0.events.send(JobEvent::Progress {
-            job: self.0.id,
-            stage: value.stage,
-            done: value.done,
-            total: value.total,
-        });
+        self.0
+            .progress(progress.stage, progress.done, progress.total);
     }
 }
 
@@ -166,18 +223,45 @@ impl JobRegistry {
         &self,
         kind: JobKind,
         events: Arc<dyn EventSink>,
+        memory: Arc<dyn secs_compute::MemoryProbe>,
         body: impl FnOnce(JobContext) -> Result<JobResult, IpcError> + Send + 'static,
     ) -> Result<JobStarted, IpcError> {
-        let job_group = group(kind);
+        self.start_in_group(kind, group(kind), events, memory.available_bytes(), body)
+    }
+
+    pub fn start_side_mdat(
+        &self,
+        events: Arc<dyn EventSink>,
+        memory: Arc<dyn secs_compute::MemoryProbe>,
+        body: impl FnOnce(JobContext) -> Result<JobResult, IpcError> + Send + 'static,
+    ) -> Result<JobStarted, IpcError> {
+        self.start_in_group(
+            JobKind::Export,
+            JobGroup::SideMdat,
+            events,
+            memory.available_bytes(),
+            body,
+        )
+    }
+
+    fn start_in_group(
+        &self,
+        kind: JobKind,
+        job_group: JobGroup,
+        events: Arc<dyn EventSink>,
+        available_memory: u64,
+        body: impl FnOnce(JobContext) -> Result<JobResult, IpcError> + Send + 'static,
+    ) -> Result<JobStarted, IpcError> {
         let id = JobId(self.next_id.fetch_add(1, Ordering::Relaxed));
         let cancel = CancelToken::new();
         let measurement_cancel = crate::measure::CancelToken::default();
         {
             let mut inner = lock(&self.inner);
-            if inner
-                .jobs
-                .iter()
-                .any(|job| job.group == job_group && !job.snapshot.status.is_terminal())
+            if job_group != JobGroup::SideMdat
+                && inner
+                    .jobs
+                    .iter()
+                    .any(|job| job.group == job_group && !job.snapshot.status.is_terminal())
             {
                 return Err(IpcError::new(
                     ErrorCode::JobBusy,
@@ -197,6 +281,7 @@ impl JobRegistry {
                 group: job_group,
                 cancel: cancel.clone(),
                 measurement_cancel: measurement_cancel.clone(),
+                attached: None,
             });
         }
         events.send(JobEvent::Started { job: id, kind });
@@ -206,6 +291,7 @@ impl JobRegistry {
             events: events.clone(),
             cancel,
             measurement_cancel,
+            available_memory,
         };
         let registry = self.clone();
         let worker_events = events.clone();
@@ -245,6 +331,9 @@ impl JobRegistry {
             job.snapshot.status = JobStatus::CancelRequested;
             job.cancel.cancel();
             job.measurement_cancel.cancel();
+            if let Some(attached) = &job.attached {
+                attached.cancel();
+            }
         }
         Ok(job.snapshot.clone())
     }
@@ -257,6 +346,14 @@ impl JobRegistry {
             .collect()
     }
 
+    pub fn running(&self, kind: JobKind) -> Option<JobId> {
+        lock(&self.inner)
+            .jobs
+            .iter()
+            .find(|job| job.snapshot.kind == kind && !job.snapshot.status.is_terminal())
+            .map(|job| job.snapshot.job)
+    }
+
     pub fn running_in_device_group(&self) -> bool {
         lock(&self.inner)
             .jobs
@@ -267,41 +364,43 @@ impl JobRegistry {
     /// The kind of a running measurement-group job other than the level
     /// monitor, which the screen restarts itself (TD-91).
     pub fn running_measurement(&self) -> Option<JobKind> {
-        lock(&self.inner)
-            .jobs
-            .iter()
-            .find(|job| {
-                job.group == JobGroup::Device
-                    && job.snapshot.kind != JobKind::LevelMonitor
-                    && !job.snapshot.status.is_terminal()
-            })
-            .map(|job| job.snapshot.kind)
+        [JobKind::Measure, JobKind::SampleLoad, JobKind::MdatImport]
+            .into_iter()
+            .find(|kind| self.running(*kind).is_some())
     }
 
     pub fn cancel_all(&self) {
         let mut inner = lock(&self.inner);
         for job in &mut inner.jobs {
-            if !job.snapshot.status.is_terminal() && job.snapshot.cancellable {
+            if job.group != JobGroup::SideMdat
+                && !job.snapshot.status.is_terminal()
+                && job.snapshot.cancellable
+            {
                 job.snapshot.status = JobStatus::CancelRequested;
                 job.cancel.cancel();
                 job.measurement_cancel.cancel();
+                if let Some(attached) = &job.attached {
+                    attached.cancel();
+                }
             }
         }
     }
 
-    pub fn wait_for_device(&self, timeout: Duration) -> bool {
+    pub fn wait_for_device_and_side_mdat(&self, timeout: Duration) -> bool {
         let deadline = Instant::now() + timeout;
         let mut inner = lock(&self.inner);
-        while inner
-            .jobs
-            .iter()
-            .any(|job| job.group == JobGroup::Device && !job.snapshot.status.is_terminal())
-        {
+        while inner.jobs.iter().any(|job| {
+            matches!(job.group, JobGroup::Device | JobGroup::SideMdat)
+                && !job.snapshot.status.is_terminal()
+        }) {
             let remaining = deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
                 return false;
             }
-            let (next, wait) = self.changed.wait_timeout(inner, remaining).unwrap();
+            let (next, wait) = self
+                .changed
+                .wait_timeout(inner, remaining)
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             inner = next;
             if wait.timed_out() {
                 return false;
@@ -326,11 +425,14 @@ impl JobRegistry {
             let Some(job) = inner.jobs.iter_mut().find(|job| job.snapshot.job == id) else {
                 return;
             };
+            let cancelled = || IpcError::new(ErrorCode::Cancelled, "cancelled");
             let (status, result, error) = match outcome {
-                Ok(_) if job.cancel.is_cancelled() => (JobStatus::Cancelled, None, None),
+                Ok(_) if job.cancel.is_cancelled() => {
+                    (JobStatus::Cancelled, None, Some(cancelled()))
+                }
                 Ok(result) => (JobStatus::Succeeded, Some(result), None),
                 Err(error) if error.code == ErrorCode::Cancelled || job.cancel.is_cancelled() => {
-                    (JobStatus::Cancelled, None, Some(error))
+                    (JobStatus::Cancelled, None, Some(cancelled()))
                 }
                 Err(error) => (JobStatus::Failed, None, Some(error)),
             };
@@ -368,7 +470,7 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Condvar;
+    use std::sync::{Condvar, mpsc};
     use std::time::{Duration, Instant};
 
     use super::*;
@@ -385,6 +487,38 @@ mod tests {
             self.changed.notify_all();
         }
     }
+    fn memory() -> Arc<dyn secs_compute::MemoryProbe> {
+        Arc::new(secs_compute::FixedMemory(u64::MAX))
+    }
+
+    #[test]
+    fn job_groups_match_the_exported_table() {
+        let kinds = [
+            JobKind::Measure,
+            JobKind::SampleLoad,
+            JobKind::MdatImport,
+            JobKind::LevelMonitor,
+            JobKind::Calibrate,
+            JobKind::RecommendXo,
+            JobKind::Mimo,
+            JobKind::Export,
+            JobKind::Apply,
+            JobKind::StatusWatch,
+        ];
+        for kind in kinds {
+            let name = kind_name(kind);
+            assert_eq!(
+                secs_types::rules::JOB_GROUPS
+                    .iter()
+                    .filter(|(_, members)| members.contains(&name))
+                    .count(),
+                1,
+                "{name}"
+            );
+            let _ = group(kind);
+        }
+    }
+
     impl Events {
         fn wait_finished(&self, timeout: Duration) -> Vec<JobEvent> {
             let deadline = Instant::now() + timeout;
@@ -404,13 +538,125 @@ mod tests {
     }
 
     #[test]
+    fn job_context_reports_the_memory_available_at_start() {
+        let registry = JobRegistry::default();
+        let events = Arc::new(Events::default());
+        registry
+            .start(
+                JobKind::Export,
+                events.clone(),
+                Arc::new(secs_compute::FixedMemory(123)),
+                |job| {
+                    assert_eq!(job.available_memory(), 123);
+                    Ok(JobResult::Stopped)
+                },
+            )
+            .unwrap();
+        let values = events.wait_finished(Duration::from_secs(2));
+        assert!(matches!(
+            values.last(),
+            Some(JobEvent::Finished {
+                status: JobStatus::Succeeded,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn running_answers_the_live_job_of_a_kind_and_none_after_it_ends() {
+        let registry = JobRegistry::default();
+        let events = Arc::new(Events::default());
+        let gate = Arc::new((Mutex::new(false), Condvar::new()));
+        let worker_gate = gate.clone();
+        let started = registry
+            .start(JobKind::Export, events.clone(), memory(), move |_| {
+                let mut released = lock(&worker_gate.0);
+                while !*released {
+                    released = worker_gate.1.wait(released).unwrap();
+                }
+                Ok(JobResult::Stopped)
+            })
+            .unwrap();
+        assert_eq!(registry.running(JobKind::Export), Some(started.job));
+        assert_eq!(registry.running(JobKind::Calibrate), None);
+        *lock(&gate.0) = true;
+        gate.1.notify_all();
+        events.wait_finished(Duration::from_secs(2));
+        assert_eq!(registry.running(JobKind::Export), None);
+    }
+
+    #[test]
+    fn attach_cancel_is_cancelled_with_the_job_and_only_the_last_attached_token_counts() {
+        let registry = JobRegistry::default();
+        let events = Arc::new(Events::default());
+        let first = crate::measure::CancelToken::default();
+        let second = crate::measure::CancelToken::default();
+        let worker_first = first.clone();
+        let worker_second = second.clone();
+        let (ready, waiting) = mpsc::channel();
+        let started = registry
+            .start(
+                JobKind::LevelMonitor,
+                events.clone(),
+                memory(),
+                move |job| {
+                    job.attach_cancel(worker_first);
+                    job.attach_cancel(worker_second);
+                    ready.send(()).unwrap();
+                    while !job.cancel().is_cancelled() {
+                        std::thread::yield_now();
+                    }
+                    Ok(JobResult::Stopped)
+                },
+            )
+            .unwrap();
+        waiting.recv_timeout(Duration::from_secs(2)).unwrap();
+        registry.cancel(started.job).unwrap();
+        events.wait_finished(Duration::from_secs(2));
+        assert!(!first.is_cancelled());
+        assert!(second.is_cancelled());
+    }
+
+    #[test]
+    fn a_token_attached_after_the_cancel_request_is_cancelled_immediately() {
+        let registry = JobRegistry::default();
+        let events = Arc::new(Events::default());
+        let token = crate::measure::CancelToken::default();
+        let worker_token = token.clone();
+        let (ready_tx, ready_rx) = mpsc::channel();
+        let (attach_tx, attach_rx) = mpsc::channel();
+        let (attached_tx, attached_rx) = mpsc::channel();
+        let started = registry
+            .start(
+                JobKind::LevelMonitor,
+                events.clone(),
+                memory(),
+                move |job| {
+                    ready_tx.send(()).unwrap();
+                    attach_rx.recv().unwrap();
+                    job.attach_cancel(worker_token);
+                    attached_tx.send(()).unwrap();
+                    Ok(JobResult::Stopped)
+                },
+            )
+            .unwrap();
+        ready_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        registry.cancel(started.job).unwrap();
+        attach_tx.send(()).unwrap();
+        attached_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+
+        assert!(token.is_cancelled());
+        events.wait_finished(Duration::from_secs(2));
+    }
+
+    #[test]
     fn jobs_push_ordered_events_and_exclude_the_same_group() {
         let registry = JobRegistry::default();
         let events = Arc::new(Events::default());
         let gate = Arc::new((Mutex::new(false), Condvar::new()));
         let worker_gate = gate.clone();
         registry
-            .start(JobKind::Calibrate, events.clone(), move |ctx| {
+            .start(JobKind::Calibrate, events.clone(), memory(), move |ctx| {
                 ctx.progress_sink().report(&Progress {
                     stage: "test",
                     done: 1,
@@ -432,7 +678,7 @@ mod tests {
             })
             .unwrap();
         let error = registry
-            .start(JobKind::Mimo, events.clone(), |_| {
+            .start(JobKind::Mimo, events.clone(), memory(), |_| {
                 unreachable!("busy jobs do not start")
             })
             .unwrap_err();
@@ -458,13 +704,18 @@ mod tests {
         let gate = Arc::new((Mutex::new(false), Condvar::new()));
         let worker_gate = gate.clone();
         let active = registry
-            .start(JobKind::Calibrate, active_events.clone(), move |_| {
-                let mut ready = lock(&worker_gate.0);
-                while !*ready {
-                    ready = worker_gate.1.wait(ready).unwrap();
-                }
-                Ok(JobResult::Calibration)
-            })
+            .start(
+                JobKind::Calibrate,
+                active_events.clone(),
+                memory(),
+                move |_| {
+                    let mut ready = lock(&worker_gate.0);
+                    while !*ready {
+                        ready = worker_gate.1.wait(ready).unwrap();
+                    }
+                    Ok(JobResult::Calibration)
+                },
+            )
             .unwrap();
         let mut completed = Vec::new();
         for index in 0..96 {
@@ -472,7 +723,7 @@ mod tests {
             let folder = format!("export-{index}");
             let expected = folder.clone();
             let job = registry
-                .start(JobKind::Export, events.clone(), move |_| {
+                .start(JobKind::Export, events.clone(), memory(), move |_| {
                     Ok(JobResult::Export(ExportResult {
                         folder,
                         files: vec!["filter.wav".into()],
@@ -536,11 +787,61 @@ mod tests {
     }
 
     #[test]
+    fn a_body_that_returns_cancelled_finishes_like_an_external_cancel_td165() {
+        fn cancelled_error(events: &Events) -> IpcError {
+            let values = events.wait_finished(Duration::from_secs(2));
+            let Some(JobEvent::Finished {
+                status,
+                result,
+                error,
+                ..
+            }) = values.last()
+            else {
+                panic!("job did not finish")
+            };
+            assert_eq!(*status, JobStatus::Cancelled);
+            assert!(result.is_none());
+            let error = error.clone().expect("cancelled jobs carry one error");
+            assert_eq!(error.code, ErrorCode::Cancelled);
+            assert_eq!(error.detail, "cancelled");
+            assert!(error.params.is_empty());
+            error
+        }
+
+        let registry = JobRegistry::default();
+        let external_events = Arc::new(Events::default());
+        let external = registry
+            .start(
+                JobKind::Calibrate,
+                external_events.clone(),
+                memory(),
+                |ctx| {
+                    while !ctx.cancel().is_cancelled() {
+                        std::thread::yield_now();
+                    }
+                    Ok(JobResult::Calibration)
+                },
+            )
+            .unwrap();
+        registry.cancel(external.job).unwrap();
+        let external_error = cancelled_error(&external_events);
+
+        let body_events = Arc::new(Events::default());
+        registry
+            .start(JobKind::Calibrate, body_events.clone(), memory(), |_| {
+                Err(IpcError::new(ErrorCode::Cancelled, "cancelled"))
+            })
+            .unwrap();
+        let body_error = cancelled_error(&body_events);
+        assert_eq!(external_error, body_error);
+    }
+
+    #[test]
     fn cancellation_finishes_within_one_second() {
         let registry = JobRegistry::default();
         let events = Arc::new(Events::default());
         let started = registry
-            .start(JobKind::Calibrate, events.clone(), |ctx| {
+            .start(JobKind::Calibrate, events.clone(), memory(), |ctx| {
                 loop {
                     ctx.cancel()
                         .check()

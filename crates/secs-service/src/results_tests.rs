@@ -59,6 +59,7 @@ fn calibration_summary() -> CalibrationSummary {
         late_energy: vec![],
         latency_ms: 0.0,
         notes: vec![],
+        notices: vec![],
         main_roles: vec!["L".into()],
         sub_roles: vec![],
     }
@@ -73,6 +74,7 @@ fn mimo_summary(supports: usize) -> MimoSummary {
         support_count: supports,
         fir_taps_total: 0,
         notes: vec![],
+        notices: vec![],
         input_count: usize::from(supports > 0),
         scorecard: vec![],
         late_energy: vec![],
@@ -102,10 +104,13 @@ fn paths(supports: usize) -> MimoPaths {
 
 fn cache(project: &Project, supports: usize, compute: ComputeIdentity) -> CachedResults {
     let settings = calibration_from_project(project);
-    let signature = signature_key(project);
-    let target = target_key_string(project);
-    let config = config_key(project);
-    let run = crate::calibration::run_key(&signature, &target, &settings.engine_key(), &config);
+    let keys = ProjectKeys::of(project);
+    let run = keys.run(&settings);
+    let ProjectKeys {
+        config,
+        signature,
+        target,
+    } = keys;
     CachedResults {
         calibration: calibration_summary(),
         calibration_chain: SignalChain {
@@ -160,10 +165,13 @@ fn live_book_with_settings(
     supports: usize,
     compute: ComputeIdentity,
 ) -> ResultBook {
-    let signature = signature_key(project);
-    let target = target_key_string(project);
-    let config = config_key(project);
-    let run = crate::calibration::run_key(&signature, &target, &settings.engine_key(), &config);
+    let keys = ProjectKeys::of(project);
+    let run = keys.run(&settings);
+    let ProjectKeys {
+        config,
+        signature,
+        target,
+    } = keys;
     let mut book = ResultBook::default();
     book.commit_calibration(
         CalibrationRun::metadata_only(
@@ -380,13 +388,14 @@ fn a_live_calibration_hides_the_cached_mimo_until_mimo_runs_again() {
     let cpu = ComputeIdentity::default();
     let mut book = ResultBook::from_cache(Some(cache(&current, 1, cpu.clone())));
     let live = live_book(&current, 1, cpu.clone());
+    let keys = ProjectKeys::of(&current);
     book.commit_calibration(
         CalibrationRun::metadata_only(
             calibration_summary(),
             calibration_from_project(&current),
-            signature_key(&current),
-            target_key_string(&current),
-            config_key(&current),
+            keys.signature,
+            keys.target,
+            keys.config,
             live.live_calibration().unwrap().run_key.clone(),
             3,
         ),
@@ -417,24 +426,25 @@ fn calibration_signature_keeps_old_caches_without_curves() {
         "{:?}:{identities:?}",
         secs_project::measurement_signature(&current)
     );
-    assert_eq!(signature_key(&current), old_signature);
+    assert_eq!(ProjectKeys::of(&current).signature, old_signature);
 
     let cached = cache(&current, 0, ComputeIdentity::default());
     assert_eq!(cached_stale_reason(&cached, &current), None);
     current
         .measurement_calibration
         .insert((1, "L".into()), 0x0123_4567_89ab_cdef);
-    assert_ne!(signature_key(&current), old_signature);
+    assert_ne!(ProjectKeys::of(&current).signature, old_signature);
     assert_eq!(cached_stale_reason(&cached, &current), Some("measurements"));
 }
 
 #[test]
 fn stale_reasons_prioritize_measurements_then_config_settings_and_target() {
     let project = Project::default();
-    let signature = signature_key(&project);
+    let keys = ProjectKeys::of(&project);
+    let signature = keys.signature;
     let engine = calibration_from_project(&project).engine_key();
-    let target = target_key_string(&project);
-    let config = config_key(&project);
+    let target = keys.target;
+    let config = keys.config;
     assert_eq!(
         stale_reason("changed", "changed", "changed", Some("changed"), &project),
         Some("measurements")
@@ -505,4 +515,37 @@ fn xo_recommendation_staleness_ignores_xo_and_clears_after_recommendation() {
             .summary(&project, &ComputeIdentity::default())
             .xo_rec_stale
     );
+}
+
+#[test]
+fn project_keys_strings_are_pinned() {
+    let sample = Project::from_preset("2.1").unwrap();
+    assert_eq!(
+        ProjectKeys::of(&sample),
+        ProjectKeys {
+            config: "SpeakerConfig { speakers: [Speaker { role: \"L\", size: \"small\", bands: [Band { band: \"FULL\", out: 1, pol: \"+\" }] }, Speaker { role: \"R\", size: \"small\", bands: [Band { band: \"FULL\", out: 2, pol: \"+\" }] }, Speaker { role: \"SW1\", size: \"sub\", bands: [Band { band: \"SUB\", out: 3, pol: \"+\" }] }], device: \"\", preset: \"2.1\", biamp_default: false }:[]".into(),
+            signature: "[]:[]".into(),
+            target: "[(FloatKey(25.0), FloatKey(2.0)), (FloatKey(80.0), FloatKey(2.0)), (FloatKey(200.0), FloatKey(0.0)), (FloatKey(1000.0), FloatKey(0.0)), (FloatKey(16000.0), FloatKey(-2.0))]".into(),
+        }
+    );
+}
+
+#[test]
+fn inputs_unchanged_since_is_false_after_a_config_settings_or_target_change() {
+    let sample = Project::from_preset("2.1").unwrap();
+    let settings = calibration_from_project(&sample);
+    let book = live_book(&sample, 0, ComputeIdentity::default());
+    assert!(book.inputs_unchanged_since(&ProjectKeys::of(&sample), &settings));
+
+    let mut changed = sample.clone();
+    changed.config.device = "changed".into();
+    assert!(!book.inputs_unchanged_since(&ProjectKeys::of(&changed), &settings));
+
+    let mut changed_settings = settings.clone();
+    changed_settings.boost_max_db += 1.0;
+    assert!(!book.inputs_unchanged_since(&ProjectKeys::of(&sample), &changed_settings));
+
+    let mut changed = sample.clone();
+    changed.target.points[0].1 += 1.0;
+    assert!(!book.inputs_unchanged_since(&ProjectKeys::of(&changed), &settings));
 }

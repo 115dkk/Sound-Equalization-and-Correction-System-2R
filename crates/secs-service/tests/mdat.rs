@@ -1,8 +1,10 @@
+#![allow(deprecated)]
 #![forbid(unsafe_code)]
 use secs_mdat::{Boxed, SourceDate};
 use secs_project::{
-    MeasurementResult, MeasurementStore, Project, PyJson, load_source, save_source, source_path,
+    MeasurementResult, MeasurementStore, Project, PyJson, save_source, source_path,
 };
+use secs_service::EventSink;
 use secs_service::mdat_import::*;
 use serde_json::{Value, json};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -32,6 +34,35 @@ impl Drop for TempDir {
 
 fn root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
+}
+
+#[derive(Debug)]
+struct SaveEvents(std::sync::mpsc::Sender<secs_types::ipc::JobEvent>);
+
+impl EventSink for SaveEvents {
+    fn send(&self, event: secs_types::ipc::JobEvent) {
+        let _ = self.0.send(event);
+    }
+}
+
+fn save_and_wait(service: &secs_service::Service) {
+    let (send, receive) = std::sync::mpsc::channel();
+    assert!(matches!(
+        service.call(
+            secs_types::ipc::Request::ProjectSave(Default::default()),
+            std::sync::Arc::new(SaveEvents(send)),
+        ),
+        secs_types::ipc::Envelope::Ok(_)
+    ));
+    loop {
+        let event = receive
+            .recv_timeout(std::time::Duration::from_secs(30))
+            .expect("side mdat job did not finish");
+        if let secs_types::ipc::JobEvent::Finished { status, error, .. } = event {
+            assert_eq!(status, secs_types::ipc::JobStatus::Succeeded, "{error:?}");
+            break;
+        }
+    }
 }
 fn strings(v: &Value) -> Vec<String> {
     v.as_array()
@@ -126,10 +157,29 @@ fn service_mdat_every_oracle_value_and_imported_secs_bytes() {
             );
         } else if name == "source_generated" {
             let directory = TempDir::new("mdat-source");
-            let wav = directory.0.join("L_P1.wav");
+            let project_path = directory.0.join("source.secs");
+            let irs = project_path.with_extension("irs");
+            std::fs::create_dir_all(&irs).unwrap();
+            let wav = irs.join("L_P1.wav");
+            std::fs::write(&wav, []).unwrap();
+            let mut project = Project::from_preset("2.0").unwrap();
+            project.measurements = PyJson::Array(vec![PyJson::Object(vec![
+                ("pos".into(), PyJson::Int("1".into())),
+                (
+                    "ir".into(),
+                    PyJson::Object(vec![(
+                        "L".into(),
+                        PyJson::Str("source.irs/L_P1.wav".into()),
+                    )]),
+                ),
+            ])]);
+            std::fs::write(&project_path, project.save_text()).unwrap();
             for case in ["rew", "missing_cal"] {
                 std::fs::write(source_path(&wav), out["json"][case].as_str().unwrap()).unwrap();
-                let info = load_source(&wav).unwrap();
+                let info = MeasurementStore::open(&project_path)
+                    .unwrap()
+                    .source_of("L", 1)
+                    .unwrap();
                 match case {
                     "rew" => {
                         assert_eq!(
@@ -291,12 +341,7 @@ fn side_mdat_bytes_match_upstream_for_every_import_case() {
         ) else {
             panic!("{} open", fixture.id)
         };
-        let secs_types::ipc::Envelope::Ok(_) = service.call(
-            secs_types::ipc::Request::ProjectSave(Default::default()),
-            std::sync::Arc::new(secs_service::NoEvents),
-        ) else {
-            panic!("{} save", fixture.id)
-        };
+        save_and_wait(&service);
         assert_eq!(
             std::fs::read(target.with_extension("mdat")).unwrap(),
             fixture.blob(&fixture.outputs()["side_mdat"]),
@@ -364,13 +409,7 @@ fn side_mdat_orders_multiple_positions_and_unplanned_roles_like_upstream() {
         ),
         secs_types::ipc::Envelope::Ok(_)
     ));
-    assert!(matches!(
-        service.call(
-            secs_types::ipc::Request::ProjectSave(Default::default()),
-            std::sync::Arc::new(secs_service::NoEvents)
-        ),
-        secs_types::ipc::Envelope::Ok(_)
-    ));
+    save_and_wait(&service);
     assert_eq!(
         std::fs::read(target.with_extension("mdat")).unwrap(),
         fixture.blob(&fixture.outputs()["side_mdat"])

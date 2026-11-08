@@ -1,3 +1,4 @@
+#![allow(deprecated)]
 #![forbid(unsafe_code)]
 // Protocol parity with tests/test_rewapi_real.py (GPL-3.0-only); replies are
 // recorded protocol data, not a second implementation of the client.
@@ -952,4 +953,23 @@ fn test_cancel_during_running_aborts_and_keeps_terminal_phase_last() {
 fn test_recorded_transport_rejects_wrong_order() {
     let (mut c, _) = client(vec![post("/measure/notes", json!("a"))]);
     let _ = c.set_blocking(true);
+}
+
+#[test]
+fn test_impulse_response_rejects_fractional_sample_rates() {
+    for rate in [0.5, 48000.5, 0.0, -1.0, 4_294_967_296.0] {
+        let mut ir = data("ir");
+        ir["sampleRate"] = json!(rate);
+        let (mut c, transport) = client(vec![ir_exchange("abc", ir)]);
+        let result = c.impulse_response("abc");
+        assert!(
+            matches!(&result, Err(RewError::Schema { path, message })
+            if path == "/measurements/abc/impulse-response" && message == "invalid sample rate"),
+            "sampleRate={rate}: {result:?}"
+        );
+        transport.assert_finished();
+    }
+    let (mut c, transport) = client(vec![ir_exchange("abc", data("ir"))]);
+    assert_eq!(c.impulse_response("abc").unwrap().sample_rate, 48000);
+    transport.assert_finished();
 }

@@ -3,6 +3,7 @@ import { coalesceExternalChanges, externalRefresh } from "./externalChanges";
 import { effectsOf } from "./effects";
 import { createSession } from "./session";
 import { createMockService } from "../ipc/mock";
+import { PROJECT_HOST_DEFAULTS, PROJECT_RESOURCES } from "./projectScope";
 
 afterEach(() => vi.useRealTimers());
 
@@ -18,6 +19,12 @@ it.each(methods)("refreshes all potentially changed resources for %s without rep
     replaceProject: ["project_new", "project_open"].includes(method),
     resources: [...effectsOf({ request: "project_open" }).reload, "measurementSettings"], jobs: true,
   });
+});
+
+it("refreshes every project resource the replacement table empties after an external replacement", () => {
+  const resources: readonly string[] = externalRefresh("project_open").resources;
+  // apply_status is read only while a target is set to 적용, never as part of a refresh.
+  for (const key of PROJECT_RESOURCES.filter((key) => key !== "applyStatus")) expect(resources, key).toContain(key);
 });
 
 it("coalesces a burst and serializes notifications that arrive during a refresh", async () => {
@@ -123,7 +130,7 @@ describe("session external changes", () => {
     const { mock, session, emit } = setup();
     try {
       await session.start(); await session.settled();
-      session.host.set({ selected: 2, channel: "L", xoGroup: "front" });
+      session.host.set({ selected: 2, channel: "L", xoGroup: "front", designName: "old room" });
       const epoch = session.jobs.epoch;
       const opened = session.host.getSnapshot().opened;
       await mock.request({ method: "project_new", params: { path: "/external.secs", preset: "2.0", sub_count: 0, sample: false, tutorial: false } });
@@ -131,7 +138,7 @@ describe("session external changes", () => {
       emit("project_new"); emit("project_new");
       await vi.advanceTimersByTimeAsync(25); await session.settled();
       expect(session.jobs.epoch).toBe(epoch + 1);
-      expect(session.host.getSnapshot()).toMatchObject({ selected: null, channel: null, xoGroup: null, mdat: null, opened: opened + 1 });
+      expect(session.host.getSnapshot()).toMatchObject({ ...PROJECT_HOST_DEFAULTS, path: session.host.getSnapshot().path, opened: opened + 1 });
       expect(session.stores.project.getSnapshot()?.path).toBe("/external.secs");
       expect(mock.calls.some((r) => r.method === "project_new")).toBe(false);
     } finally { session.dispose(); await session.settled(); mock.dispose(); }

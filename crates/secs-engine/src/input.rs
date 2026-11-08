@@ -10,6 +10,52 @@
 use secs_types::target::TargetCurve;
 use std::sync::Arc;
 
+/// Role-keyed values in insertion order.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct RoleMap<T>(Vec<(String, T)>);
+
+impl<T> Default for RoleMap<T> {
+    fn default() -> Self {
+        Self(Vec::new())
+    }
+}
+
+impl<T> RoleMap<T> {
+    pub(crate) fn get(&self, role: &str) -> Option<&T> {
+        Self::get_from(&self.0, role)
+    }
+
+    pub(crate) fn get_mut(&mut self, role: &str) -> Option<&mut T> {
+        Self::get_mut_from(&mut self.0, role)
+    }
+
+    pub(crate) fn iter(&self) -> impl Iterator<Item = (&str, &T)> {
+        self.0.iter().map(|(role, value)| (role.as_str(), value))
+    }
+
+    pub(crate) fn push(&mut self, role: String, value: T) {
+        self.0.push((role, value));
+    }
+
+    pub(crate) fn get_from<'a>(values: &'a [(String, T)], role: &str) -> Option<&'a T> {
+        values
+            .iter()
+            .find_map(|(candidate, value)| (candidate == role).then_some(value))
+    }
+
+    pub(crate) fn get_mut_from<'a>(values: &'a mut [(String, T)], role: &str) -> Option<&'a mut T> {
+        values
+            .iter_mut()
+            .find_map(|(candidate, value)| (candidate == role).then_some(value))
+    }
+}
+
+impl<T> FromIterator<(String, T)> for RoleMap<T> {
+    fn from_iter<I: IntoIterator<Item = (String, T)>>(iter: I) -> Self {
+        Self(iter.into_iter().collect())
+    }
+}
+
 /// Impulse-response samples in the precision they were stored with.
 ///
 /// Upstream widens every IR to float64 (`np.asarray(ir, float)`) before any
@@ -75,7 +121,7 @@ impl MeasurementSet {
         self.positions
             .iter()
             .find(|(p, _)| *p == position)
-            .and_then(|(_, roles)| roles.iter().find(|(r, _)| r == role).map(|(_, m)| m))
+            .and_then(|(_, roles)| RoleMap::get_from(roles, role))
     }
 }
 

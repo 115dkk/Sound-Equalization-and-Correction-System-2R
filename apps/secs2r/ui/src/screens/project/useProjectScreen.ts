@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { RECENT_PROJECTS_MAX } from "../../ipc/bindings/rules";
-import { IpcFailure } from "../../ipc/client";
+import { IpcFailure, internalError } from "../../ipc/client";
 import { useResource, useSession } from "../../state/react";
 import type { ProjectDialog, ProjectDialogsActions, ProjectDialogsView, UnsavedReason } from "./types";
 
@@ -12,14 +12,18 @@ export function useProjectScreen(close: () => Promise<void>) {
   const waiting = useRef<(() => Promise<void>) | null>(null);
   const previous = useRef<string | null>(null);
   useEffect(() => () => session.setSavePromptOpen(false), [session]);
+  const dialogOpen = useRef(false);
+  /** A request made while a dialog is open: the dialog shows its failure, not the global notice (TD-234). */
+  const ask: typeof session.call = (request) => session.call(request, { ownsFailure: dialogOpen.current });
   const show = (dialog: ProjectDialog | null) => {
+    dialogOpen.current = dialog !== null;
     session.setSavePromptOpen(dialog?.kind === "unsaved");
     setView({ dialog, busy: false, error: null });
   };
   const perform = (work: () => Promise<void>) => {
     setView((v) => ({ ...v, busy: true, error: null }));
     void work().then(() => setView((v) => ({ ...v, busy: false }))).catch((error: unknown) => {
-      setView((v) => ({ ...v, busy: false, error: error instanceof IpcFailure ? error.error : { code: "internal", params: {}, retryable: false, detail: String(error) } }));
+      setView((v) => ({ ...v, busy: false, error: error instanceof IpcFailure ? error.error : internalError(String(error)) }));
     });
   };
   const guard = (reason: UnsavedReason, work: () => Promise<void>) => {
@@ -37,14 +41,14 @@ export function useProjectScreen(close: () => Promise<void>) {
     const guard = session.projectGuard();
     if (!await session.projectEditsSettled()) return false;
     let path = as ? "" : session.stores.project.getSnapshot()?.path;
-    if (!path) path = await session.call({ method: "dialog_save_project", params: { suggested: project?.path ?? "" } }) ?? "";
+    if (!path) path = await ask({ method: "dialog_save_project", params: { suggested: project?.path ?? "" } }) ?? "";
     if (!path || !guard.alive()) return false;
-    await session.call({ method: "project_save", params: { path } });
+    await ask({ method: "project_save", params: { path } });
     await remember(path); return true;
   }
   async function open(path: string) {
     await session.monitor(false);
-    await session.call({ method: "project_open", params: { path } });
+    await ask({ method: "project_open", params: { path } });
     await remember(path); session.navigate("system"); show(null);
   }
   async function tutorial() {
@@ -54,10 +58,10 @@ export function useProjectScreen(close: () => Promise<void>) {
   }
   const actions: ProjectDialogsActions = {
     createProject: (input) => perform(async () => {
-      const path = await session.call({ method: "dialog_save_project", params: { suggested: "" } });
+      const path = await ask({ method: "dialog_save_project", params: { suggested: "" } });
       if (!path) return;
       await session.monitor(false);
-      await session.call({ method: "project_new", params: { path, preset: input.preset, sub_count: input.subCount, sample: input.sample, tutorial: false } });
+      await ask({ method: "project_new", params: { path, preset: input.preset, sub_count: input.subCount, sample: input.sample, tutorial: false } });
       await remember(path); session.navigate("system"); show(null);
     }),
     saveAndContinue: () => perform(async () => {
@@ -70,7 +74,7 @@ export function useProjectScreen(close: () => Promise<void>) {
     startTutorial: () => guard("tutorial", tutorial),
     openRecent: (path) => guard("open", () => open(path)),
     browseProject: () => perform(async () => {
-      const path = await session.call({ method: "dialog_open_project" });
+      const path = await ask({ method: "dialog_open_project" });
       if (path) guard("open", () => open(path));
     }),
   };
@@ -87,7 +91,7 @@ export function useProjectScreen(close: () => Promise<void>) {
     finishTutorial: () => perform(async () => {
       if (previous.current) await open(previous.current);
       else {
-        await session.call({ method: "project_new", params: { path: "", preset: "2.0", sub_count: 0, sample: false, tutorial: false } });
+        await ask({ method: "project_new", params: { path: "", preset: "2.0", sub_count: 0, sample: false, tutorial: false } });
         session.navigate("system");
       }
     }),

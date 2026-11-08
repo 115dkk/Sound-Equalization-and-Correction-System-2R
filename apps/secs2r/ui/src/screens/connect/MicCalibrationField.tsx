@@ -30,7 +30,7 @@ const NEXT: Record<Issue, MessageKey> = {
 const isIssue = (value: string | undefined): value is Issue => (ISSUES as readonly string[]).includes(value ?? "");
 
 /** A mic calibration failure as cause and next step; other failures read as the app's usual error text. */
-export function micCalibrationError(t: Translate, error: IpcError): { cause: string; next: string } {
+function micCalibrationError(t: Translate, error: IpcError): { cause: string; next: string } {
   const { reason, issue, line, file } = error.params;
   if (error.code === "measurement_input" && reason === "mic_calibration" && isIssue(issue) && (!WITH_LINE.has(issue) || /^\d+$/.test(line ?? ""))) {
     const params = { file: file ?? "", line: line ?? "" };

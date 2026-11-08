@@ -1,6 +1,8 @@
 //! Narrow derived state used by response exports.
 
-use crate::{EngineConfig, EngineError, MeasurementSet, Spectra, measurement, setup::SubFilter};
+#[cfg(any(test, feature = "test-support"))]
+use crate::EngineConfig;
+use crate::{EngineError, MeasurementSet, Spectra, measurement, setup::SubFilter};
 
 /// Long-window spectra and timing on the engine's internal axis.
 #[derive(Debug)]
@@ -12,6 +14,8 @@ pub struct ExportView {
 
 /// Rebuilds the 2 s spectra, reusing the design's preparation for matching inputs.
 /// New same-input callers use `design.replay.export_view(design)` directly.
+#[cfg(any(test, feature = "test-support"))]
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn export_view(
     design: &crate::Design,
     measurements: &MeasurementSet,
@@ -22,17 +26,22 @@ pub fn export_view(
     } else {
         let prepared =
             measurement::prepare(measurements, config, &crate::setup::Setup::new(config))?;
-        export_view_prepared(design, measurements, &prepared, &|| false)
+        export_view_prepared(
+            design,
+            measurements,
+            &prepared,
+            &secs_compute::Context::serial(),
+        )
     }
 }
 
-/// [`export_view`] on measurements already prepared with the same config;
-/// `Err(Cancelled)` once `cancelled()` reads true while the spectra are built.
+/// Rebuilds the 2 s spectra from measurements already prepared with the same config.
+/// Returns `Err(Cancelled)` when the context token is cancelled during the build.
 pub(crate) fn export_view_prepared(
     design: &crate::Design,
     measurements: &MeasurementSet,
     prepared: &measurement::Prepared,
-    cancelled: &dyn Fn() -> bool,
+    ctx: &secs_compute::Context,
 ) -> Result<ExportView, EngineError> {
     let sub_filters: Vec<_> = design
         .chain
@@ -53,16 +62,14 @@ pub(crate) fn export_view_prepared(
         })
         .collect();
     let mut spectra =
-        measurement::long_spectra_until(measurements, prepared, &sub_filters, 2000.0, cancelled)?;
+        measurement::long_spectra_until(measurements, prepared, &sub_filters, 2000.0, ctx)?;
     if let Some(hz) = design.chain.input_hp_hz {
         let highpass =
             secs_dsp::response::band_filter(crate::grid::design_freqs(), hz, "HP", "BW48")?;
         for position in spectra.positions().to_vec() {
             let roles: Vec<_> = spectra.roles_at(position).map(str::to_owned).collect();
             for role in roles {
-                if cancelled() {
-                    return Err(EngineError::Cancelled);
-                }
+                ctx.cancel().check()?;
                 let response = spectra.get(position, &role).expect("spectrum role");
                 let filtered = response
                     .iter()

@@ -196,6 +196,7 @@ pub(crate) struct DiracReader {
     rows: Vec<FileRow>,
     /// The Dirac position (from 0) and channel of each row.
     measured: Vec<(usize, usize)>,
+    file_name: String,
 }
 
 impl DiracReader {
@@ -246,6 +247,7 @@ impl DiracReader {
             project,
             rows,
             measured,
+            file_name: measurement_file::file_name(path),
         })
     }
 }
@@ -258,6 +260,7 @@ impl MeasurementReader for DiracReader {
     fn take(&self, row: usize) -> Result<ImportedIr, MeasureError> {
         let missing = || MeasureError::Input("Dirac measurement row is missing its IR".into());
         let (position, channel) = *self.measured.get(row).ok_or_else(missing)?;
+        let title = self.rows.get(row).ok_or_else(missing)?.title.clone();
         let samples = self
             .project
             .response(position, channel)
@@ -270,13 +273,18 @@ impl MeasurementReader for DiracReader {
             sample_rate,
             t0_s,
             uuid: content_uuid(samples, self.project.sample_rate, t0_s),
-            source_info: None,
+            source_info: Some(secs_mdat::SourceInfo {
+                strings: vec![("outputName".into(), title)],
+                notes: Some(self.file_name.clone()),
+                ..Default::default()
+            }),
         })
     }
 }
 
 /// Imports the assigned rows of the Dirac project at `path`, one
 /// assignment per row, through the measurement-file import flow.
+#[deprecated(since = "0.23.0", note = "use measurement_file::import")]
 pub fn import(
     store: &mut MeasurementStore,
     path: &Path,

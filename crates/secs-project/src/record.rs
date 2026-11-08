@@ -7,20 +7,15 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
-#[cfg(test)]
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::UNIX_EPOCH;
-
-#[cfg(test)]
-static SOURCE_PARSE_COUNT: AtomicUsize = AtomicUsize::new(0);
+use thiserror::Error;
 
 pub const IR_CACHE_LIMIT_BYTES: usize = 256 * 1024 * 1024;
 pub const MAX_PROJECT_BYTES: u64 = 64 * 1024 * 1024;
 pub const MAX_SOURCE_BYTES: u64 = 16 * 1024 * 1024;
 
 /// Calibration curves a measurement source sidecar attaches (ADR 0015).
-/// `meterCal` precedes every `scCal`; only entries with equal `freq` and
-/// `gain` lengths of at least two points are attached.
+/// `meterCal` precedes every `scCal`; only valid embedded curves are attached.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AttachedCalibration<'a> {
     /// The valid `meterCal` entry, when present.
@@ -38,29 +33,41 @@ impl AttachedCalibration<'_> {
     }
 }
 
-fn has_curve_arrays(cal: &CalInfo) -> bool {
-    matches!(
-        (&cal.freq, &cal.gain),
-        (Some(freq), Some(gain)) if freq.len() >= 2 && freq.len() == gain.len()
-    )
+fn has_valid_curve(cal: &CalInfo) -> bool {
+    let (Some(frequencies), Some(gains)) = (&cal.freq, &cal.gain) else {
+        return false;
+    };
+    let frequencies = frequencies
+        .iter()
+        .map(|&value| f64::from(value))
+        .collect::<Vec<_>>();
+    let gains = gains
+        .iter()
+        .map(|&value| f64::from(value))
+        .collect::<Vec<_>>();
+    secs_types::calibration::calibration_curve_is_valid(&frequencies, &gains)
 }
 
 /// Selects the sidecar calibration that ADR 0015 applies.
 pub fn attached_calibration(info: &SourceInfo) -> AttachedCalibration<'_> {
-    let meter_entry = info.cal.iter().find(|(name, _)| name == "meterCal");
+    let meter_entry = info
+        .cal
+        .iter()
+        .find(|(name, _)| name == "meterCal")
+        .map(|(_, cal)| cal);
+    let meter = meter_entry.filter(|cal| has_valid_curve(cal));
+    let c_weighted = meter_entry.is_some_and(|cal| {
+        cal.inverse_c_selected && (meter.is_some() || (cal.freq.is_none() && cal.gain.is_none()))
+    });
     AttachedCalibration {
-        meter: info
-            .cal
-            .iter()
-            .find(|(name, cal)| name == "meterCal" && has_curve_arrays(cal))
-            .map(|(_, cal)| cal),
+        meter,
         others: info
             .cal
             .iter()
-            .filter(|(name, cal)| name == "scCal" && has_curve_arrays(cal))
+            .filter(|(name, cal)| name == "scCal" && has_valid_curve(cal))
             .map(|(_, cal)| cal)
             .collect(),
-        c_weighted: meter_entry.is_some_and(|(_, cal)| cal.inverse_c_selected),
+        c_weighted,
     }
 }
 
@@ -177,6 +184,23 @@ impl MeasurementRecord {
     }
 }
 
+/// Failure before or after a measurement changed the in-memory project.
+#[derive(Debug, Error)]
+pub enum RecordError {
+    #[error("{0}")]
+    Invalid(#[source] ProjectError),
+    #[error("{0}")]
+    SaveFailed(#[source] ProjectError),
+}
+
+impl From<RecordError> for ProjectError {
+    fn from(error: RecordError) -> Self {
+        match error {
+            RecordError::Invalid(error) | RecordError::SaveFailed(error) => error,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MigrationWarning {
     pub code: &'static str,
@@ -188,6 +212,9 @@ pub struct MeasurementStore {
     path: PathBuf,
     project: Project,
     snr_db: BTreeMap<(i64, String), f64>,
+    sources: BTreeMap<(i64, String), Arc<SourceInfo>>,
+    source_budget: SourceBudget,
+    source_parse_count: usize,
     warnings: Vec<MigrationWarning>,
     cache: IrCache,
     saves: u64,
@@ -200,6 +227,7 @@ pub struct RemovedPosition {
     pos: i64,
     entries: Vec<(usize, PyJson)>,
     snr_db: Vec<(String, f64)>,
+    sources: Vec<(String, Arc<SourceInfo>)>,
 }
 
 impl RemovedPosition {
@@ -209,24 +237,47 @@ impl RemovedPosition {
     }
 }
 
+#[allow(deprecated)]
 impl MeasurementStore {
     pub fn open(path: impl Into<PathBuf>) -> Result<Self, ProjectError> {
+        Self::open_with_source_budget(path, MAX_PROJECT_SOURCE_BYTES)
+    }
+
+    fn open_with_source_budget(
+        path: impl Into<PathBuf>,
+        source_budget: usize,
+    ) -> Result<Self, ProjectError> {
         let path = path.into();
         let bytes = crate::irs::read_bounded(&path, MAX_PROJECT_BYTES, "project")?;
         let text = String::from_utf8(bytes).map_err(|error| {
             ProjectError::Invalid(format!("project {} is not UTF-8: {error}", path.display()))
         })?;
-        let (mut project, warnings) = Project::from_json_with_warnings(loads(&text)?)?;
-        for (pos, roles) in load_project_sources(&project, &path) {
-            for (role, info) in roles {
-                if let Some(fingerprint) = calibration_fingerprint(&info) {
-                    project
-                        .measurement_calibration
-                        .insert((i64::from(pos), role), fingerprint);
-                }
+        let (mut project, mut warnings) = Project::from_json_with_warnings(loads(&text)?)?;
+        let loaded = load_project_sources_within(&project, &path, source_budget);
+        let LoadedSources {
+            by_entry: sources,
+            exhausted,
+            skipped,
+            parse_count,
+        } = loaded;
+        debug_assert_eq!(
+            exhausted,
+            skipped
+                .iter()
+                .any(|skip| skip.reason == SourceSkipReason::Budget)
+        );
+        for (key, info) in &sources {
+            if let Some(fingerprint) = calibration_fingerprint(info) {
+                project
+                    .measurement_calibration
+                    .insert(key.clone(), fingerprint);
             }
         }
+        warnings.extend(skipped.iter().map(source_warning));
         let mut store = Self::new(path, project);
+        store.sources = sources;
+        store.source_budget = SourceBudget::from_sources(source_budget, &store.sources);
+        store.source_parse_count = parse_count;
         store.warnings.extend(warnings);
         Ok(store)
     }
@@ -236,10 +287,39 @@ impl MeasurementStore {
             path: path.into(),
             project,
             snr_db: BTreeMap::new(),
+            sources: BTreeMap::new(),
+            source_budget: SourceBudget::new(MAX_PROJECT_SOURCE_BYTES),
+            source_parse_count: 0,
             warnings: Vec::new(),
             cache: IrCache::default(),
             saves: 0,
         }
+    }
+
+    /// Moves an open store to another project path without reparsing source sidecars.
+    pub fn relocated(&self, path: PathBuf, project: Project) -> Self {
+        let mut relocated = Self::new(path, project);
+        relocated.sources = self.sources.clone();
+        relocated.source_budget = self.source_budget.clone();
+        relocated.source_parse_count = self.source_parse_count;
+        relocated
+    }
+
+    /// Overrides the source-map budget for focused tests.
+    #[doc(hidden)]
+    pub fn with_source_budget(mut self, cap_bytes: usize) -> Self {
+        let sources = std::mem::take(&mut self.sources);
+        self.source_budget = SourceBudget::new(cap_bytes);
+        for ((pos, role), source) in sources {
+            self.keep_source((pos, role), source);
+        }
+        self
+    }
+
+    /// Number of source sidecars parsed when this store opened.
+    /// Relocation preserves the diagnostic count without parsing again.
+    pub fn source_parse_count(&self) -> usize {
+        self.source_parse_count
     }
 
     pub fn project(&self) -> &Project {
@@ -311,6 +391,10 @@ impl MeasurementStore {
             .collect()
     }
 
+    #[deprecated(
+        since = "0.23.0",
+        note = "no caller; removed in the next minor (audit #186 TD-219)"
+    )]
     pub fn label_for(&self, pos: i64) -> String {
         format!("위치 {pos}")
     }
@@ -324,6 +408,14 @@ impl MeasurementStore {
             records.push(entry);
         }
         self.snr_db.retain(|(entry_pos, _), _| *entry_pos != pos);
+        let released = self
+            .sources
+            .iter()
+            .filter(|((entry_pos, _), _)| *entry_pos == pos)
+            .map(|(_, source)| source_info_bytes(source))
+            .sum();
+        self.sources.retain(|(entry_pos, _), _| *entry_pos != pos);
+        self.source_budget.release(released);
         self.entry_for(pos).expect("new entry has a valid position")
     }
 
@@ -338,20 +430,21 @@ impl MeasurementStore {
         &mut self,
         result: MeasurementResult,
         plan_roles: Option<&[String]>,
-    ) -> Result<MeasurementRecord, ProjectError> {
-        let source_fingerprint = result
-            .source_info
-            .as_ref()
-            .and_then(calibration_fingerprint);
+    ) -> Result<MeasurementRecord, RecordError> {
+        let source_info = result.source_info.clone();
+        let source_fingerprint = source_info.as_ref().and_then(calibration_fingerprint);
         let path = save_ir(
             &self.path,
             &result.role,
             result.pos,
             &result.ir,
             result.sample_rate,
-        )?;
-        save_source(&path, result.source_info.as_ref())?;
-        self.cache.remember(&path, &result.ir, result.sample_rate)?;
+        )
+        .map_err(RecordError::Invalid)?;
+        save_source(&path, result.source_info.as_ref()).map_err(RecordError::Invalid)?;
+        self.cache
+            .remember(&path, &result.ir, result.sample_rate)
+            .map_err(RecordError::Invalid)?;
         let relative = relative_to_project(&self.path, &path);
         let label = self.label_for(result.pos);
         let role = result.role.clone();
@@ -416,10 +509,16 @@ impl MeasurementStore {
                 .measurement_calibration
                 .remove(&calibration_key);
         }
+        let source_key = (result.pos, role.clone());
+        if let Some(source) = source_info {
+            self.keep_source(source_key, Arc::new(source));
+        } else {
+            self.remove_source(&source_key);
+        }
         if let Some(value) = result.snr_db {
             self.snr_db.insert((result.pos, role), value);
         }
-        self.save()?;
+        self.save().map_err(RecordError::SaveFailed)?;
         Ok(self
             .entry_for(result.pos)
             .expect("recorded entry has a valid position"))
@@ -452,10 +551,24 @@ impl MeasurementStore {
             .map(|((_, role), value)| (role.clone(), *value))
             .collect();
         self.snr_db.retain(|(entry_pos, _), _| *entry_pos != pos);
+        let sources = self
+            .sources
+            .iter()
+            .filter(|((entry_pos, _), _)| *entry_pos == pos)
+            .map(|((_, role), source)| (role.clone(), source.clone()))
+            .collect::<Vec<_>>();
+        self.source_budget.release(
+            sources
+                .iter()
+                .map(|(_, source)| source_info_bytes(source))
+                .sum(),
+        );
+        self.sources.retain(|(entry_pos, _), _| *entry_pos != pos);
         Some(RemovedPosition {
             pos,
             entries,
             snr_db,
+            sources,
         })
     }
 
@@ -467,6 +580,7 @@ impl MeasurementStore {
             pos,
             entries,
             snr_db,
+            sources,
         } = removed;
         if measurement_values(&self.project)
             .iter()
@@ -482,6 +596,9 @@ impl MeasurementStore {
         }
         self.snr_db
             .extend(snr_db.into_iter().map(|(role, value)| ((pos, role), value)));
+        for (role, source) in sources {
+            self.keep_source((pos, role), source);
+        }
         Ok(())
     }
 
@@ -520,29 +637,60 @@ impl MeasurementStore {
         Ok(candidate)
     }
 
-    pub fn ir_of(&mut self, role: &str, pos: i64) -> Result<(Vec<f32>, u32), ProjectError> {
+    pub fn ir_of(&mut self, role: &str, pos: i64) -> Result<(Arc<[f32]>, u32), ProjectError> {
         let path = self.ir_path_of(role, pos)?;
         self.cache.load(&path)
     }
 
-    /// Returns a recorded IR's source sidecar when both files are readable and
-    /// confined to the project's `.irs` directory.
-    pub fn source_of(&mut self, role: &str, pos: i64) -> Option<SourceInfo> {
-        let recorded = self
-            .entry_for(pos)
+    fn remove_source(&mut self, key: &(i64, String)) -> Option<Arc<SourceInfo>> {
+        let source = self.sources.remove(key)?;
+        self.source_budget.release(source_info_bytes(&source));
+        Some(source)
+    }
+
+    fn keep_source(&mut self, key: (i64, String), source: Arc<SourceInfo>) -> bool {
+        self.remove_source(&key);
+        let bytes = source_info_bytes(&source);
+        if bytes > MAX_SOURCE_BYTES as usize || !self.source_budget.spend(bytes) {
+            self.warnings.push(MigrationWarning {
+                code: "measurement.source.budget",
+                entry: format!("position {}, role {}", key.0, key.1),
+            });
+            false
+        } else {
+            self.sources.insert(key, source);
+            true
+        }
+    }
+
+    pub fn sources_by_position(&self) -> BTreeMap<u32, BTreeMap<String, Arc<SourceInfo>>> {
+        let mut by_position = BTreeMap::<u32, BTreeMap<String, Arc<SourceInfo>>>::new();
+        for ((position, role), source) in &self.sources {
+            let Ok(position) = u32::try_from(*position) else {
+                continue;
+            };
+            if !self.has_recorded_ir(role, i64::from(position)) {
+                continue;
+            }
+            by_position
+                .entry(position)
+                .or_default()
+                .insert(role.clone(), source.clone());
+        }
+        by_position
+    }
+
+    /// Returns a recorded IR's source sidecar from the map built when the store opened.
+    pub fn source_of(&self, role: &str, pos: i64) -> Option<Arc<SourceInfo>> {
+        self.has_recorded_ir(role, pos)
+            .then(|| self.sources.get(&(pos, role.to_owned())).cloned())
+            .flatten()
+    }
+
+    fn has_recorded_ir(&self, role: &str, pos: i64) -> bool {
+        self.entry_for(pos)
             .and_then(|entry| entry.ir.get(role).cloned())
-            .is_some_and(|path| !path.is_empty());
-        if !recorded {
-            return None;
-        }
-        let path = self.ir_path_of(role, pos).ok()?;
-        if !path.is_file()
-            || confined_ir_path(&self.path, &path).is_err()
-            || confined_ir_path(&self.path, &source_path(&path)).is_err()
-        {
-            return None;
-        }
-        load_source(&path)
+            .is_some_and(|path| !path.is_empty())
     }
 
     /// Rewrites a recorded IR's source sidecar and updates its in-memory
@@ -580,9 +728,14 @@ impl MeasurementStore {
         if let Some(fingerprint) = info.and_then(calibration_fingerprint) {
             self.project
                 .measurement_calibration
-                .insert(key, fingerprint);
+                .insert(key.clone(), fingerprint);
         } else {
             self.project.measurement_calibration.remove(&key);
+        }
+        if let Some(info) = info {
+            self.keep_source(key, Arc::new(info.clone()));
+        } else {
+            self.remove_source(&key);
         }
         Ok(())
     }
@@ -593,6 +746,10 @@ impl MeasurementStore {
             .unwrap_or(0.0)
     }
 
+    #[deprecated(
+        since = "0.23.0",
+        note = "no caller; removed in the next minor (audit #186 TD-219)"
+    )]
     pub fn t0_by_role(&self, pos: i64) -> BTreeMap<String, f64> {
         self.entry_for(pos).map_or_else(BTreeMap::new, |entry| {
             entry
@@ -604,10 +761,15 @@ impl MeasurementStore {
         })
     }
 
+    #[deprecated(
+        since = "0.23.0",
+        note = "no caller; removed in the next minor (audit #186 TD-219)"
+    )]
+    #[allow(clippy::type_complexity)]
     pub fn irs_by_role(
         &mut self,
         pos: i64,
-    ) -> Result<BTreeMap<String, (Vec<f32>, u32)>, ProjectError> {
+    ) -> Result<BTreeMap<String, (Arc<[f32]>, u32)>, ProjectError> {
         let roles = self.entry_for(pos).map_or_else(Vec::new, |entry| {
             entry
                 .ir
@@ -639,779 +801,16 @@ impl MeasurementStore {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum LoadedIr {
-    Samples(Vec<f32>, u32),
-    Timed(Vec<f32>, u32, f64),
-}
+mod cache;
+mod confine;
+mod entries;
+mod source;
 
-pub fn source_path(wav: &Path) -> PathBuf {
-    wav.with_extension("src.json")
-}
-
-pub fn save_source(wav: &Path, info: Option<&SourceInfo>) -> Result<(), ProjectError> {
-    let path = source_path(wav);
-    let Some(info) = info else {
-        match fs::remove_file(path) {
-            Ok(()) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error.into()),
-        }
-        return Ok(());
-    };
-    atomic_write(&path, dumps_compact(&source_to_json(info)).as_bytes())
-}
-
-pub fn load_source(wav: &Path) -> Option<SourceInfo> {
-    load_source_checked(wav).ok().flatten()
-}
-
-fn load_source_checked(wav: &Path) -> Result<Option<SourceInfo>, ProjectError> {
-    #[cfg(test)]
-    SOURCE_PARSE_COUNT.fetch_add(1, Ordering::Relaxed);
-    let path = source_path(wav);
-    let bytes = match crate::irs::read_bounded(&path, MAX_SOURCE_BYTES, "measurement source") {
-        Ok(bytes) => bytes,
-        Err(error @ ProjectError::Invalid(_)) => return Err(error),
-        Err(_) => return Ok(None),
-    };
-    let text = match String::from_utf8(bytes) {
-        Ok(text) => text,
-        Err(_) => return Ok(None),
-    };
-    let value = match loads(&text) {
-        Ok(value) => value,
-        Err(_) => return Ok(None),
-    };
-    Ok(source_from_json(&value))
-}
-
-const MAX_PROJECT_SOURCE_BYTES: usize = 64 * 1024 * 1024;
-
-fn source_info_bytes(info: &SourceInfo) -> usize {
-    let mut bytes = std::mem::size_of::<SourceInfo>();
-    bytes = bytes.saturating_add(
-        info.strings
-            .iter()
-            .map(|(key, value)| std::mem::size_of::<(String, String)>() + key.len() + value.len())
-            .sum::<usize>(),
-    );
-    bytes = bytes.saturating_add(
-        info.boxed
-            .iter()
-            .map(|(key, _)| std::mem::size_of::<(String, Boxed)>() + key.len())
-            .sum::<usize>(),
-    );
-    for (key, cal) in &info.cal {
-        bytes = bytes
-            .saturating_add(std::mem::size_of::<(String, CalInfo)>())
-            .saturating_add(key.len())
-            .saturating_add(cal.source_name.len())
-            .saturating_add(cal.source_path.len())
-            .saturating_add(cal.freq.as_ref().map_or(0, |values| {
-                values.len().saturating_mul(std::mem::size_of::<f32>())
-            }))
-            .saturating_add(cal.gain.as_ref().map_or(0, |values| {
-                values.len().saturating_mul(std::mem::size_of::<f32>())
-            }))
-            .saturating_add(cal.phase.as_ref().map_or(0, |values| {
-                values.len().saturating_mul(std::mem::size_of::<f32>())
-            }))
-            .saturating_add(
-                cal.boxed
-                    .iter()
-                    .map(|(name, _)| std::mem::size_of::<(String, Boxed)>() + name.len())
-                    .sum::<usize>(),
-            );
-    }
-    bytes
-        .saturating_add(info.notes.as_ref().map_or(0, String::len))
-        .saturating_add(info.format.as_ref().map_or(0, String::len))
-}
-
-pub fn load_project_sources(
-    project: &Project,
-    project_path: &Path,
-) -> BTreeMap<u32, BTreeMap<String, SourceInfo>> {
-    load_project_sources_within(project, project_path, MAX_PROJECT_SOURCE_BYTES)
-}
-
-fn load_project_sources_within(
-    project: &Project,
-    project_path: &Path,
-    budget: usize,
-) -> BTreeMap<u32, BTreeMap<String, SourceInfo>> {
-    let base = project_path.parent().unwrap_or_else(|| Path::new("."));
-    let mut loaded: HashMap<PathBuf, Option<(Arc<SourceInfo>, usize)>> = HashMap::new();
-    let mut remaining = budget;
-    let mut exhausted = false;
-    let mut out = BTreeMap::new();
-    for record in measurement_values(project)
-        .iter()
-        .filter_map(MeasurementRecord::from_json)
-    {
-        let Ok(pos) = u32::try_from(record.pos) else {
-            continue;
-        };
-        for (role, raw) in record.ir {
-            if raw.is_empty() || exhausted {
-                continue;
-            }
-            let path = PathBuf::from(raw);
-            let path = if path.is_absolute() {
-                path
-            } else {
-                base.join(path)
-            };
-            let sidecar = source_path(&path);
-            // F5: neither the IR nor its sidecar may lead outside the `.irs`.
-            if !path.is_file()
-                || confined_ir_path(project_path, &path).is_err()
-                || confined_ir_path(project_path, &sidecar).is_err()
-            {
-                continue;
-            }
-            let key = sidecar.canonicalize().unwrap_or_else(|_| sidecar.clone());
-            let info = match loaded.get(&key) {
-                Some(info) => info.clone(),
-                None => {
-                    // The cache slot and its key spend the budget too, so
-                    // sidecars that hold no source info cannot grow the cache
-                    // past it (audit #155 TD-112).
-                    let entry_bytes =
-                        std::mem::size_of::<(PathBuf, Option<(Arc<SourceInfo>, usize)>)>()
-                            .saturating_add(key.as_os_str().len());
-                    if entry_bytes > remaining {
-                        exhausted = true;
-                        continue;
-                    }
-                    remaining -= entry_bytes;
-                    let info = load_source_checked(&path).ok().flatten().and_then(|info| {
-                        let bytes = source_info_bytes(&info);
-                        if bytes > remaining {
-                            exhausted = true;
-                            None
-                        } else {
-                            remaining -= bytes;
-                            Some((Arc::new(info), bytes))
-                        }
-                    });
-                    loaded.insert(key, info.clone());
-                    info
-                }
-            };
-            if let Some((info, bytes)) = info {
-                if bytes > remaining {
-                    exhausted = true;
-                    continue;
-                }
-                remaining -= bytes;
-                out.entry(pos)
-                    .or_insert_with(BTreeMap::new)
-                    .insert(role, info.as_ref().clone());
-            }
-        }
-    }
-    out
-}
-
-pub fn load_project_irs(
-    project: &Project,
-    project_path: &Path,
-    cache: &mut IrCache,
-) -> Result<BTreeMap<i64, BTreeMap<String, LoadedIr>>, ProjectError> {
-    let mut store = MeasurementStore::new(project_path, project.clone());
-    std::mem::swap(&mut store.cache, cache);
-    let mut out = BTreeMap::new();
-    let positions = store
-        .records()
-        .iter()
-        .map(|record| record.pos)
-        .collect::<Vec<_>>();
-    for pos in positions {
-        let roles = store.entry_for(pos).map_or_else(Vec::new, |entry| {
-            entry
-                .ir
-                .iter()
-                .filter(|(_, path)| !path.is_empty())
-                .map(|(role, _)| role.clone())
-                .collect()
-        });
-        for role in roles {
-            let (samples, rate) = store.ir_of(&role, pos)?;
-            let t0 = store.t0_of(&role, pos);
-            let value = if t0 == 0.0 {
-                LoadedIr::Samples(samples, rate)
-            } else {
-                LoadedIr::Timed(samples, rate, t0)
-            };
-            out.entry(pos)
-                .or_insert_with(BTreeMap::new)
-                .insert(role, value);
-        }
-    }
-    std::mem::swap(&mut store.cache, cache);
-    Ok(out)
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-struct CacheKey {
-    path: PathBuf,
-    modified_ns: u128,
-    size: u64,
-}
-
-#[derive(Debug, Clone)]
-struct CacheValue {
-    samples: Vec<f32>,
-    sample_rate: u32,
-}
-
-#[derive(Debug)]
-pub struct IrCache {
-    entries: BTreeMap<CacheKey, CacheValue>,
-    order: VecDeque<CacheKey>,
-    bytes: usize,
-    cap: usize,
-}
-
-impl Default for IrCache {
-    fn default() -> Self {
-        Self::new(IR_CACHE_LIMIT_BYTES)
-    }
-}
-
-impl IrCache {
-    pub fn new(cap: usize) -> Self {
-        Self {
-            entries: BTreeMap::new(),
-            order: VecDeque::new(),
-            bytes: 0,
-            cap,
-        }
-    }
-
-    pub fn load(&mut self, path: &Path) -> Result<(Vec<f32>, u32), ProjectError> {
-        let key = cache_key(path)?;
-        self.remove_old_versions(&key.path, Some(&key));
-        if let Some(value) = self.entries.get(&key) {
-            let hit = (value.samples.clone(), value.sample_rate);
-            if let Some(index) = self.order.iter().position(|old_key| old_key == &key) {
-                let touched = self.order.remove(index).expect("index from position");
-                self.order.push_back(touched);
-            }
-            return Ok(hit);
-        }
-        let (samples, sample_rate) =
-            read_mono_float_wav(&crate::irs::read_bounded(path, MAX_IR_BYTES, "WAV")?)
-                .map_err(|error| ProjectError::Wav(format!("{}: {error}", path.display())))?;
-        self.insert(key, &samples, sample_rate);
-        Ok((samples, sample_rate))
-    }
-
-    pub fn remember(
-        &mut self,
-        path: &Path,
-        samples: &[f32],
-        sample_rate: u32,
-    ) -> Result<(), ProjectError> {
-        let key = cache_key(path)?;
-        self.remove_old_versions(&key.path, Some(&key));
-        self.insert(key, samples, sample_rate);
-        Ok(())
-    }
-
-    pub fn len(&self) -> usize {
-        self.entries.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
-    }
-
-    /// Sample bytes the cache holds; never more than its cap.
-    pub fn retained_bytes(&self) -> usize {
-        self.bytes
-    }
-
-    /// Stores a copy unless it alone exceeds the cap, then evicts from the
-    /// least recently used end until the cache fits.
-    fn insert(&mut self, key: CacheKey, samples: &[f32], sample_rate: u32) {
-        let size = samples.len().saturating_mul(std::mem::size_of::<f32>());
-        if let Some(old) = self.entries.remove(&key) {
-            self.bytes = self
-                .bytes
-                .saturating_sub(old.samples.len().saturating_mul(4));
-            self.order.retain(|old_key| old_key != &key);
-        }
-        if size > self.cap {
-            return;
-        }
-        self.bytes = self.bytes.saturating_add(size);
-        self.order.push_back(key.clone());
-        self.entries.insert(
-            key,
-            CacheValue {
-                samples: samples.to_vec(),
-                sample_rate,
-            },
-        );
-        while self.bytes > self.cap
-            && let Some(old_key) = self.order.pop_front()
-        {
-            if let Some(old) = self.entries.remove(&old_key) {
-                self.bytes = self
-                    .bytes
-                    .saturating_sub(old.samples.len().saturating_mul(4));
-            }
-        }
-    }
-
-    fn remove_old_versions(&mut self, path: &Path, keep: Option<&CacheKey>) {
-        let old = self
-            .entries
-            .keys()
-            .filter(|key| key.path == path && keep != Some(*key))
-            .cloned()
-            .collect::<Vec<_>>();
-        for key in old {
-            if let Some(value) = self.entries.remove(&key) {
-                self.bytes = self
-                    .bytes
-                    .saturating_sub(value.samples.len().saturating_mul(4));
-            }
-            self.order.retain(|old_key| old_key != &key);
-        }
-    }
-}
-
-const SOURCE_STRING_FIELDS: [&str; 7] = [
-    "outputName",
-    "sourceFileName",
-    "timingRefName",
-    "osName",
-    "osVersion",
-    "jre",
-    "sigGenLevelSt",
-];
-const SOURCE_BOXED_FIELDS: [&str; 8] = [
-    "inputVolume",
-    "outputVolume",
-    "micSensitivity",
-    "splCalOffset",
-    "dBVInputOffset",
-    "dBVOutputOffset",
-    "usesEmbeddedCalData",
-    "calDataLimitApplied",
-];
-const SOURCE_CAL_FIELDS: [&str; 2] = ["meterCal", "scCal"];
-const SOURCE_CAL_BOXED: [&str; 4] = ["sensitivitydB", "sensitivitydBFS", "serialNum", "revision"];
-
-fn source_to_json(info: &SourceInfo) -> PyJson {
-    let mut fields = vec![
-        (
-            "strings".into(),
-            PyJson::Object(
-                info.strings
-                    .iter()
-                    .map(|(name, value)| (name.clone(), PyJson::Str(value.clone())))
-                    .collect(),
-            ),
-        ),
-        (
-            "boxed".into(),
-            PyJson::Object(
-                info.boxed
-                    .iter()
-                    .filter(|(_, value)| boxed_is_serializable(*value))
-                    .map(|(name, value)| (name.clone(), boxed_to_json(*value)))
-                    .collect(),
-            ),
-        ),
-        (
-            "cal".into(),
-            PyJson::Object(
-                info.cal
-                    .iter()
-                    .map(|(name, cal)| (name.clone(), cal_to_json(cal)))
-                    .collect(),
-            ),
-        ),
-    ];
-    if let Some(date) = info.date.and_then(serializable_date) {
-        fields.push(("date".into(), date));
-    }
-    if let Some(notes) = &info.notes {
-        fields.push(("notes".into(), PyJson::Str(notes.clone())));
-    }
-    if let Some(format) = &info.format {
-        fields.push(("format".into(), PyJson::Str(format.clone())));
-    }
-    PyJson::Object(fields)
-}
-
-fn boxed_is_serializable(value: Boxed) -> bool {
-    match value {
-        Boxed::Double(value) => value.is_finite(),
-        Boxed::Integer(value) => i32::try_from(value).is_ok(),
-        Boxed::Boolean(_) => true,
-    }
-}
-
-fn serializable_date(value: SourceDate) -> Option<PyJson> {
-    match value {
-        SourceDate::Int(value) => Some(PyJson::Int(value.to_string())),
-        SourceDate::Float(value) if value.is_finite() => Some(PyJson::Float(value)),
-        SourceDate::Float(_) => None,
-    }
-}
-
-fn boxed_to_json(value: Boxed) -> PyJson {
-    let (kind, value) = match value {
-        Boxed::Double(value) => ("java.lang.Double", PyJson::Float(value)),
-        Boxed::Integer(value) => ("java.lang.Integer", PyJson::Int(value.to_string())),
-        Boxed::Boolean(value) => ("java.lang.Boolean", PyJson::Bool(value)),
-    };
-    PyJson::Object(vec![
-        ("type".into(), PyJson::Str(kind.into())),
-        ("value".into(), value),
-    ])
-}
-
-fn cal_to_json(cal: &CalInfo) -> PyJson {
-    let mut fields = vec![
-        (
-            "inverseCSelected".into(),
-            PyJson::Bool(cal.inverse_c_selected),
-        ),
-        ("sourceName".into(), PyJson::Str(cal.source_name.clone())),
-        ("sourcePath".into(), PyJson::Str(cal.source_path.clone())),
-        ("freqArray".into(), float_array_to_json(cal.freq.as_deref())),
-        ("gainArray".into(), float_array_to_json(cal.gain.as_deref())),
-        (
-            "phaseArray".into(),
-            float_array_to_json(cal.phase.as_deref()),
-        ),
-    ];
-    fields.extend(
-        cal.boxed
-            .iter()
-            .filter(|(_, value)| boxed_is_serializable(*value))
-            .map(|(name, value)| (name.clone(), boxed_to_json(*value))),
-    );
-    PyJson::Object(fields)
-}
-
-fn float_array_to_json(values: Option<&[f32]>) -> PyJson {
-    values.map_or(PyJson::Null, |values| {
-        PyJson::Array(
-            values
-                .iter()
-                .map(|value| PyJson::Float(f64::from(*value)))
-                .collect(),
-        )
-    })
-}
-
-fn source_from_json(value: &PyJson) -> Option<SourceInfo> {
-    let object = value.object()?;
-    let mut info = SourceInfo::default();
-    if let Some(strings) = value_for(object, "strings").and_then(PyJson::object) {
-        for (name, value) in strings {
-            if SOURCE_STRING_FIELDS.contains(&name.as_str()) && !matches!(value, PyJson::Null) {
-                info.strings.push((name.clone(), python_str(value)));
-            }
-        }
-    }
-    if let Some(boxed) = value_for(object, "boxed").and_then(PyJson::object) {
-        for (name, value) in boxed {
-            if SOURCE_BOXED_FIELDS.contains(&name.as_str())
-                && let Some(value) = boxed_from_json(value)
-            {
-                info.boxed.push((name.clone(), value));
-            }
-        }
-    }
-    if let Some(calibrations) = value_for(object, "cal").and_then(PyJson::object) {
-        for (name, value) in calibrations {
-            if !SOURCE_CAL_FIELDS.contains(&name.as_str()) {
-                continue;
-            }
-            let Some(cal) = value.object() else {
-                continue;
-            };
-            let mut boxed = Vec::new();
-            for key in SOURCE_CAL_BOXED {
-                if let Some(value) = value_for(cal, key).and_then(boxed_from_json) {
-                    boxed.push((key.into(), value));
-                }
-            }
-            info.cal.push((
-                name.clone(),
-                CalInfo {
-                    inverse_c_selected: value_for(cal, "inverseCSelected")
-                        .is_some_and(PyJson::is_truthy),
-                    source_name: value_for(cal, "sourceName")
-                        .filter(|value| value.is_truthy())
-                        .map_or_else(String::new, python_str),
-                    source_path: value_for(cal, "sourcePath")
-                        .filter(|value| value.is_truthy())
-                        .map_or_else(String::new, python_str),
-                    freq: value_for(cal, "freqArray").and_then(float_array_from_json),
-                    gain: value_for(cal, "gainArray").and_then(float_array_from_json),
-                    phase: value_for(cal, "phaseArray").and_then(float_array_from_json),
-                    boxed,
-                },
-            ));
-        }
-    }
-    info.date = value_for(object, "date").and_then(date_from_json);
-    info.notes = value_for(object, "notes")
-        .filter(|value| value.is_truthy())
-        .map(python_str);
-    info.format = value_for(object, "format")
-        .filter(|value| value.is_truthy())
-        .map(python_str);
-    Some(info)
-}
-
-fn boxed_from_json(value: &PyJson) -> Option<Boxed> {
-    let object = value.object()?;
-    let kind = value_for(object, "type")?.str()?;
-    let raw = value_for(object, "value").filter(|value| !matches!(value, PyJson::Null))?;
-    match kind {
-        "java.lang.Double" => python_float_value(raw)
-            .filter(|value| value.is_finite())
-            .map(Boxed::Double),
-        "java.lang.Integer" => python_int(raw)
-            .filter(|value| i32::try_from(*value).is_ok())
-            .map(Boxed::Integer),
-        "java.lang.Boolean" => Some(Boxed::Boolean(raw.is_truthy())),
-        _ => None,
-    }
-}
-
-fn date_from_json(value: &PyJson) -> Option<SourceDate> {
-    match value {
-        PyJson::Bool(value) => Some(SourceDate::Int(i64::from(*value))),
-        PyJson::Int(value) => value.parse().ok().map(SourceDate::Int),
-        PyJson::Float(value) if value.is_finite() => Some(SourceDate::Float(*value)),
-        _ => None,
-    }
-}
-
-fn float_array_from_json(value: &PyJson) -> Option<Vec<f32>> {
-    value
-        .array()?
-        .iter()
-        .map(|value| match value {
-            PyJson::Bool(value) => Some(if *value { 1.0 } else { 0.0 }),
-            PyJson::Int(value) => value.parse().ok(),
-            PyJson::Float(value) => Some(*value),
-            PyJson::Str(value) => value.trim().parse().ok(),
-            _ => None,
-        })
-        .map(|value: Option<f64>| {
-            value
-                .filter(|value| value.is_finite())
-                .map(|value| value as f32)
-                .filter(|value| value.is_finite())
-        })
-        .collect()
-}
-
-fn python_float_value(value: &PyJson) -> Option<f64> {
-    match value {
-        PyJson::Bool(value) => Some(if *value { 1.0 } else { 0.0 }),
-        PyJson::Int(value) => value.parse().ok(),
-        PyJson::Float(value) => Some(*value),
-        PyJson::Str(value) => value.trim().parse().ok(),
-        _ => None,
-    }
-}
-
-fn python_int(value: &PyJson) -> Option<i64> {
-    match value {
-        PyJson::Bool(value) => Some(i64::from(*value)),
-        PyJson::Int(value) => value.parse().ok(),
-        PyJson::Float(value) if value.is_finite() => {
-            let value = value.trunc();
-            (value >= i64::MIN as f64 && value < i64::MAX as f64).then_some(value as i64)
-        }
-        PyJson::Str(value) => value.trim().parse().ok(),
-        _ => None,
-    }
-}
-
-fn python_str(value: &PyJson) -> String {
-    match value {
-        PyJson::Null => "None".into(),
-        PyJson::Bool(value) => if *value { "True" } else { "False" }.into(),
-        PyJson::Int(value) => value.clone(),
-        PyJson::Float(value) => {
-            let text = dumps_compact(&PyJson::Float(*value));
-            if text == "Infinity" {
-                "inf".into()
-            } else if text == "-Infinity" {
-                "-inf".into()
-            } else if text == "NaN" {
-                "nan".into()
-            } else {
-                text
-            }
-        }
-        PyJson::Str(value) => value.clone(),
-        PyJson::Array(values) => format!(
-            "[{}]",
-            values
-                .iter()
-                .map(python_repr)
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
-        PyJson::Object(values) => format!(
-            "{{{}}}",
-            values
-                .iter()
-                .map(|(key, value)| format!(
-                    "{}: {}",
-                    python_repr(&PyJson::Str(key.clone())),
-                    python_repr(value)
-                ))
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
-    }
-}
-
-fn python_repr(value: &PyJson) -> String {
-    match value {
-        PyJson::Str(value) => format!("'{}'", value.replace('\\', "\\\\").replace('\'', "\\'")),
-        _ => python_str(value),
-    }
-}
-
-fn measurement_values(project: &Project) -> &[PyJson] {
-    match &project.measurements {
-        PyJson::Array(records) => records,
-        _ => &[],
-    }
-}
-
-fn measurement_values_mut(project: &mut Project) -> &mut Vec<PyJson> {
-    if !matches!(project.measurements, PyJson::Array(_)) {
-        project.measurements = PyJson::Array(Vec::new());
-    }
-    match &mut project.measurements {
-        PyJson::Array(records) => records,
-        _ => unreachable!("measurements was replaced with an array"),
-    }
-}
-
-fn pos_of(value: &PyJson) -> Option<i64> {
-    crate::project::integer(Some(value.get("pos")?), -1, "measurement.pos").ok()
-}
-
-fn pos_of_or_minus_one(value: &PyJson) -> i64 {
-    let Some(object) = value.object() else {
-        return -1;
-    };
-    let Some(value) = value_for(object, "pos") else {
-        return -1;
-    };
-    crate::project::integer(Some(value), -1, "measurement.pos").unwrap_or(-1)
-}
-
-fn new_entry(pos: i64, label: String) -> PyJson {
-    PyJson::Object(vec![
-        ("pos".into(), PyJson::Int(pos.to_string())),
-        ("label".into(), PyJson::Str(label)),
-        ("uuid".into(), PyJson::Object(Vec::new())),
-        ("mdat".into(), PyJson::Null),
-        ("ir".into(), PyJson::Object(Vec::new())),
-        ("spl_db".into(), PyJson::Object(Vec::new())),
-        ("t0".into(), PyJson::Object(Vec::new())),
-        ("done".into(), PyJson::Bool(false)),
-        ("sample_rate".into(), PyJson::Null),
-    ])
-}
-
-fn repair_entry(object: &mut Vec<(String, PyJson)>, pos: i64, label: String) {
-    set_value(object, "pos", PyJson::Int(pos.to_string()));
-    setdefault_value(object, "label", PyJson::Str(label));
-    setdefault_value(object, "mdat", PyJson::Null);
-    for key in ["uuid", "ir", "spl_db", "t0"] {
-        if !value_for(object, key).is_some_and(|value| matches!(value, PyJson::Object(_))) {
-            set_value(object, key, PyJson::Object(Vec::new()));
-        }
-    }
-    if value_for(object, "spl_offset").is_some_and(|value| !matches!(value, PyJson::Object(_))) {
-        set_value(object, "spl_offset", PyJson::Object(Vec::new()));
-    }
-    setdefault_value(object, "done", PyJson::Bool(false));
-    setdefault_value(object, "sample_rate", PyJson::Null);
-}
-
-fn value_for<'a>(object: &'a [(String, PyJson)], key: &str) -> Option<&'a PyJson> {
-    object
-        .iter()
-        .find(|(name, _)| name == key)
-        .map(|(_, value)| value)
-}
-
-fn value_for_mut<'a>(object: &'a mut [(String, PyJson)], key: &str) -> Option<&'a mut PyJson> {
-    object
-        .iter_mut()
-        .find(|(name, _)| name == key)
-        .map(|(_, value)| value)
-}
-
-fn set_value(object: &mut Vec<(String, PyJson)>, key: &str, value: PyJson) {
-    if let Some(old) = value_for_mut(object, key) {
-        *old = value;
-    } else {
-        object.push((key.into(), value));
-    }
-}
-
-fn setdefault_value(object: &mut Vec<(String, PyJson)>, key: &str, value: PyJson) {
-    if value_for(object, key).is_none() {
-        object.push((key.into(), value));
-    }
-}
-
-fn nested_object<'a>(object: &'a [(String, PyJson)], key: &str) -> Option<&'a [(String, PyJson)]> {
-    value_for(object, key).and_then(PyJson::object)
-}
-
-fn set_nested(object: &mut [(String, PyJson)], key: &str, role: &str, value: PyJson) {
-    let nested = value_for_mut(object, key)
-        .and_then(PyJson::object_mut)
-        .expect("repair_entry made the field an object");
-    set_value(nested, role, value);
-}
-
-fn setdefault_nested(object: &mut Vec<(String, PyJson)>, key: &str, role: &str, value: PyJson) {
-    setdefault_value(object, key, PyJson::Object(Vec::new()));
-    let nested = value_for_mut(object, key)
-        .and_then(PyJson::object_mut)
-        .expect("upstream setdefault requires an object");
-    set_value(nested, role, value);
-}
-
-fn cache_key(path: &Path) -> Result<CacheKey, ProjectError> {
-    let metadata = fs::metadata(path)?;
-    let modified_ns = metadata
-        .modified()?
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos();
-    Ok(CacheKey {
-        path: path.canonicalize()?,
-        modified_ns,
-        size: metadata.len(),
-    })
-}
+pub use cache::IrCache;
+use confine::*;
+use entries::*;
+use source::*;
+pub use source::{save_source, source_path};
 
 pub(crate) fn atomic_write(path: &Path, data: &[u8]) -> Result<(), ProjectError> {
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
@@ -1420,100 +819,13 @@ pub(crate) fn atomic_write(path: &Path, data: &[u8]) -> Result<(), ProjectError>
     Ok(())
 }
 
-fn confined_ir_path(project: &Path, candidate: &Path) -> Result<(), ()> {
-    if candidate
-        .components()
-        .any(|component| component == Component::ParentDir)
-    {
-        return Err(());
-    }
-    let root = ir_directory(project);
-    let root_canonical = canonicalize_existing_ancestor(&root)?;
-    let candidate_canonical = canonicalize_existing_ancestor(candidate)?;
-    if candidate_canonical.starts_with(root_canonical) {
-        Ok(())
-    } else {
-        Err(())
-    }
-}
-
-fn canonicalize_existing_ancestor(path: &Path) -> Result<PathBuf, ()> {
-    let mut existing = path;
-    let mut missing = Vec::new();
-    while !existing.exists() {
-        let name = existing.file_name().ok_or(())?;
-        missing.push(name.to_owned());
-        existing = existing.parent().ok_or(())?;
-    }
-    let mut canonical = existing.canonicalize().map_err(|_| ())?;
-    for name in missing.into_iter().rev() {
-        canonical.push(name);
-    }
-    Ok(canonical)
-}
-
-fn relative_to_project(project: &Path, path: &Path) -> String {
-    path.strip_prefix(project.parent().unwrap_or_else(|| Path::new(".")))
-        .unwrap_or(path)
-        .to_string_lossy()
-        .replace('\\', "/")
-}
-
-fn string_map(value: Option<&PyJson>) -> BTreeMap<String, String> {
-    value
-        .and_then(PyJson::object)
-        .map_or_else(BTreeMap::new, |object| {
-            object
-                .iter()
-                .filter_map(|(key, value)| value.str().map(|value| (key.clone(), value.into())))
-                .collect()
-        })
-}
-
-fn optional_string_map(value: Option<&PyJson>) -> BTreeMap<String, Option<String>> {
-    value
-        .and_then(PyJson::object)
-        .map_or_else(BTreeMap::new, |object| {
-            object
-                .iter()
-                .map(|(key, value)| (key.clone(), value.str().map(str::to_owned)))
-                .collect()
-        })
-}
-
-fn float_map(value: Option<&PyJson>) -> BTreeMap<String, f64> {
-    value
-        .and_then(PyJson::object)
-        .map_or_else(BTreeMap::new, |object| {
-            object
-                .iter()
-                .filter_map(|(key, value)| {
-                    crate::project::float(value)
-                        .ok()
-                        .map(|value| (key.clone(), value))
-                })
-                .collect()
-        })
-}
-
-fn optional_float_map(value: Option<&PyJson>) -> BTreeMap<String, Option<f64>> {
-    value
-        .and_then(PyJson::object)
-        .map_or_else(BTreeMap::new, |object| {
-            object
-                .iter()
-                .map(|(key, value)| {
-                    (
-                        key.clone(),
-                        if matches!(value, PyJson::Null) {
-                            None
-                        } else {
-                            crate::project::float(value).ok()
-                        },
-                    )
-                })
-                .collect()
-        })
+/// Parses a measurement source sidecar with the file format's allocation limit.
+///
+/// This entry point lets fuzz tests exercise the sidecar codec without file I/O.
+pub fn source_info_from_text(text: &str) -> Option<SourceInfo> {
+    crate::pyjson::loads_with_budget(text, MAX_SOURCE_BYTES as usize)
+        .ok()
+        .and_then(|value| source::source_from_json(&value))
 }
 
 #[cfg(test)]
@@ -1529,6 +841,149 @@ mod source_budget_tests {
                 PyJson::Object(vec![("L".into(), PyJson::Str(path))]),
             ),
         ])
+    }
+
+    fn sidecar_project(name: &str, sidecar: &[u8]) -> (PathBuf, PathBuf, PathBuf) {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "secs-project-sidecar-warning-{}-{unique}",
+            std::process::id()
+        ));
+        let project_path = root.join(format!("{name}.secs"));
+        let irs = project_path.with_extension("irs");
+        fs::create_dir_all(&irs).unwrap();
+        let wav = irs.join("L_P1.wav");
+        fs::write(&wav, []).unwrap();
+        let sidecar_path = source_path(&wav);
+        fs::write(&sidecar_path, sidecar).unwrap();
+        let mut project = Project::from_preset("2.0").unwrap();
+        project.measurements = PyJson::Array(vec![entry(1, format!("{name}.irs/L_P1.wav"))]);
+        fs::write(&project_path, project.save_text()).unwrap();
+        (root, project_path, sidecar_path)
+    }
+
+    fn three_source_project(name: &str) -> (PathBuf, PathBuf) {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "secs-project-source-map-{}-{name}-{unique}",
+            std::process::id()
+        ));
+        let project_path = root.join("room.secs");
+        let irs = project_path.with_extension("irs");
+        fs::create_dir_all(&irs).unwrap();
+        let mut entries = Vec::new();
+        for (position, role) in [(1, "L"), (1, "R"), (2, "L")] {
+            let wav = irs.join(format!("{role}_P{position}.wav"));
+            fs::write(&wav, []).unwrap();
+            save_source(
+                &wav,
+                Some(&SourceInfo {
+                    notes: Some(format!("{role} at {position}")),
+                    ..SourceInfo::default()
+                }),
+            )
+            .unwrap();
+            let relative = format!("room.irs/{role}_P{position}.wav");
+            if let Some(PyJson::Object(fields)) = entries
+                .iter_mut()
+                .find(|entry| pos_of(entry) == Some(position))
+            {
+                let ir = fields.iter_mut().find(|(key, _)| key == "ir").unwrap();
+                ir.1.object_mut()
+                    .unwrap()
+                    .push((role.into(), PyJson::Str(relative)));
+            } else {
+                entries.push(PyJson::Object(vec![
+                    ("pos".into(), PyJson::Int(position.to_string())),
+                    (
+                        "ir".into(),
+                        PyJson::Object(vec![(role.into(), PyJson::Str(relative))]),
+                    ),
+                ]));
+            }
+        }
+        let mut project = Project::from_preset("2.0").unwrap();
+        project.measurements = PyJson::Array(entries);
+        fs::write(&project_path, project.save_text()).unwrap();
+        (root, project_path)
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "uses temporary files")]
+    fn open_parses_each_sidecar_once_and_source_of_never_parses_again() {
+        let (root, project_path) = three_source_project("parse-once");
+        let store = MeasurementStore::open(&project_path).unwrap();
+        assert_eq!(store.source_parse_count(), 3);
+        for _ in 0..5 {
+            assert!(store.source_of("L", 1).is_some());
+        }
+        assert_eq!(store.source_parse_count(), 3);
+        let relocated = store.relocated(root.join("relocated.secs"), store.project().clone());
+        assert_eq!(relocated.source_parse_count(), 3);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "uses temporary files")]
+    fn unreadable_sidecar_is_reported_as_a_migration_warning_td183() {
+        let (root, project_path, sidecar) = sidecar_project("malformed", b"{not json");
+
+        let store = MeasurementStore::open(&project_path).unwrap();
+        let loaded =
+            load_project_sources_within(store.project(), &project_path, MAX_PROJECT_SOURCE_BYTES);
+        assert!(loaded.skipped.iter().any(|skip| {
+            skip.pos == 1
+                && skip.role == "L"
+                && skip.path == sidecar
+                && skip.reason == SourceSkipReason::Invalid
+        }));
+
+        assert!(
+            store.warnings().iter().any(|warning| {
+                warning.code == "measurement.source.skipped"
+                    && warning.entry == sidecar.to_string_lossy()
+            }),
+            "warnings: {:?}, sidecar: {}",
+            store.warnings(),
+            sidecar.display()
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "uses temporary files")]
+    fn sidecar_that_is_a_directory_is_reported_as_skipped_td183() {
+        let (root, project_path, sidecar) = sidecar_project("directory", b"[]");
+        fs::remove_file(&sidecar).unwrap();
+        fs::create_dir(&sidecar).unwrap();
+
+        let store = MeasurementStore::open(&project_path).unwrap();
+
+        assert!(store.warnings().iter().any(|warning| {
+            warning.code == "measurement.source.skipped"
+                && warning.entry == sidecar.to_string_lossy()
+        }));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "uses temporary files")]
+    fn budget_exhaustion_is_reported_td183() {
+        let (root, project_path, sidecar) = sidecar_project("budget", b"[]");
+
+        let store = MeasurementStore::open_with_source_budget(&project_path, 1).unwrap();
+
+        assert!(store.warnings().iter().any(|warning| {
+            warning.code == "measurement.source.budget"
+                && warning.entry == sidecar.to_string_lossy()
+        }));
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -1559,16 +1014,17 @@ mod source_budget_tests {
         let mut project = Project::from_preset("2.0").unwrap();
         project.measurements = PyJson::Array(entries);
 
-        SOURCE_PARSE_COUNT.store(0, Ordering::Relaxed);
-        let sources = load_project_sources(&project, &project_path);
-        let parsed = SOURCE_PARSE_COUNT.load(Ordering::Relaxed);
+        let loaded = load_project_sources_within(&project, &project_path, MAX_PROJECT_SOURCE_BYTES);
+        assert!(loaded.exhausted);
+        let parsed = loaded.parse_count;
+        let sources = loaded.by_entry;
         assert!(parsed > 0);
         assert!(
             parsed < 10,
             "parsed {parsed} sidecars after exhausting the budget"
         );
-        assert!(sources.contains_key(&1));
-        assert!(!sources.contains_key(&10));
+        assert!(sources.keys().any(|(position, _)| *position == 1));
+        assert!(!sources.keys().any(|(position, _)| *position == 10));
 
         fs::remove_dir_all(root).unwrap();
     }
@@ -1597,10 +1053,10 @@ mod source_budget_tests {
         let mut project = Project::from_preset("2.0").unwrap();
         project.measurements = PyJson::Array(entries);
 
-        SOURCE_PARSE_COUNT.store(0, Ordering::Relaxed);
-        let sources = load_project_sources_within(&project, &project_path, 4096);
-        let parsed = SOURCE_PARSE_COUNT.load(Ordering::Relaxed);
-        assert!(sources.is_empty());
+        let loaded = load_project_sources_within(&project, &project_path, 4096);
+        let parsed = loaded.parse_count;
+        assert!(loaded.by_entry.is_empty());
+        assert!(loaded.exhausted);
         assert!(parsed > 0);
         assert!(
             parsed < 50,

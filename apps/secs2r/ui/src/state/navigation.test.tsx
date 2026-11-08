@@ -17,7 +17,7 @@ const setup = (mock: ReturnType<typeof createMockService>, method: string) => mo
 });
 
 it.each(["Ls", "missing"])("opens the split warning's polarity setting with a first-control fallback: %s", async (role) => {
-  const mock = createMockService({ tickMs: 0, results: { ...resultsSummary, calibration: { ...resultsSummary.calibration!, notes: [{ code: "polarity_split", params: { a: `${role},Rs`, b: "L,R", confidence: "0.94" } }] } } });
+  const mock = createMockService({ tickMs: 0, results: { ...resultsSummary, calibration: { ...resultsSummary.calibration!, notes: [{ code: "polarity_split", groups: { a: [role, "Rs"], b: ["L", "R"] }, confidence: 0.94 }] } } });
   await setup(mock, "native");
   const rendered = render(<App ipc={mock} />);
   try {

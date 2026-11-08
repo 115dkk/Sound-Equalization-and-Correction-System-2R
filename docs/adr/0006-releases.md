@@ -19,11 +19,13 @@
   - Windows: `SECS2R-<버전>-windows-x64-setup.exe`(NSIS, 사용자 단위 설치), `SECS2R-<버전>-windows-x64-portable.zip`(설치 없이 폴더째 실행)
   - macOS: `SECS2R-<버전>-macos-universal.dmg`
   - Linux: `SECS2R-<버전>-linux-x86_64.AppImage`, `SECS2R-<버전>-linux-amd64.deb`(오래된 glibc와 맞도록 Ubuntu 22.04에서 빌드)
+  - CLI: `SECS2R-<버전>-windows-x64-cli.zip`, `SECS2R-<버전>-macos-universal-cli.tar.gz`, `SECS2R-<버전>-linux-x86_64-cli.tar.gz`
+  - 업데이터: `SECS2R-<버전>-macos-universal.app.tar.gz`와 해당 파일의 `.sig`, Windows `setup.exe`와 Linux `AppImage`·`deb`의 `.sig`, `latest.json`(ADR 0020)
   - 모든 자산의 `SHA256SUMS.txt`
 - Windows 릴리스 exe는 GUI 서브시스템이어야 합니다(콘솔 창 없음). 빌드 잡이 PE 헤더로 확인합니다.
-- 빌드 잡은 패키징 전에 release 모드로 전체 테스트를 돌립니다. 릴리스 잡은 캐시를 쓰지 않고, 손으로 실행하는 트리거도 두지 않습니다. 둘 다 다른 브랜치의 코드가 main의 신뢰를 얻는 경로가 되기 때문입니다(CodeQL actions/cache-poisoning). 실패한 릴리스는 그 실행을 다시 돌립니다.
+- 빌드 잡은 패키징 전에 release 모드로 전체 테스트를 돌립니다. 릴리스 잡은 캐시를 사용하지 않습니다(CodeQL actions/cache-poisoning). 수동 실행의 `pypi_only`와 `nuget_only`는 main의 현재 라이브러리 판에 해당하는 `api-v` 태그에서 PyPI나 NuGet 패키지만 다시 빌드해 게시합니다. main에서만 실행하며 릴리스 게이트는 건너뛰고, 다른 브랜치의 코드는 사용하지 않습니다. 전체 릴리스가 실패하면 그 실행을 다시 돌립니다.
 - 릴리스 본문은 `CHANGELOG.md`의 해당 버전 절이고, 절이 없으면 커밋 제목을 씁니다.
-- 자동 업데이트와 코드 서명은 M6에서 정합니다. 그전 판은 업데이트를 스스로 하지 않습니다.
+- 자동 업데이트와 업데이트 묶음의 서명은 ADR 0020을 따릅니다. macOS 앱의 코드 서명은 ADR 0041의 자체 서명 인증서를 사용합니다.
 
 ## 결과
 

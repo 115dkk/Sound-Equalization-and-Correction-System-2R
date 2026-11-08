@@ -1,3 +1,4 @@
+#![allow(deprecated)]
 #![forbid(unsafe_code)]
 
 use std::fs;
@@ -303,12 +304,13 @@ fn dirac_import_records_irs_t0_and_source() {
         let role = roles[measured.channel];
         let (actual, sample_rate) = store.ir_of(role, position).unwrap();
         assert_eq!(
-            actual,
+            &*actual,
             measured
                 .samples
                 .iter()
                 .map(|sample| *sample as f32)
                 .collect::<Vec<_>>()
+                .as_slice()
         );
         assert_eq!(sample_rate, parsed.sample_rate);
         assert_eq!(store.t0_of(role, position), -0.25);
@@ -319,7 +321,39 @@ fn dirac_import_records_irs_t0_and_source() {
         let wav = project_path
             .with_extension("irs")
             .join(format!("{role}_P{position}.wav"));
-        assert!(!secs_project::source_path(&wav).exists());
+        assert!(secs_project::source_path(&wav).is_file());
+    }
+}
+
+#[test]
+fn dirac_rows_keep_a_source_with_the_file_name_td219() {
+    let directory = TempDir::new("source-info");
+    let source = directory.0.join("room.liveproject");
+    fs::write(&source, write(&SyntheticProject::minimal())).unwrap();
+
+    let project_path = directory.0.join("room.secs");
+    let service = Service::new(Deps::default());
+    new_project(&service, &project_path, "2.1", 1);
+    import_dirac(&service, &source);
+
+    let store = secs_project::MeasurementStore::open(&project_path).unwrap();
+    for (role, position, title) in [
+        ("L", 1, "Left P1"),
+        ("SW1", 1, "Subwoofer P1"),
+        ("L", 2, "Left P2"),
+    ] {
+        let wav = project_path
+            .with_extension("irs")
+            .join(format!("{role}_P{position}.wav"));
+        assert!(secs_project::source_path(&wav).is_file());
+        assert_eq!(
+            store.source_of(role, position).as_deref(),
+            Some(&secs_mdat::SourceInfo {
+                strings: vec![("outputName".into(), title.into())],
+                notes: Some("room.liveproject".into()),
+                ..Default::default()
+            })
+        );
     }
 }
 
@@ -434,7 +468,7 @@ fn dirac_import_skips_unplanned_and_outside_rows_and_rejects_bad_files() {
     assert!(!direct_path.with_extension("irs").exists());
     assert!(matches!(
         dirac_import::import(&mut direct, &source, &assignments[..2]),
-        Err(secs_service::measure::MeasureError::Input(_))
+        Err(secs_service::MeasureError::Input(_))
     ));
     assert_eq!(direct.project().save_text(), before_direct);
 

@@ -70,6 +70,7 @@ const base: MeasureView = {
   path: "measure",
   records: [],
   curves: curvesAt([]),
+  curvesLoading: false,
   sweepOptions,
   repetitions: 1,
   job: null,
@@ -235,6 +236,12 @@ export const referenceSubView: MeasureView = {
   curves: curvesFor([1, 2, 3].map((position) => ({ position, roles: SUB_ROLES })), SUB_ROLES),
 };
 
+/** Three positions measured, the curves' first read on its way (TD-237): a loading state where the graph goes. */
+export const curvesLoadingView: MeasureView = { ...partialView, curves: null, curvesLoading: true };
+
+/** Three positions measured, the curves read again after a change: the held curves stay with a status in the header. */
+export const curvesRefreshingView: MeasureView = { ...partialView, curvesLoading: true };
+
 export const MEASURE_FIXTURES = {
   empty: emptyView,
   partial: partialView,
@@ -251,4 +258,6 @@ export const MEASURE_FIXTURES = {
   sampleLoading: sampleLoadingView,
   referenceMid: referenceMidView,
   referenceSub: referenceSubView,
+  curvesLoading: curvesLoadingView,
+  curvesRefreshing: curvesRefreshingView,
 } satisfies Record<string, MeasureView>;

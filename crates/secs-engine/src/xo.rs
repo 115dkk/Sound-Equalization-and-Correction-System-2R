@@ -7,14 +7,14 @@ use secs_dsp::pairwise_sum;
 use secs_types::calibration::CalibrationSettings;
 
 use crate::{
-    Design, DesignRequest, EngineConfig, EngineError, MeasurementSet, ProjectView, SubFilter,
-    Tuning,
+    Design, EngineConfig, EngineError, MeasurementSet, ProjectView, SubFilter, Tuning,
     calibration::{engine_inputs, prepare_inputs, resolve_xo},
     chain::stage_responses,
     decay::late_db_20_150,
-    design::{DesignBytes, design_prepared_for_xo, production_fitters_with},
+    design::{DesignBytes, DesignRequest, design_prepared_for_xo, production_fitters_with},
     fit::PeqDerivatives,
     grid::design_freqs,
+    input::RoleMap,
     levels, measurement, scorecard,
     setup::Setup,
 };
@@ -141,7 +141,7 @@ fn check_scored_positions(set: &MeasurementSet, config: &EngineConfig) -> Result
         });
     for role in scored {
         for (position, measured) in &set.positions {
-            let has = |r: &str| measured.iter().any(|(m, _)| m == r);
+            let has = |role: &str| RoleMap::get_from(measured, role).is_some();
             if !has(role) {
                 continue;
             }
@@ -164,11 +164,11 @@ impl ScoreWindows {
     fn new(
         measurements: &MeasurementSet,
         prepared: &measurement::Prepared,
-        cancelled: &dyn Fn() -> bool,
+        ctx: &secs_compute::Context,
     ) -> Result<Self, EngineError> {
         Ok(Self {
-            short: measurement::long_spectra_until(measurements, prepared, &[], 500.0, cancelled)?,
-            long: measurement::long_spectra_until(measurements, prepared, &[], 2000.0, cancelled)?,
+            short: measurement::long_spectra_until(measurements, prepared, &[], 500.0, ctx)?,
+            long: measurement::long_spectra_until(measurements, prepared, &[], 2000.0, ctx)?,
         })
     }
 }
@@ -297,7 +297,7 @@ pub fn recommend_xo(
     candidates: &[f64],
     ctx: &Context,
 ) -> Result<XoRecommendation, EngineError> {
-    ctx.cancel().check().map_err(|_| EngineError::Cancelled)?;
+    ctx.cancel().check()?;
     let mut inputs = engine_inputs(view, irs, settings)?;
     let groups = xo_groups(&inputs.config);
     if groups.is_empty() {
@@ -337,7 +337,7 @@ pub fn recommend_xo(
             &inputs.measurements,
             &inputs.config,
             &Setup::new(&inputs.config),
-            &|| ctx.cancel().is_cancelled(),
+            ctx,
         )?)
     };
     if prepared.is_some() {
@@ -348,13 +348,11 @@ pub fn recommend_xo(
     let windows = prepared
         .as_ref()
         .map(|prepared| {
-            ctx.cancel().check().map_err(|_| EngineError::Cancelled)?;
-            ScoreWindows::new(&inputs.measurements, prepared, &|| {
-                ctx.cancel().is_cancelled()
-            })
+            ctx.cancel().check()?;
+            ScoreWindows::new(&inputs.measurements, prepared, ctx)
         })
         .transpose()?;
-    ctx.cancel().check().map_err(|_| EngineError::Cancelled)?;
+    ctx.cancel().check()?;
     // A candidate's permit is taken on this thread for its whole batch, never
     // inside a pool task (TD-23); its design runs on a serial child of this
     // job, so it reserves nothing more and waits on no pool work.
@@ -380,7 +378,7 @@ pub fn recommend_xo(
                     adapter_notes: &inputs.notes,
                 },
                 &inner,
-                &*production_fitters_with(inner.cancel(), peq_derivatives),
+                &*production_fitters_with(&inner, peq_derivatives),
                 prepared,
                 schroeder,
             )?;
@@ -393,7 +391,7 @@ pub fn recommend_xo(
                 prepared,
                 windows.as_ref(),
             );
-            ctx.cancel().check().map_err(|_| EngineError::Cancelled)?;
+            ctx.cancel().check()?;
             progress.advance(1);
             Ok(scores)
         },
@@ -412,7 +410,7 @@ pub fn recommend_xo(
                     .iter()
                     .rposition(|c| *c == fc)
                     .expect("candidate key");
-                if let Some((_, scores)) = trials[index].iter().find(|(group, _)| group == &g) {
+                if let Some(scores) = RoleMap::get_from(&trials[index], &g) {
                     rows.push(XoRow {
                         fc,
                         scores: *scores,
@@ -440,7 +438,7 @@ mod perf_tests {
     #[test]
     fn xo_replay_scores_match_fresh_preparation_bits() {
         for name in ["dolby", "room_filters"] {
-            let case = crate::test_support::replay_case(name);
+            let case = crate::testkit::replay_case(&crate::tests::Oracle, name);
             let prepared =
                 measurement::prepare(&case.measurements, &case.config, &Setup::new(&case.config))
                     .unwrap();
@@ -472,7 +470,7 @@ mod perf_tests {
     #[test]
     fn xo_preparation_is_candidate_independent() {
         for name in ["dolby", "room", "room_dba", "room_filters"] {
-            let case = cases::load(name);
+            let case = cases::load(&crate::tests::Oracle, name);
             let settings: CalibrationSettings = serde_json::from_value(case.settings).unwrap();
             let view = ProjectView {
                 groups: &case.config.groups,
@@ -529,7 +527,7 @@ mod perf_tests {
     #[test]
     fn xo_shared_windows_preserve_filtered_bits() {
         for name in ["dolby", "room_dba", "room_filters"] {
-            let case = cases::load(name);
+            let case = cases::load(&crate::tests::Oracle, name);
             let setup = Setup::new(&case.config);
             let prepared = measurement::prepare(&case.measurements, &case.config, &setup).unwrap();
             let mut filters = setup.sub_filters.clone();
@@ -572,7 +570,7 @@ mod perf_tests {
 
     #[test]
     fn xo_shared_preparation_preserves_candidate_bits() {
-        let case = cases::load("room_dba");
+        let case = cases::load(&crate::tests::Oracle, "room_dba");
         let prepared =
             measurement::prepare(&case.measurements, &case.config, &Setup::new(&case.config))
                 .unwrap();
@@ -589,7 +587,7 @@ mod perf_tests {
                 subs_only: false,
                 adapter_notes: &[],
             };
-            let fitters = crate::design::production_fitters(ctx.cancel());
+            let fitters = crate::design::production_fitters(&ctx);
             let own = crate::design::design(&req, &ctx, &*fitters).unwrap();
             let shared =
                 crate::design::design_prepared(&req, &ctx, &*fitters, &prepared, &|_, _| {})
@@ -628,7 +626,12 @@ mod perf_tests {
                 }
             }
             let own_scores = xo_scores(&own, &case.measurements, &config);
-            let windows = ScoreWindows::new(&case.measurements, &prepared, &|| false).unwrap();
+            let windows = ScoreWindows::new(
+                &case.measurements,
+                &prepared,
+                &secs_compute::Context::serial(),
+            )
+            .unwrap();
             let shared_scores = xo_scores_prepared(
                 &shared,
                 &case.measurements,

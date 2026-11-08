@@ -112,6 +112,8 @@ it("starts status watch, reloads job dependencies and clears selection after mea
   try {
     await session.start(); await session.settled();
     expect(mock.calls.some((r) => r.method === "status_watch_start")).toBe(true);
+    // Measuring happens on 측정·가져오기, the screen that reads the curves (TD-237).
+    session.stores.curves.show();
     await session.configure({ method: "mock" });
     session.host.set({ selected: 4 });
     await session.call({ method: "measure_position", params: { position: 4 } });
@@ -196,7 +198,7 @@ describe("level monitor silence", () => {
     try {
       await session.start(); await session.settled(); await session.configure({ method: "mock" }); await session.monitor(true);
       await vi.advanceTimersByTimeAsync(5000);
-      expect(session.host.getSnapshot().monitor).not.toBe("stalled");
+      expect(session.stores.monitor.getSnapshot().monitor).not.toBe("stalled");
       expect(mock.calls.filter((call) => call.method === "level_monitor_start")).toHaveLength(1);
       expect(mock.calls.filter((call) => call.method === "level_monitor_stop")).toHaveLength(0);
     } finally { session.dispose(); await session.settled(); mock.dispose(); vi.useRealTimers(); }
@@ -209,28 +211,28 @@ describe("level monitor silence", () => {
     try {
       await session.start(); await session.settled(); await session.configure({ method: "rew" }); await session.monitor(true);
       const states: string[] = [];
-      const off = session.host.subscribe(() => states.push(session.host.getSnapshot().monitor));
+      const off = session.stores.monitor.subscribe(() => states.push(session.stores.monitor.getSnapshot().monitor));
       const first = session.jobs.getSnapshot().jobs.find((job) => job.kind === "level_monitor")!.job;
       const reading = { event: "meter" as const, job: first, rms_dbfs: -40, peak_dbfs: -30, spl_db: null, clipping: false };
       mock.events.emit(reading);
-      expect(session.host.getSnapshot().monitor).toBe("receiving");
+      expect(session.stores.monitor.getSnapshot().monitor).toBe("receiving");
       await vi.advanceTimersByTimeAsync(999);
       expect(mock.calls.filter((call) => call.method === "level_monitor_start")).toHaveLength(1);
       await vi.advanceTimersByTimeAsync(1);
       expect(states).toContain("stalled");
-      expect(session.host.getSnapshot().monitor).toBe("stalled");
+      expect(session.stores.monitor.getSnapshot().monitor).toBe("stalled");
       expect(mock.calls.filter((call) => ["level_monitor_start", "level_monitor_stop"].includes(call.method)).map((call) => call.method)).toEqual(["level_monitor_start", "level_monitor_stop", "level_monitor_start"]);
       const second = session.jobs.getSnapshot().jobs.find((job) => job.kind === "level_monitor" && job.status === "running")!.job;
       mock.events.emit(reading);
-      expect(session.host.getSnapshot().monitor).toBe("stalled");
+      expect(session.stores.monitor.getSnapshot().monitor).toBe("stalled");
       mock.events.emit({ ...reading, job: second });
-      expect(session.host.getSnapshot().monitor).toBe("receiving");
+      expect(session.stores.monitor.getSnapshot().monitor).toBe("receiving");
       await session.monitor(false);
-      expect(session.host.getSnapshot().monitor).toBe("off");
+      expect(session.stores.monitor.getSnapshot().monitor).toBe("off");
       expect(vi.getTimerCount()).toBe(0);
       mock.events.emit({ ...reading, job: second });
       await vi.advanceTimersByTimeAsync(5000);
-      expect(session.host.getSnapshot().monitor).toBe("off");
+      expect(session.stores.monitor.getSnapshot().monitor).toBe("off");
       expect(mock.calls.filter((call) => call.method === "level_monitor_start")).toHaveLength(2);
       off();
     } finally { session.dispose(); await session.settled(); mock.dispose(); vi.useRealTimers(); }
@@ -252,7 +254,7 @@ describe("level monitor silence", () => {
       await vi.advanceTimersByTimeAsync(1000);
       const stopped = session.monitor(false);
       release(); await stopped;
-      expect(session.host.getSnapshot().monitor).toBe("off");
+      expect(session.stores.monitor.getSnapshot().monitor).toBe("off");
       expect(vi.getTimerCount()).toBe(0);
       expect(mock.calls.filter((call) => call.method === "level_monitor_start")).toHaveLength(1);
     } finally { session.dispose(); await session.settled(); mock.dispose(); vi.restoreAllMocks(); vi.useRealTimers(); }
@@ -264,23 +266,23 @@ describe("level monitor silence", () => {
     try {
       await session.start(); await session.settled(); await session.configure({ method: "native" }); await session.monitor(true);
       mock.tick(); await session.settled();
-      expect(session.host.getSnapshot().meter).not.toBeNull();
-      session.host.set({ playing: "L", playingAll: true });
+      expect(session.stores.monitor.getSnapshot().meter).not.toBeNull();
+      session.stores.monitor.set({ playing: "L", playingAll: true });
       mock.failJobs("level_monitor", "device_unavailable", "CPAL: device disconnected", { device: "backend" });
       mock.tick(); await session.settled();
-      expect(session.host.getSnapshot()).toMatchObject({
+      expect(session.stores.monitor.getSnapshot()).toMatchObject({
         monitor: "offline", meter: null, playing: null, playingAll: false,
         monitorError: { code: "device_unavailable", params: { device: "backend" }, detail: "CPAL: device disconnected" },
       });
       expect(session.errors.getSnapshot()).toBeNull();
       await session.monitor(false);
-      expect(session.host.getSnapshot()).toMatchObject({ monitor: "off", monitorError: null });
+      expect(session.stores.monitor.getSnapshot()).toMatchObject({ monitor: "off", monitorError: null });
       await session.monitor(true);
       mock.tick(); await session.settled();
-      expect(session.host.getSnapshot().monitorError).toMatchObject({ code: "device_unavailable" });
+      expect(session.stores.monitor.getSnapshot().monitorError).toMatchObject({ code: "device_unavailable" });
       // Wanted all along, so only a start (a play's) runs it again; the start drops the error.
       await session.monitor(true);
-      expect(session.host.getSnapshot()).toMatchObject({ monitor: "starting", monitorError: null });
+      expect(session.stores.monitor.getSnapshot()).toMatchObject({ monitor: "starting", monitorError: null });
       expect(mock.calls.filter((call) => call.method === "level_monitor_start")).toHaveLength(3);
     } finally { session.dispose(); await session.settled(); mock.dispose(); }
   });
@@ -294,7 +296,7 @@ describe("level monitor silence", () => {
       await session.call({ method: "project_new", params: { path: "", preset: "2.0", sub_count: 0, sample: false, tutorial: false } });
       expect(vi.getTimerCount()).toBe(0);
       await vi.advanceTimersByTimeAsync(5000);
-      expect(session.host.getSnapshot()).toMatchObject({ monitor: "off", meter: null });
+      expect(session.stores.monitor.getSnapshot()).toMatchObject({ monitor: "off", meter: null });
       expect(mock.calls.filter((call) => call.method === "level_monitor_start")).toHaveLength(1);
     } finally { session.dispose(); await session.settled(); mock.dispose(); vi.useRealTimers(); }
   });

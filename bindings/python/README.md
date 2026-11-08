@@ -22,6 +22,17 @@ print(info["data"]["version"])
 
 Long-running requests return a job identifier. Use `wait_job` for its terminal event or iterate over `events()` to receive every later job event.
 
+## Typed calculation notes
+
+`results.data.calibration.notes` and `results.data.mimo.notes` contain typed records. The `code` field selects the shape; collection values are JSON arrays rather than strings that need splitting. Notices made by the service itself remain in the adjacent `notices` array.
+
+```python
+results = engine.call({"method": "results"})["data"]
+for note in results["calibration"]["notes"]:
+    if note["code"] == "dip_limit":
+        print(note["role"], note["dips"][0]["hz"])
+```
+
 ## Running application
 
 Enable the local API in the SECS 2R application, then read its status with the default token file:
@@ -35,6 +46,12 @@ print(status["app_name"], status["app_version"])
 ```
 
 You may pass `token` directly or use `token_path` for another token file.
+
+## Stopping event iteration
+
+Both `Engine.events(timeout=None)` and `Client.events(timeout=None)` return iterators with `close()` and a `closed` property. Call `close()` from another thread to end a blocked `next()`. A finite, nonnegative timeout raises `TimeoutError` after that many seconds without an event; `None` waits indefinitely. Waiting checks Python signals every 100 ms, so `KeyboardInterrupt` can interrupt an idle iterator. Close a client iterator when finished to release its socket and reader thread.
+
+Each public iterator queues 1024 events. When that queue is full, it drops new non-terminal events and `dropped_events()` reports the count. The local API server has a separate 256-event queue. If a client falls behind that server queue, it receives a `lagged` event with the missed count, followed by a close whose WebSocket code is 1013.
 
 ## Licence
 

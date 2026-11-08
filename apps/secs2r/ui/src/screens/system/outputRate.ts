@@ -4,12 +4,12 @@
 // rows. 자동 is decided by the service when it exports, so the screens count
 // it as 48 kHz, the rate it falls back to.
 import type { OutputRateChoice } from "../../ipc/bindings/OutputRateChoice";
+import { DESIGN_RATE, OUTPUT_RATES } from "../../ipc/bindings/rules";
 
-/** The rate measurement and design run at (`secs_dsp::rate::DESIGN_RATE`). */
-export const DESIGN_RATE = 48_000;
-
-/** The rates a DSP profile can run at, in the order the choice lists them (`secs_dsp::rate::OUTPUT_RATES`). */
-export const OUTPUT_RATES = [44_100, 48_000, 88_200, 96_000, 176_400, 192_000] as const;
+// The rate measurement and design run at and the rates a DSP profile can run
+// at, in the order the choice lists them; generated from `secs_dsp::rate`
+// through `secs-types` (ADR 0052).
+export { DESIGN_RATE, OUTPUT_RATES } from "../../ipc/bindings/rules";
 
 /** The rate the screens count with: the fixed rate, or 48 kHz for 자동. */
 export function countedRate(choice: OutputRateChoice): number {

@@ -3,7 +3,7 @@
 #![cfg(not(miri))]
 
 use secs_jos::{ArrayData, Node, Stream, Value};
-use secs_mdat::{MeasurementInput, TEMPLATE, build, load, load_mdat_project};
+use secs_mdat::{Boxed, MdatError, MeasurementInput, TEMPLATE, build, load, load_mdat_project};
 use secs_oracle::{Fixture, number};
 use serde_json::Value as Json;
 
@@ -332,6 +332,46 @@ fn builds_match_bytes_except_nine_one_ulp_caches() {
         "cache budget exceeded: {}",
         failures.join("; ")
     );
+}
+
+#[test]
+fn source_info_integer_box_rejects_i64_narrowing_td228() {
+    let fixture = Fixture::load("mdat", "source_info_build");
+    let with_integer = |value| {
+        let mut items = inputs(&fixture);
+        let info = items[0].source_info.get_or_insert_with(Default::default);
+        info.boxed.retain(|(name, _)| name != "splCalOffset");
+        info.boxed
+            .push(("splCalOffset".into(), Boxed::Integer(value)));
+        items
+    };
+
+    let error = build(
+        &with_integer(i64::MAX),
+        TEMPLATE,
+        None,
+        1_700_000_000_000,
+        &mut || 1,
+    )
+    .unwrap_err();
+    assert!(matches!(&error, MdatError::Input(_)), "{error}");
+    assert!(error.to_string().contains("splCalOffset"), "{error}");
+
+    let bytes = build(
+        &with_integer(7),
+        TEMPLATE,
+        None,
+        1_700_000_000_000,
+        &mut || 1,
+    )
+    .unwrap();
+    let stream = secs_jos::parse(&bytes, &secs_jos::Limits::default()).unwrap();
+    let measurement = measurement_ids(&stream)[0];
+    let boxed = match stream.get(measurement, "splCalOffset") {
+        Some(Value::Node(id)) => *id,
+        other => panic!("expected boxed Integer, got {other:?}"),
+    };
+    assert_eq!(stream.get(boxed, "value"), Some(&Value::Int(7)));
 }
 
 #[test]

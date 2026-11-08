@@ -29,6 +29,12 @@
 
 5. 표준 출력 전체를 이 문서의 새 기록 절에 붙입니다. 장치, 형식, 실제로 열린 모드, 레이턴시, SNR, 드롭아웃을 함께 남깁니다. 불연속이나 출력 언더런이 있으면 측정을 통과한 것으로 기록하지 않습니다.
 
+제조사 마이크 보정 파일을 직접 검사하려면 파일 경로를 `SECS_REAL_MIC_CAL`에 넣고 무시된 시험을 따로 실행하십시오.
+
+```sh
+SECS_REAL_MIC_CAL=<path> cargo test -p secs-audio -- --ignored real_umik1_file
+```
+
 ## 진단 변수 (Windows WASAPI)
 
 Windows의 WASAPI 어댑터(`crates/secs-sys/src/wasapi.rs`)는 진단용 환경 변수 두 개를 읽습니다. PA05 실측에서 공유 모드 재생의 언더런을 추적하려고 둔 것이라 평소 측정에는 설정하지 않습니다. macOS와 Linux의 cpal 어댑터는 이 변수를 읽지 않습니다. 세션을 열 때마다 프로세스 환경에서 읽으므로, 앱이나 프로브를 실행하기 전에 같은 셸에서 설정합니다.

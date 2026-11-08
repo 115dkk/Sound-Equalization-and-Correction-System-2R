@@ -1,19 +1,106 @@
 use std::sync::Arc;
 
 use secs_engine::Design;
-use secs_project::{Project, calibration_from_project, measured_positions};
+use secs_project::{
+    Project, calibration_from_project, measured_positions, measurement_signature, target_key,
+};
 use secs_types::calibration::CalibrationSettings;
 use secs_types::ipc::{
     CalibrationSummary, MimoExportDecision, MimoSummary, Notice, ResultsSummary,
 };
 
 use crate::cache::CachedResults;
-use crate::calibration::{config_key, signature_key, target_key_string, xo_rec_key};
+use crate::calibration::xo_rec_key;
 use crate::compute::ComputeIdentity;
 
 #[cfg(test)]
 #[path = "results_tests.rs"]
 mod tests;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ProjectKeys {
+    pub config: String,
+    pub signature: String,
+    pub target: String,
+}
+
+impl ProjectKeys {
+    /// `config_key`와 이를 포함하는 `run_key`, `xo_rec_key`는 `SpeakerConfig`와
+    /// `XoSettings`의 `Debug` 표현을 사용합니다. 필드를 추가하면 업그레이드 뒤
+    /// 저장된 결과와 크로스오버 추천은 모두 낡음이 됩니다. 이는 유지보수자가 승인한
+    /// 정책입니다(감사 #186 TD-166, 2026-11-06). 캐시를 무효화하지 않아야 하는
+    /// 변경에서는 두 구조체의 `Debug` 출력을 그대로 유지하십시오.
+    pub(crate) fn of(project: &Project) -> Self {
+        let identities = match &project.measurements {
+            secs_project::PyJson::Array(entries) => entries
+                .iter()
+                .map(|entry| match entry {
+                    secs_project::PyJson::Object(fields) => fields
+                        .iter()
+                        .find(|(key, _)| key == "uuid")
+                        .map(|(_, value)| value),
+                    _ => None,
+                })
+                .collect::<Vec<_>>(),
+            _ => vec![],
+        };
+        let base = format!("{:?}:{identities:?}", measurement_signature(project));
+        let has_ir = |position: i64, role: &str| {
+            match &project.measurements {
+                secs_project::PyJson::Array(entries) => entries.as_slice(),
+                _ => &[],
+            }
+            .iter()
+            .any(|entry| {
+                let matches_position = match entry.get("pos") {
+                    Some(secs_project::PyJson::Int(value) | secs_project::PyJson::Str(value)) => {
+                        value.parse() == Ok(position)
+                    }
+                    Some(secs_project::PyJson::Float(value)) => {
+                        value.is_finite() && value.trunc() == position as f64
+                    }
+                    Some(secs_project::PyJson::Bool(value)) => i64::from(*value) == position,
+                    _ => false,
+                };
+                matches_position
+                    && entry
+                        .get("ir")
+                        .and_then(secs_project::PyJson::object)
+                        .and_then(|values| values.iter().find(|(name, _)| name == role))
+                        .is_some_and(|(_, value)| {
+                            matches!(value, secs_project::PyJson::Str(path) if !path.is_empty())
+                        })
+            })
+        };
+        let calibration = project
+            .measurement_calibration
+            .iter()
+            .filter_map(|((position, role), fingerprint)| {
+                has_ir(*position, role).then_some((*position, role.as_str(), *fingerprint))
+            })
+            .collect::<Vec<_>>();
+        let signature = if calibration.is_empty() {
+            base
+        } else {
+            format!("{base}:cal{calibration:?}")
+        };
+        Self {
+            config: format!("{:?}:{:?}", project.config, project.xo),
+            signature,
+            target: format!("{:?}", target_key(project)),
+        }
+    }
+
+    pub(crate) fn run(&self, settings: &CalibrationSettings) -> String {
+        format!(
+            "{}\u{1f}{}\u{1f}{}\u{1f}{}",
+            self.signature,
+            self.target,
+            settings.engine_key(),
+            self.config
+        )
+    }
+}
 
 #[derive(Debug)]
 pub(crate) struct CalibrationRun {
@@ -53,7 +140,7 @@ impl CalibrationRun {
             target_key,
             config_key,
             run_key,
-            positions: design.spectra.positions.len(),
+            positions: design.positions().count(),
             design: CalibrationDesign::Computed(design),
         }
     }
@@ -196,6 +283,23 @@ impl<'a> MimoVerdict<'a> {
 }
 
 impl ResultBook {
+    pub(crate) fn inputs_unchanged_since(
+        &self,
+        keys: &ProjectKeys,
+        settings: &CalibrationSettings,
+    ) -> bool {
+        let expected = keys.run(settings);
+        self.calibration
+            .as_ref()
+            .is_some_and(|run| run.run_key == expected)
+            || (self.calibration.is_none()
+                && self
+                    .cached
+                    .as_ref()
+                    .and_then(|cache| cache.run_key.as_ref())
+                    == Some(&expected))
+    }
+
     pub(crate) fn from_cache(cached: Option<CachedResults>) -> Self {
         Self {
             cached,
@@ -330,12 +434,12 @@ impl ResultBook {
         let calibration = self.calibration.as_ref()?;
         Some(CachedResults {
             calibration: CalibrationSummary {
-                notes: cached_notes(&calibration.summary.notes),
+                notices: cached_notices(&calibration.summary.notices),
                 ..calibration.summary.clone()
             },
-            calibration_chain: calibration.design().chain.clone(),
+            calibration_chain: calibration.design().signal_chain().clone(),
             mimo: self.mimo.as_ref().map(|result| MimoSummary {
-                notes: cached_notes(&result.summary.notes),
+                notices: cached_notices(&result.summary.notices),
                 ..result.summary.clone()
             }),
             measurement_signature: calibration.signature.clone(),
@@ -358,8 +462,8 @@ impl ResultBook {
                 }
                 .into(),
                 ultra_ms: calibration.settings.ultra_ms,
-                latency_ms: calibration.design().chain.latency_ms,
-                rc_hi_hz: calibration.design().rc_hi,
+                latency_ms: calibration.design().latency_ms(),
+                rc_hi_hz: calibration.design().rc_hi(),
                 rc_bands: calibration.settings.rc_bands.clone(),
                 lf_align: calibration.settings.lf_align,
                 mode_decay: calibration.settings.mode_decay,
@@ -393,9 +497,11 @@ impl ResultBook {
 
     pub(crate) fn all_notes_mut(&mut self) -> impl Iterator<Item = &mut Vec<Notice>> {
         [
-            self.calibration.as_mut().map(|run| &mut run.summary.notes),
-            self.subs.as_mut().map(|run| &mut run.summary.notes),
-            self.mimo.as_mut().map(|result| &mut result.summary.notes),
+            self.calibration
+                .as_mut()
+                .map(|run| &mut run.summary.notices),
+            self.subs.as_mut().map(|run| &mut run.summary.notices),
+            self.mimo.as_mut().map(|result| &mut result.summary.notices),
         ]
         .into_iter()
         .flatten()
@@ -403,9 +509,12 @@ impl ResultBook {
 
     pub(crate) fn owner_notes_mut(&mut self, owner: CacheOwner) -> Option<&mut Vec<Notice>> {
         match owner {
-            CacheOwner::Calibration => self.calibration.as_mut().map(|run| &mut run.summary.notes),
-            CacheOwner::Subs => self.subs.as_mut().map(|run| &mut run.summary.notes),
-            CacheOwner::Mimo => self.mimo.as_mut().map(|result| &mut result.summary.notes),
+            CacheOwner::Calibration => self
+                .calibration
+                .as_mut()
+                .map(|run| &mut run.summary.notices),
+            CacheOwner::Subs => self.subs.as_mut().map(|run| &mut run.summary.notices),
+            CacheOwner::Mimo => self.mimo.as_mut().map(|result| &mut result.summary.notices),
         }
     }
 }
@@ -451,21 +560,22 @@ fn stale_reason(
     config_key_at_run: Option<&str>,
     project: &Project,
 ) -> Option<&'static str> {
-    if signature != signature_key(project) {
+    let keys = ProjectKeys::of(project);
+    if signature != keys.signature {
         Some("measurements")
-    } else if config_key_at_run.is_none_or(|key| key != config_key(project)) {
+    } else if config_key_at_run.is_none_or(|key| key != keys.config) {
         Some("config")
     } else if engine_key != calibration_from_project(project).engine_key() {
         Some("settings")
-    } else if target_key != target_key_string(project) {
+    } else if target_key != keys.target {
         Some("target")
     } else {
         None
     }
 }
 
-fn cached_notes(notes: &[Notice]) -> Vec<Notice> {
-    notes
+fn cached_notices(notices: &[Notice]) -> Vec<Notice> {
+    notices
         .iter()
         .filter(|notice| notice.code != "cache_save_failed")
         .cloned()

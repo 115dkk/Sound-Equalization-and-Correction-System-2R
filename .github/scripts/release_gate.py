@@ -55,9 +55,17 @@ import argparse
 import fnmatch
 import os
 import re
-import subprocess
 import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _git import git as _shared_git  # noqa: E402
+from _git import run as _run  # noqa: E402
+
+
+def _git(*args):
+    return _shared_git(*args, quotepath=False, runner=_run)
+
 
 SHIP = (
     "crates/*",
@@ -74,6 +82,8 @@ SHIP = (
 # Shipped although they match NOT_SHIPPED.
 SHIP_ALWAYS: tuple[str, ...] = ()
 NOT_SHIPPED = (
+    # Published crate READMEs are packaged, but API publication is tied to an
+    # app release below; a README-only change waits for that release.
     "*.md",
     "crates/secs-policy/*",
     "crates/secs-oracle/*",
@@ -378,20 +388,6 @@ def set_member_versions(lock: str, names: set[str], new: str) -> str:
     )
 
 
-# ---------------------------------------------------------------------------
-# I/O wrapper (runs in CI)
-# ---------------------------------------------------------------------------
-def _run(*args, check=True):
-    return subprocess.run(
-        list(args), check=check, capture_output=True, text=True,
-        encoding="utf-8", errors="replace",
-    )
-
-
-def _git(*args) -> str:
-    return _run("git", *args).stdout.strip()
-
-
 def _read(path: Path) -> str:
     with open(path, encoding="utf-8", newline="") as fh:
         return fh.read()
@@ -510,8 +506,8 @@ def main(argv=None) -> int:
     print(f"shipped changes: {shipped[:20]}")
     print(f"decision: {action} {new_version}")
 
-    # The crates.io crates publish only with an app release: a packaged file
-    # of theirs is always a shipped file of the app.
+    # The crates.io crates publish only with an app release. Most packaged
+    # files ship in the app too; packaged README files wait for that release.
     api_action, api_version, api_manifests = "none", None, {}
     if API_MANIFEST.exists():
         api_version = package_field(_read(API_MANIFEST), "version")

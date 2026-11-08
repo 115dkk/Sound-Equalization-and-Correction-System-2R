@@ -12,7 +12,7 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use secs_service::{
-    ApplyAdapter, Deps, EventSink, LocalTime, ManagedHostAdapter, NoEvents, Service,
+    ApplyAdapter, Deps, EventSink, LocalTime, LogLevel, ManagedHostAdapter, NoEvents, Service,
 };
 use secs_types::ipc::*;
 use sha2::{Digest, Sha256};
@@ -216,6 +216,109 @@ impl ApplyAdapter for DefaultReportApply {
         _timeout: Duration,
     ) -> Result<ApplyOutcome, IpcError> {
         Ok(self.outcomes.lock().unwrap().remove(0))
+    }
+
+    fn eqapo_include_state(&self, config_text: &str) -> IncludeState {
+        NativeApply.eqapo_include_state(config_text)
+    }
+
+    fn eqapo_with_include(&self, config_text: &str) -> Result<Option<String>, IpcError> {
+        NativeApply.eqapo_with_include(config_text)
+    }
+
+    fn eqapo_without_include(&self, config_text: &str) -> Result<Option<String>, IpcError> {
+        NativeApply.eqapo_without_include(config_text)
+    }
+}
+
+#[derive(Debug)]
+struct MainConfigApply {
+    paths: Arc<Mutex<Vec<PathBuf>>>,
+}
+
+impl ApplyAdapter for MainConfigApply {
+    fn camilla_status(
+        &self,
+        _address: &str,
+        _timeout: Duration,
+    ) -> Result<CamillaStatus, IpcError> {
+        Err(IpcError::new(ErrorCode::NotImplemented, "unused status"))
+    }
+
+    fn camilla_apply(
+        &self,
+        _address: &str,
+        config_path: &Path,
+        config_text: &str,
+        _timeout: Duration,
+    ) -> Result<ApplyOutcome, IpcError> {
+        assert!(config_text.contains("title:"));
+        self.paths.lock().unwrap().push(config_path.to_owned());
+        Ok(ApplyOutcome::Applied)
+    }
+
+    fn eqapo_include_state(&self, config_text: &str) -> IncludeState {
+        NativeApply.eqapo_include_state(config_text)
+    }
+
+    fn eqapo_with_include(&self, config_text: &str) -> Result<Option<String>, IpcError> {
+        NativeApply.eqapo_with_include(config_text)
+    }
+
+    fn eqapo_without_include(&self, config_text: &str) -> Result<Option<String>, IpcError> {
+        NativeApply.eqapo_without_include(config_text)
+    }
+}
+
+#[derive(Debug, Default)]
+struct BreakRetirement {
+    previous: Mutex<Option<String>>,
+    marker_writes: AtomicU64,
+    moved_root: Mutex<Option<PathBuf>>,
+}
+
+impl ApplyAdapter for BreakRetirement {
+    fn camilla_status(
+        &self,
+        _address: &str,
+        _timeout: Duration,
+    ) -> Result<CamillaStatus, IpcError> {
+        Err(IpcError::new(ErrorCode::NotImplemented, "unused status"))
+    }
+
+    fn camilla_apply(
+        &self,
+        _address: &str,
+        _config_path: &Path,
+        _config_text: &str,
+        _timeout: Duration,
+    ) -> Result<ApplyOutcome, IpcError> {
+        Ok(ApplyOutcome::Applied)
+    }
+
+    fn camilla_apply_report(
+        &self,
+        _address: &str,
+        config_path: &Path,
+        _config_text: &str,
+        _timeout: Duration,
+    ) -> Result<(ApplyOutcome, Option<String>), IpcError> {
+        let previous = lock(&self.previous).replace(config_path.to_string_lossy().into_owned());
+        Ok((ApplyOutcome::Applied, previous))
+    }
+
+    fn before_camilla_marker_write(&self, marker: &Path) -> Result<(), IpcError> {
+        if self.marker_writes.fetch_add(1, Ordering::SeqCst) == 2 {
+            let root = marker
+                .parent()
+                .expect("the marker has an applied folder")
+                .join("camilladsp");
+            let moved = root.with_file_name("camilladsp-retirement-held");
+            fs::rename(&root, &moved).unwrap();
+            fs::write(&root, b"blocks read_dir").unwrap();
+            *lock(&self.moved_root) = Some(moved);
+        }
+        Ok(())
     }
 
     fn eqapo_include_state(&self, config_text: &str) -> IncludeState {
@@ -663,6 +766,43 @@ fn apply_camilla_with(
         Request::ApplyCamilla(ApplyCamillaParams { camilla_devices }),
         events,
     )
+}
+
+fn assert_camilla_writer_result() {
+    let root = root("main-config-result");
+    let paths = Arc::new(Mutex::new(Vec::new()));
+    let service = calibrated_service_with_apply(
+        &root,
+        Deps::default(),
+        Arc::new(MainConfigApply {
+            paths: paths.clone(),
+        }),
+    );
+    set_apply(
+        &service,
+        CamillaApply {
+            level: ApplyLevel::Apply,
+            address: "unused:1234".into(),
+            exe_path: None,
+        },
+        EqApoApply::default(),
+    );
+
+    let events = Arc::new(Events::default());
+    let job = apply_camilla(&service, events.clone());
+    let JobResult::Apply(result) = succeeded(events.wait(job.job)) else {
+        panic!("apply result is absent")
+    };
+    assert!(!result.design_id.is_empty());
+    let paths = paths.lock().unwrap();
+    assert_eq!(paths.len(), 1);
+    assert!(paths[0].ends_with("configs/secs_mixed.yml"));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn camilla_apply_reads_the_main_config_from_the_export_result() {
+    assert_camilla_writer_result();
 }
 
 #[test]
@@ -1765,6 +1905,140 @@ fn apply_camilla_gives_each_design_its_own_folder_so_reload_reads_its_firs() {
 }
 
 #[test]
+fn eqapo_apply_leaves_no_design_index_in_the_config_root_td153() {
+    let root = root("eqapo-no-index");
+    let config_root = root.join("EqualizerAPO/config");
+    fs::create_dir_all(&config_root).unwrap();
+    fs::write(config_root.join("config.txt"), "Preamp: -3 dB\n").unwrap();
+    let install = EqApoInstall {
+        config_path: config_root.to_string_lossy().into_owned(),
+        install_path: "EqualizerAPO-XT/current".into(),
+        variant: EqApoVariant::Xt,
+    };
+    let service = calibrated_service(
+        &root,
+        Deps {
+            eqapo_install: Arc::new(move || Some(install.clone())),
+            ..Deps::default()
+        },
+    );
+    set_apply(
+        &service,
+        CamillaApply::default(),
+        EqApoApply {
+            level: ApplyLevel::Apply,
+        },
+    );
+
+    let events = Arc::new(Events::default());
+    let job = started(&service, Request::ApplyEqapo, events.clone());
+    succeeded(events.wait(job.job));
+    let mut names = fs::read_dir(&config_root)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect::<Vec<_>>();
+    names.sort();
+    assert_eq!(names, ["SECS2R", "config.txt", "config.txt.secs2r-backup"]);
+    assert!(!config_root.join("designs.json").exists());
+    assert!(!root.join("app-data/applied/designs.json").exists());
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn camilla_apply_leaves_no_design_index_in_applied_td153() {
+    let root = root("camilla-no-index");
+    let service = calibrated_service_with_apply(
+        &root,
+        Deps::default(),
+        Arc::new(DefaultReportApply {
+            outcomes: Mutex::new(vec![ApplyOutcome::Applied]),
+        }),
+    );
+    set_apply(
+        &service,
+        CamillaApply {
+            level: ApplyLevel::Apply,
+            address: "127.0.0.1:1234".into(),
+            exe_path: None,
+        },
+        EqApoApply::default(),
+    );
+
+    let events = Arc::new(Events::default());
+    let job = apply_camilla(&service, events.clone());
+    succeeded(events.wait(job.job));
+    assert!(!root.join("app-data/applied/designs.json").exists());
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn retire_failure_reaches_the_log_sink_td151() {
+    let root = root("retire-log");
+    let lines = Arc::new(Mutex::new(Vec::new()));
+    let sink_lines = lines.clone();
+    let apply = Arc::new(BreakRetirement::default());
+    let service = calibrated_service_with_apply(
+        &root,
+        Deps {
+            log: Arc::new(move |level, scope, line| {
+                lock(&sink_lines).push((level, scope.to_owned(), line.to_owned()));
+            }),
+            ..Deps::default()
+        },
+        apply.clone(),
+    );
+    set_apply(
+        &service,
+        CamillaApply {
+            level: ApplyLevel::Apply,
+            address: "127.0.0.1:1234".into(),
+            exe_path: None,
+        },
+        EqApoApply::default(),
+    );
+
+    let mut folders = Vec::new();
+    for _ in 0..3 {
+        let events = Arc::new(Events::default());
+        let job = apply_camilla(&service, events.clone());
+        let JobResult::Apply(result) = succeeded(events.wait(job.job)) else {
+            panic!("apply result is absent")
+        };
+        folders.push(PathBuf::from(result.folder));
+    }
+    let previous_name = folders[1]
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    let lines = lock(&lines);
+    assert_eq!(lines.len(), 1);
+    assert_eq!(lines[0].0, LogLevel::Error);
+    assert_eq!(lines[0].1, "apply");
+    assert!(lines[0].2.contains("retire"));
+    // The adapter leaves a file where the applied folder was. Windows reads the
+    // `retained` list under it as absent and fails while pruning, naming the kept
+    // generations; Unix cannot read it (NotADirectory) and skips retirement.
+    if cfg!(windows) {
+        assert!(lines[0].2.contains(&previous_name), "{}", lines[0].2);
+    } else {
+        assert!(
+            lines[0].2.contains("could not read retained"),
+            "{}",
+            lines[0].2
+        );
+    }
+    drop(lines);
+
+    let applied = root.join("app-data/applied/camilladsp");
+    fs::remove_file(&applied).unwrap();
+    fs::rename(lock(&apply.moved_root).take().unwrap(), &applied).unwrap();
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn apply_eqapo_installs_reapplies_repairs_once_and_removes_stale_files() {
     let root = root("eqapo-apply");
     let config_root = root.join("EqualizerAPO/config");
@@ -1913,6 +2187,69 @@ fn applied_eqapo_manifest_names_every_installed_file_with_size_and_hash() {
     fs::remove_dir_all(root).unwrap();
 }
 
+#[cfg(windows)]
+#[test]
+fn a_junction_target_is_refused_like_a_symlink_td197() {
+    let root = root("eqapo-junction-target");
+    let config_root = root.join("EqualizerAPO").join("config");
+    let outside = root.join("outside");
+    fs::create_dir_all(&config_root).unwrap();
+    fs::create_dir_all(&outside).unwrap();
+    fs::write(config_root.join("config.txt"), "Preamp: -3 dB\n").unwrap();
+    let junction = config_root.join("SECS2R");
+    let output = std::process::Command::new("cmd")
+        .args(["/C", "mklink", "/J"])
+        .arg(&junction)
+        .arg(&outside)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "mklink /J failed: {}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let install = EqApoInstall {
+        config_path: config_root.to_string_lossy().into_owned(),
+        install_path: "EqualizerAPO-XT/current".into(),
+        variant: EqApoVariant::Xt,
+    };
+    let service = calibrated_service(
+        &root,
+        Deps {
+            eqapo_install: Arc::new(move || Some(install.clone())),
+            ..Deps::default()
+        },
+    );
+    set_apply(
+        &service,
+        CamillaApply::default(),
+        EqApoApply {
+            level: ApplyLevel::Apply,
+        },
+    );
+    let events = Arc::new(Events::default());
+    let job = started(&service, Request::ApplyEqapo, events.clone());
+    let JobEvent::Finished {
+        status: JobStatus::Failed,
+        error: Some(error),
+        ..
+    } = events.wait(job.job)
+    else {
+        panic!("junction deployment target must be refused")
+    };
+    assert_eq!(error.code, ErrorCode::InvalidRequest);
+    assert_eq!(
+        error.detail,
+        "deployment root must not be a link or junction"
+    );
+    assert_eq!(error.params["path"], junction.to_string_lossy());
+
+    fs::remove_dir(&junction).unwrap();
+    fs::remove_dir_all(root).unwrap();
+}
+
 #[test]
 fn apply_eqapo_prunes_a_link_without_touching_its_target() {
     let root = root("eqapo-linked-stale");
@@ -1926,10 +2263,22 @@ fn apply_eqapo_prunes_a_link_without_touching_its_target() {
     #[cfg(unix)]
     std::os::unix::fs::symlink(&outside, &link).unwrap();
     #[cfg(windows)]
-    if let Err(error) = std::os::windows::fs::symlink_dir(&outside, &link) {
-        eprintln!("skipping Windows link half: {error}");
-        fs::remove_dir_all(root).unwrap();
-        return;
+    if let Err(symlink_error) = std::os::windows::fs::symlink_dir(&outside, &link) {
+        // Without the symlink privilege a junction stands in: a directory reparse
+        // point too, which retirement must remove without following. mklink takes
+        // only backslashes.
+        let native = |path: &Path| path.to_string_lossy().replace('/', "\\");
+        let output = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(native(&link))
+            .arg(native(&outside))
+            .output()
+            .expect("run mklink /J after symlink_dir failed");
+        assert!(
+            output.status.success(),
+            "symlink_dir failed ({symlink_error}); mklink /J failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 
     let install = EqApoInstall {
@@ -2184,6 +2533,80 @@ fn failed_eqapo_restore_keeps_the_generation_the_entry_may_reference() {
             .all(|generation| generation.join("config.txt").is_file())
     );
     fs::remove_dir_all(root).unwrap();
+}
+
+fn assert_eqapo_config_encoding_error(name: &str, bytes: &[u8]) {
+    let root = root(name);
+    let config = root.join("config.txt");
+    fs::write(&config, bytes).unwrap();
+    let install = EqApoInstall {
+        config_path: root.to_string_lossy().into_owned(),
+        install_path: "EqualizerAPO/current".into(),
+        variant: EqApoVariant::Official,
+    };
+    let service = Service::new(Deps {
+        eqapo_install: Arc::new(move || Some(install.clone())),
+        apply: Arc::new(NativeApply),
+        ..Deps::default()
+    });
+
+    let Envelope::Err(error) = service.call(Request::ApplyStatus, Arc::new(NoEvents)) else {
+        panic!("non-UTF-8 config.txt must fail status")
+    };
+    assert_eq!(error.code, ErrorCode::ApplyFailed);
+    assert_eq!(
+        error.params.get("reason").map(String::as_str),
+        Some("config_encoding")
+    );
+    assert_eq!(
+        error.params.get("path").map(String::as_str),
+        Some(config.to_string_lossy().as_ref())
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn latin1_config_txt_is_reported_as_an_encoding_problem_td199() {
+    assert_eqapo_config_encoding_error("latin1-config", b"# caf\xe9\r\nInclude: x\r\n");
+}
+
+#[test]
+fn utf16_config_txt_is_reported_as_an_encoding_problem_td199() {
+    assert_eqapo_config_encoding_error(
+        "utf16-config",
+        &[0xff, 0xfe, b'#', 0, b' ', 0, b'x', 0, b'\r', 0, b'\n', 0],
+    );
+}
+
+#[test]
+fn relative_eqapo_config_path_is_unsupported_td200() {
+    let relative = PathBuf::from(format!(
+        "relative-eqapo-{}-{}/config",
+        std::process::id(),
+        TEMP.fetch_add(1, Ordering::Relaxed)
+    ));
+    let relative_root = relative.parent().unwrap().to_path_buf();
+    let _ = fs::remove_dir_all(&relative_root);
+    let install = EqApoInstall {
+        config_path: relative.to_string_lossy().into_owned(),
+        install_path: "EqualizerAPO/current".into(),
+        variant: EqApoVariant::Official,
+    };
+    let service = Service::new(Deps {
+        eqapo_install: Arc::new(move || Some(install.clone())),
+        apply: Arc::new(NativeApply),
+        ..Deps::default()
+    });
+
+    let Envelope::Err(error) = service.call(Request::ApplyStatus, Arc::new(NoEvents)) else {
+        panic!("a relative Equalizer APO config path must be rejected")
+    };
+    assert_eq!(error.code, ErrorCode::Unsupported);
+    assert_eq!(
+        error.params.get("reason").map(String::as_str),
+        Some("eqapo_config_path")
+    );
+    assert!(!relative_root.exists());
 }
 
 #[test]

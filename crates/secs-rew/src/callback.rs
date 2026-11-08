@@ -1,5 +1,7 @@
 use crate::{CancelToken, RewError};
 use serde_json::Value;
+#[cfg(test)]
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::{
     collections::{HashMap, VecDeque, hash_map::RandomState},
     hash::{BuildHasher, Hasher},
@@ -29,6 +31,8 @@ pub struct CallbackServer {
     state: Arc<Mutex<State>>,
     stop: CancelToken,
     thread: Option<JoinHandle<()>>,
+    #[cfg(test)]
+    active_workers: Arc<AtomicUsize>,
 }
 impl std::fmt::Debug for CallbackServer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -64,6 +68,8 @@ impl CallbackServer {
             })),
             stop: CancelToken::default(),
             thread: None,
+            #[cfg(test)]
+            active_workers: Arc::new(AtomicUsize::new(0)),
         }
     }
     pub fn is_running(&self) -> bool {
@@ -99,6 +105,10 @@ impl CallbackServer {
             path.trim_start_matches('/')
         ));
     }
+    #[deprecated(
+        since = "0.23.0",
+        note = "no caller; removed in the next minor (audit #186 TD-219)"
+    )]
     pub fn history(&self) -> Vec<(String, Value)> {
         self.state.lock().unwrap().history.iter().cloned().collect()
     }
@@ -118,6 +128,8 @@ impl CallbackServer {
         self.stop = CancelToken::default();
         let stop = self.stop.clone();
         let state = self.state.clone();
+        #[cfg(test)]
+        let active_workers = self.active_workers.clone();
         self.thread = Some(thread::spawn(move || {
             let mut workers: Vec<JoinHandle<()>> = vec![];
             while !stop.is_cancelled() {
@@ -133,8 +145,14 @@ impl CallbackServer {
                     Ok((stream, _)) if workers.len() < 16 => {
                         let state = state.clone();
                         let stop = stop.clone();
+                        #[cfg(test)]
+                        let active_workers = active_workers.clone();
+                        #[cfg(test)]
+                        active_workers.fetch_add(1, Ordering::SeqCst);
                         workers.push(thread::spawn(move || {
                             let _ = serve(stream, state, stop);
+                            #[cfg(test)]
+                            active_workers.fetch_sub(1, Ordering::SeqCst);
                         }));
                     }
                     Ok(_) => {}
@@ -388,4 +406,107 @@ fn serve(stream: TcpStream, state: Arc<Mutex<State>>, stop: CancelToken) -> std:
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Read as _;
+    use std::net::Shutdown;
+    use std::sync::{atomic::AtomicBool, mpsc};
+
+    fn request(port: u16, path: &str) -> (TcpStream, Vec<u8>) {
+        let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        write!(
+            stream,
+            "GET {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n"
+        )
+        .unwrap();
+        stream.flush().unwrap();
+        let mut response = Vec::new();
+        match stream.read_to_end(&mut response) {
+            Ok(_) => {}
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    ErrorKind::ConnectionReset | ErrorKind::ConnectionAborted
+                ) => {}
+            Err(error) => panic!("read response: {error}"),
+        }
+        (stream, response)
+    }
+
+    fn wait_for_workers(server: &CallbackServer, expected: usize) {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while server.active_workers.load(Ordering::SeqCst) != expected {
+            assert!(
+                Instant::now() < deadline,
+                "worker count did not reach {expected}: {}",
+                server.active_workers.load(Ordering::SeqCst)
+            );
+            thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    #[test]
+    fn callback_server_drops_a_connection_beyond_16_workers_td220() {
+        let mut server = CallbackServer::new(0);
+        server.start().unwrap();
+        let url = server.route("held", Arc::new(|_| {}));
+        let path = format!("/{}", url.splitn(4, '/').nth(3).unwrap());
+        let ready = request(server.port(), &path).1;
+        assert!(
+            String::from_utf8_lossy(&ready).starts_with("HTTP/1.1 200 OK"),
+            "path={path:?} response={ready:?}"
+        );
+
+        let (connected_tx, connected_rx) = mpsc::channel();
+        let mut held = Vec::new();
+        for _ in 0..16 {
+            let release = Arc::new(AtomicBool::new(false));
+            let thread_release = release.clone();
+            let thread_path = path.clone();
+            let connected = connected_tx.clone();
+            let port = server.port();
+            let handle = thread::spawn(move || {
+                let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
+                write!(stream, "GET {thread_path} HTTP/1.1\r\nX-Hold: ").unwrap();
+                stream.flush().unwrap();
+                connected.send(()).unwrap();
+                while !thread_release.load(Ordering::SeqCst) {
+                    if stream.write_all(b"x").is_err() || stream.flush().is_err() {
+                        break;
+                    }
+                    thread::sleep(Duration::from_millis(100));
+                }
+                let _ = stream.shutdown(Shutdown::Both);
+            });
+            held.push((release, handle));
+        }
+        for _ in 0..16 {
+            connected_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        }
+        wait_for_workers(&server, 16);
+
+        let (_, dropped) = request(server.port(), &path);
+        assert!(dropped.is_empty(), "17th response: {dropped:?}");
+
+        let (release, handle) = held.pop().unwrap();
+        release.store(true, Ordering::SeqCst);
+        handle.join().unwrap();
+        wait_for_workers(&server, 15);
+        let served = request(server.port(), &path).1;
+        assert!(
+            String::from_utf8_lossy(&served).starts_with("HTTP/1.1 200 OK"),
+            "response: {}",
+            String::from_utf8_lossy(&served)
+        );
+        for (release, handle) in held {
+            release.store(true, Ordering::SeqCst);
+            handle.join().unwrap();
+        }
+    }
 }

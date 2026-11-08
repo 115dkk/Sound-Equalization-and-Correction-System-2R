@@ -220,6 +220,17 @@ impl MeasurementPlan {
         if !SWEEP_LENGTH_NAMES.contains(&self.sweep_length.as_str()) {
             errors.push("rew.plan.sweep_length");
         }
+        if !self.start_frequency.is_finite()
+            || !self.end_frequency.is_finite()
+            || self.start_frequency <= 0.0
+            || self.end_frequency <= self.start_frequency
+            || self.end_frequency >= f64::from(self.sample_rate) / 2.0
+        {
+            errors.push("rew.plan.frequency");
+        }
+        if !self.sweep_level_db.is_finite() || !(-120.0..=0.0).contains(&self.sweep_level_db) {
+            errors.push("rew.plan.level");
+        }
         errors
     }
 }

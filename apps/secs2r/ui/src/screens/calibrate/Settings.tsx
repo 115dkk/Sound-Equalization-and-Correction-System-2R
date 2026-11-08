@@ -2,12 +2,14 @@ import { HelpTip } from "../../ui/HelpTip";
 import { useProjectIdentity } from "../../state/react";
 // The settings that change the correction, in sections grouped by what they
 // change: 모드, 보정 범위, 크로스오버, 서브 정렬 (BA), 저음 도착과 울림,
-// MIMO. Every change goes through `changeSetting` (calibration_settings_set)
+// MIMO. Every change goes through `changeSetting` (calibration_settings_edit)
 // and only marks the result stale. Experiments, resource budgets and rare
 // setups sit under 고급 (ADR 0038); every correction mode is available in the
 // mode selector. MIMO is chosen beside 보정 계산 too
 // (MIMO 함께 계산, P142); its card keeps the details and MIMO만 계산. So is
 // XO 추천 포함 (ADR 0028); the crossover card has its switch as well.
+// The simple controls are rows of settingRows.ts, drawn by `SettingRow`
+// (ADR 0055); the cards say which rows they show and where.
 import { ComputeControl, ComputeResult } from "./ComputeControl";
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { errorText } from "../../app/jobs/jobText";
@@ -15,7 +17,6 @@ import { useNumber, useT } from "../../i18n/react";
 import type { BandType } from "../../ipc/bindings/BandType";
 import type { CalibrationSettings } from "../../ipc/bindings/CalibrationSettings";
 import type { RcBand } from "../../ipc/bindings/RcBand";
-import type { SampleRatePolicy } from "../../ipc/bindings/SampleRatePolicy";
 import { Advanced, Button, Card, ErrorNotice, IconButton, NumberField, Segmented, Select, Toggle, type Option } from "../../ui";
 import { Icon } from "../../ui/Icon";
 import { roleCode } from "../../ui/maps/geometry";
@@ -29,7 +30,6 @@ import {
   SUB_LIMITS,
   MIMO_MIN_POSITIONS,
   ALLPASS_Q_DEFAULT,
-  TRANSITION_FACTORS,
   UPPER_CHOICES,
   infraState,
   layoutOf,
@@ -45,9 +45,11 @@ import {
   type RejectionPlace,
   type UpperChoice,
 } from "./settingsView";
-import { FAILED_TEXT, MODES, MODE_EFFECT, MODE_NAME, bandTypeText, filterSpec, groupName, modeSpecText, noteLines, noticeText, rangeNotices, rangeRejectionText, subRoles, xoGroups } from "./text";
+import { FAILED_TEXT, MODE_EFFECT, MODE_NAME, bandTypeText, filterSpec, groupName, modeSpecText, noteLines, noticeText, rangeNotices, rangeRejectionText, subRoles, xoGroups } from "./text";
 import { DESIGN_RATE, rateText, tapsAt } from "../system/outputRate";
 import type { BandTypeChoice, CalibrateActions, CalibrateJob, CalibrateView, SettingEdit, SubLayout, SubModeChoice } from "./types";
+import { SettingRow } from "./controls";
+import { rowShown } from "./settingRows";
 
 type Props = { view: CalibrateView; actions: CalibrateActions };
 type FailureProps = Props & { onSampleRateSettings: () => void };
@@ -92,18 +94,7 @@ function SampleRateSettings({ view, actions, request }: Props & { request: numbe
   return (
     <div ref={root} data-ui="calibrate.settings.input">
       <Advanced key={request} id="calibrate.input.details" label={t("calibrate.sample_rate.title")} defaultOpen={request > 0 || view.settings.sample_rate_policy === "resample"}>
-        <Segmented<SampleRatePolicy>
-          id="calibrate.sample_rate_policy"
-          label={t("calibrate.sample_rate.title")}
-          hideLabel
-          help={t("calibrate.sample_rate.help")}
-          value={view.settings.sample_rate_policy}
-          options={[
-            { value: "reject", label: t("calibrate.sample_rate.reject") },
-            { value: "resample", label: t("calibrate.sample_rate.resample") },
-          ]}
-          onChange={(policy) => actions.changeSetting({ kind: "sample_rate_policy", policy })}
-        />
+        <SettingRow id="calibrate.sample_rate_policy" view={view} change={actions.changeSetting} />
       </Advanced>
     </div>
   );
@@ -117,14 +108,7 @@ function ModeSection({ view, actions }: Props) {
   const s = view.settings;
   return (
     <SettingsCard id="mode" title={t("calibrate.mode.title")} help={<>{t("calibrate.mode.description")}<p>{t(MODE_EFFECT[s.mode])}</p></>}>
-      <Segmented
-        id="calibrate.mode"
-        label={t("calibrate.mode.title")}
-        hideLabel
-        value={s.mode}
-        options={MODES.map((mode) => ({ value: mode, label: t(MODE_NAME[mode]) }))}
-        onChange={(mode) => actions.changeSetting({ kind: "mode", mode })}
-      />
+      <SettingRow id="calibrate.mode" view={view} change={actions.changeSetting} />
       <div className="calibrate-mode-text">
         <p className="calibrate-line tabular" data-ui="calibrate.mode.latency">
           {view.modeSpec.max_latency_ms === 0
@@ -136,19 +120,9 @@ function ModeSection({ view, actions }: Props) {
           <HelpTip id="calibrate.mode.spec.help" labelledBy="calibrate.mode.spec.label" content={modeSpecText(t, number, view.modeSpec)} />
         </span>
       </div>
-      {s.mode === "ultra" && (
+      {rowShown("calibrate.mode.ultra_ms", view) && (
         <div className="calibrate-fields">
-          <NumberField
-            id="calibrate.mode.ultra_ms"
-            label={t("calibrate.mode.ultra_ms.label")}
-            value={s.ultra_ms}
-            min={LIMITS.ultra_ms[0]}
-            max={LIMITS.ultra_ms[1]}
-            step={10}
-            unit="ms"
-            showRange
-            onChange={(ms) => actions.changeSetting({ kind: "ultra_ms", ms })}
-          />
+          <SettingRow id="calibrate.mode.ultra_ms" view={view} change={actions.changeSetting} />
         </div>
       )}
       <ChannelFirOver view={view} />
@@ -395,18 +369,7 @@ function RangeSection({ view, actions, advancedOpen = false }: Props & { advance
   return (
     <SettingsCard id="range" title={t("calibrate.range.title")} help={t("calibrate.range.description")}>
       <div className="calibrate-fields">
-        <NumberField
-          id="calibrate.range.lower"
-          label={t("calibrate.range.lower")}
-          value={s.rc_lo}
-          min={LIMITS.rc_lo[0]}
-          max={LIMITS.rc_lo[1]}
-          step={5}
-          unit="Hz"
-          showRange
-          rejected={refusedAt("lower")}
-          onChange={(hz) => actions.changeSetting({ kind: "rc_lo", hz })}
-        />
+        <SettingRow id="calibrate.range.lower" view={view} change={actions.changeSetting} rejected={refusedAt("lower")} />
         <Segmented<UpperChoice>
           id="calibrate.range.basis"
           label={t("calibrate.range.basis")}
@@ -440,26 +403,8 @@ function RangeSection({ view, actions, advancedOpen = false }: Props & { advance
       <div className="calibrate-upper">
         <UpperPanel id="calibrate.range.schroeder" shown={usesSchroeder(choice)}>
           <div className="calibrate-fields">
-            <Segmented
-              id="calibrate.range.transition"
-              label={t("calibrate.range.transition")}
-              help={t("calibrate.range.transition.help")}
-              value={String(s.rc_hi_transition)}
-              options={TRANSITION_FACTORS.map((factor) => ({ value: String(factor), label: `×${number(factor)}` }))}
-              onChange={(factor) => actions.changeSetting({ kind: "rc_hi_transition", factor: Number(factor) })}
-            />
-            <NumberField
-              id="calibrate.range.volume"
-              label={t("calibrate.range.volume")}
-              value={s.room_volume_m3 ?? 0}
-              min={LIMITS.volume[0]}
-              max={LIMITS.volume[1]}
-              step={10}
-              digits={1}
-              unit="m³"
-              help={t("calibrate.range.volume.hint")}
-              onChange={(m3) => actions.changeSetting({ kind: "room_volume", m3 })}
-            />
+            <SettingRow id="calibrate.range.transition" view={view} change={actions.changeSetting} />
+            <SettingRow id="calibrate.range.volume" view={view} change={actions.changeSetting} />
             <RoomDims settings={s} change={actions.changeSetting} />
           </div>
         </UpperPanel>
@@ -468,18 +413,7 @@ function RangeSection({ view, actions, advancedOpen = false }: Props & { advance
         </UpperPanel>
         <UpperPanel id="calibrate.range.manual" shown={choice === "manual"}>
           <div className="calibrate-fields">
-            <NumberField
-              id="calibrate.range.upper"
-              label={t("calibrate.range.upper")}
-              value={s.rc_hi ?? shownHi}
-              min={LIMITS.rc_hi[0]}
-              max={LIMITS.rc_hi[1]}
-              step={50}
-              unit="Hz"
-              showRange
-              rejected={refusedAt("upper")}
-              onChange={(hz) => actions.changeSetting({ kind: "rc_hi", hz })}
-            />
+            <SettingRow id="calibrate.range.upper" view={view} change={actions.changeSetting} unset={shownHi} rejected={refusedAt("upper")} />
           </div>
         </UpperPanel>
       </div>
@@ -492,30 +426,12 @@ function RangeSection({ view, actions, advancedOpen = false }: Props & { advance
         </ul>
       )}
       <ExtraBands settings={s} primaryHi={shownHi} rejection={rejection} change={actions.changeSetting} />
-      <LowEnd settings={s} change={actions.changeSetting} />
+      <LowEnd view={view} actions={actions} />
       {/* The boost limit and 딥 보정 제한 both limit how far the correction reaches, so they sit together in the body (ADR 0038). */}
       <div className="calibrate-fields">
-        <NumberField
-          id="calibrate.range.boost"
-          label={t("calibrate.range.boost")}
-          value={s.boost_max_db}
-          min={LIMITS.boost[0]}
-          max={LIMITS.boost[1]}
-          step={1}
-          digits={1}
-          unit="dB"
-          help={t("calibrate.range.boost.hint")}
-          onChange={(db) => actions.changeSetting({ kind: "boost_max", db })}
-        />
+        <SettingRow id="calibrate.range.boost" view={view} change={actions.changeSetting} />
       </div>
-      {/* Deep narrow dips are filled only partly (ADR 0034): a limit beside the boost limit, not a protection. */}
-      <Toggle
-        id="calibrate.range.dip_limit"
-        label={t("calibrate.range.dip_limit")}
-        help={t("calibrate.range.dip_limit.help")}
-        checked={s.dip_limit}
-        onChange={(on) => void actions.changeSetting({ kind: "dip_limit", on })}
-      />
+      <SettingRow id="calibrate.range.dip_limit" view={view} change={actions.changeSetting} />
       {/* Only the experiment is left under 고급 (ADR 0038). Left on, it stays in view: the section opens with it. */}
       <Advanced id="calibrate.range.advanced" count={1} defaultOpen={advancedOpen || analytic !== "off"}>
         <Segmented<AnalyticScope>
@@ -534,9 +450,6 @@ function RangeSection({ view, actions, advancedOpen = false }: Props & { advance
   );
 }
 
-/** The input cut's first value: the default target's first point (ADR 0031). */
-const INPUT_HP_START = 25;
-
 /**
  * 극저역 보호 in the range card, out of 고급 (the maintainer's 2026-10-31 rule
  * for this family), as one group with two settings (the maintainer's
@@ -545,42 +458,18 @@ const INPUT_HP_START = 25;
  * frequency on every input before the MIMO fork (ADR 0031), its frequency
  * shown while on. They are stored apart, so each switches on its own.
  */
-function LowEnd({ settings: s, change }: { settings: CalibrationSettings; change: (edit: SettingEdit) => Promise<boolean> }) {
+function LowEnd({ view, actions }: Props) {
   const t = useT();
-  const cut = s.input_hp_hz;
   return (
     <div role="group" aria-labelledby="calibrate.range.low_end.label" className="calibrate-low-end" data-ui="calibrate.range.low_end">
       <span id="calibrate.range.low_end.label" className="calibrate-low-end__name" data-ui="calibrate.range.low_end.label">
         {t("calibrate.range.low_end")}
       </span>
-      <Toggle
-        id="calibrate.range.low_protect"
-        label={t("calibrate.range.low_protect")}
-        help={t("calibrate.range.low_protect.help")}
-        checked={s.low_protect}
-        onChange={(on) => void change({ kind: "low_protect", on })}
-      />
-      <Toggle
-        id="calibrate.range.input_hp"
-        label={t("calibrate.range.input_hp")}
-        help={t("calibrate.range.input_hp.help")}
-        checked={cut !== null}
-        onChange={(on) => void change({ kind: "input_hp", hz: on ? INPUT_HP_START : null })}
-      />
-      {cut !== null && (
+      <SettingRow id="calibrate.range.low_protect" view={view} change={actions.changeSetting} />
+      <SettingRow id="calibrate.range.input_hp" view={view} change={actions.changeSetting} />
+      {rowShown("calibrate.range.input_hp.hz", view) && (
         <div className="calibrate-fields">
-          <NumberField
-            id="calibrate.range.input_hp.hz"
-            label={t("calibrate.range.input_hp.hz")}
-            value={cut}
-            min={LIMITS.input_hp[0]}
-            max={LIMITS.input_hp[1]}
-            step={1}
-            unit="Hz"
-            showRange
-            help={t("calibrate.range.input_hp.hz.hint")}
-            onChange={(hz) => void change({ kind: "input_hp", hz })}
-          />
+          <SettingRow id="calibrate.range.input_hp.hz" view={view} change={actions.changeSetting} />
         </div>
       )}
     </div>
@@ -916,7 +805,6 @@ function BaSection({ view, actions, onSampleRateSettings, editSub, advancedOpen 
   const result = view.results.calibration;
   const canTake = !!result && result.sub_roles.length > 0;
   const busy = view.running !== null;
-  const anyFixed = subs.some((r) => subOf(s, r).mode === "fixed");
   return (
     <SettingsCard id="ba" title={t("calibrate.ba.title")} help={<>{t("calibrate.ba.description")}<p>{t("calibrate.ba.actions.hint")}</p></>}>
       <div className="calibrate-sub-modes" data-ui="calibrate.ba.subs">
@@ -974,20 +862,9 @@ function BaSection({ view, actions, onSampleRateSettings, editSub, advancedOpen 
         onChange={setEditing}
       />
       <SubEditor view={view} actions={actions} role={role} />
-      {anyFixed && (
+      {rowShown("calibrate.ba.main_delay", view) && (
         <div className="calibrate-fields">
-          <NumberField
-            id="calibrate.ba.main_delay"
-            label={t("calibrate.ba.main_delay")}
-            value={s.sub_main_delay_ms}
-            min={LIMITS.main_delay[0]}
-            max={LIMITS.main_delay[1]}
-            step={0.1}
-            digits={2}
-            unit="ms"
-            help={t("calibrate.ba.main_delay.hint")}
-            onChange={(ms) => actions.changeSetting({ kind: "main_delay", ms })}
-          />
+          <SettingRow id="calibrate.ba.main_delay" view={view} change={actions.changeSetting} />
         </div>
       )}
       {/* 고급 keeps only the infra sub, a rare setup (ADR 0038); the tutorial opens it for its infra quest (App.tsx). */}
@@ -1025,20 +902,9 @@ function BaSection({ view, actions, onSampleRateSettings, editSub, advancedOpen 
                   options={BAND_TYPES.map((type) => ({ value: type, label: bandTypeText(type) }))}
                   onChange={(type: BandType) => actions.changeSetting({ kind: "infra", role: infra.role, hz: infra.hz, type, subs })}
                 />
-                <NumberField
-                  id="calibrate.ba.infra_boost"
-                  label={t("calibrate.ba.infra_boost")}
-                  value={s.infra_boost_max_db}
-                  min={LIMITS.infra_boost[0]}
-                  max={LIMITS.infra_boost[1]}
-                  step={1}
-                  digits={1}
-                  unit="dB"
-                  size={5}
-                  onChange={(db) => actions.changeSetting({ kind: "infra_boost", db })}
-                />
               </>
             )}
+            <SettingRow id="calibrate.ba.infra_boost" view={view} change={actions.changeSetting} />
           </div>
           {infra.role && (
             <p className="calibrate-line tabular" data-ui="calibrate.ba.infra_note">
@@ -1066,44 +932,11 @@ function BaSection({ view, actions, onSampleRateSettings, editSub, advancedOpen 
  */
 function LfSection({ view, actions }: Props) {
   const t = useT();
-  const s = view.settings;
-  const zero = s.mode === "zero";
-  const align = !zero && s.lf_align;
-  const alignHint = zero ? (
-    <span data-ui="calibrate.lf_align.unavailable">{t("calibrate.lf_align.unavailable_zero", { mode: t(MODE_NAME.zero) })}</span>
-  ) : align && s.mode === "mixed" ? (
-    <span data-ui="calibrate.lf_align.partial">{t("calibrate.lf_align.mixed", { mode: t(MODE_NAME.mixed) })}</span>
-  ) : undefined;
-  const phaseHint = zero ? (
-    <span data-ui="calibrate.hf_phase.unavailable">{t("calibrate.hf_phase.unavailable_zero", { mode: t(MODE_NAME.zero) })}</span>
-  ) : undefined;
   return (
     <SettingsCard id="lf" title={t("calibrate.lf.title")} help={t("calibrate.lf.description")}>
-      <Toggle
-        id="calibrate.lf_align"
-        label={t("calibrate.lf_align")}
-        help={t("calibrate.lf_align.help")}
-        hint={alignHint}
-        checked={align}
-        disabled={zero}
-        onChange={(on) => actions.changeSetting({ kind: "lf_align", on })}
-      />
-      <Toggle
-        id="calibrate.hf_phase"
-        label={t("calibrate.hf_phase")}
-        help={t("calibrate.hf_phase.help")}
-        hint={phaseHint}
-        checked={!zero && s.hf_phase}
-        disabled={zero}
-        onChange={(on) => actions.changeSetting({ kind: "hf_phase", on })}
-      />
-      <Toggle
-        id="calibrate.mode_decay"
-        label={t("calibrate.mode_decay")}
-        help={t("calibrate.mode_decay.help")}
-        checked={s.mode_decay}
-        onChange={(on) => actions.changeSetting({ kind: "mode_decay", on })}
-      />
+      <SettingRow id="calibrate.lf_align" view={view} change={actions.changeSetting} />
+      <SettingRow id="calibrate.hf_phase" view={view} change={actions.changeSetting} />
+      <SettingRow id="calibrate.mode_decay" view={view} change={actions.changeSetting} />
     </SettingsCard>
   );
 }
@@ -1153,30 +986,12 @@ function MimoSection({ view, actions, onSampleRateSettings }: FailureProps) {
   };
   return (
     <SettingsCard id="mimo" title={t("calibrate.mimo.title")} help={<>{t("calibrate.mimo.description")}<p>{t("calibrate.mimo.compute.help")}</p></>}>
-      <Toggle
-        id="calibrate.mimo.on"
-        label={t("calibrate.mimo.on")}
-        help={t("calibrate.mimo.on.hint")}
-        hint={!available ? t("calibrate.mimo.unavailable", { count, min: MIMO_MIN_POSITIONS }) : undefined}
-        checked={on}
-        disabled={!available}
-        onChange={(value) => actions.changeSetting({ kind: "mimo_on", on: value })}
-      />
+      <SettingRow id="calibrate.mimo.on" view={view} change={actions.changeSetting} />
       {on && (
         <>
           <ComputeControl view={view} actions={actions} />
           <div className="calibrate-fields">
-            <NumberField
-              id="calibrate.mimo.fsiso"
-              label={t("calibrate.mimo.fsiso")}
-              value={s.fsiso}
-              min={LIMITS.fsiso[0]}
-              max={LIMITS.fsiso[1]}
-              step={5}
-              unit="Hz"
-              help={t("calibrate.mimo.fsiso.hint")}
-              onChange={(hz) => actions.changeSetting({ kind: "fsiso", hz })}
-            />
+            <SettingRow id="calibrate.mimo.fsiso" view={view} change={actions.changeSetting} />
           </div>
           <div className="calibrate-actions">
             {/* MIMO alone, on the current correction: the service refuses it on a stale one (다시 보정하기 computes both). */}
@@ -1188,79 +1003,26 @@ function MimoSection({ view, actions, onSampleRateSettings }: FailureProps) {
           {state()}
           {mimo && <ComputeResult report={mimo.compute} />}
           {/* The MIMO run's own notes (guard reductions and the like), collapsed like the verdict's calculation notes. */}
-          {mimo && mimo.notes.length > 0 && (
+          {mimo && (mimo.notes.length > 0 || mimo.notices.length > 0) && (
             <details className="ui-details calibrate-notes" data-ui="calibrate.mimo.notes">
-              <summary>{t("calibrate.verdict.notes", { count: mimo.notes.length })}</summary>
+              <summary>{t("calibrate.verdict.notes", { count: mimo.notes.length + mimo.notices.length })}</summary>
               <ul>
-                {noteLines(t, number, mimo.notes, true).map((line, i) => (
+                {noteLines(t, number, [...mimo.notes, ...mimo.notices], true).map((line, i) => (
                   <li key={i}>{line}</li>
                 ))}
               </ul>
             </details>
           )}
-          {/* The guards judge the worst seat instead of the sum (ADR 0036): a MIMO-only setting, so it only stales MIMO. */}
-          <Toggle
-            id="calibrate.mimo.seat_guard"
-            label={t("calibrate.mimo.seat_guard")}
-            help={t("calibrate.mimo.seat_guard.hint")}
-            checked={s.mimo_seat_guard}
-            onChange={(value) => actions.changeSetting({ kind: "mimo_seat_guard", on: value })}
-          />
+          <SettingRow id="calibrate.mimo.seat_guard" view={view} change={actions.changeSetting} />
           <Advanced id="calibrate.mimo.advanced" count={4}>
-            <Toggle
-              id="calibrate.mimo.low_auto"
-              label={t("calibrate.mimo.low_auto")}
-              help={t("calibrate.mimo.low_auto.hint")}
-              checked={s.mimo_low === null}
-              onChange={(auto) => actions.changeSetting({ kind: "mimo_low", hz: auto ? null : 20 })}
-            />
+            <SettingRow id="calibrate.mimo.low_auto" view={view} change={actions.changeSetting} />
             <div className="calibrate-fields">
-              {s.mimo_low !== null && (
-                <NumberField
-                  id="calibrate.mimo.low"
-                  label={t("calibrate.mimo.low")}
-                  value={s.mimo_low}
-                  min={LIMITS.mimo_low[0]}
-                  max={LIMITS.mimo_low[1]}
-                  step={5}
-                  unit="Hz"
-                  showRange
-                  onChange={(hz) => actions.changeSetting({ kind: "mimo_low", hz })}
-                />
-              )}
-              <NumberField
-                id="calibrate.mimo.max"
-                label={t("calibrate.mimo.max")}
-                value={s.mimo_max_supports}
-                min={LIMITS.mimo_max[0]}
-                max={LIMITS.mimo_max[1]}
-                step={1}
-                help={t("calibrate.mimo.max.hint")}
-                hint={t("calibrate.mimo.max.zero")}
-                onChange={(value) => actions.changeSetting({ kind: "mimo_max", count: value })}
-              />
+              <SettingRow id="calibrate.mimo.low" view={view} change={actions.changeSetting} />
+              <SettingRow id="calibrate.mimo.max" view={view} change={actions.changeSetting} />
             </div>
-            <Toggle
-              id="calibrate.mimo.fir"
-              label={t("calibrate.mimo.fir")}
-              help={t("calibrate.mimo.fir.hint")}
-              checked={s.mimo_fir}
-              onChange={(value) => actions.changeSetting({ kind: "mimo_fir", on: value })}
-            />
-            {/* When the supports start to act after the onset (ADR 0037); 60 ms is the long-standing protection. */}
+            <SettingRow id="calibrate.mimo.fir" view={view} change={actions.changeSetting} />
             <div className="calibrate-fields">
-              <NumberField
-                id="calibrate.mimo.early"
-                label={t("calibrate.mimo.early")}
-                value={s.mimo_early_ms}
-                min={LIMITS.mimo_early_ms[0]}
-                max={LIMITS.mimo_early_ms[1]}
-                step={1}
-                unit="ms"
-                showRange
-                help={t("calibrate.mimo.early.hint")}
-                onChange={(ms) => actions.changeSetting({ kind: "mimo_early", ms })}
-              />
+              <SettingRow id="calibrate.mimo.early" view={view} change={actions.changeSetting} />
             </div>
           </Advanced>
         </>

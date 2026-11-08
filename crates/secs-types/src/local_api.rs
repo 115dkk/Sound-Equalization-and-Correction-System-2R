@@ -3,9 +3,12 @@
 //! The server and clients use these paths and payloads. The security and
 //! lifecycle decisions are recorded in ADR 0016.
 
+use std::collections::HashMap;
+use std::sync::OnceLock;
+
 use serde::{Deserialize, Serialize};
 
-use crate::ipc::{ExportKind, JobEvent, JobSnapshot, ProjectInfo, ResultsSummary};
+use crate::ipc::{ExportKind, JobEvent, JobSnapshot, ProjectInfo, Request, ResultsSummary};
 
 /// Local API protocol version.
 pub const API_VERSION: u32 = 1;
@@ -66,11 +69,19 @@ pub struct LastExport {
 /// Event sent as one text frame on [`EVENTS_PATH`].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
+#[derive(ts_rs::TS)]
+#[ts(export)]
 pub enum ServerEvent {
     /// A service job event, regardless of which caller started the job.
     Job { event: JobEvent },
     /// A successful local-API request changed observable state.
     Changed { method: String },
+    /// Events lost by a slow subscriber; the server closes with code 1013 next.
+    Lagged {
+        /// Number of events no longer available in the server queue.
+        #[ts(type = "number")]
+        missed: u64,
+    },
 }
 
 /// Local-API policy for one IPC method.
@@ -82,131 +93,19 @@ pub struct MethodAccess {
     pub mutates: bool,
 }
 
-const fn entry(method: &'static str, ui_only: bool, mutates: bool) -> (&'static str, MethodAccess) {
-    (method, MethodAccess { ui_only, mutates })
-}
-
-const ACCESS: &[(&str, MethodAccess)] = &[
-    entry("bootstrap", false, false),
-    entry("project_new", false, true),
-    entry("project_open", false, true),
-    entry("project_save", false, true),
-    entry("project_info", false, false),
-    entry("sample_load", false, true),
-    entry("calibrate", false, true),
-    entry("recommend_xo", false, true),
-    entry("mimo", false, true),
-    entry("results", false, false),
-    entry("export", false, true),
-    entry("job_cancel", false, true),
-    entry("jobs", false, false),
-    entry("measure_methods", false, false),
-    entry("measure_configure", false, true),
-    entry("measure_config_get", false, false),
-    entry("measurement_records", false, false),
-    entry("mic_calibration_get", false, false),
-    entry("mic_calibration_set", false, true),
-    entry("mic_calibration_clear", false, true),
-    entry("mic_calibration_attach", false, true),
-    entry("levels_get", false, false),
-    entry("levels_fill_defaults", false, true),
-    entry("level_stop", false, true),
-    entry("measure_position", false, true),
-    entry("position_clear", false, true),
-    entry("undo", false, true),
-    entry("rew_launch", true, true),
-    entry("mdat_scan", false, false),
-    entry("mdat_import", false, true),
-    entry("config_get", false, false),
-    entry("config_apply_preset", false, true),
-    entry("config_set_sub_count", false, true),
-    entry("config_set_speaker", false, true),
-    entry("config_add_speaker", false, true),
-    entry("config_remove_speaker", false, true),
-    entry("config_renumber", false, true),
-    entry("config_validate", false, false),
-    entry("patch_sheet_csv", false, true),
-    entry("dsp_get", false, false),
-    entry("dsp_set", false, true),
-    entry("layout_get", false, false),
-    entry("layout_set", false, true),
-    entry("position_estimate", false, false),
-    entry("target_get", false, false),
-    entry("target_set_points", false, true),
-    entry("target_apply_preset", false, true),
-    entry("target_save", false, true),
-    entry("target_load", false, true),
-    entry("calibration_settings_get", false, false),
-    entry("calibration_settings_set", false, true),
-    entry("calibration_settings_edit", false, true),
-    entry("sub_warnings", false, false),
-    entry("rew_info", false, false),
-    entry("rew_driver_set", false, true),
-    entry("mode_spec", false, false),
-    entry("app_settings_get", false, false),
-    entry("app_settings_set", false, true),
-    entry("apply_status", false, false),
-    entry("apply_camilla", false, true),
-    entry("apply_eqapo", false, true),
-    entry("revert_eqapo", false, true),
-    entry("apply_settings_set", false, true),
-    entry("host_install", true, true),
-    entry("host_uninstall", true, true),
-    entry("host_stop_managing", false, true),
-    // Installing a release replaces the app; only its own screen asks for it.
-    entry("update_status", false, false),
-    entry("update_check", true, false),
-    entry("update_download", true, true),
-    entry("update_restart", true, true),
-    entry("update_notice_dismiss", true, true),
-    entry("update_open_release", true, false),
-    entry("compute_status", false, false),
-    entry("open_gpu_help", true, false),
-    entry("measurement_curves", false, false),
-    entry("result_curves", false, false),
-    entry("result_lines", false, false),
-    entry("sub_take_values", false, true),
-    entry("dialog_open_project", true, false),
-    entry("dialog_save_project", true, false),
-    entry("dialog_pick_mdat", true, false),
-    entry("dialog_pick_folder", true, false),
-    entry("dialog_save_file", true, false),
-    entry("dialog_open_file", true, false),
-    entry("open_folder", true, true),
-    entry("level_monitor_start", false, true),
-    entry("level_monitor_stop", false, true),
-    entry("level_play", false, true),
-    entry("status_watch_start", false, true),
-    entry("status_watch_stop", false, true),
-    entry("export_folder_get", false, false),
-    entry("export_folder_set", false, true),
-    entry("local_api_status", true, false),
-    entry("local_api_token_regenerate", true, true),
-];
+static METHOD_ACCESS: OnceLock<HashMap<&'static str, MethodAccess>> = OnceLock::new();
 
 /// Returns the local-API policy for a wire method name.
 pub fn access(method: &str) -> Option<MethodAccess> {
-    ACCESS
-        .iter()
-        .find_map(|(name, value)| (*name == method).then_some(*value))
-}
-
-#[cfg(test)]
-mod tests {
-    use std::collections::BTreeSet;
-
-    use super::*;
-    use crate::ipc::Request;
-
-    #[test]
-    fn access_table_covers_every_request_method_exactly() {
-        let known = Request::METHODS.iter().copied().collect::<BTreeSet<_>>();
-        let listed = ACCESS.iter().map(|(name, _)| *name).collect::<Vec<_>>();
-        let unique = listed.iter().copied().collect::<BTreeSet<_>>();
-        assert_eq!(listed.len(), unique.len(), "duplicate access-table method");
-        assert_eq!(unique, known);
-        for method in Request::METHODS {
-            assert!(access(method).is_some(), "missing {method}");
-        }
-    }
+    METHOD_ACCESS
+        .get_or_init(|| {
+            let examples = Request::examples();
+            Request::METHODS
+                .iter()
+                .copied()
+                .zip(examples.iter().map(Request::access))
+                .collect()
+        })
+        .get(method)
+        .copied()
 }

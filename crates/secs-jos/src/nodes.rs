@@ -1,5 +1,7 @@
 // Port of src/secs/rew_mdat/serialization/nodes.py (GPL-3.0-only).
-use std::collections::{BTreeMap, BTreeSet};
+use std::cell::RefCell;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::rc::Rc;
 
 pub type NodeId = usize;
 #[derive(Clone, Debug, PartialEq)]
@@ -71,6 +73,7 @@ pub struct Stream {
     pub bytes_consumed: usize,
     pub handle_count: usize,
     pub(crate) raw_text: BTreeMap<TextKey, (String, Vec<u8>)>,
+    hierarchy_cache: RefCell<HashMap<NodeId, Rc<[NodeId]>>>,
 }
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct TextKey(pub NodeId, pub TextSlot);
@@ -83,8 +86,12 @@ pub(crate) enum TextSlot {
 }
 impl Stream {
     pub fn push(&mut self, node: Node) -> NodeId {
+        let clears_hierarchy_cache = matches!(&node, Node::ClassDesc(_));
         let id = self.nodes.len();
         self.nodes.push(node);
+        if clears_hierarchy_cache {
+            self.hierarchy_cache.get_mut().clear();
+        }
         id
     }
     pub(crate) fn descriptor(&self, id: NodeId) -> Option<&ClassDescriptor> {
@@ -94,6 +101,13 @@ impl Stream {
         }
     }
     pub(crate) fn hierarchy(&self, id: NodeId) -> Option<Vec<NodeId>> {
+        self.cached_hierarchy(id)
+            .map(|hierarchy| hierarchy.as_ref().to_vec())
+    }
+    fn cached_hierarchy(&self, id: NodeId) -> Option<Rc<[NodeId]>> {
+        if let Some(hierarchy) = self.hierarchy_cache.borrow().get(&id) {
+            return Some(Rc::clone(hierarchy));
+        }
         let mut result = Vec::new();
         let mut seen = BTreeSet::new();
         let mut next = Some(id);
@@ -105,6 +119,10 @@ impl Stream {
             result.push(id);
             next = descriptor.super_desc;
         }
+        let result = Rc::<[NodeId]>::from(result);
+        self.hierarchy_cache
+            .borrow_mut()
+            .insert(id, Rc::clone(&result));
         Some(result)
     }
     /// Most-derived class wins when a field shadows an inherited field.
@@ -112,7 +130,7 @@ impl Stream {
         let Node::Object(object) = self.nodes.get(obj)? else {
             return None;
         };
-        for id in self.hierarchy(object.classdesc)? {
+        for id in self.cached_hierarchy(object.classdesc)?.iter().copied() {
             if let Some(value) = object
                 .field_data
                 .get(&self.descriptor(id)?.name)
@@ -128,11 +146,12 @@ impl Stream {
         let Some(Node::Object(object)) = self.nodes.get(obj) else {
             return false;
         };
-        let Some(hierarchy) = self.hierarchy(object.classdesc) else {
+        let Some(hierarchy) = self.cached_hierarchy(object.classdesc) else {
             return false;
         };
         let owner = hierarchy
-            .into_iter()
+            .iter()
+            .copied()
             .filter_map(|id| self.descriptor(id))
             .find(|d| {
                 object
@@ -168,12 +187,12 @@ impl Stream {
         let Some(Node::Object(object)) = self.nodes.get(obj) else {
             return Vec::new();
         };
-        let Some(hierarchy) = self.hierarchy(object.classdesc) else {
+        let Some(hierarchy) = self.cached_hierarchy(object.classdesc) else {
             return Vec::new();
         };
         let mut names = Vec::new();
         let mut seen = BTreeSet::new();
-        for id in hierarchy.into_iter().rev() {
+        for id in hierarchy.iter().rev().copied() {
             let Some(d) = self.descriptor(id) else {
                 continue;
             };

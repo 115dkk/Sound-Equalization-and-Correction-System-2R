@@ -9,7 +9,7 @@ import { HelpTip } from "../../ui/HelpTip";
 // rest (U8). The screen draws the view and reports what the user did; P33
 // wires the actions to the service.
 import { useMemo, useState, type ReactNode } from "react";
-import { JOB_NAME } from "../../app/jobs/jobText";
+import { JOB_NAME, MEASURE_PHASES, stageText } from "../../app/jobs/jobText";
 import { usePrefs } from "../../app/prefs";
 import type { PrimaryAction } from "../../app/StepHeader";
 import { useNumber, useT, type Translate } from "../../i18n/react";
@@ -33,7 +33,7 @@ import {
   type LegendChannel,
 } from "../../ui";
 import { isSubRole, orderRoles, roleCode } from "../../ui/maps/geometry";
-import { baseName, estimateText, micPoints, pad2, pointText, recordSources, sourceSummary, sweepName } from "./format";
+import { estimateText, micPoints, pad2, pointText, recordSources, sourceSummary, sweepName } from "./format";
 import { MdatAssignDialog, MdatFilesDialog } from "./MdatDialogs";
 import {
   OWN_JOBS,
@@ -266,12 +266,16 @@ function RunProgress({ job, roleCount, onCancel }: { job: DeviceJob; roleCount: 
   const cancelling = job.status === "cancel_requested";
   const total = countdown ? countdown.total : (progress?.total ?? roleCount);
   const doneCount = countdown ? countdown.done : (progress?.done ?? 0);
+  // A phase of the sweep (스윕 준비, 재생, 응답 처리) counts percent, not channels.
+  const phase = !countdown && progress && MEASURE_PHASES.has(progress.stage) ? progress : null;
   const line = countdown
     ? t("measure.run.countdown", { seconds: Math.max(0, countdown.total - countdown.done) })
-    : progress
-      ? t("measure.run.channels", { done: progress.done, total: progress.total })
-      : t("measure.run.starting");
-  const last = !countdown && progress ? roleCode(progress.stage) : null;
+    : phase
+      ? t("measure.run.phase", { phase: stageText(t, "measure", phase.stage) ?? "", percent: phase.done })
+      : progress
+        ? t("measure.run.channels", { done: progress.done, total: progress.total })
+        : t("measure.run.starting");
+  const last = !countdown && !phase && progress ? roleCode(progress.stage) : null;
   const hint = cancelling ? t("measure.run.cancelling") : countdown ? t("measure.run.countdown.hint", { n }) : null;
   return (
     <div className="measure-run" data-ui="measure.run">
@@ -451,6 +455,9 @@ export function referenceText(t: Translate, reference: CurveReference | null): s
   return t(reference.band === "sub" ? "measure.graph.reference.sub" : "measure.graph.reference.mid", params);
 }
 
+/** The plot's height; a first read's loading state takes the same place. */
+const GRAPH_HEIGHT = 300;
+
 function GraphCard({ view, actions }: { view: MeasureView; actions: MeasureActions }) {
   const t = useT();
   const data = view.curves;
@@ -473,6 +480,11 @@ function GraphCard({ view, actions }: { view: MeasureView; actions: MeasureActio
   );
   const positions = useMemo(() => [...new Set(curves.map((curve) => curve.position ?? 1))].sort((a, b) => a - b), [curves]);
   const zero = referenceText(t, data?.reference ?? null);
+  // The curves are read when this screen is shown (TD-237). A first read
+  // takes the empty state's place with a loading state; a reread keeps the
+  // held curves drawn and says so in the header until it lands.
+  const firstRead = view.curvesLoading && !data;
+  const rereading = view.curvesLoading && !!data;
   return (
     <Card
       dense
@@ -481,6 +493,11 @@ function GraphCard({ view, actions }: { view: MeasureView; actions: MeasureActio
       hidden={view.graphHidden}
       title={t("plot.measurement.title")}
       help={curves.length > 0 ? t("measure.graph.description") : undefined}
+      actions={
+        <span className="measure-graph__refreshing" role="status" aria-live="polite" data-ui="measure.graph.refreshing">
+          {rereading && <StatusPill tone="busy">{t("measure.graph.refreshing")}</StatusPill>}
+        </span>
+      }
     >
       {data && curves.length > 0 ? (
         <>
@@ -496,7 +513,7 @@ function GraphCard({ view, actions }: { view: MeasureView; actions: MeasureActio
             yRange={data.axes.value}
             range={view.plotRange}
             onRangeChange={actions.setPlotRange}
-            height={300}
+            height={GRAPH_HEIGHT}
           />
           {zero && (
             <p className="measure-graph__reference" data-ui="measure.plot.reference">
@@ -504,6 +521,10 @@ function GraphCard({ view, actions }: { view: MeasureView; actions: MeasureActio
             </p>
           )}
         </>
+      ) : firstRead ? (
+        <div className="measure-graph__loading" style={{ height: GRAPH_HEIGHT }} role="status" data-ui="measure.graph.loading">
+          <StatusPill tone="busy">{t("measure.graph.loading")}</StatusPill>
+        </div>
       ) : (
         <EmptyState id="measure.graph.empty" title={t("measure.graph.empty.title")} description={t("measure.graph.empty.body")} />
       )}

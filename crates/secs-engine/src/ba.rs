@@ -5,7 +5,7 @@ use crate::chain::{BaRow, PreparedBaTerm, gather, sub_sum, sub_sum_prepared};
 use crate::decay::{BaLateGrid, ba_late_db};
 use crate::fit::{Fitter, xo_target_peq};
 use crate::grid::{BINS, SR_F, design_freqs};
-use crate::input::{BandType, BundleGain, DbaRow, LayoutKind, Peq, SubAllpass, SubMode};
+use crate::input::{BandType, BundleGain, DbaRow, LayoutKind, Peq, RoleMap, SubAllpass, SubMode};
 use crate::measurement::{Prepared, Spectra, onset_index, ramp_phase};
 use crate::notes::Note;
 use crate::setup::{Setup, SubFilter};
@@ -15,6 +15,7 @@ use secs_dsp::optimize::{DifferentialEvolutionOptions, differential_evolution};
 use secs_dsp::{
     fft, pairwise_sum, response,
     smooth::{self, Fraction},
+    stats::median,
 };
 use std::{f64::consts::PI, sync::Arc};
 
@@ -86,15 +87,6 @@ fn row(gain_db: f64, delay_ms: f64, polarity: i8, allpass: Vec<(f64, f64)>) -> B
 fn mean(x: &[f64]) -> f64 {
     pairwise_sum(x) / x.len() as f64
 }
-fn median(mut x: Vec<f64>) -> f64 {
-    x.sort_by(f64::total_cmp);
-    let m = x.len() / 2;
-    if x.len().is_multiple_of(2) {
-        (x[m - 1] + x[m]) / 2.0
-    } else {
-        x[m]
-    }
-}
 fn mag(x: C) -> f64 {
     x.re.hypot(x.im)
 }
@@ -106,13 +98,7 @@ fn weight(pos: u32, main: u32) -> f64 {
     if pos == main { 5.0 } else { 1.0 }
 }
 fn base(input: &BaInput<'_>, role: &str) -> f64 {
-    input
-        .prepared
-        .align_delay_ms
-        .iter()
-        .find(|(r, _)| r == role)
-        .unwrap()
-        .1
+    *RoleMap::get_from(&input.prepared.align_delay_ms, role).expect("role present: alignment delay")
 }
 fn complete(h: &Spectra, roles: &[String]) -> Vec<u32> {
     h.positions()
@@ -285,35 +271,14 @@ fn variance(levels: &[Vec<f64>]) -> f64 {
 }
 fn gd_variance(h: &[C], f: &[f64]) -> f64 {
     let mut phase: Vec<_> = h.iter().map(|h| h.im.atan2(h.re)).collect();
-    let original = phase.clone();
-    let mut correction = 0.0;
-    for i in 1..phase.len() {
-        let d = original[i] - original[i - 1];
-        let mut dm = (d + PI).rem_euclid(2.0 * PI) - PI;
-        if dm == -PI && d > 0.0 {
-            dm = PI;
-        }
-        if d.abs() >= PI {
-            correction += dm - d;
-        }
-        phase[i] += correction;
-    }
+    secs_dsp::unwrap_phase(&mut phase);
     let x: Vec<_> = f.iter().map(|f| 2.0 * PI * f).collect();
-    let n = x.len();
-    let mut gd = vec![0.0; n];
-    gd[0] = (phase[1] - phase[0]) / (x[1] - x[0]);
-    gd[n - 1] = (phase[n - 1] - phase[n - 2]) / (x[n - 1] - x[n - 2]);
-    for i in 1..n - 1 {
-        let a = x[i] - x[i - 1];
-        let b = x[i + 1] - x[i];
-        gd[i] = (-b / (a * (a + b))) * phase[i - 1]
-            + ((b - a) / (a * b)) * phase[i]
-            + (a / (b * (a + b))) * phase[i + 1];
-    }
+    let mut gd = secs_dsp::gradient(&phase, &x);
     for v in &mut gd {
         *v = -*v * 1000.0;
     }
-    let m = median(gd.clone());
+    assert!(!gd.is_empty(), "BA group delay median requires samples");
+    let m = median(&gd);
     mean(&gd.iter().map(|v| (v - m).powi(2)).collect::<Vec<_>>())
 }
 
@@ -483,21 +448,17 @@ impl BaSetup {
 }
 
 fn manual_value(setup: &Setup, role: &str) -> BaRow {
-    setup
-        .sub_manual
-        .iter()
-        .find(|(r, _)| r == role)
-        .map_or_else(
-            || row(0.0, 0.0, 1, vec![]),
-            |(_, m)| {
-                row(
-                    m.gain_db,
-                    m.delay_ms,
-                    if m.polarity < 0 { -1 } else { 1 },
-                    m.allpass.iter().take(2).copied().collect(),
-                )
-            },
-        )
+    RoleMap::get_from(&setup.sub_manual, role).map_or_else(
+        || row(0.0, 0.0, 1, vec![]),
+        |m| {
+            row(
+                m.gain_db,
+                m.delay_ms,
+                if m.polarity < 0 { -1 } else { 1 },
+                m.allpass.iter().take(2).copied().collect(),
+            )
+        },
+    )
 }
 fn manual_plan(input: &BaInput<'_>) -> Option<ManualPlan> {
     let mut p = ManualPlan {
@@ -507,17 +468,11 @@ fn manual_plan(input: &BaInput<'_>) -> Option<ManualPlan> {
         gain_anchored: false,
     };
     for r in &input.config.subs {
-        match input
-            .setup
-            .sub_manual
-            .iter()
-            .find(|(s, _)| s == r)
-            .map(|(_, m)| m)
-        {
+        match RoleMap::get_from(&input.setup.sub_manual, r) {
             Some(m) if m.mode == SubMode::Fixed => p.fixed.push(r.clone()),
             Some(m) if m.mode == SubMode::Bundle => {
                 let name = if m.bundle.is_empty() { "A" } else { &m.bundle };
-                if let Some((_, rs)) = p.bundles.iter_mut().find(|(b, _)| b == name) {
+                if let Some(rs) = RoleMap::get_mut_from(&mut p.bundles, name) {
                     rs.push(r.clone());
                 } else {
                     p.bundles.push((name.to_owned(), vec![r.clone()]));
@@ -599,12 +554,13 @@ impl Search {
         let off = if plan.fixed.is_empty() {
             0.0
         } else {
-            median(
-                out.constants
-                    .iter()
-                    .map(|(r, v)| v.delay_ms - base(input, r))
-                    .collect(),
-            )
+            let values = out
+                .constants
+                .iter()
+                .map(|(r, v)| v.delay_ms - base(input, r))
+                .collect::<Vec<_>>();
+            assert!(!values.is_empty(), "fixed-delay median requires values");
+            median(&values)
         };
         let mut anchored = plan.fixed.clone();
         if input.tuning.bundle_gain == BundleGain::Fixed {
@@ -643,14 +599,14 @@ impl Search {
             });
         }
         for (name, rs) in &plan.bundles {
-            let layout = alignment.layout_rel.iter().find(|(b, _)| b == name);
+            let layout = RoleMap::get_from(&alignment.layout_rel, name);
             let mut vals = layout.map_or_else(
                 || {
                     rs.iter()
                         .map(|r| (r.clone(), manual_value(input.setup, r)))
                         .collect()
                 },
-                |(_, v)| v.clone(),
+                Clone::clone,
             );
             let dmin = vals
                 .iter()
@@ -727,7 +683,11 @@ impl Search {
             .config
             .subs
             .iter()
-            .map(|r| out.iter().find(|(s, _)| s == r).unwrap().1.clone())
+            .map(|role| {
+                RoleMap::get_from(&out, role)
+                    .expect("role present: bass-alignment row")
+                    .clone()
+            })
             .collect()
     }
 }
@@ -748,13 +708,13 @@ fn level(input: &BaInput<'_>, by_pos: &[(u32, Arc<[C]>)]) -> f64 {
         .config
         .target
         .sample(&gather(design_freqs(), &indices));
-    median(
-        indices
-            .iter()
-            .zip(target)
-            .map(|(&i, t)| 20.0 * (mag(h[i]) + 1e-20).log10() - t)
-            .collect(),
-    )
+    let values = indices
+        .iter()
+        .zip(target)
+        .map(|(&i, t)| 20.0 * (mag(h[i]) + 1e-20).log10() - t)
+        .collect::<Vec<_>>();
+    assert!(!values.is_empty(), "BA level median requires samples");
+    median(&values)
 }
 #[allow(clippy::too_many_arguments)]
 fn target_peq(
@@ -930,11 +890,12 @@ fn layout_stage(
                         }
                     }
                 }
-                median(
-                    pw.iter()
-                        .map(|v| 10.0 * (v / total + 1e-30).log10())
-                        .collect(),
-                )
+                let values = pw
+                    .iter()
+                    .map(|v| 10.0 * (v / total + 1e-30).log10())
+                    .collect::<Vec<_>>();
+                assert!(!values.is_empty(), "bundle level median requires samples");
+                median(&values)
             })
             .collect();
         let low = levels.iter().copied().fold(f64::INFINITY, f64::min);
@@ -980,7 +941,9 @@ fn layout_stage(
         if lay.kind == LayoutKind::Dba {
             if front.is_empty() || rear.is_empty() {
                 info.kind = LayoutKind::Multi;
-                out.notes.push(Note::LayoutFallback(name.clone()));
+                out.notes.push(Note::LayoutFallback {
+                    value: name.clone(),
+                });
             } else {
                 let arrival = |p, r: &str| -> Result<f64, EngineError> {
                     let m = input
@@ -1095,11 +1058,8 @@ fn layout_stage(
                         },
                     ));
                 }
-                out.sub_filters
-                    .iter_mut()
-                    .find(|(s, _)| s == r)
-                    .unwrap()
-                    .1
+                RoleMap::get_mut_from(&mut out.sub_filters, r)
+                    .expect("role present: sub filter")
                     .peq
                     .extend_from_slice(&peq);
                 for p in h.positions().to_vec() {
@@ -1117,7 +1077,9 @@ fn layout_stage(
             lay.members.iter().cloned().zip(rows).collect(),
         ));
         out.layout_info.push((name.clone(), info));
-        out.notes.push(Note::Layout(name.clone()));
+        out.notes.push(Note::Layout {
+            value: name.clone(),
+        });
     }
     Ok(())
 }
@@ -1144,15 +1106,11 @@ fn two_way(input: &BaInput<'_>, h: &Spectra, out: &mut SubAlignment) -> Result<u
     if low.is_empty() || high.is_empty() {
         return Ok(0);
     }
-    let xo = filters.iter().find(|(r, _)| r == &low[0]).unwrap().1.lp_hz;
+    let xo = RoleMap::get_from(filters, &low[0])
+        .expect("role present: low sub filter")
+        .lp_hz;
     if high.iter().any(|r| {
-        (filters
-            .iter()
-            .find(|(s, _)| s == *r)
-            .map_or(0.0, |(_, f)| f.hp_hz)
-            - xo)
-            .abs()
-            > 0.5
+        (RoleMap::get_from(filters, r).map_or(0.0, |filter| filter.hp_hz) - xo).abs() > 0.5
     }) {
         return Ok(0);
     }
@@ -1202,7 +1160,13 @@ fn two_way(input: &BaInput<'_>, h: &Spectra, out: &mut SubAlignment) -> Result<u
             .zip(&target)
             .map(|(p, t)| 10.0 * (p + 1e-30).log10() - t)
             .collect();
-        let diff = median(gather(&db, &hi)) - median(gather(&db, &lo));
+        let high = gather(&db, &hi);
+        let low = gather(&db, &lo);
+        assert!(
+            !high.is_empty() && !low.is_empty(),
+            "infra-band median requires samples"
+        );
+        let diff = median(&high) - median(&low);
         let step = diff.clamp(-24.0 - total, input.config.infra_boost_max_db - total);
         if step.abs() < 0.1 {
             break;
@@ -1291,7 +1255,7 @@ fn align_with(
             DifferentialEvolutionOptions::default(),
         )?;
         check(input)?;
-        out.notes.push(Note::BaCost(res.fun));
+        out.notes.push(Note::BaCost { value: res.fun });
         let mut x = res.x;
         if input.tuning.sub_bus_fix
             && let Some(p1) = bus_response(input, &h, &out, &search.unpack(input, &x), fitter)?
@@ -1358,7 +1322,9 @@ fn align_with(
     let lvl = level(input, &out.sub_sum_by_pos);
     out.sub_level_db = Some(lvl - input.ref_level);
     if out.plan.as_ref().is_some_and(|p| p.gain_anchored) {
-        out.notes.push(Note::BusGainAnchored(lvl - input.ref_level));
+        out.notes.push(Note::BusGainAnchored {
+            value: lvl - input.ref_level,
+        });
     } else {
         out.bus_gain = 10f64.powf((input.ref_level - lvl) / 20.0);
     }
@@ -1389,7 +1355,7 @@ fn align_with(
 }
 
 /// Main spectra include acoustic-XO PEQ, but not their electrical HP or delay.
-/// Returns `Err(Cancelled)` once `cancelled()` reads true; it is polled once
+/// Returns `Err(Cancelled)` when the context token is cancelled; it is polled once
 /// per main position while the bands are gathered and once per candidate
 /// delay, which leaves the search's arithmetic and order unchanged (TD-49).
 #[allow(clippy::type_complexity)]
@@ -1399,7 +1365,7 @@ pub fn bus_delay(
     align_delay_ms: &[(String, f64)],
     xo_of: &[(String, f64)],
     lo_ms: f64,
-    cancelled: &dyn Fn() -> bool,
+    ctx: &secs_compute::Context,
 ) -> Result<(f64, i8), EngineError> {
     bus_delay_observe(
         alignment,
@@ -1407,7 +1373,7 @@ pub fn bus_delay(
         align_delay_ms,
         xo_of,
         lo_ms,
-        cancelled,
+        ctx,
         &mut |_, _, _| {},
     )
 }
@@ -1419,22 +1385,15 @@ fn bus_delay_observe(
     align_delay_ms: &[(String, f64)],
     xo_of: &[(String, f64)],
     lo_ms: f64,
-    cancelled: &dyn Fn() -> bool,
+    ctx: &secs_compute::Context,
     observe: &mut dyn FnMut(i8, f64, f64),
 ) -> Result<(f64, i8), EngineError> {
-    let check = || {
-        if cancelled() {
-            Err(EngineError::Cancelled)
-        } else {
-            Ok(())
-        }
-    };
     if alignment.plan.as_ref().is_some_and(|p| !p.fixed.is_empty()) {
         return Ok((0.0, 1));
     }
     let mut prepared = vec![];
     for (r, positions) in mains {
-        let Some(&(_, xo)) = xo_of.iter().find(|(s, x)| s == r && *x != 0.0) else {
+        let Some(xo) = RoleMap::get_from(xo_of, r).copied().filter(|xo| *xo != 0.0) else {
             continue;
         };
         let idx: Vec<_> = design_freqs()
@@ -1444,11 +1403,11 @@ fn bus_delay_observe(
             .map(|(i, _)| i)
             .collect();
         let f = gather(design_freqs(), &idx);
-        let d = align_delay_ms.iter().find(|(s, _)| s == r).unwrap().1;
+        let d = *RoleMap::get_from(align_delay_ms, r).expect("role present: alignment delay");
         let hp = response::lr4(&f, xo, "HP");
         let lp = response::lr4(&f, xo, "LP");
         for (pos, h) in positions {
-            check()?;
+            ctx.cancel().check()?;
             let sub = &alignment
                 .sub_sum_by_pos
                 .iter()
@@ -1475,7 +1434,7 @@ fn bus_delay_observe(
     for pol in [1, -1] {
         let mut k = 0;
         while lo_ms + k as f64 * 0.25 < 15.01 {
-            check()?;
+            ctx.cancel().check()?;
             let d = lo_ms + k as f64 * 0.25;
             k += 1;
             let mut cost = 0.0;
@@ -1517,7 +1476,7 @@ pub fn fold(rows: &[BaRow], bus_gain: f64, bus_delay_ms: f64, bus_polarity: i8) 
         .collect()
 }
 pub fn sub_mode_label(role: &str, setup: &Setup, layout_info: &[(String, LayoutInfo)]) -> String {
-    let Some((_, m)) = setup.sub_manual.iter().find(|(r, _)| r == role) else {
+    let Some(m) = RoleMap::get_from(&setup.sub_manual, role) else {
         return "auto".into();
     };
     match m.mode {
@@ -1525,7 +1484,7 @@ pub fn sub_mode_label(role: &str, setup: &Setup, layout_info: &[(String, LayoutI
         SubMode::Fixed => "fixed".into(),
         SubMode::Bundle => {
             let name = if m.bundle.is_empty() { "A" } else { &m.bundle };
-            if let Some((_, info)) = layout_info.iter().find(|(n, _)| n == name) {
+            if let Some(info) = RoleMap::get_from(layout_info, name) {
                 let kind = match info.kind {
                     LayoutKind::Multi => "multi",
                     LayoutKind::Dba => {

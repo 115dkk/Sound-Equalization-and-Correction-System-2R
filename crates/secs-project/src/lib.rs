@@ -18,9 +18,10 @@ pub use calibration::{calibration_from_project, store_calibration};
 pub use config::{Band, Speaker, SpeakerConfig, default_bands, ordered_speakers};
 pub use dsp_profile::DspProfile;
 pub use error::ProjectError;
+#[allow(deprecated)]
 pub use irs::{
-    MAX_IR_BYTES, ir_directory, ir_file, load_ir, read_mono_float_wav, read_wav_float32, save_ir,
-    try_write_wav_float32, write_wav_float32,
+    MAX_IR_BYTES, ir_directory, ir_file, load_ir, read_bounded, read_mono_float_wav,
+    read_wav_float32, save_ir, try_write_wav_float32, write_wav_float32,
 };
 pub use plan::{
     MeasurementPlan, PlanValidationError, SWEEP_LENGTHS, TimingReference, default_ref_role,
@@ -33,10 +34,9 @@ pub use project::{
 };
 pub use pyjson::{PyJson, PyJsonError, dumps, dumps_compact, loads, loads_with_budget};
 pub use record::{
-    AttachedCalibration, IR_CACHE_LIMIT_BYTES, IrCache, LoadedIr, MAX_PROJECT_BYTES,
-    MeasurementRecord, MeasurementResult, MeasurementStore, MigrationWarning, RemovedPosition,
-    attached_calibration, calibration_fingerprint, load_project_irs, load_project_sources,
-    load_source, save_source, source_path,
+    AttachedCalibration, IR_CACHE_LIMIT_BYTES, IrCache, MAX_PROJECT_BYTES, MeasurementRecord,
+    MeasurementResult, MeasurementStore, MigrationWarning, RecordError, RemovedPosition,
+    attached_calibration, calibration_fingerprint, save_source, source_info_from_text, source_path,
 };
 pub use signature::{
     FloatKey, MeasurementSignatureEntry, estimate_seconds, estimate_subs_seconds,

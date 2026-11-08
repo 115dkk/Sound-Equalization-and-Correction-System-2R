@@ -35,7 +35,22 @@ await foreach (JsonElement jobEvent in events)
 }
 ```
 
-An `EventStream` can be enumerated once; open another one for a second reader. Each stream queues up to 1024 events. A reader that falls further behind loses the newest ones, and `EventStream.DroppedEvents` counts them; when it grows, ask for the job's state with `WaitJob`.
+An `EventStream` can be enumerated once; open another one for a second reader. Each stream queues up to 1024 events. A reader that falls further behind loses the newest ones, and `EventStream.DroppedEvents` counts them; when it grows, ask for the job's state with `WaitJob`. The local API server has a separate 256-event queue. Falling behind that queue produces a `lagged` event with the missed count, followed by a WebSocket close with code 1013.
+
+## Typed calculation notes
+
+`results.data.calibration.notes` and `results.data.mimo.notes` contain typed JSON records. The `code` property selects the shape; collection values are JSON arrays rather than encoded strings. Notices made by the service itself remain in the adjacent `notices` array.
+
+```csharp
+JsonElement results = engine.Call(resultsRequest).GetProperty("data");
+foreach (JsonElement note in results.GetProperty("calibration").GetProperty("notes").EnumerateArray())
+{
+    if (note.GetProperty("code").GetString() == "dip_limit")
+    {
+        Console.WriteLine(note.GetProperty("dips")[0].GetProperty("hz").GetDouble());
+    }
+}
+```
 
 ## Running application
 

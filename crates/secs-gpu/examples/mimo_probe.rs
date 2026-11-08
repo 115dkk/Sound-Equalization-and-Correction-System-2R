@@ -1,7 +1,7 @@
 //! End-to-end acoustic comparison with actual production fitters and CUDA.
 #![forbid(unsafe_code)]
 use secs_compute::{CancelToken, Context, MemoryBudget, NoProgress};
-use secs_engine::{Tuning, mimo};
+use secs_engine::{Tuning, compute_with_acceleration};
 use secs_engine_testkit as test_support;
 use secs_types::{calibration::CalibrationSettings, compute::ComputePreference};
 use std::{sync::Arc, time::Instant};
@@ -45,7 +45,7 @@ fn main() {
         let mut latest = None;
         for sample in 0..if repeats > 1 { repeats + 1 } else { 1 } {
             let start = Instant::now();
-            let result = mimo::compute_with_acceleration(
+            let result = compute_with_acceleration(
                 &case.design,
                 &case.measurements,
                 &case.config,

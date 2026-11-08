@@ -22,6 +22,11 @@ export class IpcFailure extends Error {
   }
 }
 
+/** A failure with no typed cause from the service: a bridge fault or an exception on the screen side. */
+export function internalError(detail: string, retryable = false): IpcError {
+  return { code: "internal", params: {}, retryable, detail };
+}
+
 /** Builds a typed caller over an invoke function (Tauri's, or a fake in tests). */
 export function makeClient(call: Invoke) {
   return async function request<M extends Request["method"]>(
@@ -32,12 +37,7 @@ export function makeClient(call: Invoke) {
       throw new IpcFailure(envelope.error);
     }
     if (envelope.data.method !== req.method) {
-      throw new IpcFailure({
-        code: "internal",
-        params: {},
-        retryable: false,
-        detail: `reply for ${envelope.data.method} to a ${req.method} request`,
-      });
+      throw new IpcFailure(internalError(`reply for ${envelope.data.method} to a ${req.method} request`));
     }
     return envelope.data.data as ResponseOf<M>;
   };

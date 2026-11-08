@@ -147,18 +147,16 @@ function Scoped({ tutorial, children }: { tutorial?: boolean; children: ReactNod
 
 const frame = (id: string, title: string, render: () => ReactNode): SpecimenDef => ({ id: `screen.calibrate.${id}`, title: `보정 · ${title}`, width: 1280, height: 800, render });
 
-/** The range card on each upper-limit basis (ADR 0021), its RC line from the mock's calibration. */
+/** The range card on each recorded upper-limit case (ADR 0021), its RC line from the service's recorded calibration. */
 const RANGE_SPECIMENS: [string, string, CalibrateView][] = [
-  ["strict", "strict Schroeder ×1 (default) with the room volume and the transition", fx.rangeViews.strict],
+  ["strict", "strict Schroeder ×1 (default) without a room volume: 500 Hz and the hint to enter it", fx.rangeViews.strict],
   ["strict-x2", "strict Schroeder ×2", fx.rangeViews.strictTimes2],
   ["strict-x4", "strict Schroeder ×4", fx.rangeViews.strictTimes4],
-  ["lenient", "lenient Schroeder, its band's T60 in the line", fx.rangeViews.lenient],
-  ["lenient-x2", "lenient Schroeder ×2", fx.rangeViews.lenientTimes2],
+  ["lenient", "lenient Schroeder without a room volume", fx.rangeViews.lenient],
   ["agreement", "position agreement at nine positions: no room volume, the time it takes", fx.rangeViews.agreement],
   ["agreement-unavailable", "two measured positions: agreement off, with the reason", fx.rangeViews.agreementUnavailable],
   ["agreement-short", "agreement chosen, a position cleared since: still chosen, with what to do", fx.rangeViews.agreementShort],
   ["manual", "직접 입력: the number field", fx.rangeViews.manual],
-  ["no-volume", "strict Schroeder without a room volume: 500 Hz and the hint to enter it", fx.rangeViews.noVolume],
 ];
 
 /** Every kind of RC line in the range card's list. */
@@ -183,8 +181,8 @@ function RcBandsLines() {
   return (
     <Card title={t("calibrate.verdict.title")} className="calibrate-settings__card">
       <ul className="calibrate-notes-list" data-ui="calibrate.verdict.rc_bands.lines">
-        {fx.rcBandsNotes.map((note, i) => (
-          <li key={i}>{noticeText(t, number, note)}</li>
+        {fx.rcBandsNotes.map((run, i) => (
+          <li key={i}>{noticeText(t, number, run[0]!, run)}</li>
         ))}
       </ul>
     </Card>
@@ -329,10 +327,10 @@ export const calibrateSpecimens: SpecimenDef[] = [
   ...RANGE_SPECIMENS.map(([id, title, view]) => frame(`range-${id}`, `RC upper limit: ${title}`, () => <CalibrateFrame view={view} scrollTo="calibrate.settings.range" />)),
   {
     id: "screen.calibrate.range.min",
-    title: "보정 · RC upper limit at the smallest window (1024 × 700): lenient Schroeder ×2, the row wraps",
+    title: "보정 · RC upper limit at the smallest window (1024 × 700): strict Schroeder ×2, the row wraps",
     width: 1024,
     height: 700,
-    render: () => <CalibrateFrame view={fx.rangeViews.lenientTimes2} scrollTo="calibrate.settings.range" />,
+    render: () => <CalibrateFrame view={fx.rangeViews.strictTimes2} scrollTo="calibrate.settings.range" />,
   },
   { id: "screen.calibrate.rc-lines", title: "보정 · the RC line for each kind of evidence, then a missing volume and a note from before the bases", width: 720, render: () => <RcLines /> },
   // Extra correction bands (ADR 0024).
@@ -348,16 +346,21 @@ export const calibrateSpecimens: SpecimenDef[] = [
   frame("range-extra-four", "four extra bands: the add action hidden", () => <CalibrateFrame view={fx.extraBandViews.four} scrollTo="calibrate.range.extra" />),
   frame("spl-extra-band", "SPL with an extra band at 15–20 kHz: shaded outside the RC band and it, its label left of its edge", () => <CalibrateFrame view={fx.extraBandViews.one} />),
   frame("spl-extra-bands", "SPL with two extra bands: shaded outside the RC band and both; a label that finds no room is left out", () => <CalibrateFrame view={fx.extraBandViews.two} />),
-  frame("rc-bands-notes", "calculation notes open: the merged band set after an extra-band calculation", () => (
-    <CalibrateFrame view={fx.extraBandViews.two} initial={{ notesOpen: true }} scrollTo="calibrate.verdict.notes" />
+  frame("rc-bands-notes", "calculation notes open: the merged band set after the recorded extra-band calculation (1–2 kHz, 15–20 kHz)", () => (
+    <CalibrateFrame view={fx.extraBandViews.calculated} initial={{ notesOpen: true }} scrollTo="calibrate.verdict.notes" />
   )),
   { id: "screen.calibrate.rc-bands-lines", title: "보정 · the band set line for one extra band, two bands, and a band merged with the RC band", width: 720, render: () => <RcBandsLines /> },
+  // A main against the others' polarity (ADR 0033) and the dips the limit filled only partly (ADR 0034).
+  frame("polarity-reversed", "a reversed main: the warning with what to do and its flip button above the figures", () => <CalibrateFrame view={fx.polarityDipView} />),
+  frame("dip-limit-notes", "calculation notes open: the dip-limit line naming each dip and how far it was filled", () => (
+    <CalibrateFrame view={fx.polarityDipView} initial={{ notesOpen: true }} scrollTo="calibrate.verdict.notes" />
+  )),
   // 극저역 보호, 자동 설정 (ADR 0022) and 수동 설정 (the input cut, ADR 0031): one group in the range card's body, never under 고급.
   frame("low-protect-off", "극저역 보호 자동 and 수동 설정 off (the default) in the range card's body", () => (
     <CalibrateFrame view={fx.lowProtectViews.off} scrollTo="calibrate.range.low_end" />
   )),
   frame("low-protect-on", "극저역 보호 자동 설정 on, 고급 stays folded", () => <CalibrateFrame view={fx.lowProtectViews.on} scrollTo="calibrate.range.low_end" />),
-  frame("input-hp-on", "극저역 보호 수동 설정 on at 27 Hz: its frequency under the switch", () => <CalibrateFrame view={fx.inputHpViews.on} scrollTo="calibrate.range.low_end" />),
+  frame("input-hp-on", "극저역 보호 수동 설정 on at 25 Hz: its frequency under the switch", () => <CalibrateFrame view={fx.inputHpViews.on} scrollTo="calibrate.range.low_end" />),
   frame("input-hp-both", "극저역 보호 자동 and 수동 설정 both on", () => <CalibrateFrame view={fx.inputHpViews.both} scrollTo="calibrate.range.low_end" />),
   frame("input-hp-notes", "calculation notes open: the 수동 설정 line", () => (
     <CalibrateFrame view={fx.inputHpViews.on} initial={{ notesOpen: true }} scrollTo="calibrate.verdict.notes" />

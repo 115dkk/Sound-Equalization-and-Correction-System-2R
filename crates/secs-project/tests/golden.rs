@@ -1,9 +1,10 @@
+#![allow(deprecated)]
 #![forbid(unsafe_code)]
 
 use secs_oracle::{Fixture, assert_same, number};
 use secs_project::{
-    Band, DspProfile, Project, PyJson, Speaker, SpeakerConfig, TargetCurve, dumps, loads,
-    read_mono_float_wav, read_wav_float32, snap_focus, write_wav_float32,
+    Band, DspProfile, Project, ProjectError, PyJson, Speaker, SpeakerConfig, TargetCurve, dumps,
+    loads, read_mono_float_wav, read_wav_float32, snap_focus, write_wav_float32,
 };
 use secs_types::role::{
     ROLES, role_code, role_from_title, role_group, role_kind, role_label, role_order, role_position,
@@ -462,6 +463,24 @@ fn wav_error(bytes: &[u8]) -> String {
         Err(secs_project::ProjectError::Wav(message)) => message,
         other => panic!("expected a WAV error, got {other:?}"),
     }
+}
+
+#[test]
+fn wav_readers_reject_zero_rate_and_stereo_float_td228() {
+    let mono_samples = le_bytes([0.0_f32; 48].map(f32::to_le_bytes));
+    let zero_rate = riff(&fmt_body(3, 1, 0, 4, 32), &mono_samples);
+    for result in [
+        read_mono_float_wav(&zero_rate),
+        read_wav_float32(&zero_rate),
+    ] {
+        assert!(matches!(result, Err(ProjectError::Wav(_))));
+    }
+
+    let stereo_samples = le_bytes([0.0_f32; 96].map(f32::to_le_bytes));
+    let stereo = riff(&fmt_body(3, 2, 48_000, 8, 32), &stereo_samples);
+    let error = read_wav_float32(&stereo).unwrap_err();
+    assert!(matches!(&error, ProjectError::Wav(_)));
+    assert!(error.to_string().contains("2 channels"), "{error}");
 }
 
 #[test]

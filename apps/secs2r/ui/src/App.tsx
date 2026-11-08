@@ -27,7 +27,7 @@ import { isRunning } from "./screens/measure/types";
 import { CalibrateScreen, calibrateHeader } from "./screens/calibrate/CalibrateScreen";
 import { ExportScreen, exportHeader } from "./screens/export/ExportScreen";
 import { useSystemScreen } from "./screens/system/useSystemScreen";
-import { useConnectScreen } from "./screens/connect/useConnectScreen";
+import { useConnectScreen, useLiveLevel, withLiveLevel } from "./screens/connect/useConnectScreen";
 import { useMeasureScreen } from "./screens/measure/useMeasureScreen";
 import { useCalibrateScreen } from "./screens/calibrate/useCalibrateScreen";
 import { useExportScreen } from "./screens/export/useExportScreen";
@@ -37,6 +37,19 @@ import { HelpPanel } from "./screens/help/HelpPanel";
 import { MicMeterPanel } from "./screens/connect/MicMeterPanel";
 import { TutorialLayer } from "./screens/tutorial/Tutorial";
 import { tutorialQuests, type TutorialView } from "./screens/tutorial/quests";
+import type { ConnectActions, ConnectState } from "./screens/connect/types";
+
+// The two places the mic meter is drawn read the level monitor themselves:
+// a Meter event renders them, not `Shell` and the five hooks it runs (TD-176).
+function LiveConnectScreen({ state, actions }: { state: ConnectState; actions: ConnectActions }) {
+  const live = useLiveLevel();
+  return <ConnectScreen view={withLiveLevel(state, live)} actions={actions} />;
+}
+function FloatingMicMeter({ connect, onClose }: { connect: ConnectState | null; onClose: () => void }) {
+  const t = useT();
+  const live = useLiveLevel();
+  return <div className="app-mic"><MicMeterPanel id="app.mic" floating view={{ input: connect ? micInput(t, connect) : null, monitor: live.monitor, reading: live.reading, error: live.error, path: connect?.path }} onClose={onClose} /></div>;
+}
 
 function Shell({ tutorialStart }: { tutorialStart?: string | undefined }) {
   const session = useSession();
@@ -83,7 +96,7 @@ function Shell({ tutorialStart }: { tutorialStart?: string | undefined }) {
       break;
     }
   }, [settingFocus, host.current]);
-  const measure = useMeasureScreen();
+  const measure = useMeasureScreen(host.current === "measure");
   const goToMeasurements = useCallback(() => navigateToSetting("measure", '[data-ui="measure.positions"] [aria-current="true"]', '[data-ui="measure.positions"] button'), [navigateToSetting]);
   // A project warning's 다시 측정: that position picked (never during a device
   // job) and its measure action focused; on the import path, the import.
@@ -170,7 +183,7 @@ function Shell({ tutorialStart }: { tutorialStart?: string | undefined }) {
   let header: ReturnType<typeof systemHeader> = {};
   switch (host.current) {
     case "system": if (system.view) { content = <SystemScreen view={system.view} actions={system.actions} />; header = systemHeader(system.view, system.actions, t); } break;
-    case "connect": if (connect.view) { content = <ConnectScreen view={connect.view} actions={connect.actions} />; header = connectHeader(connect.view, connect.actions, t); } break;
+    case "connect": if (connect.view) { content = <LiveConnectScreen state={connect.view} actions={connect.actions} />; header = connectHeader(connect.view, connect.actions, t); } break;
     case "measure": if (measure.view) { content = <MeasureScreen view={measure.view} actions={measure.actions} />; header = measureHeader(measure.view, measure.actions, t); } break;
     case "calibrate": if (calibrate.view) { content = <CalibrateScreen view={calibrate.view} actions={calibrate.actions} initial={project?.tutorial ? { editSub: "SW3", baAdvanced: true } : undefined} blocked={model.steps.calibrate.status === "blocked"} />; header = calibrateHeader(calibrate.view, t); } break;
     case "export": if (exporting.view) { content = <ExportScreen view={exporting.view} actions={exporting.actions} />; header = exportHeader(exporting.view, exporting.actions, t); } break;
@@ -182,7 +195,7 @@ function Shell({ tutorialStart }: { tutorialStart?: string | undefined }) {
       version={info ? { version: info.version, prerelease: info.prerelease } : null} tray={<JobTray api={jobs} />} onRemeasure={remeasure} onOpenPatch={openPatch}
       aside={helpOpen || meterOpen ? <>
         {helpOpen && <HelpPanel view={{ step: host.current, tutorial: project?.tutorial ?? false }} actions={{ close: () => setHelpOpen(false), startTutorial: dialogs.offerTutorial }} />}
-        {meterOpen && <div className="app-mic"><MicMeterPanel id="app.mic" floating view={{ input: connect.view ? micInput(t, connect.view) : null, monitor: host.monitor, reading: host.meter, error: host.monitorError, path: connect.view?.path }} onClose={() => setMeterOpen(false)} /></div>}
+        {meterOpen && <FloatingMicMeter connect={connect.view} onClose={() => setMeterOpen(false)} />}
       </> : null}>
       {error && failure && <ErrorNotice id="app.error" cause={error.cause} next={error.next} detail={failure.error.detail} code={failure.error.code} />}
       {content ?? (ready && !project ? <EmptyState id="app.project.empty" title={t("project.new.title")} action={<Button variant="primary" onClick={dialogs.menu.onNew}>{t("frame.project.new")}</Button>} /> : null)}

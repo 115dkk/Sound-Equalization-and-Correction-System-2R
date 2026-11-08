@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import os
 import re
 import shutil
@@ -15,6 +14,9 @@ import urllib.parse
 import urllib.request
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Callable
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _http import fetch_file as _fetch_file  # noqa: E402
 
 DEFAULT_MANIFEST = Path(__file__).resolve().parent.parent / "reaper.toml"
 
@@ -45,43 +47,21 @@ def load_manifest(path: Path) -> dict[str, str]:
     return {key: entry[key] for key in required}
 
 
-def sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
 def fetch_file(
     url: str, expected: str, target: Path,
     opener: Callable[..., object] = urllib.request.urlopen,
     sleeper: Callable[[float], None] = time.sleep,
 ) -> bool:
-    target.parent.mkdir(parents=True, exist_ok=True)
-    if target.is_file() and sha256(target) == expected:
-        return False
-    temporary = target.with_name(f".{target.name}.part")
-    request = urllib.request.Request(url, headers={"User-Agent": "secs2r-ci"})
-    last_error: Exception | None = None
-    for attempt in range(4):
-        try:
-            with opener(request, timeout=60) as response, temporary.open("wb") as output:
-                shutil.copyfileobj(response, output)
-            actual = sha256(temporary)
-            if actual != expected:
-                raise EngineError(f"checksum mismatch: expected {expected} got {actual}")
-            os.replace(temporary, target)
-            return True
-        except EngineError:
-            temporary.unlink(missing_ok=True)
-            raise
-        except Exception as error:  # urllib exposes several unrelated failure types.
-            last_error = error
-            temporary.unlink(missing_ok=True)
-            if attempt < 3:
-                sleeper(2 ** (attempt + 1))
-    raise EngineError(f"download failed after 4 attempts: {last_error}")
+    return _fetch_file(
+        url,
+        expected,
+        target,
+        opener=opener,
+        attempts=4,
+        sleeper=sleeper,
+        error_type=EngineError,
+        timeout=60,
+    )
 
 
 def extract_package(package: Path, destination: Path) -> None:

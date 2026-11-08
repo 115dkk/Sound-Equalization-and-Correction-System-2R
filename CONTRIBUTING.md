@@ -21,18 +21,24 @@
 
 ## 검사
 
-PR을 올리기 전에 아래가 통과하는지 확인해 주세요. 같은 검사를 CI가 세 운영체제에서 돌립니다.
+`SpeakerConfig`나 `XoSettings`에 필드를 추가하는 PR에서는 저장된 결과와 크로스오버 추천이 낡음이 된다는 사실을 `CHANGELOG.md`에 기록하십시오(감사 #186 TD-166).
+
+검사의 정본은 [`CLAUDE.md`의 검사 절](CLAUDE.md#검사)입니다. PR을 올리기 전에 아래 검사가 통과하는지 확인하십시오. CI에서도 세 운영체제로 같은 검사를 실행합니다.
 
 ```sh
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
-cargo test --workspace --locked
+cargo clippy --workspace --exclude secs2r --exclude secs2r-host-shell --all-targets --locked --target x86_64-pc-windows-msvc -- -D warnings
+cargo test --workspace --all-targets --locked
+cargo deny --all-features check
 python3 -m unittest discover -s .github/scripts -p "test_*.py"
-(cd apps/secs2r/ui && npm ci && npm run typecheck && npm test)
+python3 .github/scripts/upstream.py check-tree
+python3 .github/scripts/check_feature_tests.py
+(cd apps/secs2r/ui && npm ci && npm run typecheck && npm test && npm run build)
 ```
 
 Linux에서는 Tauri용 패키지가 필요합니다(README의 '소스에서 빌드'). 화면 의존성은 Node 24로 설치해 주세요.
 
 ## 라이선스
 
-기여한 코드는 이 저장소의 라이선스로 배포됩니다. 앱과 게시하지 않는 크레이트는 GPL-3.0-only, crates.io에 올리는 크레이트 16개와 PyPI 패키지는 AGPL-3.0-only입니다(ADR 0023). 다른 곳에서 가져온 코드를 넣을 때는 출처와 라이선스를 파일 머리와 `docs/THIRD_PARTY.md`에 적어 주세요.
+기여한 코드는 이 저장소의 라이선스로 배포됩니다. 앱과 게시하지 않는 크레이트는 GPL-3.0-only, crates.io에 올리는 크레이트, PyPI 패키지 `secs2r`, NuGet 패키지 `Secs2R`은 AGPL-3.0-only입니다(ADR 0023). 다른 곳에서 가져온 코드를 넣을 때는 출처와 라이선스를 파일 머리와 `docs/THIRD_PARTY.md`에 적어 주세요.

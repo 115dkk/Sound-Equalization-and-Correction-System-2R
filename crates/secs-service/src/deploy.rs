@@ -1,8 +1,14 @@
+//! Three replacement conventions are deliberate: [`install`] installs a whole
+//! generation folder without a backup, `design_export::replace_folder` replaces a
+//! bundle with a backup, and `secs_graph::files::install` rolls back per file.
+
 use std::ffi::OsStr;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
 use secs_types::ipc::{ErrorCode, IpcError};
+
+use crate::fs::is_link_or_junction;
 
 pub(crate) struct Generation {
     pub name: String,
@@ -18,7 +24,8 @@ pub(crate) fn install(root: &Path, prefix: &str, stage: &Path) -> Result<Generat
         ));
     }
     refuse_link(root)?;
-    fs::create_dir_all(root).map_err(|error| io_error(root, error))?;
+    fs::create_dir_all(root)
+        .map_err(|error| crate::fs::io_failure(root, &error, ErrorCode::ApplyFailed))?;
     refuse_link(root)?;
     for number in 1_u64.. {
         let name = format!("{prefix}-{number}");
@@ -26,9 +33,10 @@ pub(crate) fn install(root: &Path, prefix: &str, stage: &Path) -> Result<Generat
         match fs::symlink_metadata(&dir) {
             Ok(_) => continue,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => return Err(io_error(&dir, error)),
+            Err(error) => return Err(crate::fs::io_failure(&dir, &error, ErrorCode::ApplyFailed)),
         }
-        fs::rename(stage, &dir).map_err(|error| io_error(&dir, error))?;
+        fs::rename(stage, &dir)
+            .map_err(|error| crate::fs::io_failure(&dir, &error, ErrorCode::ApplyFailed))?;
         return Ok(Generation { name, dir });
     }
     unreachable!("u64 generation names are sufficient")
@@ -36,8 +44,11 @@ pub(crate) fn install(root: &Path, prefix: &str, stage: &Path) -> Result<Generat
 
 pub(crate) fn prune(root: &Path, keep: &[&str]) -> Result<(), IpcError> {
     refuse_link(root)?;
-    for entry in fs::read_dir(root).map_err(|error| io_error(root, error))? {
-        let entry = entry.map_err(|error| io_error(root, error))?;
+    for entry in fs::read_dir(root)
+        .map_err(|error| crate::fs::io_failure(root, &error, ErrorCode::ApplyFailed))?
+    {
+        let entry =
+            entry.map_err(|error| crate::fs::io_failure(root, &error, ErrorCode::ApplyFailed))?;
         if keep
             .iter()
             .any(|name| entry.file_name() == OsStr::new(name))
@@ -45,13 +56,16 @@ pub(crate) fn prune(root: &Path, keep: &[&str]) -> Result<(), IpcError> {
             continue;
         }
         let path = entry.path();
-        let metadata = fs::symlink_metadata(&path).map_err(|error| io_error(&path, error))?;
-        if metadata.file_type().is_symlink() {
+        let metadata = fs::symlink_metadata(&path)
+            .map_err(|error| crate::fs::io_failure(&path, &error, ErrorCode::ApplyFailed))?;
+        if is_link_or_junction(&metadata) {
             remove_link(&path)?;
         } else if metadata.is_dir() {
-            fs::remove_dir_all(&path).map_err(|error| io_error(&path, error))?;
+            fs::remove_dir_all(&path)
+                .map_err(|error| crate::fs::io_failure(&path, &error, ErrorCode::ApplyFailed))?;
         } else {
-            fs::remove_file(&path).map_err(|error| io_error(&path, error))?;
+            fs::remove_file(&path)
+                .map_err(|error| crate::fs::io_failure(&path, &error, ErrorCode::ApplyFailed))?;
         }
     }
     Ok(())
@@ -59,35 +73,118 @@ pub(crate) fn prune(root: &Path, keep: &[&str]) -> Result<(), IpcError> {
 
 pub(crate) fn write_entry(path: &Path, bytes: &[u8]) -> Result<(), IpcError> {
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|error| io_error(parent, error))?;
+        fs::create_dir_all(parent)
+            .map_err(|error| crate::fs::io_failure(parent, &error, ErrorCode::ApplyFailed))?;
     }
-    secs_types::fs::write_atomic_bytes(path, bytes).map_err(|error| io_error(path, error))
+    crate::fs::write_atomic(path, bytes, ErrorCode::ApplyFailed)
 }
 
 fn refuse_link(path: &Path) -> Result<(), IpcError> {
     match fs::symlink_metadata(path) {
-        Ok(metadata) if metadata.file_type().is_symlink() => Err(IpcError::new(
+        Ok(metadata) if is_link_or_junction(&metadata) => Err(IpcError::new(
             ErrorCode::InvalidRequest,
             "deployment root must not be a link or junction",
         )
         .with_param("path", path.to_string_lossy())),
         Ok(_) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(io_error(path, error)),
+        Err(error) => Err(crate::fs::io_failure(path, &error, ErrorCode::ApplyFailed)),
     }
 }
 
 fn remove_link(path: &Path) -> Result<(), IpcError> {
-    match fs::remove_file(path) {
-        Ok(()) => Ok(()),
-        Err(file_error) => match fs::remove_dir(path) {
-            Ok(()) => Ok(()),
-            Err(_) => Err(io_error(path, file_error)),
-        },
+    let metadata = fs::symlink_metadata(path)
+        .map_err(|error| crate::fs::io_failure(path, &error, ErrorCode::ApplyFailed))?;
+    let result = if is_directory_entry(&metadata) {
+        fs::remove_dir(path)
+    } else {
+        fs::remove_file(path)
+    };
+    result.map_err(|error| crate::fs::io_failure(path, &error, ErrorCode::ApplyFailed))
+}
+
+/// Whether the entry itself is a directory. `Metadata::is_dir` is false for every link,
+/// but a Windows directory symlink or junction goes with `remove_dir` (PR #189's CI);
+/// a Unix symlink is a file entry and goes with `remove_file`.
+fn is_directory_entry(metadata: &fs::Metadata) -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt as _;
+        // Win32 FILE_ATTRIBUTE_DIRECTORY, set on directory links and junctions too.
+        const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x10;
+        metadata.file_attributes() & FILE_ATTRIBUTE_DIRECTORY != 0
+    }
+    #[cfg(not(windows))]
+    {
+        metadata.is_dir()
     }
 }
 
-fn io_error(path: &Path, error: impl std::fmt::Display) -> IpcError {
-    IpcError::new(ErrorCode::ApplyFailed, error.to_string())
-        .with_param("path", path.to_string_lossy())
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    struct TempDir(PathBuf);
+
+    impl TempDir {
+        fn new() -> Self {
+            static NEXT: AtomicU64 = AtomicU64::new(0);
+            let path = std::env::temp_dir().join(format!(
+                "secs-service-deploy-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ));
+            fs::create_dir_all(&path).unwrap();
+            Self(path)
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn install_refuses_a_prefix_that_is_not_one_file_name_td202() {
+        let temp = TempDir::new();
+        let root = temp.0.join("root");
+        for prefix in ["a/b", "..", ""] {
+            let stage = temp
+                .0
+                .join(format!("stage-{}", prefix.replace(['/', '.'], "_")));
+            fs::create_dir(&stage).unwrap();
+            let error = match install(&root, prefix, &stage) {
+                Err(error) => error,
+                Ok(_) => panic!("accepted prefix {prefix:?}"),
+            };
+            assert_eq!(error.code, ErrorCode::InvalidRequest);
+            assert_eq!(error.detail, "generation prefix must be one file name");
+            assert!(stage.is_dir(), "stage was changed for prefix {prefix:?}");
+        }
+    }
+
+    #[test]
+    fn remove_link_removes_a_file_or_an_empty_directory_td202() {
+        let temp = TempDir::new();
+
+        let file = temp.0.join("file");
+        fs::write(&file, b"file").unwrap();
+        remove_link(&file).unwrap();
+        assert!(!file.exists());
+
+        let empty = temp.0.join("empty");
+        fs::create_dir(&empty).unwrap();
+        remove_link(&empty).unwrap();
+        assert!(!empty.exists());
+
+        let nonempty = temp.0.join("nonempty");
+        fs::create_dir(&nonempty).unwrap();
+        fs::write(nonempty.join("held"), b"held").unwrap();
+        let error = remove_link(&nonempty).unwrap_err();
+        assert_eq!(error.code, ErrorCode::ApplyFailed);
+        assert_eq!(error.params["path"], nonempty.to_string_lossy());
+        assert!(nonempty.is_dir());
+    }
 }

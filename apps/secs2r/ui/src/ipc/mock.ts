@@ -1,11 +1,16 @@
 // Stateful service double: every command returns an envelope, and jobs push
-// events through the same bus as the real transport. Values are synthetic;
-// configuration edits model the service contract, not the numerical engine.
-// The mock owns the contract only (ADR 0014): rule values come from the
-// generated `bindings/rules`, and no-input responses (mode specs, presets,
-// new-project settings) are the service's recorded answers, returned as is.
+// events through the same bus as the real transport. The mock owns the
+// contract only (ADR 0014, ADR 0052): envelopes, the job scheduler and its
+// events, the exclusive job groups, failure injection, undo, the open
+// project's state and the dialog queue. Rules are not copied here: limits,
+// field lists and tables come from the generated `bindings/rules`, and the
+// answers that compute something (mode specs, presets, new-project settings,
+// refused edits, calibration results and their lines, exports, updater
+// transitions) are the service's recorded answers, returned as recorded.
+// Edits that move state (sub entries, bundles, infra, the XO map) stay here.
 import type { Invoke } from "./client";
 import { makeClient } from "./client";
+import { isMonitorJob } from "../state/jobRetention";
 import { createEventBus, type JobEventBus } from "./events";
 import * as fx from "./fixtures";
 import type { ApplyStatus } from "./bindings/ApplyStatus";
@@ -32,14 +37,19 @@ import type { ResultLinesResult } from "./bindings/ResultLinesResult";
 import type { Notice } from "./bindings/Notice";
 import type { MicCalibrationStatus } from "./bindings/MicCalibrationStatus";
 import { umikFile } from "../screens/connect/fixtures";
-import type { ExportKind } from "./bindings/ExportKind";
+import type { ExportParams } from "./bindings/ExportParams";
+import type { ExportResult } from "./bindings/ExportResult";
 import type { CurveReference } from "./bindings/CurveReference";
 import type { MeasurementCurve } from "./bindings/MeasurementCurve";
-import { CALIBRATION_LIMITS as LIMITS, RECENT_PROJECTS_MAX } from "./bindings/rules";
+import type { UpdatePhase } from "./bindings/UpdatePhase";
+import type { UpdatePolicy } from "./bindings/UpdatePolicy";
+import {
+  AGREEMENT_MIN_POSITIONS, CALIBRATION_LIMITS as LIMITS, ENGINE_KEY_FIELDS, JOB_GROUPS, MANUAL_KEY_FIELDS, MIMO_KEY_FIELDS,
+  OUTPUT_RATES, RECENT_PROJECTS_MAX, REPETITIONS, SCALAR_EDITS, TRANSITION_FACTORS,
+} from "./bindings/rules";
 import { isSubRole, roleKind } from "../ui/maps/geometry";
-import { recorded } from "./recorded";
-import { CAMILLA_EXE_FILE, addressProblem, designNameFor, designNameProblem, filterModeName, isFilterKind, mdatFileName, MIMO_MIN_POSITIONS } from "../screens/export/types";
-import { DESIGN_RATE, OUTPUT_RATES, countedRate, sameRate } from "../screens/system/outputRate";
+import { RECORDED_EXPORTS, RECORDED_UPDATE_TRANSITIONS, ordered, recordKey, recorded, recordedCalibration, recordedRefusal, same } from "./recorded";
+import { CAMILLA_EXE_FILE, addressProblem, designNameFor, designNameProblem, isFilterKind } from "../screens/export/types";
 
 export type Method = Request["method"];
 type DialogMethod = Extract<Method, `dialog_${string}`>;
@@ -92,8 +102,8 @@ type MockOptions = {
   /** `apply_status` until `setApplyStatus`; CamillaDSP unreachable and no Equalizer APO by default. */
   applyStatus?: ApplyStatus;
   updateStatus?: UpdateStatus;
-  /** The default playback device's rate that 자동 reads when exporting (48000 by default); null when it cannot be read. */
-  playbackRate?: number | null;
+  /** What `bootstrap` answers besides the fixture's, such as the app settings notice (ADR 0051). */
+  bootstrap?: Partial<import("./bindings/BootstrapInfo").BootstrapInfo>;
 };
 export const ipcError = (code: ErrorCode, detail = "", params: Record<string, string> = {}): IpcError => ({
   code, params, retryable: code === "job_busy" || code === "rew_unreachable" || code === "device_unavailable", detail,
@@ -103,144 +113,43 @@ class MockError extends Error {
 }
 const clone = <T,>(value: T): T => structuredClone(value);
 const clamp = (value: number, [lo, hi]: readonly [number, number]) => Math.min(hi, Math.max(lo, value));
-const monitor = (kind: JobKind) => kind === "level_monitor" || kind === "status_watch";
-/** Service jobs.rs groups, not individual kinds, own exclusivity (audit #155 TD-124). */
-const JOB_GROUPS = {
-  measure: "device", sample_load: "device", mdat_import: "device", level_monitor: "device",
-  calibrate: "compute", recommend_xo: "compute", mimo: "compute",
-  export: "export", apply: "export", status_watch: "status_watch",
-} as const satisfies Record<JobKind, string>;
-const jobGroup = (kind: JobKind) => JOB_GROUPS[kind];
+/** The exclusive group of each job kind, from the service's jobs.rs table (audit #155 TD-124). */
+const GROUP_OF = new Map<JobKind, string>(JOB_GROUPS.flatMap(([group, kinds]) => kinds.map((kind) => [kind, group] as const)));
+const jobGroup = (kind: JobKind) => GROUP_OF.get(kind) ?? kind;
 /** secs-types valid_rc_bands also normalizes settings supplied directly to a job. */
 function validRcBands(bands: CalibrationSettings["rc_bands"]) {
   return bands.filter(({ lo_hz, hi_hz }) => Number.isFinite(lo_hz) && Number.isFinite(hi_hz)
     && lo_hz >= LIMITS.rc_band[0] && hi_hz <= LIMITS.rc_band[1] && lo_hz < hi_hz)
     .sort((a, b) => a.lo_hz - b.lo_hz || a.hi_hz - b.hi_hz).slice(0, LIMITS.rc_bands_max[1]);
 }
-/** Compare the correction inputs used by CalibrationSettings::engine_key/manual_key,
- * not MIMO-only choices or recommendation metadata (audit #155 TD-125). */
-function correctionSettings(s: CalibrationSettings): string {
-  const manual = Object.entries(s.subs_manual).sort(([a], [b]) => a.localeCompare(b)).flatMap(([role, entry]) => {
-    const filters = [entry.hp_hz, entry.hp_hz ? entry.hp_type : "", entry.lp_hz, entry.lp_hz ? entry.lp_type : "", entry.peq];
-    if (entry.mode === "auto") return entry.hp_hz || entry.lp_hz || entry.peq.length ? [[role, "auto", filters]] : [];
-    const layout = entry.mode === "bundle" ? s.bundle_layouts[entry.bundle] : undefined;
-    if (layout && layout.kind !== "values") return [[role, "bundle", entry.bundle, layout.kind, layout.kind === "dba" ? entry.dba_row : "", layout.kind === "dba" ? layout.rear_trim_ms : 0, filters]];
-    return [[role, entry.mode, entry.mode === "bundle" ? entry.bundle : "", entry.gain_db, entry.delay_ms, entry.polarity, entry.allpass, filters]];
-  });
-  return JSON.stringify([
-    s.mode, s.rc_lo, s.rc_hi, s.room_volume_m3, Object.entries(s.xo).sort(([a], [b]) => a.localeCompare(b)),
-    s.mode === "ultra" ? s.ultra_ms : null, manual,
-    Object.values(s.subs_manual).some((entry) => entry.mode === "fixed") ? s.sub_main_delay_ms : null,
-    s.infra_boost_max_db, s.xo_peq_on, s.xo_peq_lo, s.xo_peq_hi, s.boost_max_db,
-    s.rc_hi_basis, s.rc_hi_transition, [...s.rc_bands].sort((a, b) => a.lo_hz - b.lo_hz || a.hi_hz - b.hi_hz).map((band) => [band.lo_hz, band.hi_hz]),
-    s.sample_rate_policy, s.low_protect, s.lf_align, s.mode_decay, s.hf_phase, s.dip_limit, s.input_hp_hz, s.peq_analytic_derivatives,
-  ]);
+const projection = (settings: CalibrationSettings, fields: readonly (keyof CalibrationSettings)[]) => JSON.stringify(fields.map((field) => ordered(settings[field])));
+/** The fields the correction reads (secs-types `engine_key` and `manual_key`, generated lists). */
+const correctionKey = (settings: CalibrationSettings) => projection(settings, [...ENGINE_KEY_FIELDS, ...MANUAL_KEY_FIELDS]);
+/** The fields only MIMO reads (secs-types `mimo_key`, generated list). */
+const mimoKey = (settings: CalibrationSettings) => projection(settings, MIMO_KEY_FIELDS);
+const SCALAR = new Map<string, (typeof SCALAR_EDITS)[number]>(SCALAR_EDITS.map((rule) => [rule.kind, rule]));
+/**
+ * The number a scalar edit sets (`SCALAR_EDITS`, ADR 0052): clamped to its
+ * limits, or refused outside them with the service's recorded refusal. Null
+ * turns the setting off and passes through, and so does a row without a
+ * numeric limit (`limit: "-"`: the booleans, the enums, and
+ * `rc_hi_transition`, whose 1|2|4 rule `TRANSITION_FACTORS` checks).
+ */
+function scalar(edit: SettingEdit): number | null {
+  const rule = SCALAR.get(edit.kind);
+  const [value = null] = Object.entries(edit).flatMap(([key, item]) => key !== "kind" && (typeof item === "number" || item === null) ? [item as number | null] : []);
+  if (!rule || value === null || rule.limit === "-") return value;
+  const limits = LIMITS[rule.limit];
+  if (rule.policy === "clamp") return clamp(value, limits);
+  if (!Number.isFinite(value) || value < limits[0] || value > limits[1]) {
+    throw new MockError(recordedRefusal(edit, true) ?? ipcError("invalid_request", `${rule.field} is outside its range`, { field: rule.field }));
+  }
+  return value;
 }
+
 /** Where the service writes what it applies to CamillaDSP (`app_data_path/applied/camilladsp`). */
 const APPLIED_CAMILLA = "C:/Users/demo/AppData/Roaming/SECS2R/applied/camilladsp";
 const basename = (path: string) => path.split(/[\\/]/).at(-1) ?? path;
-/** The export kind in a timestamped folder name (export_folder.rs). */
-const EXPORT_FOLDER_TAG: Record<ExportKind, string> = {
-  camilla_dsp: "camilla", before_after_mdat: "mdat", staged_mdat: "mdat", filter_text: "text", equalizer_apo: "eqapo", convolution: "convolution",
-};
-/**
- * The RC upper limit a calibration notes (secs-engine `Note::RcLimit`, ADR
- * 0021), with synthetic evidence: ADR 0021's examples, a strict Schroeder
- * frequency of 154 Hz, the lenient 200 Hz band at T60 0.50 s and agreement
- * at 287 Hz. A Schroeder basis needs a room volume (500 Hz without one, no
- * factor); the factor multiplies within 100 Hz and 500 Hz × factor.
- */
-function rcLimitNote(settings: CalibrationSettings, positions: number): Notice {
-  const params: Record<string, string> = { auto: String(settings.rc_hi === null), basis: settings.rc_hi_basis, factor: String(settings.rc_hi_transition) };
-  if (settings.rc_hi !== null) return { code: "rc_limit", params: { ...params, hz: String(settings.rc_hi) } };
-  const volume = (settings.room_volume_m3 ?? 0) > 0;
-  if (volume) params.schroeder_hz = "154";
-  const factor = settings.rc_hi_transition;
-  let hz = 500;
-  if (settings.rc_hi_basis === "agreement") {
-    hz = 287;
-    params.positions = String(positions);
-  } else if (volume) {
-    const lenient = settings.rc_hi_basis === "lenient";
-    if (lenient) Object.assign(params, { band_hz: "200", band_t60_s: "0.5" });
-    hz = clamp((lenient ? 200 : 154) * factor, [100, 500 * factor]);
-  }
-  return { code: "rc_limit", params: { ...params, hz: String(hz) } };
-}
-
-/**
- * `result_lines().rc` after a calibration (secs-service curves.rs): its
- * rc_limit note, then how the room volume set an automatic Schroeder limit.
- * The agreement basis uses no volume.
- */
-function rcLines(limit: Notice | undefined, volume: number | null): Notice[] {
-  if (!limit) return [];
-  if (limit.params.auto !== "true" || limit.params.basis === "agreement") return [limit];
-  return [limit, volume ? { code: "rc_room_volume", params: { volume_m3: String(volume) } } : { code: "rc_no_room_volume", params: {} }];
-}
-
-/** The RC lines the mock's calibration leaves for these settings at this many measured positions (gallery views). */
-export const mockRcLines = (settings: CalibrationSettings, positions: number): Notice[] => rcLines(rcLimitNote(settings, positions), settings.room_volume_m3);
-
-/**
- * The correction band set a calibration with extra bands notes (secs-engine
- * `Note::RcBands`, ADR 0024): the primary band up to its resolved upper
- * limit and the extra bands, sorted, with overlapping or touching bands
- * merged, as `"lo-hi,lo-hi"`. Without extra bands there is no note.
- */
-export function mockRcBandsNotes(settings: CalibrationSettings, positions: number): Notice[] {
-  if (settings.rc_bands.length === 0) return [];
-  const hi = Number(rcLimitNote(settings, positions).params.hz);
-  const all = [[settings.rc_lo, hi], ...settings.rc_bands.map((band) => [band.lo_hz, band.hi_hz])].sort((a, b) => a[0]! - b[0]!);
-  const merged: number[][] = [];
-  for (const [lo, top] of all) {
-    const last = merged.at(-1);
-    if (last && lo! <= last[1]!) last[1] = Math.max(last[1]!, top!);
-    else merged.push([lo!, top!]);
-  }
-  return [{ code: "rc_bands", params: { bands: merged.map(([lo, top]) => `${lo}-${top}`).join(",") } }];
-}
-
-/**
- * Why the service refuses an edit of the RC edges or the extra bands
- * (secs-service `calibration_settings_edit`, ADR 0024): an edge outside its
- * limits, the lower edge at or above a manual upper one (or the reverse), more
- * than four extra bands, or a band outside 20–20000 Hz or not rising (its
- * 1-based place in the list sent); also an input cut outside 10–50 Hz
- * (ADR 0031) or a MIMO early interval outside its limits (ADR 0037).
- * Nothing is clamped.
- */
-export function rcEditRefusal(settings: CalibrationSettings, edit: SettingEdit): IpcError | undefined {
-  const refuse = (field: string, reason: string, params: Record<string, string>) =>
-    ipcError("invalid_request", `${field}: ${reason}`, { field, reason, ...params });
-  const outside = (hz: number, [lo, hi]: readonly [number, number]) => !Number.isFinite(hz) || hz < lo || hz > hi;
-  switch (edit.kind) {
-    case "rc_lo":
-      if (outside(edit.hz, LIMITS.rc_lo)) return refuse("rc_lo", "rc_lo_range", { min: String(LIMITS.rc_lo[0]), max: String(LIMITS.rc_lo[1]) });
-      if (settings.rc_hi !== null && edit.hz >= settings.rc_hi) return refuse("rc_lo", "rc_lo_above_hi", { hi_hz: String(settings.rc_hi) });
-      return undefined;
-    case "rc_hi":
-      if (edit.hz === null) return undefined;
-      if (outside(edit.hz, LIMITS.rc_hi)) return refuse("rc_hi", "rc_hi_range", { min: String(LIMITS.rc_hi[0]), max: String(LIMITS.rc_hi[1]) });
-      if (edit.hz <= settings.rc_lo) return refuse("rc_hi", "rc_hi_below_lo", { lo_hz: String(settings.rc_lo) });
-      return undefined;
-    case "input_hp":
-      // ADR 0031: off is null; a cut outside 10–50 Hz is refused like an RC edge.
-      if (edit.hz !== null && outside(edit.hz, LIMITS.input_hp)) return refuse("input_hp", "input_hp_range", { min: String(LIMITS.input_hp[0]), max: String(LIMITS.input_hp[1]) });
-      return undefined;
-    case "mimo_early":
-      if (outside(edit.ms, LIMITS.mimo_early_ms)) return refuse("mimo_early_ms", "mimo_early_range", { min: String(LIMITS.mimo_early_ms[0]), max: String(LIMITS.mimo_early_ms[1]) });
-      return undefined;
-    case "rc_bands": {
-      if (edit.bands.length > LIMITS.rc_bands_max[1]) return refuse("rc_bands", "rc_band_count", { max: String(LIMITS.rc_bands_max[1]) });
-      const index = edit.bands.findIndex((band) => outside(band.lo_hz, LIMITS.rc_band) || outside(band.hi_hz, LIMITS.rc_band) || band.lo_hz >= band.hi_hz);
-      const band = edit.bands[index];
-      return band ? refuse("rc_bands", "rc_band_range", { index: String(index + 1), lo_hz: String(band.lo_hz), hi_hz: String(band.hi_hz) }) : undefined;
-    }
-    default:
-      return undefined;
-  }
-}
 
 /**
  * Zero dB of the measurement graph (secs-service `measurement_reference`,
@@ -249,7 +158,7 @@ export function rcEditRefusal(settings: CalibrationSettings, edit: SettingEdit):
  * 200–2000 Hz; with no main measured, the first sub at its lowest measured
  * position over 40–120 Hz. `order` is the configuration's roles.
  */
-export function measurementReference(order: readonly string[], measured: readonly { role: string; position: number }[]): CurveReference | null {
+function measurementReference(order: readonly string[], measured: readonly { role: string; position: number }[]): CurveReference | null {
   const lowest = (role: string) => {
     const positions = measured.filter((curve) => curve.role === role).map((curve) => curve.position);
     return positions.length ? Math.min(...positions) : null;
@@ -301,50 +210,11 @@ const mockMeasurement = (role: string, seed: number): number[] =>
 /** The curve kind the service names (secs-service `measurement_curves`). */
 const measurementKind = (role: string): MeasurementCurve["kind"] => (roleKind(role) === "height" ? "top" : roleKind(role));
 
-/**
- * The 극저역 보호 notes a calibration with `low_protect` leaves (ADR 0022,
- * secs-service `scalar_notice`), with synthetic roll-offs: about 30 Hz for
- * the mains, about 22 Hz for the subs. Each sub gets its own high-pass, or
- * keeps the one set by the user. With the RC lower limit below the 20 Hz
- * measurement band and more than 6 dB of boost allowed, the sub bus PEQ
- * cannot hold its boost below the roll-off and keeps its fit (`limited`
- * false); raising the lower limit or lowering the boost limit clears it.
- */
-export function mockLowProtectNotes(settings: CalibrationSettings, roles: readonly string[]): Notice[] {
-  if (!settings.low_protect) return [];
-  const subs = roles.filter(isSubRole);
-  const notes: Notice[] = roles.map((role, i) => {
-    if (!isSubRole(role)) return { code: "low_protect", params: { role, rolloff_hz: String(28 + ((i * 3) % 7)), limited: "true" } };
-    const rolloff = 22 + 2 * subs.indexOf(role);
-    const user = settings.subs_manual[role]?.hp_hz ?? 0;
-    return { code: "low_protect", params: { role, rolloff_hz: String(rolloff), hp_hz: String(user > 0 ? user : rolloff / Math.SQRT2), limited: "true" } };
-  });
-  if (subs.length > 0 && settings.rc_lo < 20 && settings.boost_max_db > 6) {
-    notes.push({ code: "low_protect", params: { role: subs.join(" + "), rolloff_hz: "22", limited: "false" } });
-  }
-  return notes;
-}
-
-/** The 입력 저역 컷 note a calibration with `input_hp_hz` leaves (ADR 0031, secs-service `scalar_notice`). */
-export function mockInputHpNotes(settings: CalibrationSettings): Notice[] {
-  return settings.input_hp_hz === null ? [] : [{ code: "input_hp", params: { hz: String(settings.input_hp_hz), order: "8" } }];
-}
-
-/** Settings edits that change only the MIMO result (secs-types `mimo_key`). */
-const MIMO_ONLY_EDITS: ReadonlySet<SettingEdit["kind"]> = new Set(["fsiso", "mimo_low", "mimo_max", "mimo_fir", "mimo_early", "mimo_seat_guard"]);
-
-/** The service fails a calibration on the agreement basis below three measured positions (secs-service `check_rc_agreement`). */
+/** The service fails a calibration on the agreement basis below the positions it needs (secs-service `check_rc_agreement`). */
 const rcAgreementError = (settings: CalibrationSettings, positions: number): IpcError | undefined =>
-  settings.rc_hi === null && settings.rc_hi_basis === "agreement" && positions < 3
-    ? ipcError("engine_input", "RC agreement requires at least 3 measured positions", { reason: "rc_agreement_positions", measured: String(positions), required: "3" })
+  settings.rc_hi === null && settings.rc_hi_basis === "agreement" && positions < AGREEMENT_MIN_POSITIONS
+    ? ipcError("engine_input", `RC agreement requires at least ${AGREEMENT_MIN_POSITIONS} measured positions`, { reason: "rc_agreement_positions", measured: String(positions), required: String(AGREEMENT_MIN_POSITIONS) })
     : undefined;
-
-/** The folder stamp `20261015-094107` (clock.rs `stamp`) in local time; Date.now follows the tour's clock. */
-const stamp = () => {
-  const date = new Date(Date.now());
-  const pad = (value: number) => String(value).padStart(2, "0");
-  return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}-${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`;
-};
 
 const updateBase: UpdateStatus = { current: fx.bootstrapInfo.version, policy: "auto", phase: { kind: "up_to_date" }, checked_at: "2026-10-30T09:00:00Z", notice: null };
 const updateVersion = "1.2.0";
@@ -362,6 +232,32 @@ export const updateStates = {
   notice: { ...updateBase, current: updateVersion, notice: updateNotice },
   skippedNotice: { ...updateBase, current: updateVersion, notice: { ...updateNotice, from: "1.0.0", skipped: true } },
 } satisfies Record<string, UpdateStatus>;
+
+type UpdateMethod = (typeof RECORDED_UPDATE_TRANSITIONS)[number]["params"]["method"];
+/**
+ * The updater's next phase after this request in this policy, as the app
+ * recorded it (`update_transitions.json`), or its refusal. The record names
+ * the next phase's kind; the version it carries comes from the phase it
+ * leaves. The update requests were recorded in one policy per phase, which
+ * does not change their answer.
+ */
+function nextPhase(method: UpdateMethod, policy: UpdatePolicy, from: UpdatePhase): UpdatePhase {
+  const entries = RECORDED_UPDATE_TRANSITIONS.filter((entry) => entry.params.method === method && entry.params.phase === from.kind);
+  const entry = entries.find((e) => e.params.policy === policy) ?? entries[0];
+  if (!entry) return from;
+  if ("error" in entry.data) throw new MockError(ipcError(entry.data.error.code, entry.data.error.detail));
+  const kind = entry.data.phase;
+  if (kind === from.kind) return from;
+  const version = "version" in from ? from.version : updateVersion;
+  switch (kind) {
+    case "downloading": return { kind, version, received: 0, total: null };
+    case "available": case "installing": return { kind, version };
+    case "ready": return { kind, version, install: "on_exit" };
+    case "portable": return { kind, version, url: updateUrl };
+    case "failed": return { kind, reason: "Could not check for updates" };
+    default: return { kind };
+  }
+}
 
 export function createMockService(options: MockOptions = {}): MockService {
   const tickMs = options.tickMs ?? 450;
@@ -411,16 +307,10 @@ export function createMockService(options: MockOptions = {}): MockService {
   };
   let playing: { role: string; master: number; ticks: number } | null = null;
   let subsOnly = false;
-  let calibrationPositions: number | null = results.calibration && !results.calibration.cached ? project?.positions.length ?? 0 : null;
-  let calibrationSettings: string | null = calibrationPositions === null ? null : correctionSettings(settings);
-  // ResultBook::mimo: live runs keep their measured positions; cached runs use the project.
-  const mimoExport = (): ResultsSummary["mimo_export"] => {
-    if (!settings.mimo_on) return "off";
-    if ((calibrationPositions ?? project?.positions.length ?? 0) < MIMO_MIN_POSITIONS) return "too_few_positions";
-    if (!results.mimo) return "none";
-    if (!results.calibration || results.calibration.stale || results.mimo.stale) return "stale";
-    return results.mimo.support_count === 0 ? "no_supports" : "included";
-  };
+  /** What the live correction ran on (`correctionKey`), for the MIMO run that follows it; null for none or a cached one. */
+  let calibratedKey: string | null = results.calibration && !results.calibration.cached ? correctionKey(settings) : null;
+  /** The record key of the stored correction's settings, which its lines are looked up by. */
+  let resultKey = recordKey(settings);
   let nextJob = 1;
   let nextUndo = 1;
   let timer: ReturnType<typeof setInterval> | null = null;
@@ -448,15 +338,16 @@ export function createMockService(options: MockOptions = {}): MockService {
     };
   };
   let inputRevision = 0;
+  /** A stored MIMO result falls behind, and so does its place in an export. */
+  const mimoBehind = () => {
+    if (results.mimo) results = { ...results, mimo: { ...results.mimo, stale: true }, mimo_export: "stale" };
+  };
   const dirty = (reason = "settings", recommendationChanged = true) => {
     inputRevision++;
     if (recommendationChanged && Object.keys(settings.xo_rec).length > 0) results = { ...results, xo_rec_stale: true };
     project = { ...needProject(), dirty: true };
-    results = {
-      ...results,
-      calibration: results.calibration ? { ...results.calibration, stale: true, stale_reason: reason } : null,
-      mimo: results.mimo ? { ...results.mimo, stale: true } : null,
-    };
+    results = { ...results, calibration: results.calibration ? { ...results.calibration, stale: true, stale_reason: reason } : null };
+    mimoBehind();
   };
   const syncMeasure = () => {
     measureConfig.roles = config.speakers.map((s) => s.role);
@@ -464,13 +355,13 @@ export function createMockService(options: MockOptions = {}): MockService {
     for (const record of records) record.done = measureConfig.roles.length > 0 && measureConfig.roles.every((role) => record.roles.includes(role));
   };
   syncMeasure();
-  const state = () => clone({ project: needProject(), results, config, dsp, layout, settings, target, measureConfig, levels, exportFolder, records, micCalFile, micCalAttached, subsOnly, calibrationPositions, calibrationSettings });
+  const state = () => clone({ project: needProject(), results, config, dsp, layout, settings, target, measureConfig, levels, exportFolder, records, micCalFile, micCalAttached, subsOnly, calibratedKey, resultKey });
   type State = ReturnType<typeof state>;
   const undos = new Map<string, State>();
   const savedProjects = new Map<string, State>();
   const savedTargets = new Map<string, typeof target>();
   const restore = (s: State) => {
-    ({ project, results, config, dsp, layout, settings, target, measureConfig, levels, exportFolder, records, micCalFile, micCalAttached, subsOnly, calibrationPositions, calibrationSettings } = clone(s));
+    ({ project, results, config, dsp, layout, settings, target, measureConfig, levels, exportFolder, records, micCalFile, micCalAttached, subsOnly, calibratedKey, resultKey } = clone(s));
   };
   const remember = () => {
     const token = `undo-${nextUndo++}`;
@@ -519,7 +410,7 @@ export function createMockService(options: MockOptions = {}): MockService {
     results = clone(fx.noResults); exportFolder = { folder: "C:/Users/demo/Documents/SECS_export", stored: false };
     records = info.positions.map((position) => ({ position, roles: config.speakers.map((s) => s.role), sources: Object.fromEntries(config.speakers.map((s) => [s.role, "measured"])), done: true }));
     micCalFile = null; micCalAttached.clear();
-    undos.clear(); subsOnly = false; calibrationPositions = null; calibrationSettings = null; syncMeasure();
+    undos.clear(); subsOnly = false; calibratedKey = null; resultKey = recordKey(settings); syncMeasure();
   };
   const dialog = (method: DialogMethod, fallback: string): string | null => {
     const queue = dialogs.get(method);
@@ -570,7 +461,7 @@ export function createMockService(options: MockOptions = {}): MockService {
   const step = (job: SimJob) => {
     job.ticks++;
     if (job.cancelRequested) { finish(job, "cancelled", ipcError("cancelled", "cancelled by the user")); return; }
-    if (monitor(job.kind)) {
+    if (isMonitorJob(job.kind)) {
       const failure = jobFailures.get(job.kind);
       if (failure) { finish(job, "failed", failure); return; }
       if (job.kind === "level_monitor" && playing && playFailure) {
@@ -617,7 +508,7 @@ export function createMockService(options: MockOptions = {}): MockService {
     }
   };
   const tick = () => { for (const job of [...jobs.values()]) step(job); };
-  const busy = () => [...jobs.values()].some((job) => !monitor(job.kind) || job.cancelRequested);
+  const busy = () => [...jobs.values()].some((job) => !isMonitorJob(job.kind) || job.cancelRequested);
   /** `then`: stages that follow the kind's own, reached through `phase` (the combined calibrate). */
   const start = (kind: JobKind, complete: () => JobResult, error?: IpcError, then?: { stages: Stage[]; phase: Omit<NonNullable<SimJob["phase"]>, "at"> }) => {
     if ([...jobs.values()].some((job) => jobGroup(job.kind) === jobGroup(kind))) throw new MockError(ipcError("job_busy", `a ${kind} job is running`));
@@ -648,8 +539,14 @@ export function createMockService(options: MockOptions = {}): MockService {
         if (other.mode === "bundle" && other.bundle === entry.bundle) Object.assign(other, clone({ hp_hz: entry.hp_hz, lp_hz: entry.lp_hz, hp_type: entry.hp_type, lp_type: entry.lp_type, peq: entry.peq }));
       }
     };
-    const refusal = rcEditRefusal(settings, edit);
-    if (refusal) throw new MockError(refusal);
+    // An edit the service was recorded refusing, a number outside a refusing
+    // limit (SCALAR_EDITS), or a factor outside TRANSITION_FACTORS answers the
+    // recorded refusal, and nothing is stored.
+    const refused = recordedRefusal(edit)
+      ?? (edit.kind === "rc_hi_transition" && !(TRANSITION_FACTORS as readonly number[]).includes(edit.factor) ? recordedRefusal(edit, true) : undefined);
+    if (refused) throw new MockError(refused);
+    const value = scalar(edit);
+    const before = { correction: correctionKey(settings), mimo: mimoKey(settings) };
     switch (edit.kind) {
       case "mode": settings.mode = edit.mode; break;
       case "sample_rate_policy": settings.sample_rate_policy = edit.policy; break;
@@ -659,25 +556,24 @@ export function createMockService(options: MockOptions = {}): MockService {
       case "mode_decay": settings.mode_decay = edit.on; break;
       case "hf_phase": settings.hf_phase = edit.on; break;
       case "dip_limit": settings.dip_limit = edit.on; break;
-      case "input_hp": settings.input_hp_hz = edit.hz; break;
-      case "ultra_ms": settings.ultra_ms = clamp(edit.ms, LIMITS.ultra_ms); break;
-      case "rc_lo": settings.rc_lo = edit.hz; break;
-      case "rc_hi": settings.rc_hi = edit.hz; break;
+      // The scalar edits of one field each: the field and the number from SCALAR_EDITS.
+      case "input_hp": case "ultra_ms": case "rc_lo": case "rc_hi": case "boost_max": case "infra_boost":
+      case "main_delay": case "fsiso": case "mimo_low": case "mimo_early":
+        Object.assign(settings, { [SCALAR.get(edit.kind)!.field]: value });
+        break;
+      case "mimo_max": settings.mimo_max_supports = Math.round(value ?? 0); break;
       case "rc_bands": settings.rc_bands = edit.bands.map((band) => ({ ...band })).sort((a, b) => a.lo_hz - b.lo_hz); break;
       case "rc_hi_basis": settings.rc_hi_basis = edit.basis; break;
-      case "rc_hi_transition":
-        if (edit.factor !== 1 && edit.factor !== 2 && edit.factor !== 4) throw new MockError(ipcError("invalid_request", "RC transition factor must be 1, 2 or 4", { field: "rc_hi_transition" }));
-        settings.rc_hi_transition = edit.factor; break;
-      case "room_volume": settings.room_volume_m3 = edit.m3 > LIMITS.volume[0] ? Math.min(edit.m3, LIMITS.volume[1]) : null; settings.room_dims_m = null; break;
+      case "rc_hi_transition": settings.rc_hi_transition = edit.factor; break;
+      case "room_volume": settings.room_volume_m3 = edit.m3 > LIMITS.volume[0] ? value : null; settings.room_dims_m = null; break;
       case "room_dims": {
         const dims = edit.dims.map((n) => clamp(n, LIMITS.dim)) as [number, number, number];
         settings.room_dims_m = dims.every((n) => n >= LIMITS.dim_valid[0] && n <= LIMITS.dim_valid[1]) ? dims : null;
         if (settings.room_dims_m) settings.room_volume_m3 = Math.min(LIMITS.volume[1], Math.round(dims[0] * dims[1] * dims[2] * 10) / 10);
         break;
       }
-      case "boost_max": settings.boost_max_db = clamp(edit.db, LIMITS.boost); break;
       case "xo_rec_include": settings.xo_rec_include = edit.on; break;
-      case "xo": settings.xo[edit.group] = Math.round(clamp(edit.hz, LIMITS.xo)); settings.xo_rec_include = false; break;
+      case "xo": settings.xo[edit.group] = Math.round(value ?? edit.hz); settings.xo_rec_include = false; break;
       case "xo_peq":
         if (edit.on !== undefined) settings.xo_peq_on = edit.on;
         if (edit.lo !== undefined) settings.xo_peq_lo = clamp(edit.lo, LIMITS.xo_peq);
@@ -691,7 +587,6 @@ export function createMockService(options: MockOptions = {}): MockService {
           e.hp_type = edit.type; e.lp_type = edit.type;
         }
         break;
-      case "infra_boost": settings.infra_boost_max_db = clamp(edit.db, LIMITS.infra_boost); break;
       case "sub_mode": {
         const e = sub(edit.role);
         e.mode = edit.mode.startsWith("bundle:") ? "bundle" : edit.mode;
@@ -706,7 +601,7 @@ export function createMockService(options: MockOptions = {}): MockService {
       case "sub_layout": case "rear_trim": {
         const entry = settings.bundle_layouts[edit.bundle] ??= { kind: "values", rear_trim_ms: 0 };
         if (edit.kind === "sub_layout") entry.kind = edit.layout;
-        else entry.rear_trim_ms = clamp(edit.ms, LIMITS.rear_trim);
+        else entry.rear_trim_ms = value ?? 0;
         const first = Object.entries(settings.subs_manual).find(([, s]) => s.mode === "bundle" && s.bundle === edit.bundle);
         if (first) share(first[0]);
         break;
@@ -720,27 +615,23 @@ export function createMockService(options: MockOptions = {}): MockService {
         if (edit.type !== "off") e[type] = edit.type;
         share(edit.role); break;
       }
-      case "main_delay": settings.sub_main_delay_ms = clamp(edit.ms, LIMITS.main_delay); break;
       case "mimo_on": settings.mimo_on = edit.on; break;
-      case "fsiso": settings.fsiso = clamp(edit.hz, LIMITS.fsiso); break;
-      case "mimo_low": settings.mimo_low = edit.hz === null ? null : clamp(edit.hz, LIMITS.mimo_low); break;
-      case "mimo_max": settings.mimo_max_supports = Math.round(clamp(edit.count, LIMITS.mimo_max)); break;
       case "mimo_fir": settings.mimo_fir = edit.on; break;
-      case "mimo_early": settings.mimo_early_ms = edit.ms; break;
       case "mimo_seat_guard": settings.mimo_seat_guard = edit.on; break;
       case "analytic_derivatives":
         if (edit.peq !== undefined) settings.peq_analytic_derivatives = edit.peq;
         if (edit.mimo_iir !== undefined) settings.mimo_iir_analytic_derivatives = edit.mimo_iir;
         break;
     }
-    // MIMO's own settings are not in the correction's key (secs-types `engine_key`, `mimo_key`): they
-    // leave the correction current and only MIMO behind, which is what 'MIMO만 계산' is for. Turning
-    // MIMO on or off is in neither key.
-    if (edit.kind === "mimo_on" || edit.kind === "xo_rec_include") project = { ...needProject(), dirty: true };
-    else if (MIMO_ONLY_EDITS.has(edit.kind)) {
+    // Which result falls behind is read from the generated key fields: a correction field makes the
+    // correction (and MIMO on it) stale; a field only MIMO reads leaves the correction current and only
+    // MIMO behind, which is what 'MIMO만 계산' is for; a field in neither key (MIMO on or off, the
+    // recommendation's inclusion) changes the project only.
+    if (correctionKey(settings) !== before.correction) dirty("settings", edit.kind !== "xo");
+    else {
       project = { ...needProject(), dirty: true };
-      results = { ...results, mimo: results.mimo ? { ...results.mimo, stale: true } : null };
-    } else dirty("settings", edit.kind !== "xo");
+      if (mimoKey(settings) !== before.mimo) mimoBehind();
+    }
     return settings;
   };
   const warnings = (): Notice[] => Object.entries(settings.subs_manual).flatMap(([role, sub]) => sub.hp_hz > 0 && sub.lp_hz > 0 && sub.lp_hz < 2 * sub.hp_hz
@@ -762,39 +653,37 @@ export function createMockService(options: MockOptions = {}): MockService {
         ? { ...score.after, in1_20: fx.scoreFigures(score.role).within[2], gd_20: fx.scoreFigures(score.role).gd[2] }
         : { ...score.after } })) ?? [],
       late_energy: results.calibration?.late_energy.map(({ role, position, after_db }) => ({ role, position,
-        after_mimo_db: supports > 0 ? fx.lateAt(role, position)[2] : after_db })) ?? [] } };
-  };
-  /**
-   * Why `calibrate { mimo: true }` cannot start, in the service's order
-   * (start_calibration: the explicit GPU, then check_mimo_preconditions).
-   */
-  const mimoRefusal = (s: CalibrationSettings, positions: number): IpcError | undefined => {
-    const status = computeStatus();
-    if (status.preference === "gpu" && !status.gpu_available) return ipcError("compute_unavailable", "no supported GPU is available", { reason: status.reason });
-    if (!s.mimo_on) return ipcError("engine_input", "invalid input: MIMO is disabled");
-    if (positions < MIMO_MIN_POSITIONS) return ipcError("engine_input", `invalid input: MIMO needs ${MIMO_MIN_POSITIONS} measured positions, the project has ${positions}`);
-    return undefined;
+        after_mimo_db: supports > 0 ? fx.lateAt(role, position)[2] : after_db })) ?? [] },
+      mimo_export: "included" };
   };
   // Mock-only design values: compact wire summaries carry roles, not DSP filters.
   const resultSubs = () => results.calibration?.sub_roles.map((role, i) => ({
     ...clone(fx.signalChain.subs[i % fx.signalChain.subs.length]!), role,
   })) ?? [];
-  const resultLines = (): ResultLinesResult => ({
-    stale: results.calibration?.stale ?? false,
-    channels: results.calibration?.scorecard.map((s) => ({ role: s.role, within_1db_pct: [s.before.in1_20, s.after.in1_20], gd_spread_ms: [s.before.gd_20, s.after.gd_20], peq_count: 2,
-      fir_taps: fx.modeSpec(results.calibration!.mode).fir_taps, xo_hz: settings.xo[fx.GROUP_KEYS[fx.groupOf(s.role)]!] ?? null, mimo_support_count: results.mimo ? 2 : null })) ?? [],
-    total_delay_ms: results.calibration?.latency_ms ?? null, notes: results.calibration?.notes ?? [],
-    rc: rcLines(results.calibration?.notes.find((note) => note.code === "rc_limit"), settings.room_volume_m3),
-    ba: results.calibration && results.calibration.sub_roles.length >= 2 ? {
-      stale: results.calibration.stale, subs_only: subsOnly, band_hz: [20, 200], flatness_db: [6.2, 1.8], seat_spread_db: [4.5, 2.1], positions: records.length,
-      rows: resultSubs().map((s) => ({ role: s.role, mode: s.mode, gain_db: s.gain_db, delay_ms: s.delay_ms, polarity: s.polarity,
-        allpass: s.allpass, high_pass: [s.hp_hz, s.hp_type], low_pass: [s.lp_hz, s.lp_type], peq: s.peq })),
-      layouts: Object.entries(settings.bundle_layouts).map(([bundle, entry]) => ({ bundle, kind: entry.kind,
-        members: Object.entries(settings.subs_manual).filter(([, s]) => s.mode === "bundle" && s.bundle === bundle).map(([role]) => role),
-        front: [], rear: [], rear_ms: entry.rear_trim_ms, auto_ms: null, trim_ms: entry.rear_trim_ms, peq: [],
-      })), warnings: warnings(),
-    } : null,
-  });
+  /**
+   * The service's recorded export of this kind (ADR 0052): its folder name,
+   * files, output rate and notes, written below the explicit folder or the
+   * export folder. A design name or extra rates that were not recorded get
+   * the kind's record. Whether the result was current is this session's.
+   */
+  const exported = (params: ExportParams, stale: boolean): ExportResult => {
+    const kind = RECORDED_EXPORTS.filter((entry) => entry.params.kind === params.kind);
+    const entry = kind.find((e) => e.params.design_name === (params.design_name ?? null) && same(e.params.extra_rates, params.extra_rates ?? [])) ?? kind[0]!;
+    const folder = params.folder || `${exportFolder.folder.replace(/[\\/]+$/, "")}/${entry.data.folder}`;
+    return { ...clone(entry.data), folder, files: entry.data.files.map((file) => `${folder}/${file}`), stale };
+  };
+  /**
+   * The recorded lines of the stored correction's settings (ADR 0052), with
+   * this session's state: whether the correction is still current, which run
+   * the BA lines come from, and the notes the stored summary carries.
+   */
+  const resultLines = (): ResultLinesResult => {
+    const calibration = results.calibration;
+    if (!calibration) return { stale: false, channels: [], total_delay_ms: null, notes: [], notices: [], rc: [], ba: null };
+    const { lines } = recordedCalibration(resultKey);
+    return { ...lines, stale: calibration.stale, notes: calibration.notes, notices: calibration.notices,
+      ba: lines.ba && { ...lines.ba, stale: calibration.stale, subs_only: subsOnly } };
+  };
   const resultCurves = (params: Extract<Request, { method: "result_curves" }>["params"]): ResultCurvesResult => {
     const role = params.channel ?? config.speakers.find((s) => !s.role.startsWith("SW"))?.role ?? "L";
     const hasMeasurement = records.some((r) => r.roles.includes(role));
@@ -824,7 +713,7 @@ export function createMockService(options: MockOptions = {}): MockService {
 
   const answer = (req: Request): Response => {
     switch (req.method) {
-      case "bootstrap": return { method: req.method, data: { ...fx.bootstrapInfo, log_dir: "C:/Users/demo/AppData/Roaming/SECS2R/logs" } };
+      case "bootstrap": return { method: req.method, data: { ...fx.bootstrapInfo, log_dir: "C:/Users/demo/AppData/Roaming/SECS2R/logs", ...options.bootstrap } };
       case "project_info": return { method: req.method, data: needProject() };
       case "project_new": {
         const p = req.params;
@@ -839,7 +728,7 @@ export function createMockService(options: MockOptions = {}): MockService {
         if (saved) {
           restore(saved);
           if (results.calibration) results.calibration.cached = true;
-          calibrationPositions = null; calibrationSettings = null;
+          calibratedKey = null;
         } else reset({ ...fx.projectInfo, path: req.params.path, name: basename(req.params.path).replace(/\.secs$/i, ""), dirty: false });
         return { method: req.method, data: needProject() };
       }
@@ -852,7 +741,7 @@ export function createMockService(options: MockOptions = {}): MockService {
         savedProjects.set(path, state());
         return { method: req.method, data: project };
       }
-      case "results": return { method: req.method, data: { ...results, mimo_export: mimoExport() } };
+      case "results": return { method: req.method, data: results };
       case "jobs": return { method: req.method, data: [...jobs.values()].map(snapshot) };
       case "job_cancel": {
         const job = jobs.get(req.params.job);
@@ -867,13 +756,18 @@ export function createMockService(options: MockOptions = {}): MockService {
         const before = JSON.stringify(config);
         const p = req.params;
         if (!["none", "mdat", ...fx.measureMethods.methods].includes(p.method)) invalid("unknown measurement method");
-        if (p.repetitions !== null && ![1, 2, 4, 8].includes(p.repetitions)) invalid("invalid repetitions");
+        if (p.repetitions !== null && !(REPETITIONS as readonly number[]).includes(p.repetitions)) invalid("invalid repetitions");
         measureConfig = { ...measureConfig, method: p.method, input_device: p.input_device ?? measureConfig.input_device,
           output_device: p.output_device ?? measureConfig.output_device, input_channel: p.input_channel ?? measureConfig.input_channel,
           sweep_length: p.sweep_length ?? measureConfig.sweep_length, repetitions: p.repetitions ?? measureConfig.repetitions,
           sweep_level_dbfs: p.sweep_level_dbfs ?? measureConfig.sweep_level_dbfs, timing: p.timing ?? measureConfig.timing,
           loopback_input_channel: p.loopback_input_channel ?? measureConfig.loopback_input_channel,
           timing_ref_output: p.timing_ref_output ?? measureConfig.timing_ref_output, share_mode: p.share_mode ?? measureConfig.share_mode };
+        // State only: the REW executable as sent ("" clears it); the service's path check is not copied (tests inject its refusal).
+        if (p.rew_executable !== undefined) {
+          const { rew_executable: _stored, ...rest } = measureConfig;
+          measureConfig = p.rew_executable ? { ...rest, rew_executable: p.rew_executable } : rest;
+        }
         if (p.output_device) config.device = p.output_device;
         if (p.output_channels.length) {
           config = fx.configOf(config.preset, config.speakers.map((s, i) => ({ ...s, bands: s.bands.map((b, j) => j === 0 ? { ...b, out: p.output_channels[i] ?? b.out } : b) })), config.device);
@@ -985,28 +879,17 @@ export function createMockService(options: MockOptions = {}): MockService {
         const revision = inputRevision;
         const positions = needProject().positions.length;
         const withMimo = !!req.params.mimo && !req.params.subs_only;
-        // start_calibration refuses a MIMO it cannot run before the job starts.
-        const refusal = withMimo ? mimoRefusal(captured, positions) : undefined;
-        if (refusal) throw new MockError(refusal);
+        // The service's recorded summary of a calibration on these settings (ADR 0052); only whether
+        // the inputs changed while it ran is this session's.
         const commit = () => {
-          const roles = config.speakers.filter((s) => !s.role.startsWith("SW")).map((s) => s.role);
-          const summary = clone(fx.calibrationSummary);
+          const key = recordKey(captured);
+          const summary = recordedCalibration(key).results.calibration!;
           if (revision !== inputRevision) { summary.stale = true; summary.stale_reason = results.calibration?.stale_reason ?? "settings"; }
-          summary.mode = captured.mode; summary.ultra_ms = captured.ultra_ms;
-          const spec = fx.modeSpec(captured.mode);
-          summary.latency_ms = spec.max_latency_ms;
-          summary.verdict.added_delay_ms = spec.max_latency_ms;
-          summary.notes = [rcLimitNote(captured, positions), ...mockRcBandsNotes(captured, positions), ...mockLowProtectNotes(captured, config.speakers.map((s) => s.role)), ...mockInputHpNotes(captured)];
-          summary.notes.push({ code: "polarity_reversed", params: { role: "Rs", confidence: "0.94", compared: "3", opposite: "3" } });
-          summary.notes.push({ code: "pair_phase", params: { a: "L", b: "Ls", bands: "89:112:170.0:-20.3,112:141:174.0:-24.1" } });
-          summary.scorecard = roles.map((role) => ({ ...clone(fx.scorecard.find((score) => score.role === role) ?? fx.scorecard[0]!), role }));
-          summary.late_energy = fx.lateEnergy(roles, needProject().positions);
-          summary.main_roles = roles;
-          summary.sub_roles = config.speakers.filter((s) => s.role.startsWith("SW")).map((s) => s.role);
           if (!req.params.subs_only) {
-            results = { ...results, calibration: summary, mimo: results.mimo ? { ...results.mimo, stale: true } : null };
-            calibrationPositions = positions;
-            calibrationSettings = correctionSettings(captured);
+            results = { ...results, calibration: summary };
+            mimoBehind();
+            calibratedKey = correctionKey(captured);
+            resultKey = key;
           }
           subsOnly = req.params.subs_only;
         };
@@ -1030,14 +913,12 @@ export function createMockService(options: MockOptions = {}): MockService {
           return { kind: "xo", data: { best, candidates: [60, 80, 100, 120] } };
         }) };
       case "mimo": {
-        const project = needProject();
+        needProject();
         // start_mimo compares raw engine keys; only calibration snapshots normalize bands.
         const captured = clone(req.params.settings ?? settings);
-        const refusal = mimoRefusal(captured, project.positions.length);
-        if (refusal) throw new MockError(refusal);
-        if (!results.calibration || results.calibration.cached || calibrationSettings === null) throw new MockError(ipcError("engine_input", "calibration must run before MIMO"));
+        if (!results.calibration || results.calibration.cached || calibratedKey === null) throw new MockError(ipcError("engine_input", "calibration must run before MIMO"));
         if (results.calibration.stale) throw new MockError(ipcError("stale_inputs", "calibration result is stale"));
-        if (correctionSettings(captured) !== calibrationSettings) throw new MockError(ipcError("stale_inputs", "MIMO settings do not match the calibration result"));
+        if (correctionKey(captured) !== calibratedKey) throw new MockError(ipcError("stale_inputs", "MIMO settings do not match the calibration result"));
         return { method: req.method, data: start("mimo", () => {
           commitMimo(captured);
           return { kind: "mimo" };
@@ -1068,70 +949,24 @@ export function createMockService(options: MockOptions = {}): MockService {
         if (extraRates.length > 0 && kind !== "convolution") {
           throw new MockError(ipcError("invalid_request", "extra_rates only applies to convolution export", { reason: "extra_rates" }));
         }
-        // export.rs resolve_output_rate: the REW mdat stays at 48 kHz; 자동 reads the default playback device
-        // (`playbackRate`) and writes 48 kHz with an `output_rate_fallback` note when it cannot use that rate.
-        const playback = options.playbackRate === undefined ? DESIGN_RATE : options.playbackRate;
-        const rated = kind === "before_after_mdat" || kind === "staged_mdat" ? { output_rate: DESIGN_RATE, notes: [] as Notice[] }
-          : dsp.fields.output_rate !== "auto" ? { output_rate: dsp.fields.output_rate.fixed, notes: [] as Notice[] }
-          : playback !== null && (OUTPUT_RATES as readonly number[]).includes(playback) ? { output_rate: playback, notes: [] as Notice[] }
-          : { output_rate: DESIGN_RATE, notes: [{ code: "output_rate_fallback", params: playback === null ? {} : { rate: String(playback) } }] as Notice[] };
-        const outputRate = rated.output_rate;
-        for (const [index, rate] of extraRates.entries()) {
+        for (const rate of extraRates) {
           if (!(OUTPUT_RATES as readonly number[]).includes(rate)) throw new MockError(ipcError("invalid_request", "unsupported extra output sample rate", { rate: String(rate) }));
-          if ((rate === outputRate && dsp.fields.output_rate !== "auto") || extraRates.indexOf(rate) !== index) {
-            throw new MockError(ipcError("invalid_request", "extra output sample rates must be distinct from the main rate and each other", { rate: String(rate) }));
-          }
         }
         const scope = req.params.mdat_scope ?? "all";
         if (kind === "before_after_mdat" && scope === "measurements") {
           if (project.positions.length === 0) throw new MockError(ipcError("engine_input", "no measurements to export", { reason: "no_measurements" }));
-          const folder = req.params.folder || `${exportFolder.folder.replace(/[\\/]+$/, "")}/SECS_mdat_measurements_${stamp()}`;
-          const files = [`${folder}/${mdatFileName(scope, settings)}`];
-          return { method: req.method, data: start("export", () => ({ kind: "export", data: { folder, files, stale: false, ...rated } })) };
+          return { method: req.method, data: start("export", () => ({ kind: "export", data: exported(req.params, false) })) };
         }
         if (!results.calibration) throw new MockError(ipcError("engine_input", "no calibration result to export"));
         if ((kind === "staged_mdat" || kind === "before_after_mdat") && results.calibration.cached && results.calibration.stale) {
           throw new MockError(ipcError("export_scope", `${kind} requires a current calibration result`, { reason: "stale_cache" }));
         }
         const calibration = results.calibration;
-        const hasMimo = mimoExport() === "included";
         if (kind === "filter_text" || kind === "equalizer_apo") {
-          const reason = kind === "filter_text" ? calibration.sub_roles.length > 0 ? "subs" : hasMimo ? "mimo" : null : null;
+          const reason = kind === "filter_text" ? calibration.sub_roles.length > 0 ? "subs" : results.mimo_export === "included" ? "mimo" : null : null;
           if (reason) throw new MockError(ipcError("export_scope", `${kind} cannot export a result with ${reason}`, { reason }));
         }
-        // export_folder.rs: an explicit folder as is, else SECS_<kind>_<RC_BA[_MIMO]>_<the result's mode>_<stamp>
-        // below the export base, with CamillaDSP in its own `camilladsp`.
-        const timestamped = `${exportFolder.folder.replace(/[\\/]+$/, "")}/SECS_${EXPORT_FOLDER_TAG[kind]}_${hasMimo ? "RC_BA_MIMO" : "RC_BA"}_${calibration.mode}_${stamp()}`;
-        const base = (req.params.folder || exportFolder.folder).replace(/[\\/]+$/, "");
-        const folder = designName !== null ? `${base}/SECS_${kind}_${designName}` : req.params.folder || (kind === "camilla_dsp" ? `${timestamped}/camilladsp` : timestamped);
-        if (kind === "convolution") {
-          // The synthetic chain feeds each main to itself and every sub;
-          // mock MIMO adds support to those same pairs. LFE feeds the subs.
-          const pairs = calibration.main_roles.flatMap((input) => [input, ...calibration.sub_roles].map((output) => `${input}_to_${output}`));
-          pairs.push(...calibration.sub_roles.map((output) => `LFE_to_${output}`));
-          // secs-filters: the extra rates go into `<rate>Hz` folders beside the output rate's files.
-          const files = ["", ...extraRates.filter((rate) => rate !== outputRate).map((rate) => `/${rate}Hz`)].flatMap((sub) => pairs.flatMap((pair) => [`${folder}${sub}/${pair}.wav`, `${folder}${sub}/${pair}.csv`]));
-          files.push(`${folder}/컨볼루션 적용 방법.txt`, `${folder}/routing.json`, `${folder}/secs-design.json`);
-          return { method: req.method, data: start("export", () => ({ kind: "export", data: { folder, files, stale: calibration.stale, ...rated } })) };
-        }
-        if (kind === "filter_text" || kind === "equalizer_apo") {
-          const mode = filterModeName(settings);
-          const prefix = `secs_${mode}`;
-          const firFolder = kind === "filter_text" ? folder : `${folder}/${prefix}`;
-          const files = kind === "filter_text"
-            ? [`${folder}/SECS 필터 ${fx.modeLabel(settings.mode, settings.ultra_ms)}.txt`]
-            : [`${folder}/config.txt`, `${folder}/${prefix}/${prefix}.txt`, `${folder}/EqAPO 적용 방법.txt`];
-          if (settings.mode !== "zero") files.push(...calibration.main_roles.map((role) => `${firFolder}/${prefix}_${role}_fir.wav`));
-          files.push(`${folder}/secs-design.json`);
-          return { method: req.method, data: start("export", () => ({ kind: "export", data: { folder, files, stale: calibration.stale, ...rated } })) };
-        }
-        const prefix = `secs_${filterModeName(calibration)}`;
-        const files = kind === "camilla_dsp" ? [
-          `${folder}/configs/${prefix}.yml`, `${folder}/configs/${prefix}_bypass.yml`,
-          ...(calibration.mode === "zero" ? [] : calibration.main_roles.map((role) => `${folder}/coeffs/${prefix}_${role}_fir.wav`).sort()),
-          `${folder}/secs-design.json`,
-        ] : [kind === "before_after_mdat" ? `${folder}/${mdatFileName(scope, calibration)}` : `${folder}/${kind}.mdat`];
-        return { method: req.method, data: start("export", () => ({ kind: "export", data: { folder, files, stale: calibration.stale, ...rated } })) };
+        return { method: req.method, data: start("export", () => ({ kind: "export", data: exported(req.params, calibration.stale) })) };
       }
       case "measure_position": {
         needProject(); const position = req.params.position; const roles = [...measureConfig.roles];
@@ -1203,22 +1038,13 @@ export function createMockService(options: MockOptions = {}): MockService {
         if (req.params.preset !== null && !preset) invalid("unknown DSP preset");
         if (preset) dsp = { ...dsp, profile: preset.key, name: preset.name, fields: clone(preset.fields) };
         const fields = req.params.fields;
-        // project_edit.rs dsp_set: only editable profiles accept a rate change; changing other fields makes the profile custom.
-        if (fields) {
-          if (fields.output_rate !== "auto" && !(OUTPUT_RATES as readonly number[]).includes(fields.output_rate.fixed)) {
-            throw new MockError(ipcError("invalid_request", "unsupported output sample rate", { reason: "output_rate" }));
-          }
-          if (!sameRate(fields.output_rate, dsp.fields.output_rate) && !dsp.fields.output_rate_editable) {
-            throw new MockError(ipcError("invalid_request", "this DSP preset has a fixed output sample rate", { reason: "output_rate" }));
-          }
-        }
-        // The output rate stays out of the design (ADR 0017): changing it alone leaves the result current.
+        // State only: the fields as sent, and the profile kept while only the output rate changes
+        // (ADR 0017: the rate stays out of the design, so the result stays current).
         const rateOnly = !!fields && (Object.keys(fields) as (keyof typeof fields)[]).every((key) => key === "output_rate" || key === "output_rate_editable" || fields[key] === dsp.fields[key]);
         if (fields) {
           const profile = rateOnly ? dsp.profile : "custom";
           dsp = { ...dsp, profile, fields: { ...clone(fields), output_rate_editable: profile === "camilla" || profile === "custom" } };
         }
-        dsp.window_ms = (dsp.fields.fir_taps / countedRate(dsp.fields.output_rate)) * 1000; dsp.resolution_hz = 48000 / Math.max(1, dsp.fields.fir_taps);
         if (rateOnly) project = { ...needProject(), dirty: true }; else dirty();
         return { method: req.method, data: dsp };
       }
@@ -1257,23 +1083,16 @@ export function createMockService(options: MockOptions = {}): MockService {
         token: "mock-local-api-token", token_path: "C:/Users/demo/AppData/Roaming/SECS2R/local-api-token",
       } };
       case "update_status": return { method: req.method, data: updateStatus };
+      // The updater's phases follow the app's recorded transitions (update_transitions.json).
       case "update_check":
-        updateStatus = { ...updateStatus, phase: { kind: "checking" } };
+      case "update_download":
+        updateStatus = { ...updateStatus, phase: nextPhase(req.method, updateStatus.policy, updateStatus.phase) };
         return { method: req.method, data: updateStatus };
-      case "update_download": {
-        const phase = updateStatus.phase;
-        if (phase.kind !== "available") return invalid("No update is available to download");
-        updateStatus = { ...updateStatus, phase: { kind: "downloading", version: phase.version, received: 0, total: null } };
-        return { method: req.method, data: updateStatus };
-      }
-      case "update_restart": {
-        const phase = updateStatus.phase;
-        if (phase.kind !== "ready") return invalid("No update is ready to install");
-        updateStatus = { ...updateStatus, phase: { kind: "installing", version: phase.version } };
+      case "update_restart":
+        updateStatus = { ...updateStatus, phase: nextPhase(req.method, updateStatus.policy, updateStatus.phase) };
         return { method: req.method, data: null };
-      }
       case "update_notice_dismiss":
-        updateStatus = { ...updateStatus, notice: null };
+        updateStatus = { ...updateStatus, notice: null, phase: nextPhase(req.method, updateStatus.policy, updateStatus.phase) };
         return { method: req.method, data: updateStatus };
       case "update_open_release":
         if (!/^\d+\.\d+\.\d+(-[0-9A-Za-z]+(\.[0-9A-Za-z]+)*)?$/.test(req.params.version)) return invalid("Not a release version");
@@ -1281,15 +1100,10 @@ export function createMockService(options: MockOptions = {}): MockService {
       case "app_settings_get": return { method: req.method, data: appSettings };
       case "app_settings_set": {
         if (req.params.settings.compute === "gpu" && !availableCompute.gpu_available) throw new MockError(ipcError("compute_unavailable"));
-        if (req.params.settings.compute !== appSettings.compute && results.mimo) results = { ...results, mimo: { ...results.mimo, stale: true } };
+        if (req.params.settings.compute !== appSettings.compute) mimoBehind();
         if (req.params.settings.updates !== appSettings.updates) {
           const policy = req.params.settings.updates;
-          const phase = updateStatus.phase;
-          updateStatus = { ...updateStatus, policy, phase: phase.kind === "installing" ? phase
-            : policy === "off" ? { kind: "off" }
-            : policy === "auto" && phase.kind === "available" ? { kind: "downloading", version: phase.version, received: 0, total: null }
-            : policy === "notify" && phase.kind === "downloading" ? { kind: "available", version: phase.version }
-            : phase.kind === "off" ? { kind: "checking" } : phase };
+          updateStatus = { ...updateStatus, policy, phase: nextPhase("app_settings_set", policy, updateStatus.phase) };
         }
         appSettings = clone(req.params.settings);
         appSettings.recent_projects = appSettings.recent_projects.slice(0, RECENT_PROJECTS_MAX);
@@ -1409,8 +1223,8 @@ export function createMockService(options: MockOptions = {}): MockService {
     setUpdateStatus: (next) => { updateStatus = clone(next); appSettings.updates = next.policy; },
     setResults: (next) => {
       results = clone(next);
-      calibrationPositions = results.calibration && !results.calibration.cached ? project?.positions.length ?? 0 : null;
-      calibrationSettings = calibrationPositions === null ? null : correctionSettings(settings);
+      calibratedKey = results.calibration && !results.calibration.cached ? correctionKey(settings) : null;
+      resultKey = recordKey(settings);
     },
     dispose: () => { if (timer) clearInterval(timer); timer = null; jobs.clear(); playing = null; },
   };

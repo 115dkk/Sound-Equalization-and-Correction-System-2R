@@ -11,7 +11,9 @@ use crate::{
     setup::Setup,
 };
 use secs_dsp::{
-    complex_div as divide, fft, interp, lowrate,
+    complex_div as divide, fft,
+    grid::geomspace,
+    interp, lowrate,
     minphase::minimum_phase,
     pairwise_sum,
     response::{self, magnitude},
@@ -31,11 +33,11 @@ pub struct RcInput<'a> {
     pub bus_rolloff_hz: Option<f64>,
 }
 
-fn protection_rolloff(input: &RcInput<'_>) -> Option<f64> {
+fn protection_rolloff(input: &RcInput<'_>, channel_rolloff: Option<f64>) -> Option<f64> {
     if !input.config.low_protect {
         return None;
     }
-    crate::low_protect::rolloff(input.comb, input.main_position, None)
+    channel_rolloff
         .into_iter()
         .chain(input.bus_rolloff_hz)
         .reduce(f64::max)
@@ -64,6 +66,7 @@ pub struct RcOutput {
     pub peq: Vec<Peq>,
     pub phase_strength: f64,
     pub phase_band: Option<f64>,
+    #[cfg_attr(not(test), allow(dead_code))]
     pub design_db: Vec<f64>,
     pub notes: Vec<Note>,
     pub lf_align: Option<LfAlignOutcome>,
@@ -71,6 +74,7 @@ pub struct RcOutput {
     pub hf_phase: Option<HfPhaseOutcome>,
     dip_limit: Option<Vec<(f64, f64, f64)>>,
     protection: crate::low_protect::LimitOutcome,
+    rolloff: Option<f64>,
 }
 pub struct ChannelRc {
     pub out: RcOutput,
@@ -353,16 +357,6 @@ pub(crate) fn phase_error_band(f: f64, lo_fir: f64, setup: &Setup) -> bool {
                 .any(|&(lo, hi)| f >= lo && f <= (hi * 2_f64.sqrt()).min(SR_F / 2.0 * 0.99)))
 }
 
-fn geomspace(lo: f64, hi: f64, n: usize) -> Vec<f64> {
-    let start = lo.log10();
-    let step = (hi.log10() - start) / (n - 1) as f64;
-    let mut g: Vec<_> = (0..n)
-        .map(|i| 10_f64.powf(i as f64 * step + start))
-        .collect();
-    g[0] = lo;
-    g[n - 1] = hi;
-    g
-}
 fn db(h: C) -> f64 {
     20.0 * (magnitude(h) + 1e-12).log10()
 }
@@ -424,7 +418,10 @@ fn long_mode_mask(modes: &[(f64, f64)], notes: &mut Vec<Note>, cap_db: f64) -> V
         selected.sort_by(|a, b| a.0.total_cmp(&b.0));
         notes.push(Note::LongModeBoost {
             cap_db,
-            modes: selected,
+            modes: selected
+                .into_iter()
+                .map(|(hz, t60_s)| secs_types::notes::LongMode { hz, t60_s })
+                .collect(),
         });
     }
     mask
@@ -456,7 +453,7 @@ fn fit_request(
     })
 }
 fn unwrap(h: &[C]) -> Vec<f64> {
-    let angle: Vec<_> = h
+    let mut phase: Vec<_> = h
         .iter()
         .map(|h| {
             let clean = |x: f64| {
@@ -469,36 +466,17 @@ fn unwrap(h: &[C]) -> Vec<f64> {
             clean(h.im).atan2(clean(h.re))
         })
         .collect();
-    let mut out = angle.clone();
-    let mut correction = 0.0;
-    for i in 1..out.len() {
-        let d = angle[i] - angle[i - 1];
-        let mut dm = (d + PI).rem_euclid(2.0 * PI) - PI;
-        if dm == -PI && d > 0.0 {
-            dm = PI;
-        }
-        correction += if d.abs() < PI { 0.0 } else { dm - d };
-        out[i] += correction;
-    }
-    out
+    secs_dsp::unwrap_phase(&mut phase);
+    phase
 }
 fn gradient(phase: &[f64]) -> Vec<f64> {
     let f = design_freqs();
     let x: Vec<_> = f.iter().map(|v| 2.0 * PI * v.max(f[1])).collect();
-    let dx: Vec<_> = x.windows(2).map(|x| x[1] - x[0]).collect();
-    let n = phase.len();
-    let mut tau = vec![0.0; n];
-    tau[0] = -(phase[1] - phase[0]) / dx[0];
-    tau[n - 1] = -(phase[n - 1] - phase[n - 2]) / dx[n - 2];
-    for i in 1..n - 1 {
-        let (a, b) = (dx[i - 1], dx[i]);
-        tau[i] = -((-b / (a * (a + b))) * phase[i - 1]
-            + ((b - a) / (a * b)) * phase[i]
-            + (a / (b * (a + b))) * phase[i + 1]);
-    }
-    for v in &mut tau {
-        if !v.is_finite() {
-            *v = 0.0;
+    let mut tau = secs_dsp::gradient(phase, &x);
+    for value in &mut tau {
+        *value = -*value;
+        if !value.is_finite() {
+            *value = 0.0;
         }
     }
     tau
@@ -804,21 +782,12 @@ impl Realizer<'_> {
         (h, f, rms, max, outcome)
     }
 }
+#[cfg(any(test, feature = "test-support"))]
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn correction(input: &RcInput<'_>, phase_frac: f64, fitter: &mut Fitter<'_>) -> RcOutput {
     correction_traced(input, phase_frac, fitter, &mut Trace::default())
 }
 
-/// `Err(Cancelled)` once `cancelled()` reads true (TD-49). RC polls it at the
-/// boundaries of its own stages (masks, each PEQ fit, each phase position,
-/// each ladder step and trim pass, the second phase candidate and the GD
-/// cuts); the checks change no arithmetic or order.
-fn check(cancelled: &dyn Fn() -> bool) -> Result<(), EngineError> {
-    if cancelled() {
-        Err(EngineError::Cancelled)
-    } else {
-        Ok(())
-    }
-}
 // The first PEQ fit and position-common excess phase do not depend on the
 // candidate phase fraction. Each candidate owns only the values it modifies.
 struct FirPreparation {
@@ -853,25 +822,26 @@ enum RcPreparation {
     Fir(FirPreparation),
 }
 
+#[cfg(any(test, feature = "test-support"))]
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn correction_traced(
     input: &RcInput<'_>,
     phase_frac: f64,
     fitter: &mut Fitter<'_>,
     trace: &mut Trace,
 ) -> RcOutput {
-    // A probe that never reads true cannot return `Cancelled`.
-    let never = || false;
-    let prepared = prepare_correction(input, fitter, trace, &never).expect("never cancelled");
-    finish_correction(input, phase_frac, &prepared, fitter, trace, &never).expect("never cancelled")
+    let ctx = secs_compute::Context::serial();
+    let prepared = prepare_correction(input, fitter, trace, &ctx).expect("serial context");
+    finish_correction(input, phase_frac, &prepared, fitter, trace, &ctx).expect("serial context")
 }
 
 fn prepare_correction(
     input: &RcInput<'_>,
     fitter: &mut Fitter<'_>,
     trace: &mut Trace,
-    cancelled: &dyn Fn() -> bool,
+    ctx: &secs_compute::Context,
 ) -> Result<RcPreparation, EngineError> {
-    check(cancelled)?;
+    ctx.cancel().check()?;
     let f = design_freqs();
     let (s, c, t) = (input.setup, input.config, input.tuning);
     let weights = levels::freq_weights(input.positions, input.main_position, t.main_weight_lo);
@@ -950,14 +920,17 @@ fn prepare_correction(
     });
     let mut notes = Vec::new();
     let mut nb = no_boost_mask(input);
-    let rolloff = protection_rolloff(input);
+    let channel_rolloff = (c.low_protect || s.lf_align)
+        .then(|| crate::low_protect::rolloff(input.comb, input.main_position, None))
+        .flatten();
+    let rolloff = protection_rolloff(input, channel_rolloff);
     if let Some(hz) = rolloff {
         for (masked, &f) in nb.iter_mut().zip(f) {
             *masked |= f < hz;
         }
     }
     let lm = long_mode_mask(&modes, &mut notes, t.long_boost_db);
-    check(cancelled)?;
+    ctx.cancel().check()?;
     trace.no_boost = nb.clone();
     trace.long_mode = lm.clone();
     let bands = band_set(s.rc_lo, s.rc_hi, &s.rc_bands);
@@ -990,8 +963,7 @@ fn prepare_correction(
     let design_db = corr.clone();
     let dip_limit = dip_bins.map(|(bins, unlimited)| dip_notes(&bins, &corr, &unlimited));
     let mut lf = (s.lf_align && c.taps > 0).then(|| {
-        let f_lin = crate::low_protect::rolloff(input.comb, input.main_position, None)
-            .map_or(s.rc_lo, |hz| (1.5 * hz).max(s.rc_lo));
+        let f_lin = channel_rolloff.map_or(s.rc_lo, |hz| (1.5 * hz).max(s.rc_lo));
         let beta: Vec<_> = f
             .iter()
             .enumerate()
@@ -1058,7 +1030,7 @@ fn prepare_correction(
             None,
             fitter,
         );
-        check(cancelled)?;
+        ctx.cancel().check()?;
         let rest: Vec<_> = g
             .iter()
             .zip(&cg)
@@ -1075,7 +1047,7 @@ fn prepare_correction(
             None,
             fitter,
         ));
-        check(cancelled)?;
+        ctx.cancel().check()?;
         if let Some(hz) = rolloff {
             crate::low_protect::clamp_centres(&mut peq, hz);
         }
@@ -1099,6 +1071,7 @@ fn prepare_correction(
             hf_phase: None,
             dip_limit,
             protection,
+            rolloff,
         }));
     }
     let g = geomspace(15.0, 20000.0, 700);
@@ -1115,7 +1088,7 @@ fn prepare_correction(
             Some(s.rc_hi),
             fitter,
         );
-        check(cancelled)?;
+        ctx.cancel().check()?;
         if let Some(hz) = rolloff {
             crate::low_protect::clamp_centres(&mut peq, hz);
             protection = crate::low_protect::limit(
@@ -1146,7 +1119,7 @@ fn prepare_correction(
         if t.phase_positions == PhasePositions::Main && *pos != input.main_position {
             continue;
         }
-        check(cancelled)?;
+        ctx.cancel().check()?;
         let w = weights[input.positions.iter().position(|p| p == pos).unwrap()];
         total += w;
         let mut reference = if let Some(dr) = &dr {
@@ -1216,9 +1189,9 @@ fn finish_correction(
     prepared: &RcPreparation,
     fitter: &mut Fitter<'_>,
     trace: &mut Trace,
-    cancelled: &dyn Fn() -> bool,
+    ctx: &secs_compute::Context,
 ) -> Result<RcOutput, EngineError> {
-    check(cancelled)?;
+    ctx.cancel().check()?;
     let RcPreparation::Fir(prepared) = prepared else {
         let RcPreparation::Complete(out) = prepared else {
             unreachable!()
@@ -1311,7 +1284,7 @@ fn finish_correction(
         (h, response) = truncate(&m, c.taps, c.low_protect);
     } else {
         for fraction in [0.9, 0.7, 0.5, 0.3] {
-            check(cancelled)?;
+            ctx.cancel().check()?;
             let (hh, ff, rms, max, outcome) = realizer.realize(fraction, &m);
             trace.ladder.push((fraction, rms, max));
             if rms <= 0.5_f64.max(rms0 + 0.3) && max <= 2_f64.max(max0 + 1.0) {
@@ -1341,7 +1314,7 @@ fn finish_correction(
             Some(s.rc_hi),
             fitter,
         );
-        check(cancelled)?;
+        ctx.cancel().check()?;
         let nb_float: Vec<_> = nb.iter().map(|b| if *b { 1.0 } else { 0.0 }).collect();
         for (hz, _, gain) in &mut peq {
             if interp(*hz, f, &nb_float) > 0.5 {
@@ -1379,7 +1352,7 @@ fn finish_correction(
             rms(&error.iter().map(|e| e - med).collect::<Vec<_>>())
         };
         for _ in 0..2 {
-            check(cancelled)?;
+            ctx.cancel().check()?;
             let residual: Vec<_> = (0..BINS)
                 .map(|i| {
                     if rc[i] {
@@ -1466,6 +1439,7 @@ fn finish_correction(
         hf_phase,
         dip_limit: prepared.dip_limit.clone(),
         protection,
+        rolloff: prepared.rolloff,
     })
 }
 
@@ -1487,12 +1461,12 @@ pub(crate) fn phase_score(input: &RcInput<'_>, out: &RcOutput) -> f64 {
 /// The supplied fitter must return the same result for the same request: an
 /// identical preparation is evaluated once, including the PEQ-only path.
 /// Sequential replay clients must account for the shared preparation call.
-/// Returns `Err(Cancelled)` once `cancelled()` reads true; the PEQ fitter is
+/// Returns `Err(Cancelled)` when the context token is cancelled; the PEQ fitter is
 /// expected to watch the same token.
 pub fn channel(
     input: &RcInput<'_>,
     fitter: &mut Fitter<'_>,
-    cancelled: &dyn Fn() -> bool,
+    ctx: &secs_compute::Context,
 ) -> Result<ChannelRc, EngineError> {
     let bands = band_set(input.setup.rc_lo, input.setup.rc_hi, &input.setup.rc_bands);
     channel_with_cuts(
@@ -1500,12 +1474,12 @@ pub fn channel(
         fitter,
         &mut |h, lo, hi| {
             if input.setup.rc_bands.is_empty() {
-                fit::fit_gd_cuts_until(design_freqs(), h, lo, hi, 6, 3.0, cancelled)
+                fit::fit_gd_cuts_until(design_freqs(), h, lo, hi, 6, 3.0, ctx)
             } else {
-                fit::fit_gd_cuts_bands_until(design_freqs(), h, &bands, 6, 3.0, cancelled)
+                fit::fit_gd_cuts_bands_until(design_freqs(), h, &bands, 6, 3.0, ctx)
             }
         },
-        cancelled,
+        ctx,
     )
 }
 type GdFitter<'a> = dyn FnMut(&[C], f64, f64) -> Vec<Peq> + 'a;
@@ -1514,28 +1488,21 @@ pub(crate) fn channel_with_cuts(
     input: &RcInput<'_>,
     fitter: &mut Fitter<'_>,
     cuts: &mut GdFitter<'_>,
-    cancelled: &dyn Fn() -> bool,
+    ctx: &secs_compute::Context,
 ) -> Result<ChannelRc, EngineError> {
     let requested = input.config.phase_frac;
-    let prepared = prepare_correction(input, fitter, &mut Trace::default(), cancelled)?;
+    let prepared = prepare_correction(input, fitter, &mut Trace::default(), ctx)?;
     let mut out = finish_correction(
         input,
         requested,
         &prepared,
         fitter,
         &mut Trace::default(),
-        cancelled,
+        ctx,
     )?;
     let mut used = None;
     if requested > 6.0 {
-        let other = finish_correction(
-            input,
-            6.0,
-            &prepared,
-            fitter,
-            &mut Trace::default(),
-            cancelled,
-        )?;
+        let other = finish_correction(input, 6.0, &prepared, fitter, &mut Trace::default(), ctx)?;
         let mut notes = out.notes.clone();
         notes.extend(other.notes.clone());
         if phase_score(input, &other) < phase_score(input, &out) {
@@ -1550,7 +1517,11 @@ pub(crate) fn channel_with_cuts(
         out.notes.push(Note::ModeDecay {
             role: input.role.to_owned(),
             target_t60_s: mode.target_t60_s,
-            modes: mode.modes.clone(),
+            modes: mode
+                .modes
+                .iter()
+                .map(|&(hz, t60_s, cut_db)| secs_types::notes::Mode { hz, t60_s, cut_db })
+                .collect(),
         });
     }
     if let Some(hf) = &out.hf_phase {
@@ -1563,7 +1534,14 @@ pub(crate) fn channel_with_cuts(
     if let Some(dips) = &out.dip_limit {
         out.notes.push(Note::DipLimit {
             role: input.role.to_owned(),
-            dips: dips.clone(),
+            dips: dips
+                .iter()
+                .map(|&(hz, depth_db, fill_db)| secs_types::notes::Dip {
+                    hz,
+                    depth_db,
+                    fill_db,
+                })
+                .collect(),
         });
     }
     let gd_cuts = if input.tuning.gd_cuts {
@@ -1573,12 +1551,12 @@ pub(crate) fn channel_with_cuts(
             input.setup.rc_hi,
         );
         // A cancelled GD fit returns meaningless cuts; discard them here.
-        check(cancelled)?;
+        ctx.cancel().check()?;
         cuts
     } else {
         Vec::new()
     };
-    if let Some(hz) = protection_rolloff(input) {
+    if let Some(hz) = out.rolloff {
         let mut padded = out.fir.clone();
         padded.resize(N_FFT, 0.0);
         let fir = fft::rfft(&padded);
@@ -1630,7 +1608,10 @@ pub(crate) fn channel_with_cuts(
     } else {
         out.notes.push(Note::GdCuts {
             role: input.role.to_owned(),
-            cuts: gd_cuts.clone(),
+            cuts: gd_cuts
+                .iter()
+                .map(|&(hz, q, gain_db)| secs_types::notes::Peq { hz, q, gain_db })
+                .collect(),
         });
         multiply(
             &out.response,

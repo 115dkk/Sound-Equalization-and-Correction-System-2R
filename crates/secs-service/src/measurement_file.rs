@@ -7,14 +7,16 @@
 //! store with the file name as their source.
 
 use std::collections::BTreeSet;
-use std::io::Read;
 use std::path::Path;
 
 use secs_mdat::SourceInfo;
 use secs_project::{MeasurementResult, MeasurementStore};
 
-use crate::measure::{MeasureError, MeasurementSettings, plan_for, position_count};
 use crate::{dirac_import, mdat_import};
+
+use crate::measure::{
+    MeasureError, MeasurementSettings, plan_for, position_count, validate_samples,
+};
 
 /// The largest measurement file a request reads, before the format
 /// parser's own budgets.
@@ -31,7 +33,7 @@ pub struct Assignment {
 
 /// One row of a measurement file as the assignment dialog shows it.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct FileRow {
+pub struct FileRow {
     pub title: String,
     /// Suggested, 1-based.
     pub position: i64,
@@ -46,7 +48,7 @@ pub(crate) struct FileRow {
 
 /// The IR one row holds, ready to record.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct ImportedIr {
+pub struct ImportedIr {
     pub samples: Vec<f32>,
     pub sample_rate: u32,
     pub t0_s: f64,
@@ -55,7 +57,7 @@ pub(crate) struct ImportedIr {
 }
 
 /// A format reader: the rows of a file and the IR of each row.
-pub(crate) trait MeasurementReader {
+pub trait MeasurementReader {
     fn rows(&self) -> &[FileRow];
     /// The IR, its sample rate, t0 and the record's uuid and source info.
     fn take(&self, row: usize) -> Result<ImportedIr, MeasureError>;
@@ -64,23 +66,16 @@ pub(crate) trait MeasurementReader {
 /// Reads `path` whole, refusing a file over [`FILE_LIMIT`]; `what` names
 /// the format in that refusal.
 pub(crate) fn read(path: &Path, what: &str) -> Result<Vec<u8>, MeasureError> {
-    let file = std::fs::File::open(path).map_err(|error| MeasureError::Input(error.to_string()))?;
-    let mut bytes = Vec::new();
-    file.take(FILE_LIMIT + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|error| MeasureError::Input(error.to_string()))?;
-    if bytes.len() as u64 > FILE_LIMIT {
-        return Err(MeasureError::Input(format!("{what} exceeds file budget")));
-    }
-    Ok(bytes)
+    secs_project::read_bounded(path, FILE_LIMIT, what).map_err(|error| match error {
+        secs_project::ProjectError::Invalid(_) => {
+            MeasureError::Input(format!("{what} exceeds file budget"))
+        }
+        error => MeasureError::Input(error.to_string()),
+    })
 }
 
-/// Reads the file once (256 MiB limit) and picks the reader by extension:
-/// `.liveproject` is Dirac Live, anything else REW mdat. `roles` are the
-/// roles to suggest; `position` puts every mdat row there, and `current`
-/// is the position for mdat titles that name none (upstream
-/// `current_position`). Dirac rows always carry their own position.
-pub(crate) fn open(
+/// Reads a measurement file once and returns its format reader.
+pub fn open(
     path: &Path,
     roles: &[String],
     position: Option<i64>,
@@ -95,50 +90,43 @@ pub(crate) fn open(
     }
 }
 
-/// Validates assignments (one rule: role in the plan, `1..=position_count`,
-/// one record per (position, role)), records every IR with its source and
-/// saves once per IR (C6), and returns the count.
-///
-/// There is one assignment per row; a different count is an error and
-/// changes nothing. A row that breaks the rule, has no role or has no IR is
-/// skipped, as upstream `step5.load_mdat` skips it (upstream lets a position
-/// below 1 through: docs/DEVIATIONS.md F18); a skipped row does not claim
-/// its (position, role). A failing record stops the import; the IRs
-/// recorded before it stay on disk.
-pub(crate) fn import(
-    store: &mut MeasurementStore,
+/// One validated IR, converted and ready for the measurement store.
+#[derive(Debug)]
+pub(crate) struct PreparedRow {
+    result: MeasurementResult,
+}
+
+/// Validates assignments and takes every selected IR without store access.
+pub(crate) fn prepare(
     reader: &dyn MeasurementReader,
     file_name: &str,
     assignments: &[Assignment],
-) -> Result<usize, MeasureError> {
+    roles: &[String],
+    position_count: i64,
+) -> Result<Vec<PreparedRow>, MeasureError> {
     let rows = reader.rows();
     if assignments.len() != rows.len() {
         return Err(MeasureError::Input(
             "assignment count does not match the file's measurement rows".into(),
         ));
     }
-    let plan = plan_for(store.project(), &MeasurementSettings::default());
-    let count = position_count(store.project());
     let mut used = BTreeSet::new();
-    let mut saved = 0;
+    let mut prepared = Vec::new();
     for (index, (row, assignment)) in rows.iter().zip(assignments).enumerate() {
         if row.looks_like_sub.is_none() {
             continue;
         }
-        let Some(role) = assignment
-            .role
-            .as_ref()
-            .filter(|role| plan.roles.contains(role))
-        else {
+        let Some(role) = assignment.role.as_ref().filter(|role| roles.contains(role)) else {
             continue;
         };
         let position = assignment.position.unwrap_or(row.position);
-        if !(1..=count).contains(&position) || !used.insert((position, role.clone())) {
+        if !(1..=position_count).contains(&position) || !used.insert((position, role.clone())) {
             continue;
         }
         let ir = reader.take(index)?;
-        store.record(
-            MeasurementResult {
+        validate_samples(&ir.samples, &row.title)?;
+        prepared.push(PreparedRow {
+            result: MeasurementResult {
                 role: role.clone(),
                 pos: position,
                 ir: ir.samples,
@@ -151,11 +139,36 @@ pub(crate) fn import(
                 source: Some(file_name.to_owned()),
                 source_info: ir.source_info,
             },
-            Some(&plan.roles),
-        )?;
+        });
+    }
+    Ok(prepared)
+}
+
+/// Records prepared rows, saving once per IR (C6), and returns the count.
+pub(crate) fn record(
+    store: &mut MeasurementStore,
+    prepared: Vec<PreparedRow>,
+    roles: &[String],
+) -> Result<usize, MeasureError> {
+    let mut saved = 0;
+    for row in prepared {
+        store.record(row.result, Some(roles))?;
         saved += 1;
     }
     Ok(saved)
+}
+
+/// Validates, prepares, and records selected rows from a measurement reader.
+pub fn import(
+    store: &mut MeasurementStore,
+    reader: &dyn MeasurementReader,
+    file_name: &str,
+    assignments: &[Assignment],
+) -> Result<usize, MeasureError> {
+    let plan = plan_for(store.project(), &MeasurementSettings::default());
+    let count = position_count(store.project());
+    let prepared = prepare(reader, file_name, assignments, &plan.roles, count)?;
+    record(store, prepared, &plan.roles)
 }
 
 /// The name a record keeps as its source: the file name of `path`.
@@ -201,6 +214,7 @@ mod tests {
     /// Rows without a file; `take` notes which rows the import asked for.
     struct FakeReader {
         rows: Vec<FileRow>,
+        samples: Vec<Vec<f32>>,
         taken: RefCell<Vec<usize>>,
     }
 
@@ -218,6 +232,23 @@ mod tests {
                         position_tagged: true,
                     })
                     .collect(),
+                samples: (0..rows.len())
+                    .map(|row| vec![1.0, -0.5, row as f32 / 10.0])
+                    .collect(),
+                taken: RefCell::default(),
+            }
+        }
+
+        fn with_samples(title: &str, samples: Vec<f32>) -> Self {
+            Self {
+                rows: vec![FileRow {
+                    title: title.into(),
+                    position: 1,
+                    role: Some("L".into()),
+                    looks_like_sub: Some(false),
+                    position_tagged: true,
+                }],
+                samples: vec![samples],
                 taken: RefCell::default(),
             }
         }
@@ -231,7 +262,7 @@ mod tests {
         fn take(&self, row: usize) -> Result<ImportedIr, MeasureError> {
             self.taken.borrow_mut().push(row);
             Ok(ImportedIr {
-                samples: vec![1.0, -0.5, row as f32 / 10.0],
+                samples: self.samples[row].clone(),
                 sample_rate: 48_000,
                 t0_s: -(row as f64) / 1000.0,
                 uuid: format!("row-{row}"),
@@ -306,6 +337,38 @@ mod tests {
         assert_eq!(
             store.entry_for(1).unwrap().uuid["R"].as_deref(),
             Some("row-7")
+        );
+    }
+
+    fn invalid_samples_error(samples: Vec<f32>, title: &str) -> secs_types::ipc::IpcError {
+        let directory = TempDir::new();
+        let mut store = store(&directory);
+        let reader = FakeReader::with_samples(title, samples);
+        let error = import(
+            &mut store,
+            &reader,
+            "invalid.mdat",
+            &[assign(Some("L"), Some(1))],
+        )
+        .unwrap_err();
+        assert!(store.records().is_empty());
+        crate::measurement::measure_error(error, "file", secs_audio::SharePreference::Auto)
+    }
+
+    #[test]
+    fn import_rejects_a_row_with_non_finite_samples_naming_it_td263() {
+        let error = invalid_samples_error(vec![0.25, f32::NAN], "NaN row");
+        assert_eq!(error.code, secs_types::ipc::ErrorCode::MeasurementInput);
+        assert_eq!(error.params.get("row").map(String::as_str), Some("NaN row"));
+    }
+
+    #[test]
+    fn import_rejects_an_empty_row_td263() {
+        let error = invalid_samples_error(Vec::new(), "empty row");
+        assert_eq!(error.code, secs_types::ipc::ErrorCode::MeasurementInput);
+        assert_eq!(
+            error.params.get("row").map(String::as_str),
+            Some("empty row")
         );
     }
 
@@ -467,6 +530,13 @@ mod tests {
                 .collect::<Vec<_>>()
         );
         assert_eq!((ir.sample_rate, ir.t0_s), (48_000, -0.25));
-        assert_eq!(ir.source_info, None);
+        assert_eq!(
+            ir.source_info,
+            Some(SourceInfo {
+                strings: vec![("outputName".into(), "Left P2".into())],
+                notes: Some("minimal.liveproject".into()),
+                ..Default::default()
+            })
+        );
     }
 }

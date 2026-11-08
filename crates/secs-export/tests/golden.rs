@@ -312,6 +312,26 @@ fn verify_items(name: &str, actual: &[MeasurementInput], expected: &Value) {
 }
 
 #[test]
+fn public_item_builders_return_errors_for_invalid_design_td225() {
+    let mut case = replay_case("dolby");
+    case.design.signal_chain_mut().mains[0].role = "missing".into();
+    let settings: CalibrationSettings = serde_json::from_value(case.settings).unwrap();
+    let run = ExportRun {
+        design: &case.design,
+        settings: &settings,
+    };
+
+    assert!(matches!(
+        stage_items(&run, None),
+        Err(ExportError::MissingResponse(role)) if role == "missing"
+    ));
+    assert!(matches!(
+        before_after_items(&run, None),
+        Err(ExportError::MissingResponse(role)) if role == "missing"
+    ));
+}
+
+#[test]
 fn export_items_and_source_environments_match_oracle() {
     for name in CASES {
         let case = replay_case(name);
@@ -349,6 +369,7 @@ fn export_items_and_source_environments_match_oracle() {
             );
             assert!(
                 stage_items(&enabled_run, None)
+                    .unwrap()
                     .iter()
                     .any(|item| item.notes.contains("극저역 보호(수동) 27 Hz"))
             );
@@ -367,18 +388,18 @@ fn export_items_and_source_environments_match_oracle() {
         );
         verify_items(
             &format!("{name}/staged"),
-            &stage_items(&run, None),
+            &stage_items(&run, None).unwrap(),
             &output["staged"],
         );
         let sources = sources(&fixture.inputs()["sources"]);
-        let before_after = before_after_items(&run, sources.as_ref());
+        let before_after = before_after_items(&run, sources.as_ref()).unwrap();
         verify_items(
             &format!("{name}/before_after"),
             &before_after,
             &output["before_after"],
         );
         if let Some(sources) = sources {
-            let role_sources = &sources[&run.design.replay.config().main_position];
+            let role_sources = &sources[&run.design.main_position()];
             assert!(before_after.iter().any(|item| item.source_info.is_some()));
             for (role, source) in role_sources {
                 let measured = before_after
@@ -468,8 +489,8 @@ fn rew_mdat_scopes_choose_items_and_names() {
         design: &case.design,
         settings: &settings,
     };
-    let position = run.design.replay.config().main_position;
-    let role = run.design.chain.mains[0].role.as_str();
+    let position = run.design.main_position();
+    let role = run.design.main_roles().next().unwrap();
     let originals = vec![
         original(position, role, 96_000, SourceInfo::default()),
         original(position + 1, role, 44_100, SourceInfo::default()),
@@ -487,7 +508,7 @@ fn rew_mdat_scopes_choose_items_and_names() {
         ]
     );
 
-    let upstream = before_after_items(&run, None);
+    let upstream = before_after_items(&run, None).unwrap();
     let all = rew_mdat_items(Some(&run), MdatScope::All, &originals, None, None).unwrap();
     assert_eq!(all.len(), upstream.len() + 1);
     assert_eq!(
@@ -530,8 +551,8 @@ fn all_scope_takes_stored_originals_and_strips_curves_from_results() {
         design: &case.design,
         settings: &settings,
     };
-    let position = run.design.replay.config().main_position;
-    let role = run.design.chain.mains[0].role.clone();
+    let position = run.design.main_position();
+    let role = run.design.main_roles().next().unwrap().to_owned();
     let stored = original(position, &role, 96_000, meter_source());
     let mut sources = Sources::default();
     sources
@@ -637,7 +658,7 @@ fn public_exports_use_oracle_filenames_and_replace_existing_files() {
 #[test]
 fn invalid_build_does_not_create_destination_folder() {
     let mut case = replay_case("room_filters");
-    case.design.chain.mains.clear();
+    case.design.signal_chain_mut().mains.clear();
     let settings: CalibrationSettings = serde_json::from_value(case.settings).unwrap();
     let run = ExportRun {
         design: &case.design,
@@ -666,10 +687,10 @@ fn built_projects_match_oracle_structure_and_size() {
         let fixture = Fixture::load("export_mdat", name);
         let output = fixture.outputs();
         for (kind, items) in [
-            ("staged", stage_items(&run, None)),
+            ("staged", stage_items(&run, None).unwrap()),
             (
                 "before_after",
-                before_after_items(&run, sources(&fixture.inputs()["sources"]).as_ref()),
+                before_after_items(&run, sources(&fixture.inputs()["sources"]).as_ref()).unwrap(),
             ),
         ] {
             let mut next = 1_u128;

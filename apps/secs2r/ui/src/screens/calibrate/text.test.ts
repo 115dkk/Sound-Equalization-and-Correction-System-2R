@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { translate, type Locale } from "../../i18n";
 import type { Translate } from "../../i18n/react";
+import type { Note } from "../../ipc/bindings/Note";
 import type { Notice } from "../../ipc/bindings/Notice";
 import { ipcError } from "../../ipc/mock";
 import { baseSettings, lfNoteCases, lowProtectNotes, rcBandsNotes, rcLimitNotes, refusedBandEdit } from "./fixtures";
@@ -17,11 +18,16 @@ function words(locale: Locale): { t: Translate; number: FormatNumber } {
   return { t, number };
 }
 
-const lines = (locale: Locale, notices: Notice[], lfAlign = false, lfAlignAvailable = true) => {
+const lines = (locale: Locale, notices: (Notice | Note)[], lfAlign = false, lfAlignAvailable = true) => {
   const { t, number } = words(locale);
   return noteLines(t, number, notices, lfAlign, lfAlignAvailable);
 };
 const n = (code: string, params: Record<string, string>): Notice => ({ code, params });
+/** One note's records as secs-engine `NoteRecords` sends them: the shared params, then each item's with its `index`. */
+const records = (code: string, shared: Record<string, string>, items: Record<string, string>[]): Notice[] =>
+  items.map((item, index) => n(code, { ...shared, index: String(index), ...item }));
+const pair = (a: string, b: string, bands: [string, string, string, string][]) =>
+  records("pair_phase", { a, b }, bands.map(([lo_hz, hi_hz, phase_deg, loss_db]) => ({ lo_hz, hi_hz, phase_deg, loss_db })));
 
 describe("calculation notes", () => {
   it.each(["mimo_guard_reduced", "mimo_guard_disabled"])("formats %s with and without a position in both locales", (code) => {
@@ -68,31 +74,33 @@ describe("calculation notes", () => {
   });
 
   it("formats limited dips with display roles, integer Hz and one-decimal dB in both locales", () => {
-    const note = n("dip_limit", { role: "Rb", count: "2", dips: "94.43:7.54:4.77,136.78:9.20:5.60" });
-    expect(lines("ko", [note])).toEqual(["딥 보정 제한(Rrs): 94 Hz 7.5 dB 딥을 4.8 dB까지, 137 Hz 9.2 dB 딥을 5.6 dB까지"]);
-    expect(lines("en", [note])).toEqual(["Dip correction limit (Rrs): 94 Hz dip, 7.5 dB deep, filled by up to 4.8 dB, 137 Hz dip, 9.2 dB deep, filled by up to 5.6 dB"]);
+    const note = records("dip_limit", { role: "Rb" }, [{ hz: "94.43", depth_db: "7.54", fill_db: "4.77" }, { hz: "136.78", depth_db: "9.20", fill_db: "5.60" }]);
+    expect(lines("ko", note)).toEqual(["딥 보정 제한(Rrs): 94 Hz 7.5 dB 딥을 4.8 dB까지, 137 Hz 9.2 dB 딥을 5.6 dB까지"]);
+    expect(lines("en", note)).toEqual(["Dip correction limit (Rrs): 94 Hz dip, 7.5 dB deep, filled by up to 4.8 dB, 137 Hz dip, 9.2 dB deep, filled by up to 5.6 dB"]);
   });
 
-  it("reports no limited dips when the count is zero in both locales", () => {
-    const note = n("dip_limit", { role: "Tfl", count: "0", dips: "" });
-    expect(lines("ko", [note])).toEqual(["딥 보정 제한(Ltf): 줄인 딥 없음"]);
-    expect(lines("en", [note])).toEqual(["Dip correction limit (Ltf): no dips limited"]);
+  it("keeps the dips of each channel on its own line", () => {
+    const notes = [
+      ...records("dip_limit", { role: "L" }, [{ hz: "80.00", depth_db: "6.10", fill_db: "3.00" }]),
+      ...records("dip_limit", { role: "R" }, [{ hz: "120.00", depth_db: "8.00", fill_db: "4.00" }]),
+    ];
+    expect(lines("ko", notes)).toEqual(["딥 보정 제한(L): 80 Hz 6.1 dB 딥을 3.0 dB까지", "딥 보정 제한(R): 120 Hz 8.0 dB 딥을 4.0 dB까지"]);
   });
 
   it("formats pair phase with display roles and integer phase and loss in both locales", () => {
-    const note = n("pair_phase", { a: "Tfl", b: "Rb", bands: "89:112:-169.6:-20.3" });
-    expect(lines("ko", [note], true)).toEqual(["채널 사이 위상(Ltf·Rrs): 89~112 Hz에서 위상차 −170°, 함께 울리면 −20 dB"]);
-    expect(lines("en", [note], true)).toEqual(["Phase between channels (Ltf·Rrs): 89–112 Hz: −170° phase difference, −20 dB when playing together"]);
+    const note = pair("Tfl", "Rb", [["89", "112", "-169.6", "-20.3"]]);
+    expect(lines("ko", note, true)).toEqual(["채널 사이 위상(Ltf·Rrs): 89~112 Hz에서 위상차 −170°, 함께 울리면 −20 dB"]);
+    expect(lines("en", note, true)).toEqual(["Phase between channels (Ltf·Rrs): 89–112 Hz: −170° phase difference, −20 dB when playing together"]);
   });
 
   it("merges adjacent pair-phase bands and keeps the phase of the worst loss in each span", () => {
-    const note = n("pair_phase", { a: "L", b: "Ls", bands: "44:56:179.0:-12.2,56:71:164.6:-18.7,89:112:170.0:-20.3,112:141:174.0:-24.1,141:178:178.0:-22.0" });
-    expect(lines("ko", [note], true)).toEqual(["채널 사이 위상(L·Ls): 44~71 Hz에서 위상차 165°, 함께 울리면 −19 dB, 89~178 Hz에서 위상차 174°, 함께 울리면 −24 dB"]);
-    expect(lines("en", [note], true)).toEqual(["Phase between channels (L·Ls): 44–71 Hz: 165° phase difference, −19 dB when playing together, 89–178 Hz: 174° phase difference, −24 dB when playing together"]);
+    const note = pair("L", "Ls", [["44", "56", "179.0", "-12.2"], ["56", "71", "164.6", "-18.7"], ["89", "112", "170.0", "-20.3"], ["112", "141", "174.0", "-24.1"], ["141", "178", "178.0", "-22.0"]]);
+    expect(lines("ko", note, true)).toEqual(["채널 사이 위상(L·Ls): 44~71 Hz에서 위상차 165°, 함께 울리면 −19 dB, 89~178 Hz에서 위상차 174°, 함께 울리면 −24 dB"]);
+    expect(lines("en", note, true)).toEqual(["Phase between channels (L·Ls): 44–71 Hz: 165° phase difference, −19 dB when playing together, 89–178 Hz: 174° phase difference, −24 dB when playing together"]);
   });
 
   it("does not hint bass arrival alignment when the mode cannot use it", () => {
-    const notes = [n("pair_phase", { a: "L", b: "Ls", bands: "89:112:170.0:-20.3" })];
+    const notes = pair("L", "Ls", [["89", "112", "170.0", "-20.3"]]);
     for (const locale of ["ko", "en"] as const) {
       expect(lines(locale, notes, false, false)).toHaveLength(1);
       expect(lines(locale, notes, false, true)).toHaveLength(2);
@@ -101,8 +109,8 @@ describe("calculation notes", () => {
 
   it("appends one pair-phase hint at the end only when a pair note exists and bass arrival alignment is off", () => {
     const notes = [
-      n("pair_phase", { a: "L", b: "Ls", bands: "89:112:170.0:-20.3" }),
-      n("pair_phase", { a: "R", b: "Rs", bands: "112:141:174.0:-24.1" }),
+      ...pair("L", "Ls", [["89", "112", "170.0", "-20.3"]]),
+      ...pair("R", "Rs", [["112", "141", "174.0", "-24.1"]]),
       n("ba_cost", { value: "1" }),
     ];
     for (const locale of ["ko", "en"] as const) {
@@ -118,17 +126,13 @@ describe("calculation notes", () => {
     }
   });
 
-  it("does not expose malformed pair-phase bands as raw text or nonfinite numbers", () => {
-    for (const bands of ["", "89:112:170", "89:112::bad", "89:112:NaN:-20", "112:89:170:-20"]) {
-      for (const locale of ["ko", "en"] as const) {
-        const text = lines(locale, [n("pair_phase", { a: "L", b: "R", bands })], true)[0];
-        expect(text).toBe(locale === "ko" ? "채널 사이 위상(L·R): " : "Phase between channels (L·R): ");
-      }
-    }
+  it("names the measurement whose calibration curve was left out and the MIMO input that kept its starting filters", () => {
+    expect(lines("ko", [n("calibration_curve_invalid", { role: "Tfl", position: "2" })])).toEqual(["위치 2의 Ltf 측정에 붙은 보정 곡선 가운데 읽을 수 없는 곡선을 빼고 계산했습니다."]);
+    expect(lines("en", [n("mimo_iir_seed_fallback", { input: "Rb", status: "-1" })])).toEqual(["IIR support fitting for input Rrs did not converge, so the starting filters were kept."]);
   });
 
   it("has a sentence for every calibration notice code in both locales", () => {
-    const codes = ["measurement_resampled", "rc_limit", "rc_room_volume", "rc_no_room_volume", "rc_auto_cap", "rc_bands", "lf_align", "mode_decay", "mode_decay_none", "hf_phase", "hf_phase_none", "dip_limit", "pair_phase", "input_hp", "polarity_reversed", "polarity_split", "sub_narrow_band", "sub_high_gain", "lift_capped", "latency", "phase_strength", "phase_band", "long_mode_boost", "gd_cuts", "two_way", "sub_filters", "sub_filter_peq", "ba_cost", "ba_bus_pass", "bus_gain_anchored", "layout_fallback", "layout", "ba_manual", "low_protect"];
+    const codes = ["measurement_resampled", "rc_limit", "rc_room_volume", "rc_no_room_volume", "rc_auto_cap", "rc_bands", "lf_align", "mode_decay", "mode_decay_none", "hf_phase", "hf_phase_none", "dip_limit", "pair_phase", "input_hp", "polarity_reversed", "polarity_split", "sub_narrow_band", "sub_high_gain", "lift_capped", "latency", "phase_strength", "phase_band", "long_mode_boost", "gd_cuts", "two_way", "sub_filters", "sub_filter_peq", "ba_cost", "ba_bus_pass", "bus_gain_anchored", "layout_fallback", "layout", "ba_manual", "low_protect", "calibration_curve_invalid", "mimo_iir_seed_fallback"];
     for (const locale of ["ko", "en"] as const) {
       const { t, number } = words(locale);
       for (const code of codes) expect(noticeText(t, number, n(code, {})), `${locale}: ${code}`).not.toBeNull();
@@ -352,14 +356,12 @@ describe("저음 도착 맞추기, 방 울림 줄이기 and 고역 위상 맞추
 describe("extra correction bands (ADR 0024)", () => {
   it("rc_bands: every band of the merged set after the calculation, in both languages", () => {
     const [one, two, merged] = rcBandsNotes;
-    expect(one!.params.bands).toBe("20-310.42,15000-20000");
-    expect(lines("ko", [one!])).toEqual(["RC 보정 구간 20~310 Hz, 15,000~20,000 Hz"]);
-    expect(lines("en", [one!])).toEqual(["RC correction bands 20–310 Hz, 15,000–20,000 Hz"]);
-    expect(lines("ko", [two!])).toEqual(["RC 보정 구간 20~310 Hz, 2,000~4,000 Hz, 15,000~20,000 Hz"]);
+    expect(one).toEqual([{ code: "rc_bands", bands: [{ lo_hz: 20, hi_hz: 310.42 }, { lo_hz: 15000, hi_hz: 20000 }] }]);
+    expect(lines("ko", one!)).toEqual(["RC 보정 구간 20~310 Hz, 15,000~20,000 Hz"]);
+    expect(lines("en", one!)).toEqual(["RC correction bands 20–310 Hz, 15,000–20,000 Hz"]);
+    expect(lines("ko", two!)).toEqual(["RC 보정 구간 20~310 Hz, 2,000~4,000 Hz, 15,000~20,000 Hz"]);
     // A band overlapping the RC band is merged into it by the engine: one band.
-    expect(lines("ko", [merged!])).toEqual(["RC 보정 구간 20~800 Hz"]);
-    // A list it cannot read is shown as sent.
-    expect(lines("en", [n("rc_bands", { bands: "garbled" })])).toEqual(["RC correction bands garbled"]);
+    expect(lines("ko", merged!)).toEqual(["RC 보정 구간 20~800 Hz"]);
   });
 
   it("says at the refused input what to enter instead, for each reason the service gives", () => {

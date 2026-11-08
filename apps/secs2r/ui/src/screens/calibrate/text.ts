@@ -3,17 +3,19 @@
 // and numbers (ADR 0003); these helpers turn them into the current
 // language and never compute an engine value.
 import { isMessageKey, type MessageKey, type MessageParams } from "../../i18n";
-import type { Translate } from "../../i18n/react";
+import { plainNumber, signedNumber, type FormatNumber, type Translate } from "../../i18n/react";
 import type { ConfigResult } from "../../ipc/bindings/ConfigResult";
+import type { GuardCause } from "../../ipc/bindings/GuardCause";
 import type { Mode } from "../../ipc/bindings/Mode";
 import type { ModeSpecResult } from "../../ipc/bindings/ModeSpecResult";
+import type { Note } from "../../ipc/bindings/Note";
 import type { Notice } from "../../ipc/bindings/Notice";
 import { CALIBRATION_LIMITS } from "../../ipc/bindings/rules";
 import { roleCode } from "../../ui/maps/geometry";
 import type { RangeRejection, RejectionPlace } from "./settingsView";
 import type { CalibrateJob } from "./types";
 
-export type FormatNumber = (value: number, digits?: number) => string;
+export { signedNumber, type FormatNumber };
 
 export const MODES: readonly Mode[] = ["zero", "mixed", "linear", "ultra"];
 
@@ -100,12 +102,85 @@ export function groupOf(config: ConfigResult, role: string): string | null {
 
 const num = (value: string | undefined) => (value === undefined ? Number.NaN : Number(value));
 
+type NoticeValue = string | number | boolean | null | undefined;
+
+const record = (code: string, values: Record<string, NoticeValue>): Notice => ({
+  code,
+  params: Object.fromEntries(Object.entries(values).filter(([, value]) => value !== null && value !== undefined).map(([key, value]) => [key, String(value)])),
+});
+
+function guardValues(cause: GuardCause): Record<string, NoticeValue> {
+  return {
+    rejected_db: cause.rejected_db,
+    band_position: cause.band_position,
+    tail_position: cause.tail_position,
+    band_lo_hz: cause.band?.lo_hz,
+    band_hi_hz: cause.band?.hi_hz,
+    band_db: cause.band?.db,
+    mode_hz: cause.tail?.hz,
+    tail_db: cause.tail?.db,
+  };
+}
+
+/** Projects one typed engine note to the scalar records the catalog renderer consumes. */
+function noteRecords(note: Note): Notice[] {
+  switch (note.code) {
+    case "polarity_reversed": return [record(note.code, note)];
+    case "polarity_split": return [record(note.code, { a: note.groups.a.join(","), b: note.groups.b.join(","), confidence: note.confidence })];
+    case "pair_phase": return note.bands.map((band, index) => record(note.code, { a: note.a, b: note.b, index, ...band }));
+    case "lift_capped": return [record(note.code, note)];
+    case "sub_filters": return note.filters.flatMap(({ role, value }) => [
+      record(note.code, { role, hp_hz: value.hp_hz, hp_type: value.hp_type, lp_hz: value.lp_hz, lp_type: value.lp_type, peq_count: value.peq.length }),
+      ...value.peq.map((peq, index) => record("sub_filter_peq", { role, index, ...peq })),
+    ]);
+    case "low_protect": return [record(note.code, note)];
+    case "rc_limit": return [record(note.code, note)];
+    case "rc_bands": return note.bands.map((band, index) => record(note.code, { index, ...band }));
+    case "lf_align": return [record(note.code, note)];
+    case "mode_decay": return note.modes.length === 0
+      ? [record("mode_decay_none", { role: note.role, target_s: note.target_t60_s })]
+      : note.modes.map((mode) => record(note.code, { role: note.role, hz: mode.hz, t60_s: mode.t60_s, target_s: note.target_t60_s, depth_db: mode.cut_db }));
+    case "hf_phase": return [record(note.rotation_deg === null ? "hf_phase_none" : note.code, { role: note.role, rotation_deg: note.rotation_deg, limited: note.limited })];
+    case "dip_limit": return note.dips.map((dip, index) => record(note.code, { role: note.role, index, ...dip }));
+    case "input_hp": return [record(note.code, { hz: note.hz, order: 8 })];
+    case "latency": return [record(note.code, note)];
+    case "phase_strength": return note.values.map(({ role, value }) => record(note.code, { role, strength: value }));
+    case "phase_band": return note.values.map(({ role, hz }) => record(note.code, { role, enabled: hz !== null, hz }));
+    case "long_mode_boost": return note.modes.map((mode) => record(note.code, { cap_db: note.cap_db, ...mode }));
+    case "gd_cuts": return note.cuts.map((peq, index) => record(note.code, { role: note.role, index, ...peq }));
+    case "ba_cost": return [record(note.code, { value: note.value })];
+    case "ba_bus_pass": return [record(note.code, note)];
+    case "ba_manual": return [record(note.code, {})];
+    case "layout_fallback": return [record(note.code, { value: note.value })];
+    case "layout": return [record(note.code, { value: note.value })];
+    case "two_way": return note.roles.map((role) => record(note.code, { role, gain_db: note.gain_db, xo_hz: note.xo_hz }));
+    case "bus_gain_anchored": return [record(note.code, { value: note.value })];
+    case "mimo": {
+      const mimo = note.note;
+      switch (mimo.code) {
+        case "iir_seed_fallback": return [record("mimo_iir_seed_fallback", { input: mimo.support, status: mimo.status })];
+        case "insufficient_positions": return [record("mimo_insufficient_positions", { measured: mimo.measured, required: 3 })];
+        case "excluded_supports": return mimo.roles.map((role) => record("mimo_support_excluded", { role }));
+        case "support_ranges": return mimo.ranges.map(({ role, value }) => record("mimo_support_range", { role, enabled: value !== null, lo_hz: value?.lo_hz, hi_hz: value?.hi_hz }));
+        case "guard_reduced": return [record("mimo_guard_reduced", { role: mimo.role, gain_db: mimo.gain_db, ...guardValues(mimo.cause) })];
+        case "guard_disabled": return [record("mimo_guard_disabled", { role: mimo.role, ...guardValues(mimo.cause) })];
+        case "support_limit": return [record("mimo_support_limit", { max_supports: mimo.max_supports })];
+        case "fir_budget": return [record("mimo_fir_budget", { support_count: mimo.support_count, taps_total: mimo.taps_total, sample_rate_hz: 48000 })];
+      }
+    }
+  }
+}
+
+const noticeRecords = (notice: Notice | Note): Notice[] => "params" in notice ? [notice] : noteRecords(notice);
+
 /**
- * The service sends collection notes as one record per role, filter or mode
- * (secs-service `notices`, scalar params only). Records of one note that
- * follow each other read as one line, as upstream prints them: the phase
- * correction of every main, the long room modes, a channel's GD cuts, the
- * two-way subs, and a sub's fixed filters with their PEQs.
+ * The service sends collection notes as one record per role, filter, mode,
+ * dip or band (secs-engine `NoteRecords::record`, scalar params only, ADR
+ * 0042). Records of one note that follow each other read as one line, as
+ * upstream prints them: the phase correction of every main, the long room
+ * modes, a channel's GD cuts, the two-way subs, a sub's fixed filters with
+ * their PEQs, a channel's limited dips, the bands of a pair's phase and the
+ * correction bands.
  *
  * phase_band carries the same value as phase_strength (upstream
  * correction_engine.py sets both from one `frac`, and the engine's rc.rs
@@ -126,22 +201,43 @@ function runKey(notice: Notice): string | null {
     case "sub_filters":
     case "sub_filter_peq":
       return `sub_filters:${notice.params.role ?? ""}`;
+    case "dip_limit":
+      return `dip_limit:${notice.params.role ?? ""}`;
+    case "pair_phase":
+      return `pair_phase:${notice.params.a ?? ""}:${notice.params.b ?? ""}`;
+    case "rc_bands":
+      return notice.code;
     default:
       return null;
   }
 }
 
-/** Calculation notes as lines: runs of one collection note joined (`runKey`), every line a catalog sentence. */
-export function noteLines(t: Translate, number: FormatNumber, notices: readonly Notice[], lfAlign: boolean, lfAlignAvailable = true): string[] {
-  const lines: string[] = [];
+/** Codes whose records count from `index` 0: a record at 0 starts the next note's run. */
+const INDEXED: ReadonlySet<string> = new Set(["dip_limit", "pair_phase", "rc_bands"]);
+
+/** The notices as runs of one note's records (`runKey`). */
+function noteRuns(notices: readonly Notice[]): Notice[][] {
+  const runs: Notice[][] = [];
   for (let i = 0; i < notices.length; ) {
-    const first = notices[i]!;
-    const key = runKey(first);
+    const key = runKey(notices[i]!);
     let end = i + 1;
-    while (key !== null && end < notices.length && runKey(notices[end]!) === key && notices[end]!.code !== "sub_filters") end += 1;
-    lines.push(noticeText(t, number, first, notices.slice(i, end)) ?? t("jobs.log.unknown"));
+    while (key !== null && end < notices.length && runKey(notices[end]!) === key && notices[end]!.code !== "sub_filters"
+      && !(INDEXED.has(notices[end]!.code) && notices[end]!.params.index === "0")) end += 1;
+    runs.push(notices.slice(i, end));
     i = end;
   }
+  return runs;
+}
+
+/** Each run of `noteRuns` as its sentence, or null when the screen has none for its code. */
+function runTexts(t: Translate, number: FormatNumber, notices: readonly Notice[]): (string | null)[] {
+  return noteRuns(notices).map((run) => noticeText(t, number, run[0]!, run));
+}
+
+/** Calculation notes as lines: runs of one collection note joined (`runKey`), every line a catalog sentence. */
+export function noteLines(t: Translate, number: FormatNumber, notes: readonly (Notice | Note)[], lfAlign: boolean, lfAlignAvailable = true): string[] {
+  const notices = notes.flatMap(noticeRecords);
+  const lines = runTexts(t, number, notices).map((line) => line ?? t("jobs.log.unknown"));
   // The hint names a setting the mode must allow: zero mode has no bass arrival alignment.
   if (!lfAlign && lfAlignAvailable && notices.some((notice) => notice.code === "pair_phase")) lines.push(t("notice.pair_phase.hint"));
   return lines;
@@ -152,7 +248,13 @@ export function noteLines(t: Translate, number: FormatNumber, notices: readonly 
  * screen has no sentence for its code. `run` is the notice with the records
  * of the same note that follow it (`noteLines`); a single notice reads alone.
  */
-export function noticeText(t: Translate, number: FormatNumber, notice: Notice, run: readonly Notice[] = [notice]): string | null {
+export function noticeText(t: Translate, number: FormatNumber, note: Notice | Note, run: readonly (Notice | Note)[] = [note]): string | null {
+  const notice = noticeRecords(note)[0];
+  if (!notice) return null;
+  return noticeRecordText(t, number, notice, run.flatMap(noticeRecords));
+}
+
+function noticeRecordText(t: Translate, number: FormatNumber, notice: Notice, run: readonly Notice[]): string | null {
   const p = notice.params;
   const f = (key: string, digits = 0) => {
     const value = num(p[key]);
@@ -160,8 +262,7 @@ export function noticeText(t: Translate, number: FormatNumber, notice: Notice, r
   };
   const signed = (key: string, digits = 1) => {
     const value = num(p[key]);
-    if (!Number.isFinite(value)) return p[key] ?? "";
-    return `${value > 0 ? "+" : ""}${number(value, digits)}`;
+    return Number.isFinite(value) ? signedNumber(number, value, digits) : (p[key] ?? "");
   };
   const code = (key = "role") => roleCode(p[key] ?? "");
   const hz = (value: string | undefined) => `${number(num(value))} Hz`;
@@ -199,13 +300,10 @@ export function noticeText(t: Translate, number: FormatNumber, notice: Notice, r
     case "rc_auto_cap":
       params.hz = f("hz");
       break;
-    case "rc_bands": {
-      // The merged correction band set after the calculation (ADR 0024), "lo-hi,lo-hi": every band of it, the primary's included.
-      const bands = (p.bands ?? "").split(",").map((band) => band.split("-").map(num));
-      const valid = bands.length > 0 && bands.every((band) => band.length === 2 && band.every(Number.isFinite));
-      params.bands = valid ? bands.map(([lo, hi]) => t("notice.rc_bands.band", { lo: number(lo!), hi: number(hi!) })).join(", ") : (p.bands ?? "");
+    case "rc_bands":
+      // The merged correction band set after the calculation (ADR 0024), one record per band: every band of it, the primary's included.
+      params.bands = run.map((band) => t("notice.rc_bands.band", { lo: number(num(band.params.lo_hz)), hi: number(num(band.params.hi_hz)) })).join(", ");
       break;
-    }
     case "lf_align": {
       // One per main (ADR 0025): the phase correction strength (0–1) as a percentage, the bass arrival left
       // against the treble when the engine could measure it (positive is later), and the pull limit when it cut the correction.
@@ -239,34 +337,26 @@ export function noticeText(t: Translate, number: FormatNumber, notice: Notice, r
     case "hf_phase_none":
       params.role = code();
       break;
-    case "dip_limit": {
+    case "dip_limit":
+      // One record per limited dip; a channel with none sends no record.
       params.code = code();
-      if (num(p.count) === 0) key = "notice.dip_limit_none";
-      else {
-        const dips = (p.dips ?? "").split(",").map((dip) => dip.split(":").map(num));
-        const valid = dips.every((dip) => dip.length === 3 && dip.every(Number.isFinite));
-        params.dips = valid ? dips.map(([hz, depth, fill]) => t("notice.dip_limit.dip", {
-          hz: number(hz!), depth: number(depth!, 1), fill: number(fill!, 1),
-        })).join(", ") : "";
-      }
+      params.dips = run.map((dip) => t("notice.dip_limit.dip", {
+        hz: number(num(dip.params.hz)), depth: number(num(dip.params.depth_db), 1), fill: number(num(dip.params.fill_db), 1),
+      })).join(", ");
       break;
-    }
     case "pair_phase": {
-      // Adjacent bands share a span; its phase and loss both come from the band with the worst cancellation (ADR 0035).
-      const bands = (p.bands ?? "").split(",").map((band) => band.split(":").map((value) => value.trim() === "" ? Number.NaN : num(value)));
-      const valid = bands.every((band) => band.length === 4 && band.every(Number.isFinite) && band[0]! < band[1]!);
+      // One record per band. Adjacent bands share a span; its phase and loss both come from the band with the worst cancellation (ADR 0035).
       const spans: { lo: number; hi: number; phase: number; loss: number }[] = [];
-      if (valid) {
-        for (const [lo, hi, phase, loss] of bands) {
-          const previous = spans.at(-1);
-          if (previous && Math.abs(previous.hi - lo!) <= 1) {
-            previous.hi = hi!;
-            if (loss! < previous.loss) {
-              previous.phase = phase!;
-              previous.loss = loss!;
-            }
-          } else spans.push({ lo: lo!, hi: hi!, phase: phase!, loss: loss! });
-        }
+      for (const band of run) {
+        const [lo, hi, phase, loss] = [band.params.lo_hz, band.params.hi_hz, band.params.phase_deg, band.params.loss_db].map(num) as [number, number, number, number];
+        const previous = spans.at(-1);
+        if (previous && Math.abs(previous.hi - lo) <= 1) {
+          previous.hi = hi;
+          if (loss < previous.loss) {
+            previous.phase = phase;
+            previous.loss = loss;
+          }
+        } else spans.push({ lo, hi, phase, loss });
       }
       Object.assign(params, {
         a: code("a"), b: code("b"),
@@ -276,6 +366,14 @@ export function noticeText(t: Translate, number: FormatNumber, notice: Notice, r
       });
       break;
     }
+    case "calibration_curve_invalid":
+      // A curve attached to a measurement's source that could not be read; the calculation left it out.
+      Object.assign(params, { code: code(), position: f("position") });
+      break;
+    case "mimo_iir_seed_fallback":
+      // The support fit for one input kept its starting filters (secs-engine mimo/iir.rs, status -1).
+      params.code = code("input");
+      break;
     case "input_hp":
       // Once per result (ADR 0031): the common cut on every input; its order is fixed at 8 (48 dB/oct).
       params.hz = f("hz");
@@ -385,8 +483,8 @@ export function noticeText(t: Translate, number: FormatNumber, notice: Notice, r
  * the bounded guard (ADR 0022, `limited` "false"): a warning with what to do,
  * never a calculation note.
  */
-export function lowProtectFailures(notices: readonly Notice[]): Notice[] {
-  return notices.filter((n) => n.code === "low_protect" && n.params.limited === "false");
+export function lowProtectFailures(notes: readonly (Notice | Note)[]): (Notice | Note)[] {
+  return notes.filter((note) => note.code === "low_protect" && ("params" in note ? note.params.limited === "false" : !note.limited));
 }
 
 /** The warning's next step for `lowProtectFailures`. */
@@ -399,8 +497,15 @@ export type PolarityCode = "polarity_reversed" | "polarity_split";
  * Polarity verdicts (ADR 0033): a warning with a fix, never a calculation
  * note. `polarity_reversed` names one main; `polarity_split` names two groups.
  */
-export function polarityWarnings(notices: readonly Notice[]): Notice[] {
-  return notices.filter((n) => n.code === "polarity_reversed" || n.code === "polarity_split");
+export function polarityWarnings(notes: readonly (Notice | Note)[]): (Notice | Note)[] {
+  return notes.filter((note) => note.code === "polarity_reversed" || note.code === "polarity_split");
+}
+
+/** The role a polarity warning's action opens or flips. */
+export function polarityRole(note: Notice | Note): string {
+  if ("params" in note) return note.code === "polarity_reversed" ? (note.params.role ?? "") : ((note.params.a ?? "").split(",")[0] ?? "");
+  if (note.code === "polarity_reversed") return note.role;
+  return note.code === "polarity_split" ? (note.groups.a[0] ?? "") : "";
 }
 
 /** The warning's next step for each polarity code. */
@@ -464,7 +569,7 @@ export function rangeRejectionText(t: Translate, number: FormatNumber, { error }
   const p = error.params;
   const plain = (value: string | number | undefined) => {
     const n = Number(value);
-    return Number.isFinite(n) ? number(n).replace(/,/g, "") : String(value ?? "");
+    return Number.isFinite(n) ? plainNumber(number, n) : String(value ?? "");
   };
   const range = (min: string | number | undefined, max: string | number | undefined) => t("ui.number.range", { min: plain(min), max: plain(max), unit: "Hz" }).trim();
   const outside = (min: string | number | undefined, max: string | number | undefined) => t("ui.number.out_of_range", { range: range(min, max) });
@@ -523,8 +628,3 @@ export function filterSpec(
   return parts.join(" · ");
 }
 
-/** "+1.5" / "−3.0": a sign on every value but zero. */
-export function signedNumber(number: FormatNumber, value: number, digits: number): string {
-  const text = number(value, digits);
-  return value > 0 && text !== number(0, digits) ? `+${text}` : text;
-}

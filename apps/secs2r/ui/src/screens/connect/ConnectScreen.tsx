@@ -6,7 +6,7 @@
 // device and mic fields; then the level check plays each channel in turn
 // while the mic meter shows what arrives. The sweep length is set on
 // 측정·가져오기 only (P58); REW's own appears here as a read-only fact.
-import { type ReactNode } from "react";
+import { useState, type KeyboardEvent, type ReactNode } from "react";
 import type { PrimaryAction } from "../../app/StepHeader";
 import { errorText } from "../../app/jobs/jobText";
 import type { MessageKey } from "../../i18n";
@@ -14,12 +14,14 @@ import type { Translate } from "../../i18n/react";
 import { useNumber, useT } from "../../i18n/react";
 import type { MeasureDevice } from "../../ipc/bindings/MeasureDevice";
 import { Advanced, Button, Card, ErrorNotice, HelpTip, Icon, IconButton, LevelMeter, NumberField, Section, Segmented, Select, StatusPill, type Option, type PillTone } from "../../ui";
+import { Field, describedBy } from "../../ui/Field";
 import { roleCode, roleKind } from "../../ui/maps/geometry";
+import { TextBox } from "../export/fields";
 import { roleName } from "../system/text";
 import { MicCalibrationField } from "./MicCalibrationField";
 import { MicMeterPanel, type MicMeterView } from "./MicMeterPanel";
 import { levelRoles, levelsPassed, missingLevels, pathReady } from "./state";
-import type { ConnectActions, ConnectPath, ConnectView, RewProblem } from "./types";
+import type { ConnectActions, ConnectPath, ConnectState, ConnectView, RewProblem } from "./types";
 import "./connect.css";
 
 /** REW's audio drivers (`POST /audio/driver`); a name REW reports beyond these (Core Audio and the like) is shown as is. */
@@ -29,7 +31,7 @@ const REW_DRIVERS = ["ASIO", "Java"] as const;
  * The REW device the screen shows for one direction: the stored name when REW
  * lists it (REW opens it before each sweep), else the device REW has open now (R7).
  */
-function rewDevice(view: ConnectView, kind: "input" | "output"): string | null {
+function rewDevice(view: ConnectState, kind: "input" | "output"): string | null {
   const details = view.rew.details;
   const devices = (kind === "input" ? details.inputs : details.outputs) ?? [];
   const stored = kind === "input" ? view.settings?.input_device : view.settings?.output_device;
@@ -97,7 +99,7 @@ export function ConnectScreen({ view, actions }: { view: ConnectView; actions: C
 }
 
 /** The step header: plays every channel in turn; on the mdat path, opens 측정·가져오기. */
-export function connectHeader(view: ConnectView, actions: ConnectActions, t: Translate): { primary?: PrimaryAction; status?: ReactNode } {
+export function connectHeader(view: ConnectState, actions: ConnectActions, t: Translate): { primary?: PrimaryAction; status?: ReactNode } {
   if (view.path === "mdat") {
     return {
       primary: { id: "connect.next", label: t("connect.primary.next"), onClick: actions.next },
@@ -461,6 +463,7 @@ function DevicesCard({ view, actions }: { view: ConnectView; actions: ConnectAct
         </div>
         {!rew && <MicCalibrationField view={view.micCalibration} actions={actions} />}
       </div>
+      {rew && <RewExecutableField view={view} actions={actions} />}
       {!rew && (
         <Advanced id="connect.devices.details" label={t("connect.share_mode")} defaultOpen={!!settings?.share_mode && settings.share_mode !== "auto"}>
           <Segmented
@@ -482,13 +485,68 @@ function DevicesCard({ view, actions }: { view: ConnectView; actions: ConnectAct
   );
 }
 
+const REW_EXECUTABLE_ID = "connect.rew_executable";
+
+/**
+ * REW 실행 파일: the REW the service starts, a pasted path (no file dialog:
+ * the host's open-file kinds have no executable). Empty means the installed
+ * REW. Stored on Enter or when the field is left, only when it changed;
+ * Escape puts the stored path back. The service's refusal (a relative path)
+ * shows under the field until the next edit, with the text kept to fix.
+ */
+function RewExecutableField({ view, actions }: { view: ConnectView; actions: ConnectActions }) {
+  const stored = view.settings?.rew_executable ?? "";
+  // A path the service takes resets the draft; a refused one keeps it.
+  return <RewExecutableInput key={stored} stored={stored} refused={view.rew.executableError !== null} actions={actions} />;
+}
+
+function RewExecutableInput({ stored, refused, actions }: { stored: string; refused: boolean; actions: ConnectActions }) {
+  const t = useT();
+  const [draft, setDraft] = useState<string | null>(null);
+  const [typing, setTyping] = useState(false);
+  const text = draft ?? stored;
+  const error = refused && !typing ? t("connect.rew_executable.error.relative") : null;
+  const commit = () => {
+    setTyping(false);
+    if (draft !== null && draft.trim() !== stored) actions.setRewExecutable(draft.trim());
+  };
+  const onKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      commit();
+    } else if (event.key === "Escape" && draft !== null) {
+      // The first Escape puts the stored path back; it does not leave the screen.
+      event.stopPropagation();
+      setDraft(null);
+      setTyping(false);
+    }
+  };
+  return (
+    <Field id={REW_EXECUTABLE_ID} label={t("connect.rew_executable")} help={t("connect.rew_executable.help")} error={error}>
+      <TextBox
+        id={REW_EXECUTABLE_ID}
+        value={text}
+        placeholder={t("connect.rew_executable.placeholder")}
+        onChange={(value) => {
+          setDraft(value);
+          setTyping(true);
+        }}
+        onBlur={commit}
+        onKeyDown={onKeyDown}
+        invalid={!!error}
+        describedBy={describedBy(REW_EXECUTABLE_ID, null, error, true)}
+      />
+    </Field>
+  );
+}
+
 function inputLabel(t: Translate, n: number, names: readonly string[]): string {
   const name = names[n - 1];
   return name ? t("connect.input.named", { n, name }) : t("connect.input.n", { n });
 }
 
 /** "입력 1 · UMIK-1" for the mic meter. */
-export function micInput(t: Translate, view: ConnectView): string | null {
+export function micInput(t: Translate, view: ConnectState): string | null {
   const settings = view.settings;
   if (!settings || view.path === "mdat" || view.path === null) return null;
   if (view.path === "rew") {

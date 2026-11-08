@@ -882,6 +882,9 @@ class Scenario:
         # opened and once after. The status block is drawn either way, so the
         # only reliable sign is the dialog itself: wait for it a little and
         # cancel it; with the project still held by the service it never comes.
+        # A reachable menu is no such sign either: the frame renders before the
+        # session is ready and the offer follows, so ending the wait there let
+        # the offer cover the next click (PR #189, audit #186 TD-242).
         offered = lambda: self.driver.execute(
             "return document.querySelector('[data-ui=\"project.new.cancel\"]') !== null;")
         try:
@@ -1176,9 +1179,24 @@ def run(args):
         scenario.report()
 
 
+def install_command(args):
+    install_app(args.installers)
+
+
+def prepare_edge_command(args):
+    prepare_edge(args.destination, args.artifacts)
+
+
 def parser():
     result = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     subparsers = result.add_subparsers(dest="command", required=True)
+    install = subparsers.add_parser("install", help="install the sole NSIS package in a directory")
+    install.add_argument("installers", type=Path)
+    install.set_defaults(function=install_command)
+    edge = subparsers.add_parser("prepare-edge", help="verify and stage the pinned Edge driver")
+    edge.add_argument("destination", type=Path)
+    edge.add_argument("artifacts", type=Path)
+    edge.set_defaults(function=prepare_edge_command)
     environment = subparsers.add_parser("env", help="report and require an interactive runner console")
     scenario = subparsers.add_parser("run", help="drive the installed app and shell; GitHub Windows runners only")
     for child in (environment, scenario):

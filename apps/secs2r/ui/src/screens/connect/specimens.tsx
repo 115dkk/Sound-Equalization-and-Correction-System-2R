@@ -26,6 +26,8 @@ import {
   rewNotProView,
   rewOffView,
   rewSwitchingView,
+  rewExecutableView,
+  rewExecutableRefusedView,
   rewUntestedView,
 } from "./fixtures";
 import { MicMeterPanel } from "./MicMeterPanel";
@@ -39,6 +41,7 @@ const noopConnectActions: ConnectActions = {
   launchRew: () => {},
   readRewSettings: () => {},
   setRewDriver: () => {},
+  setRewExecutable: () => {},
   setInputDevice: () => {},
   setInputChannel: () => {},
   setOutputDevice: () => {},
@@ -125,6 +128,8 @@ export const connectSpecimens: SpecimenDef[] = [
   frame("screen.connect.rew_not_pro", "Connect · REW refused a sweep for want of Pro (settings read)", rewNotProView),
   frame("screen.connect.rew_java", "Connect · REW on Java: unopened devices listed by name only", rewJavaView),
   frame("screen.connect.rew_switching", "Connect · REW switching its driver, device fields waiting", rewSwitchingView),
+  frame("screen.connect.rew_executable", "Connect · REW 실행 파일 filled: a portable REW the project starts instead of the installed one", rewExecutableView),
+  frame("screen.connect.rew_executable_refused", "Connect · REW 실행 파일 refused (a relative path): the reason under the field", rewExecutableRefusedView),
   frame("screen.connect.native", "Connect · native measurement with devices", nativeView),
   frame("screen.connect.native-sharing", "Connect · saved device sharing choice shown in local details", {
     ...nativeView, settings: { ...nativeView.settings!, share_mode: "shared" },

@@ -53,14 +53,14 @@ pub fn calibrate(
     ctx: &secs_compute::Context,
 ) -> Result<Calibration, EngineError> {
     let derivatives = if req.settings.peq_analytic_derivatives {
-        crate::PeqDerivatives::Analytic
+        crate::fit::PeqDerivatives::Analytic
     } else {
-        crate::PeqDerivatives::TwoPoint
+        crate::fit::PeqDerivatives::TwoPoint
     };
     calibrate_with(
         req,
         ctx,
-        &*crate::production_fitters_with(ctx.cancel(), derivatives),
+        &*crate::design::production_fitters_with(ctx, derivatives),
     )
 }
 
@@ -68,13 +68,13 @@ pub fn calibrate(
 pub fn calibrate_with(
     req: &CalibrationRequest<'_>,
     ctx: &secs_compute::Context,
-    fitters: &crate::FitterFactory<'_>,
+    fitters: &crate::design::FitterFactory<'_>,
 ) -> Result<Calibration, EngineError> {
     ctx.cancel().check().map_err(|_| EngineError::Cancelled)?;
     let inputs = engine_inputs(req.view, req.irs, req.settings)?;
     let (inputs, resampled) = prepare_inputs(inputs, req.settings.sample_rate_policy, ctx)?;
-    let design = crate::design(
-        &crate::DesignRequest {
+    let design = crate::design::design(
+        &crate::design::DesignRequest {
             measurements: &inputs.measurements,
             config: &inputs.config,
             tuning: &crate::Tuning::default(),
@@ -105,7 +105,8 @@ pub(crate) fn prepare_inputs(
         .flat_map(|(_, roles)| roles)
         .filter(|(_, measurement)| measurement.sample_rate != crate::grid::SR)
         .count();
-    inputs.measurements = crate::normalize_measurements(&inputs.measurements, policy, ctx)?;
+    inputs.measurements =
+        crate::normalize::normalize_measurements(&inputs.measurements, policy, ctx)?;
     Ok((inputs, resampled))
 }
 

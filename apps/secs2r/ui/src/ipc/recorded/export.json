@@ -1,0 +1,117 @@
+[
+  {
+    "params": {
+      "kind": "camilla_dsp",
+      "design_name": null,
+      "extra_rates": []
+    },
+    "data": {
+      "files": [
+        "configs/secs_mixed.yml",
+        "configs/secs_mixed_bypass.yml",
+        "coeffs/secs_mixed_L_fir.wav",
+        "coeffs/secs_mixed_R_fir.wav",
+        "secs-design.json"
+      ],
+      "output_rate": 48000,
+      "notes": [],
+      "folder": "export-CamillaDsp",
+      "stale": false
+    }
+  },
+  {
+    "params": {
+      "kind": "before_after_mdat",
+      "design_name": null,
+      "extra_rates": []
+    },
+    "data": {
+      "files": [
+        "SECS 원 측정+보정 결과 저지연 모드.mdat"
+      ],
+      "output_rate": 48000,
+      "notes": [],
+      "folder": "export-BeforeAfterMdat",
+      "stale": false
+    }
+  },
+  {
+    "params": {
+      "kind": "staged_mdat",
+      "design_name": null,
+      "extra_rates": []
+    },
+    "data": {
+      "files": [
+        "SECS 보정 설계 저지연 모드.mdat"
+      ],
+      "output_rate": 48000,
+      "notes": [],
+      "folder": "export-StagedMdat",
+      "stale": false
+    }
+  },
+  {
+    "params": {
+      "kind": "filter_text",
+      "design_name": null,
+      "extra_rates": []
+    },
+    "data": {
+      "files": [
+        "SECS 필터 저지연 모드.txt",
+        "secs_mixed_L_fir.wav",
+        "secs_mixed_R_fir.wav",
+        "secs-design.json"
+      ],
+      "output_rate": 48000,
+      "notes": [],
+      "folder": "export-FilterText",
+      "stale": false
+    }
+  },
+  {
+    "params": {
+      "kind": "equalizer_apo",
+      "design_name": null,
+      "extra_rates": []
+    },
+    "data": {
+      "files": [
+        "config.txt",
+        "secs_mixed/secs_mixed.txt",
+        "EqAPO 적용 방법.txt",
+        "secs_mixed/secs_mixed_L_fir.wav",
+        "secs_mixed/secs_mixed_R_fir.wav",
+        "secs-design.json"
+      ],
+      "output_rate": 48000,
+      "notes": [],
+      "folder": "export-EqualizerApo",
+      "stale": false
+    }
+  },
+  {
+    "params": {
+      "kind": "convolution",
+      "design_name": null,
+      "extra_rates": []
+    },
+    "data": {
+      "files": [
+        "L_to_L.wav",
+        "L_to_L.csv",
+        "R_to_R.wav",
+        "R_to_R.csv",
+        "컨볼루션 적용 방법.txt",
+        "secs2r_reaper.lua",
+        "routing.json",
+        "secs-design.json"
+      ],
+      "output_rate": 48000,
+      "notes": [],
+      "folder": "export-Convolution",
+      "stale": false
+    }
+  }
+]

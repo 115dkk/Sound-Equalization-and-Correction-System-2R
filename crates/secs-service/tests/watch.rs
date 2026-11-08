@@ -137,6 +137,31 @@ fn configure_mock(service: &Service, path: &std::path::Path) {
 }
 
 #[test]
+fn stop_status_watch_cancels_the_running_watch_and_answers_none_otherwise() {
+    let service = Service::new(Deps::default());
+    let events = Arc::new(Events::default());
+    let Response::StatusWatchStart(started) =
+        call(&service, Request::StatusWatchStart, events.clone())
+    else {
+        panic!()
+    };
+    let Response::StatusWatchStop(Some(stopped)) =
+        call(&service, Request::StatusWatchStop, Arc::new(NoEvents))
+    else {
+        panic!()
+    };
+    assert_eq!(stopped.job, started.job);
+    assert_eq!(
+        events.wait_finished(started.job, Duration::from_secs(1)),
+        JobStatus::Cancelled
+    );
+    assert_eq!(
+        call(&service, Request::StatusWatchStop, Arc::new(NoEvents)),
+        Response::StatusWatchStop(None)
+    );
+}
+
+#[test]
 fn watch_reports_transitions_deduplicates_and_pauses_for_device_jobs() {
     let root = root();
     let online = Arc::new(AtomicBool::new(false));

@@ -38,7 +38,7 @@ jobs:
           TITLE: ${{ steps.watch.outputs.title }}
         run: |
           set -euo pipefail
-          existing="$(gh issue list --state open --search "\"$TITLE\" in:title" --json title -q '.[].title' || true)"
+          existing="$(gh issue list --state open --search "\"$TITLE\" in:title" --json title -q '.[].title')"
           if printf '%s\n' "$existing" | grep -Fxq "$TITLE"; then
             echo "an open issue already tracks: $TITLE"
             exit 0

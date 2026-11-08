@@ -138,6 +138,13 @@ fn every_rule_rejects_its_input_and_names_the_field() {
     assert!(is_negative_delay(-0.51 / 48.0));
     assert!(is_negative_delay(-1.0));
     ExportGraph::build(&chain(), Some(&mimo()), LfeChoice::DOLBY).unwrap();
+    let mut disabled_sub_edges = chain();
+    disabled_sub_edges.subs[0].hp_hz = 0.0;
+    disabled_sub_edges.subs[0].lp_hz = 0.0;
+    ExportGraph::build(&disabled_sub_edges, None, LfeChoice::Omit).unwrap();
+    let mut disabled_mimo_edge = mimo();
+    disabled_mimo_edge.paths[0].low_hz = 0.0;
+    ExportGraph::build(&chain(), Some(&disabled_mimo_edge), LfeChoice::Omit).unwrap();
 
     let rows: &[(&str, Edit, Kind, &str)] = &[
         // 48 kHz.
@@ -238,6 +245,55 @@ fn every_rule_rejects_its_input_and_names_the_field() {
             },
             NON_FINITE,
             "lfe.lp_hz",
+        ),
+        // Active frequencies are strictly inside the design band and Q is positive.
+        (
+            "PEQ at zero hertz",
+            |c, _, _| c.mains[0].top_peq[0].0 = 0.0,
+            INVALID,
+            "main.L.top_peq[0].frequency",
+        ),
+        (
+            "PEQ at Nyquist",
+            |c, _, _| c.mains[0].top_peq[0].0 = 24_000.0,
+            INVALID,
+            "main.L.top_peq[0].frequency",
+        ),
+        (
+            "PEQ with zero Q",
+            |c, _, _| c.mains[0].top_peq[0].1 = 0.0,
+            INVALID,
+            "main.L.top_peq[0].q",
+        ),
+        (
+            "all-pass with negative Q",
+            |c, _, _| c.subs[0].allpass[0].1 = -1.0,
+            INVALID,
+            "sub.SW1.allpass[0].q",
+        ),
+        (
+            "negative sub high-pass",
+            |c, _, _| c.subs[0].hp_hz = -20.0,
+            INVALID,
+            "sub.SW1.hp_hz",
+        ),
+        (
+            "sub low-pass above Nyquist",
+            |c, _, _| c.subs[0].lp_hz = 30_000.0,
+            INVALID,
+            "sub.SW1.lp_hz",
+        ),
+        (
+            "main crossover at zero hertz",
+            |c, _, _| c.mains[0].xo_hz = Some(0.0),
+            INVALID,
+            "main.L.xo_hz",
+        ),
+        (
+            "MIMO low edge above Nyquist",
+            |_, m, _| m.paths[0].low_hz = 48_000.0,
+            INVALID,
+            "mimo.paths[0].low_hz",
         ),
         // Identifiers ASCII and safe.
         (
@@ -415,6 +471,49 @@ fn roles_with_underscores_and_hyphens_build() {
     chain.subs[0].role = "SW-1".into();
     let graph = ExportGraph::build(&chain, None, LfeChoice::Omit).unwrap();
     assert!(graph.plan().outputs.iter().any(|role| role == "SW-1"));
+}
+
+#[test]
+fn fir_filename_collisions_are_rejected_td266() {
+    let mut collision_chain = chain();
+    collision_chain.mains[0].role = "a_b".into();
+    collision_chain.mains[1].role = "a".into();
+    let mut c = collision_chain.subs[0].clone();
+    c.role = "c".into();
+    let mut b_c = c.clone();
+    b_c.role = "b_c".into();
+    collision_chain.subs = vec![c, b_c];
+    let collision_paths = MimoPaths {
+        fsiso: 150.0,
+        paths: vec![
+            MimoPath {
+                input: "a_b".into(),
+                support: "c".into(),
+                filter: MimoFilter::Fir {
+                    taps_48k: vec![0.25, -0.125],
+                },
+                low_hz: 30.0,
+                delay_ms: 0.0,
+            },
+            MimoPath {
+                input: "a".into(),
+                support: "b_c".into(),
+                filter: MimoFilter::Fir {
+                    taps_48k: vec![0.5, -0.25],
+                },
+                low_hz: 30.0,
+                delay_ms: 0.0,
+            },
+        ],
+    };
+    let error =
+        ExportGraph::build(&collision_chain, Some(&collision_paths), LfeChoice::Omit).unwrap_err();
+    assert!(matches!(
+        error,
+        GraphError::Invalid(message) if message.contains("mimo_a_b_c")
+    ));
+
+    ExportGraph::build(&chain(), None, LfeChoice::Omit).unwrap();
 }
 
 #[test]

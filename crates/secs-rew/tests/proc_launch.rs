@@ -1,3 +1,4 @@
+#![allow(deprecated)]
 #![forbid(unsafe_code)]
 use secs_rew::{RewError, launch::*};
 use std::{collections::BTreeMap, ffi::OsString, path::Path};

@@ -1,4 +1,4 @@
-use crate::{C, DesignRequest, Note, Spectra, grid::design_freqs, test_support};
+use crate::{C, DesignRequest, Note, Spectra, grid::design_freqs, testkit};
 use secs_compute::Context;
 use secs_types::chain::{MimoFilter, MimoPath, MimoPaths};
 
@@ -41,11 +41,11 @@ fn filtered_error(a: &[C], b: &[C], hp: &[C]) -> f64 {
 #[test]
 fn input_hp_keeps_rc_ba_bits_and_filters_export_and_mimo_once() {
     for name in ["room", "room_filters"] {
-        let case = test_support::load(name);
+        let case = testkit::load(&crate::tests::Oracle, name);
         let run = |hp| {
             let mut config = case.config.clone();
             config.input_hp_hz = hp;
-            let replay = test_support::Replay::for_case(name);
+            let replay = testkit::Replay::for_case(&crate::tests::Oracle, name);
             let design = crate::design(
                 &DesignRequest {
                     measurements: &case.measurements,
@@ -196,7 +196,7 @@ fn input_hp_keeps_rc_ba_bits_and_filters_export_and_mimo_once() {
 
 #[test]
 fn input_hp_setting_reaches_engine_without_changing_other_fields() {
-    let case = test_support::load("room");
+    let case = testkit::load(&crate::tests::Oracle, "room");
     let view = crate::calibration::ProjectView {
         groups: &case.config.groups,
         project_xo: &case.config.xo,

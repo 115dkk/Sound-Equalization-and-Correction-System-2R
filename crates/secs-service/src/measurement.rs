@@ -6,12 +6,18 @@ use secs_project::{Project, PyJson};
 use secs_types::ipc::SampleLoadParams;
 use secs_types::ipc::*;
 
-use crate::measure::json::JsonExt;
-use crate::measure::{self, MeasureError, MeasurementSettings, Measurer, plan_for, store_devices};
+use crate::measure::{
+    self, MeasureError, MeasurementSettings, Measurer, plan_for, rew_executable, store_devices,
+};
 use crate::{Deps, EventSink, Service, lock, mdat_import, measurement_file, session};
 use secs_types::role::ROLES;
 
-fn input(field: &str, detail: impl Into<String>) -> IpcError {
+fn file_identity(path: &Path) -> Option<(u64, std::time::SystemTime)> {
+    let metadata = std::fs::metadata(path).ok()?;
+    Some((metadata.len(), metadata.modified().ok()?))
+}
+
+pub(crate) fn input(field: &str, detail: impl Into<String>) -> IpcError {
     IpcError::new(ErrorCode::MeasurementInput, detail).with_param("field", field)
 }
 
@@ -25,7 +31,16 @@ pub(crate) fn measure_error(
     use secs_rew::RewError as R;
     let detail = error.to_string();
     match error {
+        MeasureError::RewAfterSubscribeFailure {
+            source,
+            subscribe_error,
+        } => measure_error(MeasureError::Rew(source), field, share)
+            .with_param("subscribe_error", subscribe_error),
         MeasureError::Input(_) => input(field, detail),
+        MeasureError::InputField { field, .. } => input(field, detail),
+        MeasureError::InvalidSamples { row, reason } => input(field, detail)
+            .with_param("row", row)
+            .with_param("reason", reason),
         MeasureError::Project(_) => IpcError::new(ErrorCode::ProjectIo, detail),
         MeasureError::Audio(A::Cancelled) | MeasureError::Rew(R::Cancelled) => {
             IpcError::new(ErrorCode::Cancelled, detail)
@@ -90,13 +105,13 @@ fn start_delay(project: &Project) -> u64 {
         .unwrap_or(0)
 }
 
-fn method(project: &Project) -> &str {
+pub(crate) fn method(project: &Project) -> &str {
     project
         .extra
         .iter()
         .find(|(k, _)| k == "devices")
         .and_then(|(_, v)| v.get("method"))
-        .and_then(JsonExt::str)
+        .and_then(PyJson::str)
         .unwrap_or("native")
 }
 const LENGTHS: [(usize, &str); 7] = [
@@ -144,6 +159,7 @@ fn settings(project: &Project) -> Result<MeasureConfigResult, IpcError> {
         loopback_input_channel: s.loopback_input_channel,
         timing_ref_output: p.timing_ref_output.map(channel).transpose()?,
         share_mode: share_name(s.share).into(),
+        rew_executable: rew_executable(project).map(|path| path.to_string_lossy().into_owned()),
     })
 }
 fn measurer(
@@ -167,16 +183,7 @@ fn measurer(
     }
 }
 fn rew_status(deps: &Deps, rew: &measure::RewLink) -> RewStatusResult {
-    let running = deps
-        .process
-        .process_names()
-        .unwrap_or_default()
-        .iter()
-        .any(|name| {
-            secs_rew::launch::REW_PROCESS_NAMES
-                .iter()
-                .any(|r| name.eq_ignore_ascii_case(r))
-        });
+    let running = secs_rew::launch::rew_process_running(deps.process.as_ref());
     let mut client = rew.client();
     let reachable = client.is_running();
     if !reachable {
@@ -245,7 +252,7 @@ impl Service {
 
     pub(crate) fn measure_config_get(&self) -> Result<MeasureConfigResult, IpcError> {
         let session = lock(&self.session);
-        settings(session.require()?.store.project())
+        settings(session.require()?.project())
     }
 
     pub(crate) fn measure_configure(
@@ -266,7 +273,7 @@ impl Service {
         }
         let mut session = lock(&self.session);
         let open = session.require_mut()?;
-        let mut project = open.store.project().clone();
+        let mut project = open.project().clone();
         let mut values = vec![("method".into(), PyJson::Str(params.method))];
         for (key, value) in [
             ("input", params.input_device),
@@ -325,6 +332,12 @@ impl Service {
             }
             values.push(("share".into(), PyJson::Str(share)));
         }
+        if let Some(path) = params.rew_executable {
+            if !path.is_empty() && !Path::new(&path).is_absolute() {
+                return Err(input("rew_executable", "executable path must be absolute"));
+            }
+            values.push(("rew_executable".into(), PyJson::Str(path)));
+        }
         store_devices(&mut project, values);
         if plan_for(&project, &Default::default()).timing_reference
             == secs_project::TimingReference::Acoustic
@@ -364,8 +377,7 @@ impl Service {
         // A cable reference without a native loopback input is no longer an
         // error: only REW reads the timing reference (U15).
         let result = settings(&project)?;
-        *open.store.project_mut() = project;
-        open.dirty = true;
+        open.edit(|stored| *stored = project);
         drop(session);
 
         if open_rew_devices {
@@ -392,9 +404,9 @@ impl Service {
     pub(crate) fn measurement_records(&self) -> Result<MeasurementRecordsResult, IpcError> {
         let session = lock(&self.session);
         let open = session.require()?;
-        let project = open.store.project();
+        let project = open.project();
         let planned = plan_for(project, &Default::default()).roles;
-        let records = open.store.records();
+        let records = open.store().records();
         Ok(MeasurementRecordsResult {
             records: (1..=measure::position_count(project))
                 .map(|position| {
@@ -434,7 +446,7 @@ impl Service {
         let (roles, ticket) = {
             let session = lock(&self.session);
             let open = session.require()?;
-            let roles = plan_for(open.store.project(), &Default::default()).roles;
+            let roles = plan_for(open.project(), &Default::default()).roles;
             (roles, session.ticket()?)
         };
         // 17 is the largest measurement layout (패밀리); checked before any allocation.
@@ -445,27 +457,22 @@ impl Service {
         };
         let embedded = params.positions.is_none();
         let session = self.session.clone();
-        self.jobs.start(JobKind::SampleLoad, events, move |ctx| {
+        self.start_job(JobKind::SampleLoad, events, move |ctx| {
             let total = (roles.len() * positions.len()) as u64;
             let mut done = 0;
-            let info = session::commit(&session, ticket, &ctx, |open| {
-                if embedded {
-                    let existing = secs_project::measured_positions(open.store.project());
-                    for position in existing {
-                        if position != 1 {
-                            open.store.clear_position(position);
-                        }
-                    }
-                } else {
-                    let existing = secs_project::measured_positions(open.store.project());
-                    for position in existing {
-                        open.store.clear_position(position);
+            let info = session::commit(&session, ticket, &ctx, session::Finality::Final, |open| {
+                let existing = secs_project::measured_positions(open.project());
+                let mut store = open.store_mut();
+                for position in existing {
+                    if !embedded || position != 1 {
+                        store.clear_position(position);
                     }
                 }
                 for position in positions {
-                    open.store.start_position(position);
+                    store.start_position(position);
                     for role in &roles {
                         if ctx.cancel().is_cancelled() {
+                            drop(store);
                             return Err(IpcError::new(ErrorCode::Cancelled, "cancelled"));
                         }
                         let (ir, sample_rate, t0_s) = if embedded {
@@ -482,7 +489,7 @@ impl Service {
                                 0.0,
                             )
                         };
-                        open.store
+                        store
                             .record(
                                 secs_project::MeasurementResult {
                                     role: role.clone(),
@@ -511,8 +518,9 @@ impl Service {
                         ctx.role_progress(role, done, total);
                     }
                 }
+                drop(store);
                 // Each record is written to disk as it is made.
-                open.dirty = false;
+                open.mark_saved();
                 Ok((session::info(open), false))
             })?;
             Ok(JobResult::Measurement(info))
@@ -524,13 +532,9 @@ impl Service {
         params: MeasurePositionParams,
         events: Arc<dyn EventSink>,
     ) -> Result<JobStarted, IpcError> {
-        let (project, ticket) = {
-            let session = lock(&self.session);
-            (
-                session.require()?.store.project().clone(),
-                session.ticket()?,
-            )
-        };
+        let snapshot = lock(&self.session).snapshot().map_err(IpcError::from)?;
+        let ticket = snapshot.ticket;
+        let project = snapshot.project;
         let active_method = method(&project);
         if matches!(active_method, "none" | "mdat") {
             return Err(input("method", "selected method cannot run a measurement"));
@@ -553,11 +557,12 @@ impl Service {
         let commit_boundary = m.commit_boundary();
         let session = self.session.clone();
         let uuid = self.deps.uuid.clone();
-        self.jobs.start(JobKind::Measure, events, move |ctx| {
+        self.start_job(JobKind::Measure, events, move |ctx| {
             let countdown_started = std::time::Instant::now();
             let mut seconds_passed = 0;
             while seconds_passed < delay {
                 if ctx.cancel().is_cancelled() {
+                    ctx.role_progress("cancelled", 0, 100);
                     return Err(IpcError::new(ErrorCode::Cancelled, "cancelled"));
                 }
                 let next = std::time::Duration::from_secs(seconds_passed + 1);
@@ -570,16 +575,23 @@ impl Service {
                 ctx.report_progress("countdown", seconds_passed, delay);
             }
             if ctx.cancel().is_cancelled() {
+                ctx.role_progress("cancelled", 0, 100);
                 return Err(IpcError::new(ErrorCode::Cancelled, "cancelled"));
             }
             let mut count = 0;
             let mut failure = None;
-            m.measure_recording(
+            let measured = m.measure_recording(
                 &p,
                 params.position,
+                Some(&ctx),
                 ctx.measurement_cancel(),
                 &mut |mut result| {
                     let recorded = (|| -> Result<(), IpcError> {
+                        measure::validate_samples(
+                            &result.ir,
+                            format!("{} P{}", result.role, result.pos),
+                        )
+                        .map_err(|error| measure_error(error, "record", share))?;
                         if result.uuid.is_none() {
                             result.uuid = Some(format!(
                                 "{:032x}",
@@ -593,22 +605,38 @@ impl Service {
                         let snr = result.snr_db;
                         let first = count == 0;
                         let record = |open: &mut session::OpenProject| -> Result<_, IpcError> {
-                            if first {
-                                open.store.start_position(params.position);
-                            }
-                            open.store
-                                .record(result, Some(&p.roles))
-                                .map_err(|e| measure_error(e.into(), "record", share))?;
+                            let outcome = {
+                                let mut store = open.store_mut();
+                                if first {
+                                    store.start_position(params.position);
+                                }
+                                store
+                                    .record(result, Some(&p.roles))
+                                    .map_err(|e| measure_error(e.into(), "record", share))
+                            };
+                            outcome?;
                             // Each record is written to disk as it is made.
-                            open.dirty = false;
+                            open.mark_saved();
                             Ok(((), false))
                         };
                         // An atomic method's position becomes non-cancellable
                         // with its first record; REW keeps every role it recorded.
                         if first && commit_boundary == measure::CommitBoundary::Position {
-                            session::commit(&session, ticket, &ctx, record)?;
+                            session::commit(
+                                &session,
+                                ticket,
+                                &ctx,
+                                session::Finality::Final,
+                                record,
+                            )?;
                         } else {
-                            session::apply(&session, ticket, record)?;
+                            session::commit(
+                                &session,
+                                ticket,
+                                &ctx,
+                                session::Finality::Streaming,
+                                record,
+                            )?;
                         }
                         count += 1;
                         ctx.role_progress(&role, count, p.roles.len() as u64);
@@ -631,15 +659,25 @@ impl Service {
                     }
                     Ok(())
                 },
-            )
-            .map_err(|e| failure.unwrap_or_else(|| measure_error(e, "plan", share)))?;
+            );
+            for notice in m.take_notices() {
+                ctx.log(notice);
+            }
+            measured.map_err(|e| failure.unwrap_or_else(|| measure_error(e, "plan", share)))?;
             if rew {
                 rew_link.confirm_license();
             }
             if ctx.cancel().is_cancelled() {
+                ctx.role_progress("cancelled", 0, 100);
                 return Err(IpcError::new(ErrorCode::Cancelled, "cancelled"));
             }
-            let info = session::apply(&session, ticket, |open| Ok((session::info(open), false)))?;
+            let info = session::commit(
+                &session,
+                ticket,
+                &ctx,
+                session::Finality::Streaming,
+                |open| Ok((session::info(open), false)),
+            )?;
             Ok(JobResult::Measurement(info))
         })
     }
@@ -649,22 +687,24 @@ impl Service {
     ) -> Result<UndoResult, IpcError> {
         let mut session = lock(&self.session);
         let open = session.require_mut()?;
-        let removed = open
-            .store
+        let mut store = open.store_mut();
+        let removed = store
             .remove_position(params.position)
             .ok_or_else(|| IpcError::new(ErrorCode::InvalidRequest, "position has no record"))?;
-        if let Err(error) = open.store.save() {
-            open.store
+        if let Err(error) = store.save() {
+            store
                 .restore_position(removed)
                 .expect("nothing recorded the position since it was removed");
+            drop(store);
             return Err(measure_error(
                 error.into(),
                 "position",
                 secs_audio::SharePreference::Auto,
             ));
         }
+        drop(store);
         let token = session::push_position_undo(open, removed);
-        open.dirty = false;
+        open.mark_saved();
         Ok(UndoResult {
             token,
             project: session::info(open),
@@ -673,48 +713,44 @@ impl Service {
     pub(crate) fn undo(&self, params: UndoParams) -> Result<ProjectInfo, IpcError> {
         let mut session = lock(&self.session);
         let open = session.require_mut()?;
-        let index = open
-            .undo
-            .iter()
-            .position(|entry| entry.token == params.token)
-            .ok_or_else(|| {
-                IpcError::new(ErrorCode::InvalidRequest, "unknown or used undo token")
-            })?;
-        let payload = open.undo[index].payload.clone();
+        let payload = open.take_undo(&params.token).ok_or_else(|| {
+            IpcError::new(ErrorCode::InvalidRequest, "unknown or used undo token")
+        })?;
         match payload {
             session::UndoPayload::Position(removed) => {
-                if !matches!(open.store.project().measurements, PyJson::Array(_)) {
+                if !matches!(open.project().measurements, PyJson::Array(_)) {
                     return Err(IpcError::new(
                         ErrorCode::InvalidRequest,
                         "measurement list changed",
                     ));
                 }
                 let position = removed.position();
-                open.store.restore_position(removed).map_err(|_| {
+                let mut store = open.store_mut();
+                store.restore_position(removed).map_err(|_| {
                     IpcError::new(ErrorCode::InvalidRequest, "position was recorded again")
                 })?;
-                if let Err(error) = open.store.save() {
-                    open.store.remove_position(position);
+                if let Err(error) = store.save() {
+                    store.remove_position(position);
+                    drop(store);
                     return Err(measure_error(
                         error.into(),
                         "undo",
                         secs_audio::SharePreference::Auto,
                     ));
                 }
-                open.dirty = false;
+                drop(store);
+                open.mark_saved();
             }
             session::UndoPayload::Measurements(measurements) => {
-                if !measurement_entries(open.store.project()).is_empty() {
+                if !measurement_entries(open.project()).is_empty() {
                     return Err(IpcError::new(
                         ErrorCode::InvalidRequest,
                         "measurements changed after destructive edit",
                     ));
                 }
-                open.store.project_mut().measurements = measurements;
-                open.dirty = true;
+                open.edit(|project| project.measurements = measurements);
             }
         }
-        open.undo.remove(index);
         Ok(session::info(open))
     }
     pub(crate) fn rew_info(&self) -> RewInfoResult {
@@ -811,14 +847,27 @@ impl Service {
         if status.running {
             return Ok(status);
         }
-        self.deps.host.launch_rew().map_err(|error| {
-            let reason = match &error {
-                crate::RewLaunchError::ExeNotFound(_) => "exe_not_found",
-                crate::RewLaunchError::CannotLaunch(_) => "cannot_launch",
-                crate::RewLaunchError::LaunchFailed(_) => "launch_failed",
-            };
-            IpcError::new(ErrorCode::RewFailed, error.to_string()).with_param("reason", reason)
-        })?;
+        // The project's own executable (TD-221) is tried before the fixed install paths.
+        let executable = lock(&self.session)
+            .require()
+            .ok()
+            .and_then(|open| rew_executable(open.project()));
+        self.deps
+            .host
+            .launch_rew(executable.as_deref())
+            .map_err(|error| {
+                let reason = match &error {
+                    crate::RewLaunchError::ExeNotFound(_) => "exe_not_found",
+                    crate::RewLaunchError::CannotLaunch(_) => "cannot_launch",
+                    crate::RewLaunchError::LaunchFailed(_) => "launch_failed",
+                };
+                let error = IpcError::new(ErrorCode::RewFailed, error.to_string())
+                    .with_param("reason", reason);
+                match &executable {
+                    Some(path) => error.with_param("path", path.to_string_lossy()),
+                    None => error,
+                }
+            })?;
         Ok(RewStatusResult {
             running: true,
             reachable: false,
@@ -827,10 +876,27 @@ impl Service {
     }
     pub(crate) fn mdat_scan(&self, params: MdatScanParams) -> Result<MdatScanResult, IpcError> {
         let roles = ROLES.into_iter().map(str::to_owned).collect::<Vec<_>>();
-        let reader = measurement_file::open(Path::new(&params.path), &roles, None, 1)
-            .map_err(|e| measure_error(e, "path", secs_audio::SharePreference::Auto))?;
+        let path = Path::new(&params.path);
+        let (reader, cache_reader): (
+            Arc<dyn measurement_file::MeasurementReader>,
+            Option<Arc<mdat_import::MdatReader>>,
+        ) = if crate::dirac_import::is_liveproject(path) {
+            (
+                Arc::new(
+                    crate::dirac_import::DiracReader::read(path, &roles)
+                        .map_err(|e| measure_error(e, "path", secs_audio::SharePreference::Auto))?,
+                ),
+                None,
+            )
+        } else {
+            let reader = Arc::new(
+                mdat_import::MdatReader::read(path, &roles, None, 1)
+                    .map_err(|e| measure_error(e, "path", secs_audio::SharePreference::Auto))?,
+            );
+            (reader.clone(), Some(reader))
+        };
         let rows = reader.rows();
-        Ok(MdatScanResult {
+        let result = MdatScanResult {
             suggestions: rows
                 .iter()
                 .enumerate()
@@ -859,30 +925,66 @@ impl Service {
                     looks_like_sub: row.looks_like_sub,
                 })
                 .collect(),
-        })
+        };
+        if let (Some(reader), Some((len, modified))) = (cache_reader, file_identity(path)) {
+            *lock(&self.scanned_mdat) = Some((path.to_owned(), len, modified, reader));
+        }
+        Ok(result)
     }
     pub(crate) fn start_mdat(
         &self,
         params: MdatImportParams,
         events: Arc<dyn EventSink>,
     ) -> Result<JobStarted, IpcError> {
-        let (project, ticket) = {
-            let session = lock(&self.session);
-            (
-                session.require()?.store.project().clone(),
-                session.ticket()?,
-            )
-        };
+        let snapshot = lock(&self.session).snapshot().map_err(IpcError::from)?;
+        let ticket = snapshot.ticket;
+        let project = snapshot.project;
         let session = self.session.clone();
-        self.jobs.start(JobKind::MdatImport, events, move |ctx| {
+        let scanned_mdat = self.scanned_mdat.clone();
+        self.start_job(JobKind::MdatImport, events, move |ctx| {
             // Read the file once here, without the session lock; the lock
             // is held only for the import below (TD-37).
             let path = Path::new(&params.path);
             let plan = plan_for(&project, &Default::default());
             let path_error = |e| measure_error(e, "path", secs_audio::SharePreference::Auto);
-            let reader =
-                measurement_file::open(path, &plan.roles, Some(params.position), params.position)
-                    .map_err(path_error)?;
+            let reader: Arc<dyn measurement_file::MeasurementReader> =
+                if crate::dirac_import::is_liveproject(path) {
+                    Arc::new(
+                        crate::dirac_import::DiracReader::read(path, &plan.roles)
+                            .map_err(path_error)?,
+                    )
+                } else if let Some((len, modified)) = file_identity(path) {
+                    let cached = lock(&scanned_mdat)
+                        .as_ref()
+                        .filter(|(cached_path, cached_len, cached_modified, _)| {
+                            cached_path == path
+                                && *cached_len == len
+                                && *cached_modified == modified
+                        })
+                        .map(|(_, _, _, reader)| reader.clone());
+                    match cached {
+                        Some(reader) => reader,
+                        None => Arc::new(
+                            mdat_import::MdatReader::read(
+                                path,
+                                &plan.roles,
+                                Some(params.position),
+                                params.position,
+                            )
+                            .map_err(path_error)?,
+                        ),
+                    }
+                } else {
+                    Arc::new(
+                        mdat_import::MdatReader::read(
+                            path,
+                            &plan.roles,
+                            Some(params.position),
+                            params.position,
+                        )
+                        .map_err(path_error)?,
+                    )
+                };
             let titles = reader
                 .rows()
                 .iter()
@@ -944,14 +1046,31 @@ impl Service {
                 return Err(error);
             }
             let file_name = measurement_file::file_name(path);
-            let (count, info) = session::commit(&session, ticket, &ctx, |open| {
-                let count =
-                    measurement_file::import(&mut open.store, &*reader, &file_name, &assignments)
+            let prepared = measurement_file::prepare(
+                &*reader,
+                &file_name,
+                &assignments,
+                &plan.roles,
+                measure::position_count(&project),
+            )
+            .map_err(path_error)?;
+            let (count, info) = session::commit(
+                &session,
+                ticket,
+                &ctx,
+                session::Finality::Final,
+                move |open| {
+                    let count = open
+                        .store_mut()
+                        .write_result(move |store| {
+                            measurement_file::record(store, prepared, &plan.roles)
+                        })
                         .map_err(path_error)?;
-                // The import writes its records to disk.
-                open.dirty = false;
-                Ok(((count, session::info(open)), false))
-            })?;
+                    // The import writes its records to disk.
+                    open.mark_saved();
+                    Ok(((count, session::info(open)), false))
+                },
+            )?;
             ctx.report_progress("mdat_import", count as u64, count as u64);
             Ok(JobResult::MdatImport(info))
         })
@@ -978,6 +1097,26 @@ mod tests {
                 ErrorCode::MeasurementInput,
                 "field",
                 "plan",
+            ),
+            (
+                MeasureError::InputField {
+                    field: "mic_calibration",
+                    detail: "bad calibration".into(),
+                },
+                S::Auto,
+                ErrorCode::MeasurementInput,
+                "field",
+                "mic_calibration",
+            ),
+            (
+                MeasureError::InvalidSamples {
+                    row: "bad row".into(),
+                    reason: "empty",
+                },
+                S::Auto,
+                ErrorCode::MeasurementInput,
+                "row",
+                "bad row",
             ),
             (
                 A::DeviceNotFound("gone".into()).into(),

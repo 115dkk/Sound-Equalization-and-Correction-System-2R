@@ -11,7 +11,7 @@ import type { HostShellApi } from "./api";
 
 type Command = keyof HostShellApi;
 
-export type MockHostApi = HostShellApi & {
+type MockHostApi = HostShellApi & {
   calls: Command[];
   trayLabelCalls: Parameters<HostShellApi["trayLabels"]>[0][];
   /** The next call of `command` rejects with `error` (as the shell's commands reject). */

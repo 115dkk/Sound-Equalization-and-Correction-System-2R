@@ -23,42 +23,48 @@ pub enum PyJson {
 }
 
 impl PyJson {
-    pub(crate) fn object(&self) -> Option<&[(String, PyJson)]> {
+    /// Returns this object's insertion-ordered members.
+    pub fn object(&self) -> Option<&[(String, PyJson)]> {
         match self {
             Self::Object(value) => Some(value),
             _ => None,
         }
     }
 
-    pub(crate) fn array(&self) -> Option<&[PyJson]> {
+    /// Returns this array's elements.
+    pub fn array(&self) -> Option<&[PyJson]> {
         match self {
             Self::Array(value) => Some(value),
             _ => None,
         }
     }
 
-    pub(crate) fn str(&self) -> Option<&str> {
+    /// Returns this string value.
+    pub fn str(&self) -> Option<&str> {
         match self {
             Self::Str(value) => Some(value),
             _ => None,
         }
     }
 
-    pub(crate) fn bool(&self) -> Option<bool> {
+    /// Returns this Boolean value.
+    pub fn bool(&self) -> Option<bool> {
         match self {
             Self::Bool(value) => Some(*value),
             _ => None,
         }
     }
 
-    pub(crate) fn get(&self, key: &str) -> Option<&PyJson> {
+    /// Returns an object member by name.
+    pub fn get(&self, key: &str) -> Option<&PyJson> {
         self.object()?
             .iter()
             .find(|(name, _)| name == key)
             .map(|(_, value)| value)
     }
 
-    pub(crate) fn object_mut(&mut self) -> Option<&mut Vec<(String, PyJson)>> {
+    /// Returns this object's mutable insertion-ordered members.
+    pub fn object_mut(&mut self) -> Option<&mut Vec<(String, PyJson)>> {
         match self {
             Self::Object(value) => Some(value),
             _ => None,
@@ -66,7 +72,7 @@ impl PyJson {
     }
 
     /// Python's `bool(value)`: `None`, `False`, zero and empty containers are false.
-    pub(crate) fn is_truthy(&self) -> bool {
+    pub fn is_truthy(&self) -> bool {
         match self {
             Self::Null => false,
             Self::Bool(value) => *value,

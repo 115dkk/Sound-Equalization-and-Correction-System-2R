@@ -1,10 +1,14 @@
 //! Port of wizard/step5_measure.py and mdat_loader.py (SECS 2, GPL-3.0-only).
-use crate::measure::json::JsonExt;
 use crate::measure::{MeasureError, MeasurementSettings, plan_for};
 use crate::measurement_file::{self, FileRow, ImportedIr, MeasurementReader};
 use secs_project::{MeasurementStore, PyJson};
 use secs_types::role::{role_code, role_from_title};
-use std::{collections::BTreeSet, path::Path};
+use std::{
+    collections::BTreeSet,
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::SystemTime,
+};
 
 pub fn split_position(title: &str) -> (String, i64) {
     let text = title.trim();
@@ -132,52 +136,20 @@ fn is_sub(role: &str) -> bool {
         .starts_with("SW")
 }
 
-/// Radix-2 real-input spectrum power, for the upstream two-band classifier.
-/// Kept local to avoid adding a public numerical API to the service seam.
+/// Real-input spectrum power for the upstream two-band classifier, using the
+/// shared DSP FFT with the same power-of-two padding as the former local copy.
 pub fn looks_like_sub(samples: &[f64], sample_rate: i64) -> bool {
     if samples.len() < 64 || samples.iter().all(|x| *x == 0.0) || sample_rate <= 0 {
         return false;
     }
     let n = samples.len().max(8192).next_power_of_two();
-    let mut re = vec![0.0; n];
-    let mut im = vec![0.0; n];
-    re[..samples.len()].copy_from_slice(samples);
-    let mut j = 0;
-    for i in 1..n {
-        let mut bit = n >> 1;
-        while j & bit != 0 {
-            j ^= bit;
-            bit >>= 1;
-        }
-        j ^= bit;
-        if i < j {
-            re.swap(i, j);
-            im.swap(i, j);
-        }
-    }
-    let mut width = 2;
-    while width <= n {
-        let angle = -2.0 * std::f64::consts::PI / width as f64;
-        let (wi, wr) = angle.sin_cos();
-        for start in (0..n).step_by(width) {
-            let (mut ur, mut ui) = (1.0, 0.0);
-            for k in 0..width / 2 {
-                let a = start + k;
-                let b = a + width / 2;
-                let (vr, vi) = (re[b] * ur - im[b] * ui, re[b] * ui + im[b] * ur);
-                re[b] = re[a] - vr;
-                im[b] = im[a] - vi;
-                re[a] += vr;
-                im[a] += vi;
-                (ur, ui) = (ur * wr - ui * wi, ur * wi + ui * wr);
-            }
-        }
-        width *= 2;
-    }
+    let mut padded = vec![0.0; n];
+    padded[..samples.len()].copy_from_slice(samples);
+    let spectrum = secs_dsp::fft::rfft(&padded);
     let (mut low, mut high, mut nl, mut nh) = (0.0, 0.0, 0, 0);
-    for i in 0..=n / 2 {
+    for (i, value) in spectrum.iter().enumerate() {
         let f = i as f64 * sample_rate as f64 / n as f64;
-        let power = re[i] * re[i] + im[i] * im[i];
+        let power = value.norm_sqr();
         if (20.0..100.0).contains(&f) {
             low += power;
             nl += 1;
@@ -192,6 +164,10 @@ pub fn looks_like_sub(samples: &[f64], sample_rate: i64) -> bool {
         && 10.0 * ((high / f64::from(nh) + 1e-30) / (low / f64::from(nl) + 1e-30)).log10() < -30.0
 }
 
+#[deprecated(
+    since = "0.23.0",
+    note = "no caller; removed in the next minor (audit #186 TD-219)"
+)]
 pub fn problems(assignment: &[Option<String>], positions: &[i64]) -> String {
     let chosen = assignment
         .iter()
@@ -282,21 +258,31 @@ pub fn scan_for(
 ) -> Result<MdatScan, MeasureError> {
     Ok(MdatReader::read(path, roles, position, current_position)?.scan)
 }
+
+type MdatIr = Option<(Vec<f64>, i64)>;
+pub(crate) type ScannedMdat = (PathBuf, u64, SystemTime, Arc<MdatReader>);
+
+#[allow(deprecated)]
 fn scan_loaded(
     loaded: &secs_mdat::LoadedMdatProject,
     roles: &[String],
     position: Option<i64>,
     current: i64,
-) -> MdatScan {
+) -> (MdatScan, Vec<MdatIr>) {
+    let irs = loaded
+        .measurements
+        .iter()
+        .map(|info| loaded.ir_provider.get_ir(&info.uuid))
+        .collect::<Vec<_>>();
     let mut measurements = loaded
         .measurements
         .iter()
-        .map(|info| {
+        .zip(&irs)
+        .map(|(info, ir)| {
             let (base, pos) = split_position(&info.title);
-            let flag = loaded
-                .ir_provider
-                .get_ir(&info.uuid)
-                .map(|(ir, rate)| looks_like_sub(&ir, rate));
+            let flag = ir
+                .as_ref()
+                .map(|(samples, rate)| looks_like_sub(samples, *rate));
             MdatMeasurement {
                 info: info.clone(),
                 title_base: base,
@@ -346,19 +332,22 @@ fn scan_loaded(
             .collect::<Vec<_>>(),
         &measurements.iter().map(|m| m.position).collect::<Vec<_>>(),
     );
-    MdatScan {
-        measurements,
-        problems: problem,
-    }
+    (
+        MdatScan {
+            measurements,
+            problems: problem,
+        },
+        irs,
+    )
 }
 pub use crate::measurement_file::Assignment;
 
 /// An mdat file parsed and classified once, as the import flow's reader.
 #[derive(Debug)]
 pub(crate) struct MdatReader {
-    loaded: secs_mdat::LoadedMdatProject,
     scan: MdatScan,
     rows: Vec<FileRow>,
+    irs: Vec<MdatIr>,
 }
 
 impl MdatReader {
@@ -373,7 +362,7 @@ impl MdatReader {
         // The parser's own graph and array budgets apply on top.
         let loaded = secs_mdat::load_mdat_project(&bytes, &Default::default())
             .map_err(|e| MeasureError::Input(e.to_string()))?;
-        let scan = scan_loaded(&loaded, roles, position, current);
+        let (scan, irs) = scan_loaded(&loaded, roles, position, current);
         let rows = scan
             .measurements
             .iter()
@@ -385,7 +374,7 @@ impl MdatReader {
                 position_tagged: m.title_base != m.info.title.trim(),
             })
             .collect();
-        Ok(Self { loaded, scan, rows })
+        Ok(Self { scan, rows, irs })
     }
 }
 
@@ -402,13 +391,13 @@ impl MeasurementReader for MdatReader {
             .ok_or_else(|| MeasureError::Input("mdat measurement row does not exist".into()))?
             .info;
         let (ir, rate) = self
-            .loaded
-            .ir_provider
-            .get_ir(&info.uuid)
+            .irs
+            .get(row)
+            .and_then(Option::as_ref)
             .ok_or_else(|| MeasureError::Input("mdat measurement has no IR".into()))?;
         Ok(ImportedIr {
-            samples: ir.into_iter().map(|v| v as f32).collect(),
-            sample_rate: crate::measure::positive(rate, "sample rate")?,
+            samples: ir.iter().map(|v| *v as f32).collect(),
+            sample_rate: crate::measure::positive(*rate, "sample rate")?,
             t0_s: info.start_time_s,
             uuid: info.uuid.clone(),
             source_info: Some(info.source_info.clone()),
@@ -420,6 +409,7 @@ impl MeasurementReader for MdatReader {
 /// `assignment` is per row in file order (missing rows are skipped, as
 /// upstream pads it with `None`); without one every row takes its
 /// suggested role and position.
+#[deprecated(since = "0.23.0", note = "use measurement_file::import")]
 pub fn import(
     store: &mut MeasurementStore,
     path: &Path,
@@ -456,6 +446,10 @@ pub fn import(
     )
 }
 
+#[deprecated(
+    since = "0.23.0",
+    note = "no caller; removed in the next minor (audit #186 TD-219)"
+)]
 pub fn mdat_sources(store: &MeasurementStore) -> std::collections::BTreeMap<i64, String> {
     let mut out = std::collections::BTreeMap::new();
     if let PyJson::Array(entries) = &store.project().measurements {
@@ -467,7 +461,7 @@ pub fn mdat_sources(store: &MeasurementStore) -> std::collections::BTreeMap<i64,
             if pos <= 0 {
                 continue;
             }
-            let Some(irs) = entry.get("ir").and_then(JsonExt::object) else {
+            let Some(irs) = entry.get("ir").and_then(PyJson::object) else {
                 continue;
             };
             let mut names = Vec::new();
@@ -478,7 +472,7 @@ pub fn mdat_sources(store: &MeasurementStore) -> std::collections::BTreeMap<i64,
                 let name = entry
                     .get("source")
                     .and_then(|s| s.get(role))
-                    .and_then(JsonExt::str)
+                    .and_then(PyJson::str)
                     .unwrap_or("");
                 if !names.contains(&name) {
                     names.push(name);

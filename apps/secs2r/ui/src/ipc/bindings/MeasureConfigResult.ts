@@ -63,4 +63,8 @@ timing_ref_output: number | null,
 /**
  * Share preference: auto, exclusive, or shared.
  */
-share_mode: string, };
+share_mode: string, 
+/**
+ * The REW executable the project names, when it names one.
+ */
+rew_executable?: string, };

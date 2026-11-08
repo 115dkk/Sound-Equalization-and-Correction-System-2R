@@ -19,7 +19,13 @@ pub const REW_PROCESS_NAMES: [&str; 2] = ["roomeqwizard.exe", "rew.exe"];
 pub trait ProcessProbe {
     fn process_names(&self) -> Result<Vec<String>, RewError>;
 }
-pub fn rew_process_running(probe: &impl ProcessProbe) -> bool {
+
+impl<T: crate::Transport + ?Sized> crate::Transport for Box<T> {
+    fn request(&self, request: &crate::Request) -> Result<crate::Response, RewError> {
+        (**self).request(request)
+    }
+}
+pub fn rew_process_running(probe: &(impl ProcessProbe + ?Sized)) -> bool {
     probe
         .process_names()
         .unwrap_or_default()
@@ -67,6 +73,10 @@ pub fn find_rew_exe_for(platform: Platform, exists: impl Fn(&Path) -> bool) -> O
 }
 /// Rust is not a PyInstaller bundle and never changes SetDllDirectory. This
 /// pure helper supports hosts which deliberately supply a bundled environment.
+#[deprecated(
+    since = "0.23.0",
+    note = "no caller; removed in the next minor (audit #186 TD-219)"
+)]
 pub fn clean_env(
     env: &BTreeMap<OsString, OsString>,
     bundle: Option<&Path>,

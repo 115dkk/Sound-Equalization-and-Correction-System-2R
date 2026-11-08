@@ -11,6 +11,8 @@ import { useT } from "../../i18n/react";
 import { baseName } from "./format";
 import {
   countdownView,
+  curvesLoadingView,
+  curvesRefreshingView,
   doneView,
   emptyView,
   filesView,
@@ -175,6 +177,8 @@ const measureSpecimens: SpecimenDef[] = [
   frame("screen.measure.done", "Measure · every position measured", () => <MeasureFrame view={doneView} />),
   frame("screen.measure.reference-mid", "Measure · 2.1 project: one sub and the mains, 0 dB = L at position 1 over 200~2000 Hz", () => <MeasureFrame view={referenceMidView} />),
   frame("screen.measure.reference-sub", "Measure · subs-only project: 0 dB = SW1 at position 1 over 40~120 Hz", () => <MeasureFrame view={referenceSubView} />),
+  frame("screen.measure.curves-loading", "Measure · the curves' first read on its way: loading in the graph's place", () => <MeasureFrame view={curvesLoadingView} />),
+  frame("screen.measure.curves-refreshing", "Measure · the curves read again after a change: held curves, status in the header", () => <MeasureFrame view={curvesRefreshingView} />),
   frame("screen.measure.graph-hidden", "Measure · graph hidden, map enlarged", () => <MeasureFrame view={graphHiddenView} />),
   frame("screen.measure.graph-hidden.min", "Measure · graph hidden at 1024 × 700", () => <MeasureFrame view={graphHiddenView} />, "min"),
   frame("screen.measure.low-snr", "Measure · low S/N warning on position 4", () => <MeasureFrame view={lowSnrView} jobs={lowSnrJobs} now={T0 + 110000} />),

@@ -55,7 +55,7 @@ impl DesignReplay {
     /// Rebuilds the 2 s spectra used by SECS 2's REW exports.
     /// `design` must be the design that owns this replay.
     pub fn export_view(&self, design: &Design) -> Result<ExportView, EngineError> {
-        self.export_view_until(design, &|| false)
+        self.export_view_until(design, &secs_compute::Context::serial())
     }
 
     /// Converts a design-grid export response to REW samples and its time origin.
@@ -92,14 +92,9 @@ impl DesignReplay {
     pub(crate) fn export_view_until(
         &self,
         design: &Design,
-        cancelled: &dyn Fn() -> bool,
+        ctx: &secs_compute::Context,
     ) -> Result<ExportView, EngineError> {
-        crate::export_view::export_view_prepared(
-            design,
-            self.measurements(),
-            &self.prepared,
-            cancelled,
-        )
+        crate::export_view::export_view_prepared(design, self.measurements(), &self.prepared, ctx)
     }
 
     /// Legacy callers may supply a different input. Comparing shared storage

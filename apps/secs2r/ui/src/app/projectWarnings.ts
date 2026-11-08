@@ -15,21 +15,21 @@ const REMEASURE: ReadonlySet<string> = new Set(["measurement.ir_path.outside"]);
 const PATCH: ReadonlySet<string> = new Set(["config.band.out.outside"]);
 
 export type PositionRow = { position: number; roles: string[] };
-export type BandOutputRow = { role: string; band: string; output: number };
-export type WarningRow = PositionRow | BandOutputRow | { raw: string };
-export type WarningGroup = { code: string; text: string; known: boolean; remeasure: boolean; patch: boolean; rows: WarningRow[] };
+type BandOutputRow = { role: string; band: string; output: number };
+type WarningRow = PositionRow | BandOutputRow | { raw: string };
+type WarningGroup = { code: string; text: string; known: boolean; remeasure: boolean; patch: boolean; rows: WarningRow[] };
 
 /** A warning's identity, for dismissing it. */
 export const warningKey = (warning: ProjectWarning): string => `${warning.code}\n${warning.entry}`;
 
 /** "position 3, role FL" (secs-project `ir_path_of`) as its position and role. */
-export function warningTarget(entry: string): { position: number; role: string } | null {
+function warningTarget(entry: string): { position: number; role: string } | null {
   const match = /^position (\d+), role (.+)$/.exec(entry);
   return match?.[1] && match[2] ? { position: Number(match[1]), role: match[2] } : null;
 }
 
 /** "role Lb, band FULL, output 300" (secs-project config.rs) as the role's code, the band and the output it had. */
-export function bandOutput(entry: string): BandOutputRow | null {
+function bandOutput(entry: string): BandOutputRow | null {
   const match = /^role (.+), band (.+), output (-?\d+)$/.exec(entry);
   return match?.[1] && match[2] && match[3] ? { role: roleCode(match[1]), band: match[2], output: Number(match[3]) } : null;
 }

@@ -62,8 +62,8 @@ pub(crate) fn describe(
                 filter_note: String::new(),
                 ultra_ms: run.settings.ultra_ms,
                 label: mode_label(run.settings.mode, Some(run.settings.ultra_ms)),
-                latency_ms: design.chain.latency_ms,
-                rc_hi_hz: design.rc_hi,
+                latency_ms: design.latency_ms(),
+                rc_hi_hz: design.rc_hi(),
                 rc_bands: run.settings.rc_bands.clone(),
                 rc_pieces: secs_export::rc_pieces(&ExportRun {
                     design,
@@ -75,21 +75,15 @@ pub(crate) fn describe(
             }
         }
         RunView::Cached { cache, .. } => {
-            let rc_values = cache
-                .calibration
-                .notes
-                .iter()
-                .find(|notice| notice.code == "rc_limit")
-                .and_then(|notice| {
-                    Some((
-                        notice.params.get("hz")?.parse::<f64>().ok()?,
-                        notice.params.get("auto")?.parse::<bool>().ok()?,
-                        notice
-                            .params
-                            .get("schroeder_hz")
-                            .and_then(|value| value.parse::<f64>().ok()),
-                    ))
-                });
+            let rc_values = cache.calibration.notes.iter().find_map(|note| match note {
+                secs_types::notes::Note::RcLimit {
+                    hz,
+                    auto,
+                    schroeder_hz,
+                    ..
+                } => Some((*hz, *auto, *schroeder_hz)),
+                _ => None,
+            });
             let (rc_hi_hz, rc_auto, schroeder_hz, legacy_fallback) = match rc_values {
                 Some((hz, auto, schroeder)) => (hz, auto, schroeder, false),
                 None => (cache.labels.rc_hi_hz, settings.rc_hi.is_none(), None, true),
@@ -159,7 +153,7 @@ pub(crate) fn describe(
             kind,
             fsiso: paths.fsiso,
             supports: paths.paths.len(),
-            cap_text: secs_engine::mimo::cap_text(max_supports),
+            cap_text: secs_engine::mimo_cap_text(max_supports),
             note: MimoNote::for_paths(paths, description.max_supports)
                 .expect("an exported MIMO has support paths"),
         }
@@ -184,6 +178,24 @@ pub(crate) fn describe(
 }
 
 impl ExportDescription {
+    pub(crate) fn measurements(mode: Mode, now: crate::LocalTime) -> Self {
+        Self {
+            mode,
+            mode_name: note::mode_name(mode, 0.0),
+            camilla_note: String::new(),
+            filter_note: String::new(),
+            ultra_ms: 0.0,
+            label: mode_label(mode, None),
+            latency_ms: 0.0,
+            rc_hi_hz: 0.0,
+            rc_bands: Vec::new(),
+            rc_pieces: Vec::new(),
+            max_supports: 0,
+            mimo: None,
+            stamp: now.minute_stamp(),
+        }
+    }
+
     pub(crate) fn mode(&self) -> &'static str {
         mode_tag(self.mode)
     }

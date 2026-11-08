@@ -1,3 +1,11 @@
+//! Unclaimed results retain at most 1024 envelopes. Storing another result
+//! evicts the oldest handle; its length becomes zero and copying it returns
+//! `SECS_RESULT_UNKNOWN`. Callers must take or free results promptly.
+//!
+//! `secs_events_next` holds the subscription lock while polling. Freeing its
+//! handle returns without waiting, but a concurrent poll keeps the subscription
+//! and socket alive until that poll finishes (up to its `timeout_ms`).
+
 use std::slice;
 
 use crate::core;
@@ -186,6 +194,7 @@ pub extern "C" fn secs_events_next(subscription: u64, timeout_ms: u64) -> u64 {
 }
 
 /// Frees an event-subscription handle. Unknown handles are ignored.
+/// A concurrent poll can defer closing its socket by up to that poll's timeout.
 #[unsafe(no_mangle)]
 pub extern "C" fn secs_events_free(subscription: u64) {
     core::guard(|| core::events_free(subscription), |_| ());

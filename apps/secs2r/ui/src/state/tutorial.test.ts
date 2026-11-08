@@ -28,7 +28,8 @@ it.each([
     expect(session.stores.project.getSnapshot()).toMatchObject({ tutorial: true, path: "", positions: [] });
     expect(session.stores.measurementSettings.getSnapshot()?.method).toBe(method);
     expect(session.stores.config.getSnapshot()?.speakers.find((speaker) => speaker.role === "SW3")?.bands[0]?.out).toBe(output);
-    expect(session.host.getSnapshot()).toMatchObject({ monitor: "off", path: method === "none" ? null : "mock" });
+    expect(session.host.getSnapshot().path).toBe(method === "none" ? null : "mock");
+    expect(session.stores.monitor.getSnapshot().monitor).toBe("off");
     expect(session.tutorialReady.getSnapshot()).toBe(true);
   } finally { session.dispose(); await session.settled(); mock.dispose(); }
 });

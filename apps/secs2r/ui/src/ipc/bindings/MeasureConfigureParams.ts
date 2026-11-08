@@ -51,4 +51,9 @@ timing_ref_output: number | null,
 /**
  * Optional share preference: auto, exclusive, or shared.
  */
-share_mode: string | null, };
+share_mode: string | null, 
+/**
+ * Optional absolute path of the REW executable to start instead of the
+ * installed one; an empty string clears it (audit #186 TD-221).
+ */
+rew_executable?: string, };

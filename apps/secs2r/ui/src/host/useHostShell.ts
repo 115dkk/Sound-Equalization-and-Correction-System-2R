@@ -12,7 +12,7 @@ import type { HostState } from "./model";
 /** How many log lines the page asks for and shows. */
 export const LOG_LINES = 50;
 /** How often the page reads the service while the window is visible. */
-export const POLL_MS = 2000;
+const POLL_MS = 2000;
 
 export type HostShellAction = "install" | "uninstall" | "stop" | "open";
 

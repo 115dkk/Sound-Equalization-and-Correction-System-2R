@@ -16,6 +16,8 @@ use ts_rs::TS;
 
 use crate::calibration::{CalibrationSettings, Mode};
 use crate::compute::{ComputePreference, ComputeReport, ComputeStatus};
+use crate::local_api::MethodAccess;
+use crate::notes::Note;
 pub use crate::settings_edit::CalibrationSettingsEditParams;
 
 /// A call from the screen.
@@ -46,7 +48,8 @@ pub enum Request {
     /// The `Calibrate` Request variant.
     Calibrate(CalibrateParams),
     /// The `RecommendXo` Request variant.
-    RecommendXo,
+    #[ts(untagged)]
+    RecommendXo(#[ts(as = "RecommendXoRequest")] Option<RecommendXoParams>),
     /// The `Mimo` Request variant.
     Mimo(MimoParams),
     /// The `Results` Request variant.
@@ -230,6 +233,571 @@ impl Request {
     /// The wire name of this request's method.
     pub fn method(&self) -> &'static str {
         self.into()
+    }
+
+    /// Local-API policy carried by this request variant.
+    pub const fn access(&self) -> MethodAccess {
+        match self {
+            Self::Bootstrap => MethodAccess {
+                ui_only: false,
+                mutates: false,
+            },
+            Self::ProjectNew(..) => MethodAccess {
+                ui_only: false,
+                mutates: true,
+            },
+            Self::ProjectOpen(..) => MethodAccess {
+                ui_only: false,
+                mutates: true,
+            },
+            Self::ProjectSave(..) => MethodAccess {
+                ui_only: false,
+                mutates: true,
+            },
+            Self::ProjectInfo => MethodAccess {
+                ui_only: false,
+                mutates: false,
+            },
+            Self::SampleLoad(..) => MethodAccess {
+                ui_only: false,
+                mutates: true,
+            },
+            Self::Calibrate(..) => MethodAccess {
+                ui_only: false,
+                mutates: true,
+            },
+            Self::RecommendXo(..) => MethodAccess {
+                ui_only: false,
+                mutates: true,
+            },
+            Self::Mimo(..) => MethodAccess {
+                ui_only: false,
+                mutates: true,
+            },
+            Self::Results => MethodAccess {
+                ui_only: false,
+                mutates: false,
+            },
+            Self::Export(..) => MethodAccess {
+                ui_only: false,
+                mutates: true,
+            },
+            Self::JobCancel(..) => MethodAccess {
+                ui_only: false,
+                mutates: true,
+            },
+            Self::Jobs => MethodAccess {
+                ui_only: false,
+                mutates: false,
+            },
+            Self::MeasureMethods => MethodAccess {
+                ui_only: false,
+                mutates: false,
+            },
+            Self::MeasureConfigure(..) => MethodAccess {
+                ui_only: false,
+                mutates: true,
+            },
+            Self::MeasureConfigGet => MethodAccess {
+                ui_only: false,
+                mutates: false,
+            },
+            Self::MeasurementRecords => MethodAccess {
+                ui_only: false,
+                mutates: false,
+            },
+            Self::MicCalibrationGet => MethodAccess {
+                ui_only: false,
+                mutates: false,
+            },
+            Self::MicCalibrationSet(..) => MethodAccess {
+                ui_only: false,
+                mutates: true,
+            },
+            Self::MicCalibrationClear => MethodAccess {
+                ui_only: false,
+                mutates: true,
+            },
+            Self::MicCalibrationAttach => MethodAccess {
+                ui_only: false,
+                mutates: true,
+            },
+            Self::LevelsGet => MethodAccess {
+                ui_only: false,
+                mutates: false,
+            },
+            Self::LevelsFillDefaults => MethodAccess {
+                ui_only: false,
+                mutates: true,
+            },
+            Self::LevelStop => MethodAccess {
+                ui_only: false,
+                mutates: true,
+            },
+            Self::MeasurePosition(..) => MethodAccess {
+                ui_only: false,
+                mutates: true,
+            },
+            Self::PositionClear(..) => MethodAccess {
+                ui_only: false,
+                mutates: true,
+            },
+            Self::Undo(..) => MethodAccess {
+                ui_only: false,
+                mutates: true,
+            },
+            Self::RewLaunch => MethodAccess {
+                ui_only: true,
+                mutates: true,
+            },
+            Self::MdatScan(..) => MethodAccess {
+                ui_only: false,
+                mutates: false,
+            },
+            Self::MdatImport(..) => MethodAccess {
+                ui_only: false,
+                mutates: true,
+            },
+            Self::ConfigGet => MethodAccess {
+                ui_only: false,
+                mutates: false,
+            },
+            Self::ConfigApplyPreset(..) => MethodAccess {
+                ui_only: false,
+                mutates: true,
+            },
+            Self::ConfigSetSubCount(..) => MethodAccess {
+                ui_only: false,
+                mutates: true,
+            },
+            Self::ConfigSetSpeaker(..) => MethodAccess {
+                ui_only: false,
+                mutates: true,
+            },
+            Self::ConfigAddSpeaker => MethodAccess {
+                ui_only: false,
+                mutates: true,
+            },
+            Self::ConfigRemoveSpeaker(..) => MethodAccess {
+                ui_only: false,
+                mutates: true,
+            },
+            Self::ConfigRenumber => MethodAccess {
+                ui_only: false,
+                mutates: true,
+            },
+            Self::ConfigValidate => MethodAccess {
+                ui_only: false,
+                mutates: false,
+            },
+            Self::PatchSheetCsv(..) => MethodAccess {
+                ui_only: false,
+                mutates: true,
+            },
+            Self::DspGet => MethodAccess {
+                ui_only: false,
+                mutates: false,
+            },
+            Self::DspSet(..) => MethodAccess {
+                ui_only: false,
+                mutates: true,
+            },
+            Self::LayoutGet => MethodAccess {
+                ui_only: false,
+                mutates: false,
+            },
+            Self::LayoutSet(..) => MethodAccess {
+                ui_only: false,
+                mutates: true,
+            },
+            Self::PositionEstimate => MethodAccess {
+                ui_only: false,
+                mutates: false,
+            },
+            Self::TargetGet => MethodAccess {
+                ui_only: false,
+                mutates: false,
+            },
+            Self::TargetSetPoints(..) => MethodAccess {
+                ui_only: false,
+                mutates: true,
+            },
+            Self::TargetApplyPreset(..) => MethodAccess {
+                ui_only: false,
+                mutates: true,
+            },
+            Self::TargetSave(..) => MethodAccess {
+                ui_only: false,
+                mutates: true,
+            },
+            Self::TargetLoad(..) => MethodAccess {
+                ui_only: false,
+                mutates: true,
+            },
+            Self::CalibrationSettingsGet => MethodAccess {
+                ui_only: false,
+                mutates: false,
+            },
+            Self::CalibrationSettingsSet(..) => MethodAccess {
+                ui_only: false,
+                mutates: true,
+            },
+            Self::CalibrationSettingsEdit(..) => MethodAccess {
+                ui_only: false,
+                mutates: true,
+            },
+            Self::SubWarnings => MethodAccess {
+                ui_only: false,
+                mutates: false,
+            },
+            Self::RewInfo => MethodAccess {
+                ui_only: false,
+                mutates: false,
+            },
+            Self::RewDriverSet(..) => MethodAccess {
+                ui_only: false,
+                mutates: true,
+            },
+            Self::ModeSpec(..) => MethodAccess {
+                ui_only: false,
+                mutates: false,
+            },
+            Self::AppSettingsGet => MethodAccess {
+                ui_only: false,
+                mutates: false,
+            },
+            Self::AppSettingsSet(..) => MethodAccess {
+                ui_only: false,
+                mutates: true,
+            },
+            Self::ApplyStatus => MethodAccess {
+                ui_only: false,
+                mutates: false,
+            },
+            Self::ApplyCamilla(..) => MethodAccess {
+                ui_only: false,
+                mutates: true,
+            },
+            Self::ApplyEqapo => MethodAccess {
+                ui_only: false,
+                mutates: true,
+            },
+            Self::RevertEqapo => MethodAccess {
+                ui_only: false,
+                mutates: true,
+            },
+            Self::ApplySettingsSet(..) => MethodAccess {
+                ui_only: false,
+                mutates: true,
+            },
+            Self::HostInstall => MethodAccess {
+                ui_only: true,
+                mutates: true,
+            },
+            Self::HostUninstall => MethodAccess {
+                ui_only: true,
+                mutates: true,
+            },
+            Self::HostStopManaging => MethodAccess {
+                ui_only: false,
+                mutates: true,
+            },
+            Self::UpdateStatus => MethodAccess {
+                ui_only: false,
+                mutates: false,
+            },
+            Self::UpdateCheck => MethodAccess {
+                ui_only: true,
+                mutates: false,
+            },
+            Self::UpdateDownload => MethodAccess {
+                ui_only: true,
+                mutates: true,
+            },
+            Self::UpdateRestart => MethodAccess {
+                ui_only: true,
+                mutates: true,
+            },
+            Self::UpdateNoticeDismiss => MethodAccess {
+                ui_only: true,
+                mutates: true,
+            },
+            Self::UpdateOpenRelease(..) => MethodAccess {
+                ui_only: true,
+                mutates: false,
+            },
+            Self::LocalApiStatus => MethodAccess {
+                ui_only: true,
+                mutates: false,
+            },
+            Self::LocalApiTokenRegenerate => MethodAccess {
+                ui_only: true,
+                mutates: true,
+            },
+            Self::ComputeStatus => MethodAccess {
+                ui_only: false,
+                mutates: false,
+            },
+            Self::OpenGpuHelp => MethodAccess {
+                ui_only: true,
+                mutates: false,
+            },
+            Self::MeasurementCurves(..) => MethodAccess {
+                ui_only: false,
+                mutates: false,
+            },
+            Self::ResultCurves(..) => MethodAccess {
+                ui_only: false,
+                mutates: false,
+            },
+            Self::ResultLines => MethodAccess {
+                ui_only: false,
+                mutates: false,
+            },
+            Self::SubTakeValues => MethodAccess {
+                ui_only: false,
+                mutates: true,
+            },
+            Self::DialogOpenProject => MethodAccess {
+                ui_only: true,
+                mutates: false,
+            },
+            Self::DialogSaveProject(..) => MethodAccess {
+                ui_only: true,
+                mutates: false,
+            },
+            Self::DialogPickMdat => MethodAccess {
+                ui_only: true,
+                mutates: false,
+            },
+            Self::DialogPickFolder(..) => MethodAccess {
+                ui_only: true,
+                mutates: false,
+            },
+            Self::DialogSaveFile(..) => MethodAccess {
+                ui_only: true,
+                mutates: false,
+            },
+            Self::DialogOpenFile(..) => MethodAccess {
+                ui_only: true,
+                mutates: false,
+            },
+            Self::OpenFolder(..) => MethodAccess {
+                ui_only: true,
+                mutates: true,
+            },
+            Self::LevelMonitorStart(..) => MethodAccess {
+                ui_only: false,
+                mutates: true,
+            },
+            Self::LevelMonitorStop => MethodAccess {
+                ui_only: false,
+                mutates: true,
+            },
+            Self::LevelPlay(..) => MethodAccess {
+                ui_only: false,
+                mutates: true,
+            },
+            Self::StatusWatchStart => MethodAccess {
+                ui_only: false,
+                mutates: true,
+            },
+            Self::StatusWatchStop => MethodAccess {
+                ui_only: false,
+                mutates: true,
+            },
+            Self::ExportFolderGet => MethodAccess {
+                ui_only: false,
+                mutates: false,
+            },
+            Self::ExportFolderSet(..) => MethodAccess {
+                ui_only: false,
+                mutates: true,
+            },
+        }
+    }
+
+    /// One value of every variant. A new variant fails to compile here until
+    /// it gets an example, which `method_names_match_the_wire` then checks.
+    pub(crate) fn examples() -> Vec<Request> {
+        vec![
+            Request::Bootstrap,
+            Request::ProjectNew(ProjectNewParams {
+                path: "x.secs".into(),
+                preset: "2.1".into(),
+                sub_count: 1,
+                sample: false,
+                tutorial: false,
+            }),
+            Request::ProjectOpen(ProjectPathParams {
+                path: "x.secs".into(),
+            }),
+            Request::ProjectSave(ProjectSaveParams::default()),
+            Request::ProjectInfo,
+            Request::SampleLoad(SampleLoadParams::default()),
+            Request::Calibrate(CalibrateParams::default()),
+            Request::RecommendXo(None),
+            Request::Mimo(MimoParams::default()),
+            Request::Results,
+            Request::Export(ExportParams {
+                kind: ExportKind::CamillaDsp,
+                folder: ".".into(),
+                mdat_scope: None,
+                design_name: None,
+                camilla_devices: None,
+                extra_rates: Vec::new(),
+            }),
+            Request::JobCancel(JobCancelParams { job: JobId(1) }),
+            Request::Jobs,
+            Request::MeasureMethods,
+            Request::MeasureConfigure(MeasureConfigureParams::default()),
+            Request::MeasureConfigGet,
+            Request::MeasurementRecords,
+            Request::MicCalibrationGet,
+            Request::MicCalibrationSet(MicCalibrationSetParams {
+                path: "mic.txt".into(),
+            }),
+            Request::MicCalibrationClear,
+            Request::MicCalibrationAttach,
+            Request::LevelsGet,
+            Request::LevelsFillDefaults,
+            Request::LevelStop,
+            Request::MeasurePosition(MeasurePositionParams { position: 1 }),
+            Request::PositionClear(PositionClearParams { position: 1 }),
+            Request::Undo(UndoParams { token: "x".into() }),
+            Request::RewLaunch,
+            Request::MdatScan(MdatScanParams {
+                path: "x.mdat".into(),
+            }),
+            Request::MdatImport(MdatImportParams {
+                path: "x.mdat".into(),
+                assignments: vec![],
+                position: 1,
+            }),
+            Request::ConfigGet,
+            Request::ConfigApplyPreset(ConfigPresetParams {
+                preset: "2.1".into(),
+                confirm: false,
+            }),
+            Request::ConfigSetSubCount(ConfigSubCountParams {
+                count: 2,
+                confirm: false,
+            }),
+            Request::ConfigSetSpeaker(ConfigSetSpeakerParams {
+                index: 0,
+                role: Some("L".into()),
+                size: None,
+                band_index: Some(0),
+                out: Some(1),
+                pol: Some("+".into()),
+            }),
+            Request::ConfigAddSpeaker,
+            Request::ConfigRemoveSpeaker(ConfigIndexParams { index: 0 }),
+            Request::ConfigRenumber,
+            Request::ConfigValidate,
+            Request::PatchSheetCsv(PathParams {
+                path: "patch.csv".into(),
+            }),
+            Request::DspGet,
+            Request::DspSet(DspSetParams {
+                preset: Some("tesira".into()),
+                fields: None,
+            }),
+            Request::LayoutGet,
+            Request::LayoutSet(LayoutSetParams {
+                count: Some(9),
+                ..Default::default()
+            }),
+            Request::PositionEstimate,
+            Request::TargetGet,
+            Request::TargetSetPoints(TargetPointsParams {
+                points: vec![(20.0, 0.0), (20_000.0, 0.0)],
+            }),
+            Request::TargetApplyPreset(TargetPresetParams {
+                preset: "flat".into(),
+            }),
+            Request::TargetSave(PathParams {
+                path: "target.json".into(),
+            }),
+            Request::TargetLoad(PathParams {
+                path: "target.json".into(),
+            }),
+            Request::CalibrationSettingsGet,
+            Request::CalibrationSettingsSet(CalibrationSettingsParams {
+                settings: CalibrationSettings::default(),
+            }),
+            Request::CalibrationSettingsEdit(CalibrationSettingsEditParams {
+                edit: crate::settings_edit::SettingEdit::MimoOn { on: true },
+            }),
+            Request::SubWarnings,
+            Request::RewInfo,
+            Request::RewDriverSet(RewDriverSetParams {
+                driver: "ASIO".into(),
+            }),
+            Request::ModeSpec(ModeSpecParams {
+                mode: Mode::Mixed,
+                ultra_ms: None,
+                mimo_fir: None,
+            }),
+            Request::AppSettingsGet,
+            Request::AppSettingsSet(AppSettingsParams {
+                settings: AppSettings::default(),
+            }),
+            Request::ApplyStatus,
+            Request::ApplyCamilla(ApplyCamillaParams::default()),
+            Request::ApplyEqapo,
+            Request::RevertEqapo,
+            Request::ApplySettingsSet(ApplySettings::default()),
+            Request::HostInstall,
+            Request::HostUninstall,
+            Request::HostStopManaging,
+            Request::UpdateStatus,
+            Request::UpdateCheck,
+            Request::UpdateDownload,
+            Request::UpdateRestart,
+            Request::UpdateNoticeDismiss,
+            Request::UpdateOpenRelease(UpdateOpenReleaseParams {
+                version: "0.36.0".into(),
+            }),
+            Request::LocalApiStatus,
+            Request::LocalApiTokenRegenerate,
+            Request::ComputeStatus,
+            Request::OpenGpuHelp,
+            Request::MeasurementCurves(MeasurementCurvesParams::default()),
+            Request::ResultCurves(ResultCurvesParams {
+                tab: ResultTab::Spl,
+                channel: None,
+                group: None,
+                xo_hz: None,
+                corrected: None,
+            }),
+            Request::ResultLines,
+            Request::SubTakeValues,
+            Request::DialogOpenProject,
+            Request::DialogSaveProject(DialogSuggestedParams {
+                suggested: "x.secs".into(),
+            }),
+            Request::DialogPickMdat,
+            Request::DialogPickFolder(DialogPickFolderParams { start: None }),
+            Request::DialogSaveFile(DialogSaveFileParams {
+                kind: SaveFileKind::PatchSheet,
+                suggested: "x.csv".into(),
+            }),
+            Request::DialogOpenFile(DialogOpenFileParams {
+                kind: OpenFileKind::Target,
+            }),
+            Request::OpenFolder(OpenFolderParams { path: ".".into() }),
+            Request::LevelMonitorStart(LevelMonitorStartParams::default()),
+            Request::LevelMonitorStop,
+            Request::LevelPlay(LevelPlayParams {
+                role: "L".into(),
+                master_dbfs: -20.0,
+            }),
+            Request::StatusWatchStart,
+            Request::StatusWatchStop,
+            Request::ExportFolderGet,
+            Request::ExportFolderSet(ExportFolderSetParams { folder: ".".into() }),
+        ]
     }
 }
 
@@ -662,8 +1230,10 @@ pub struct ResultLinesResult {
     pub channels: Vec<ChannelResultLine>,
     /// Total delay in milliseconds, absent before calibration.
     pub total_delay_ms: Option<f64>,
-    /// Engine notes as codes and arguments.
-    pub notes: Vec<Notice>,
+    /// Typed engine notes.
+    pub notes: Vec<Note>,
+    /// Notices produced by service adapters rather than the engine.
+    pub notices: Vec<Notice>,
     /// RC ceiling provenance and room-volume notices.
     pub rc: Vec<Notice>,
     /// BA metrics, table, layouts and warnings when at least two subs are available.
@@ -688,6 +1258,10 @@ pub struct BootstrapInfo {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub log_dir: Option<String>,
+    /// Application-settings load warning, when defaults replaced an unreadable file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub settings_notice: Option<Notice>,
 }
 /// The upstream SECS 2 release a build is ported from (`UPSTREAM.toml`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -817,6 +1391,17 @@ pub struct RecommendXoParams {
     #[ts(as = "Option<bool>", optional)]
     pub background: bool,
 }
+// ts-rs 12 requires content for adjacent newtypes even when serde accepts an
+// absent Option. Describe just that variant with an optional named field.
+#[derive(TS)]
+#[allow(dead_code)]
+struct RecommendXoRequest {
+    #[ts(type = "\"recommend_xo\"")]
+    method: String,
+    #[ts(optional = nullable)]
+    params: Option<RecommendXoParams>,
+}
+
 /// Optional settings for a MIMO run.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS, Default)]
 #[ts(export)]
@@ -1062,8 +1647,11 @@ pub struct CalibrationSummary {
     pub late_energy: Vec<LateEnergy>,
     /// Total filter latency in milliseconds.
     pub latency_ms: f64,
-    /// Informational codes and values translated by the screen.
-    pub notes: Vec<Notice>,
+    /// Typed engine notes translated by the screen.
+    pub notes: Vec<Note>,
+    /// Notices produced by service adapters rather than the engine.
+    #[serde(default)]
+    pub notices: Vec<Notice>,
     /// Main-channel roles in design order; filter coefficients stay in Rust.
     pub main_roles: Vec<String>,
     /// Subwoofer roles in design order; filter coefficients stay in Rust.
@@ -1166,8 +1754,11 @@ pub struct MimoSummary {
     pub support_count: usize,
     /// Total FIR-tap budget across all generated paths.
     pub fir_taps_total: usize,
-    /// Informational codes and values translated by the screen.
-    pub notes: Vec<Notice>,
+    /// Typed engine notes translated by the screen.
+    pub notes: Vec<Note>,
+    /// Notices produced by service adapters rather than the engine.
+    #[serde(default)]
+    pub notices: Vec<Notice>,
     /// Number of distinct input roles with at least one generated support path.
     pub input_count: usize,
     /// Per-channel metrics after MIMO at the main position.
@@ -1492,6 +2083,36 @@ pub enum OpenFileKind {
     /// CamillaDSP executable selected for managed launching.
     CamillaExe,
 }
+
+impl OpenFileKind {
+    /// File-dialog filter names and extensions in display order.
+    pub fn filters(self, os: &str) -> &'static [(&'static str, &'static [&'static str])] {
+        match self {
+            Self::Target => &[("Target curve", &["json"])],
+            Self::MicCalibration => &[
+                ("Mic calibration", &["txt", "cal", "frd"]),
+                ("All files", &["*"]),
+            ],
+            Self::CamillaExe if os == "windows" => &[("Executable", &["exe"])],
+            Self::CamillaExe => &[],
+        }
+    }
+
+    /// Project-file filters shared by open and save dialogs.
+    pub fn project_filters() -> &'static [(&'static str, &'static [&'static str])] {
+        &[("SECS project", &["secs"])]
+    }
+
+    /// Measurement-import filters in display order.
+    pub fn measurement_filters() -> &'static [(&'static str, &'static [&'static str])] {
+        &[
+            ("Measurements", &["mdat", "liveproject"]),
+            ("REW measurement", &["mdat"]),
+            ("Dirac Live project", &["liveproject"]),
+        ]
+    }
+}
+
 /// Typed open-file dialog parameters.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]
@@ -1645,6 +2266,11 @@ pub struct MeasureConfigureParams {
     pub timing_ref_output: Option<u16>,
     /// Optional share preference: auto, exclusive, or shared.
     pub share_mode: Option<String>,
+    /// Optional absolute path of the REW executable to start instead of the
+    /// installed one; an empty string clears it (audit #186 TD-221).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub rew_executable: Option<String>,
 }
 /// The active measurement settings.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS, Default)]
@@ -1680,6 +2306,10 @@ pub struct MeasureConfigResult {
     pub timing_ref_output: Option<u16>,
     /// Share preference: auto, exclusive, or shared.
     pub share_mode: String,
+    /// The REW executable the project names, when it names one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub rew_executable: Option<String>,
 }
 /// Recording status and upstream source values for one arranged position.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -2876,6 +3506,22 @@ impl IpcError {
             detail: detail.into(),
         }
     }
+    /// Creates an invalid-request error identifying the rejected field.
+    pub fn invalid(field: impl Into<String>, detail: impl Into<String>) -> Self {
+        Self::new(ErrorCode::InvalidRequest, detail).with_param("field", field)
+    }
+
+    /// Creates an I/O error with its path, distinguishing denied access.
+    pub fn io(code: ErrorCode, path: impl AsRef<std::path::Path>, error: std::io::Error) -> Self {
+        let code = if error.kind() == std::io::ErrorKind::PermissionDenied {
+            ErrorCode::PermissionDenied
+        } else {
+            code
+        };
+        Self::new(code, error.to_string())
+            .with_param("path", path.as_ref().to_string_lossy().into_owned())
+    }
+
     /// Adds one screen message-template parameter.
     pub fn with_param(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.params.insert(key.into(), value.into());
@@ -2917,205 +3563,79 @@ impl Serialize for Envelope {
 mod tests {
     use super::*;
 
-    /// One value of every variant. A new variant fails to compile here until
-    /// it gets an example, which `method_names_match_the_wire` then checks.
-    fn examples() -> Vec<Request> {
-        vec![
-            Request::Bootstrap,
-            Request::ProjectNew(ProjectNewParams {
-                path: "x.secs".into(),
-                preset: "2.1".into(),
-                sub_count: 1,
-                sample: false,
-                tutorial: false,
-            }),
-            Request::ProjectOpen(ProjectPathParams {
-                path: "x.secs".into(),
-            }),
-            Request::ProjectSave(ProjectSaveParams::default()),
-            Request::ProjectInfo,
-            Request::SampleLoad(SampleLoadParams::default()),
-            Request::Calibrate(CalibrateParams::default()),
-            Request::RecommendXo,
-            Request::Mimo(MimoParams::default()),
-            Request::Results,
-            Request::Export(ExportParams {
-                kind: ExportKind::CamillaDsp,
-                folder: ".".into(),
-                mdat_scope: None,
-                design_name: None,
-                camilla_devices: None,
-                extra_rates: Vec::new(),
-            }),
-            Request::JobCancel(JobCancelParams { job: JobId(1) }),
-            Request::Jobs,
-            Request::MeasureMethods,
-            Request::MeasureConfigure(MeasureConfigureParams::default()),
-            Request::MeasureConfigGet,
-            Request::MeasurementRecords,
-            Request::MicCalibrationGet,
-            Request::MicCalibrationSet(MicCalibrationSetParams {
-                path: "mic.txt".into(),
-            }),
-            Request::MicCalibrationClear,
-            Request::MicCalibrationAttach,
-            Request::LevelsGet,
-            Request::LevelsFillDefaults,
-            Request::LevelStop,
-            Request::MeasurePosition(MeasurePositionParams { position: 1 }),
-            Request::PositionClear(PositionClearParams { position: 1 }),
-            Request::Undo(UndoParams { token: "x".into() }),
-            Request::RewLaunch,
-            Request::MdatScan(MdatScanParams {
-                path: "x.mdat".into(),
-            }),
-            Request::MdatImport(MdatImportParams {
-                path: "x.mdat".into(),
-                assignments: vec![],
-                position: 1,
-            }),
-            Request::ConfigGet,
-            Request::ConfigApplyPreset(ConfigPresetParams {
-                preset: "2.1".into(),
-                confirm: false,
-            }),
-            Request::ConfigSetSubCount(ConfigSubCountParams {
-                count: 2,
-                confirm: false,
-            }),
-            Request::ConfigSetSpeaker(ConfigSetSpeakerParams {
-                index: 0,
-                role: Some("L".into()),
-                size: None,
-                band_index: Some(0),
-                out: Some(1),
-                pol: Some("+".into()),
-            }),
-            Request::ConfigAddSpeaker,
-            Request::ConfigRemoveSpeaker(ConfigIndexParams { index: 0 }),
-            Request::ConfigRenumber,
-            Request::ConfigValidate,
-            Request::PatchSheetCsv(PathParams {
-                path: "patch.csv".into(),
-            }),
-            Request::DspGet,
-            Request::DspSet(DspSetParams {
-                preset: Some("tesira".into()),
-                fields: None,
-            }),
-            Request::LayoutGet,
-            Request::LayoutSet(LayoutSetParams {
-                count: Some(9),
-                ..Default::default()
-            }),
-            Request::PositionEstimate,
-            Request::TargetGet,
-            Request::TargetSetPoints(TargetPointsParams {
-                points: vec![(20.0, 0.0), (20_000.0, 0.0)],
-            }),
-            Request::TargetApplyPreset(TargetPresetParams {
-                preset: "flat".into(),
-            }),
-            Request::TargetSave(PathParams {
-                path: "target.json".into(),
-            }),
-            Request::TargetLoad(PathParams {
-                path: "target.json".into(),
-            }),
-            Request::CalibrationSettingsGet,
-            Request::CalibrationSettingsEdit(CalibrationSettingsEditParams {
-                edit: crate::settings_edit::SettingEdit::MimoOn { on: true },
-            }),
-            Request::SubWarnings,
-            Request::RewInfo,
-            Request::RewDriverSet(RewDriverSetParams {
-                driver: "ASIO".into(),
-            }),
-            Request::CalibrationSettingsSet(CalibrationSettingsParams {
-                settings: CalibrationSettings::default(),
-            }),
-            Request::ModeSpec(ModeSpecParams {
-                mode: Mode::Mixed,
-                ultra_ms: None,
-                mimo_fir: None,
-            }),
-            Request::AppSettingsGet,
-            Request::AppSettingsSet(AppSettingsParams {
-                settings: AppSettings::default(),
-            }),
-            Request::ApplyStatus,
-            Request::ApplyCamilla(ApplyCamillaParams::default()),
-            Request::ApplyEqapo,
-            Request::RevertEqapo,
-            Request::ApplySettingsSet(ApplySettings::default()),
-            Request::HostInstall,
-            Request::HostUninstall,
-            Request::HostStopManaging,
-            Request::UpdateStatus,
-            Request::UpdateCheck,
-            Request::UpdateDownload,
-            Request::UpdateRestart,
-            Request::UpdateNoticeDismiss,
-            Request::UpdateOpenRelease(UpdateOpenReleaseParams {
-                version: "0.36.0".into(),
-            }),
-            Request::LocalApiStatus,
-            Request::LocalApiTokenRegenerate,
-            Request::ComputeStatus,
-            Request::OpenGpuHelp,
-            Request::MeasurementCurves(MeasurementCurvesParams::default()),
-            Request::ResultCurves(ResultCurvesParams {
-                tab: ResultTab::Spl,
-                channel: None,
-                group: None,
-                xo_hz: None,
-                corrected: None,
-            }),
-            Request::ResultLines,
-            Request::SubTakeValues,
-            Request::DialogOpenProject,
-            Request::DialogSaveProject(DialogSuggestedParams {
-                suggested: "x.secs".into(),
-            }),
-            Request::DialogPickMdat,
-            Request::DialogPickFolder(DialogPickFolderParams { start: None }),
-            Request::DialogSaveFile(DialogSaveFileParams {
-                kind: SaveFileKind::PatchSheet,
-                suggested: "x.csv".into(),
-            }),
-            Request::DialogOpenFile(DialogOpenFileParams {
-                kind: OpenFileKind::Target,
-            }),
-            Request::OpenFolder(OpenFolderParams { path: ".".into() }),
-            Request::LevelMonitorStart(LevelMonitorStartParams::default()),
-            Request::LevelMonitorStop,
-            Request::LevelPlay(LevelPlayParams {
-                role: "L".into(),
-                master_dbfs: -20.0,
-            }),
-            Request::StatusWatchStart,
-            Request::StatusWatchStop,
-            Request::ExportFolderGet,
-            Request::ExportFolderSet(ExportFolderSetParams { folder: ".".into() }),
-        ]
+    #[test]
+    fn recommend_xo_accepts_absent_null_and_background_params() {
+        for (value, background) in [
+            (serde_json::json!({"method": "recommend_xo"}), false),
+            (
+                serde_json::json!({"method": "recommend_xo", "params": null}),
+                false,
+            ),
+            (
+                serde_json::json!({"method": "recommend_xo", "params": {"background": true}}),
+                true,
+            ),
+        ] {
+            let request = serde_json::from_value::<Request>(value);
+            assert!(
+                request.is_ok(),
+                "typed recommend_xo must accept optional params: {request:?}"
+            );
+            let encoded = serde_json::to_value(request.unwrap()).unwrap();
+            assert_eq!(
+                encoded["params"]["background"].as_bool().unwrap_or(false),
+                background
+            );
+        }
     }
+
+    #[test]
+    fn io_error_preserves_path_and_permission_kind_td208() {
+        let error = IpcError::io(
+            ErrorCode::ProjectIo,
+            r"C:\x\token",
+            std::io::Error::from(std::io::ErrorKind::PermissionDenied),
+        );
+        assert_eq!(error.code, ErrorCode::PermissionDenied);
+        assert_eq!(error.params["path"], r"C:\x\token");
+        assert!(!error.retryable);
+        let missing = IpcError::io(
+            ErrorCode::ProjectIo,
+            "missing",
+            std::io::Error::from(std::io::ErrorKind::NotFound),
+        );
+        assert_eq!(missing.code, ErrorCode::ProjectIo);
+        assert_eq!(missing.params["path"], "missing");
+        let invalid = IpcError::invalid("field", "bad value");
+        assert_eq!(invalid.code, ErrorCode::InvalidRequest);
+        assert_eq!(invalid.params["field"], "field");
+    }
+
     #[test]
     fn method_names_match_the_wire() {
-        let examples = examples();
+        let examples = Request::examples();
         assert_eq!(examples.len(), Request::METHODS.len());
-        for request in examples {
+        for (method, request) in Request::METHODS.iter().zip(examples) {
+            assert_eq!(*method, request.method());
             let wire = serde_json::to_value(&request).unwrap();
             assert_eq!(wire["method"], request.method());
         }
     }
     #[test]
     fn every_method_name_is_listed_and_parses() {
-        for request in examples() {
+        for request in Request::examples() {
             let wire = serde_json::to_value(&request).unwrap();
             let parsed: Request = serde_json::from_value(wire).unwrap();
             assert_eq!(parsed.method(), request.method());
         }
     }
+    #[test]
+    fn camilla_executable_filter_is_windows_only() {
+        assert_eq!(OpenFileKind::CamillaExe.filters("windows")[0].1, &["exe"]);
+        assert!(OpenFileKind::CamillaExe.filters("linux").is_empty());
+        assert!(OpenFileKind::CamillaExe.filters("macos").is_empty());
+    }
+
     #[test]
     fn old_app_settings_without_local_api_use_the_disabled_default() {
         let settings: AppSettings = serde_json::from_str(
@@ -3189,6 +3709,7 @@ mod tests {
                 arch: "x86_64".into(),
             },
             log_dir: None,
+            settings_notice: None,
         })));
         let value = serde_json::to_value(ok).unwrap();
         assert_eq!(value["ok"], true);

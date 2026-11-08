@@ -1,15 +1,16 @@
+#![allow(deprecated)]
 #![forbid(unsafe_code)]
 
 use secs_mdat::{Boxed, CalInfo, SourceDate, SourceInfo};
 use secs_oracle::Fixture;
 use secs_project::{
-    IrCache, LoadedIr, MAX_IR_BYTES, MAX_PROJECT_BYTES, MeasurementResult, MeasurementStore,
-    Project, ProjectError, PyJson, TargetCurve, calibration_fingerprint, calibration_from_project,
-    dumps, load_project_irs, load_project_sources, load_source, loads, save_ir, save_source,
-    source_path, store_calibration, write_wav_float32,
+    IrCache, MAX_IR_BYTES, MAX_PROJECT_BYTES, MeasurementResult, MeasurementStore, Project,
+    ProjectError, PyJson, TargetCurve, calibration_fingerprint, calibration_from_project, dumps,
+    loads, save_ir, save_source, source_path, store_calibration, write_wav_float32,
 };
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 static NEXT: AtomicU64 = AtomicU64::new(0);
@@ -219,7 +220,7 @@ fn test_saved_ir_matches_measured_ir_and_ir_saver_paths_and_round_trip() {
         .record(result("L:LF", 3, "one"), Some(&["L:LF".into()]))
         .unwrap();
     let (samples, rate) = store.ir_of("L:LF", 3).unwrap();
-    assert_eq!(samples, result("L:LF", 3, "one").ir);
+    assert_eq!(&*samples, result("L:LF", 3, "one").ir.as_slice());
     assert_eq!(rate, 48_000);
     assert_eq!(
         store.ir_path_of("L:LF", 3).unwrap().file_name().unwrap(),
@@ -227,6 +228,19 @@ fn test_saved_ir_matches_measured_ir_and_ir_saver_paths_and_round_trip() {
     );
     assert!(path.with_extension("irs").join("L_LF_P3.wav").is_file());
     assert_eq!(roles.len(), 3);
+}
+
+#[test]
+fn ir_cache_hit_returns_the_same_allocation_td187() {
+    let (_directory, _path, mut store, _roles) = setup();
+    store
+        .record(result("L", 1, "one"), Some(&["L".into()]))
+        .unwrap();
+
+    let first = store.ir_of("L", 1).unwrap().0;
+    let second = store.ir_of("L", 1).unwrap().0;
+
+    assert!(Arc::ptr_eq(&first, &second));
 }
 
 #[test]
@@ -270,11 +284,55 @@ fn measurement_source_writes_exact_bytes_reads_and_deletes_stale_file() {
         "\"date\": 1704164645000, \"notes\": \"원 측정\", \"format\": \"REW\"}"
     );
     assert_eq!(fs::read_to_string(&source).unwrap(), expected);
-    assert_eq!(load_source(&wav), Some(info.clone()));
-    assert_eq!(load_project_sources(store.project(), &path)[&1]["L"], info);
+    assert_eq!(store.source_of("L", 1).as_deref(), Some(&info));
+    assert_eq!(store.sources_by_position()[&1]["L"].as_ref(), &info);
 
     store.record(result("L", 1, "two"), Some(&roles)).unwrap();
     assert!(!source.exists());
+}
+
+#[test]
+fn start_position_and_clear_position_forget_the_sources_of_that_position() {
+    let (_directory, _path, mut store, roles) = setup();
+    let info = SourceInfo {
+        strings: vec![("outputName".into(), "source".into())],
+        ..SourceInfo::default()
+    };
+    let mut measured = result("L", 1, "first");
+    measured.source_info = Some(info.clone());
+    store.record(measured, Some(&roles)).unwrap();
+    assert_eq!(store.source_of("L", 1).as_deref(), Some(&info));
+
+    store.start_position(1);
+    assert!(store.source_of("L", 1).is_none());
+    assert!(store.sources_by_position().is_empty());
+
+    let mut measured = result("L", 1, "second");
+    measured.source_info = Some(info);
+    store.record(measured, Some(&roles)).unwrap();
+    assert!(store.clear_position(1));
+    assert!(store.source_of("L", 1).is_none());
+    assert!(store.sources_by_position().is_empty());
+}
+
+#[test]
+fn sources_follow_the_current_measurement_entries() {
+    let (_directory, _path, mut store, roles) = setup();
+    let mut measured = result("L", 1, "source");
+    measured.source_info = Some(SourceInfo {
+        strings: vec![("outputName".into(), "source".into())],
+        ..SourceInfo::default()
+    });
+    store.record(measured, Some(&roles)).unwrap();
+
+    let removed = store.remove_position(1).unwrap();
+    assert!(store.sources_by_position().is_empty());
+    store.restore_position(removed).unwrap();
+    assert!(store.sources_by_position()[&1].contains_key("L"));
+
+    store.project_mut().measurements = PyJson::Array(Vec::new());
+    assert!(store.source_of("L", 1).is_none());
+    assert!(store.sources_by_position().is_empty());
 }
 
 fn meter_source(gain_db: f32) -> SourceInfo {
@@ -371,13 +429,13 @@ fn store_reads_and_updates_calibration_fingerprints() {
 #[test]
 fn measurement_source_tolerates_partial_values_and_rejects_unsafe_narrowing() {
     let directory = TempDir::new();
-    let wav = directory.0.join("L_P1.wav");
+    let (project_path, wav) = source_test_project(&directory.0, "partial");
     fs::write(
         source_path(&wav),
         r#"{"strings":{"outputName":7,"osName":null},"boxed":{"inputVolume":{"type":"java.lang.Double","value":"1.5"},"bad":{"type":"java.lang.Boolean","value":1},"splCalOffset":{"type":"java.lang.Integer","value":2147483648}},"cal":{"meterCal":{"inverseCSelected":1,"sourceName":false,"sourcePath":null,"freqArray":[20,true,"30"],"gainArray":"bad","serialNum":{"type":"java.lang.Integer","value":"42"}}},"date":NaN,"notes":0,"format":true}"#,
     )
     .unwrap();
-    let info = load_source(&wav).unwrap();
+    let info = source_from_project(&project_path).unwrap();
     assert_eq!(info.strings, vec![("outputName".into(), "7".into())]);
     assert_eq!(info.boxed, vec![("inputVolume".into(), Boxed::Double(1.5))]);
     assert_eq!(info.date, None);
@@ -424,19 +482,19 @@ fn measurement_source_tolerates_partial_values_and_rejects_unsafe_narrowing() {
             "\"freqArray\": null, \"gainArray\": null, \"phaseArray\": null}}}"
         )
     );
-    assert_eq!(load_source(&wav).unwrap().date, None);
+    assert_eq!(source_from_project(&project_path).unwrap().date, None);
 
     fs::write(source_path(&wav), "[]").unwrap();
-    assert_eq!(load_source(&wav), None);
+    assert_eq!(source_from_project(&project_path), None);
     fs::write(source_path(&wav), "not json").unwrap();
-    assert_eq!(load_source(&wav), None);
+    assert_eq!(source_from_project(&project_path), None);
     save_source(&wav, None).unwrap();
 }
 
 #[test]
 fn measurement_source_builds_upstream_mdat_bytes_and_skips_upstream_exceptions_f10() {
     let directory = TempDir::new();
-    let wav = directory.0.join("L_P1.wav");
+    let (project_path, wav) = source_test_project(&directory.0, "oracle");
     let mut checked = 0;
     for fixture in Fixture::all("service_mdat", "source_") {
         if fixture.id.ends_with("source_generated") {
@@ -447,7 +505,7 @@ fn measurement_source_builds_upstream_mdat_bytes_and_skips_upstream_exceptions_f
             fixture.inputs()["text"].as_str().unwrap(),
         )
         .unwrap();
-        let info = load_source(&wav);
+        let info = source_from_project(&project_path);
         assert_eq!(
             info.is_some(),
             fixture.outputs()["loaded"].as_bool().unwrap(),
@@ -494,31 +552,27 @@ fn test_t0_is_stored_in_secs_because_wav_cannot_hold_it_and_defaults_to_zero() {
 }
 
 #[test]
-fn test_reload_project_restores_irs_by_role_and_load_project_irs_roundtrip() {
+fn test_load_project_irs_without_measurements() {
+    let (_directory, path, _store, _roles) = setup();
+    let reopened = MeasurementStore::open(path).unwrap();
+    assert!(reopened.sources_by_position().is_empty());
+}
+
+#[test]
+fn test_reload_project_restores_irs_by_role() {
     let (_directory, path, mut store, roles) = setup();
     for role in &roles {
         store.record(result(role, 1, role), Some(&roles)).unwrap();
     }
-    let project = Project::load_text(&fs::read_to_string(&path).unwrap()).unwrap();
-    let mut cache = IrCache::default();
-    let loaded = load_project_irs(&project, &path, &mut cache).unwrap();
-    assert_eq!(loaded[&1].len(), 3);
-    assert!(matches!(&loaded[&1]["L"], LoadedIr::Timed(_, 48_000, value) if *value == -0.25));
-    let mut reopened = MeasurementStore::new(path, project);
-    assert_eq!(reopened.irs_by_role(1).unwrap().len(), 3);
-}
-
-#[test]
-fn test_load_project_irs_without_measurements() {
-    let directory = TempDir::new();
-    let path = directory.0.join("empty.secs");
-    let project = Project::from_preset("2.0").unwrap();
-    let mut cache = IrCache::default();
+    let mut reopened = MeasurementStore::open(path).unwrap();
+    let restored = reopened.irs_by_role(1).unwrap();
+    assert_eq!(restored.len(), 3);
     assert!(
-        load_project_irs(&project, &path, &mut cache)
-            .unwrap()
-            .is_empty()
+        restored
+            .values()
+            .all(|(_, sample_rate)| *sample_rate == 48_000)
     );
+    assert_eq!(reopened.t0_of("L", 1), -0.25);
 }
 
 #[test]
@@ -811,7 +865,7 @@ fn f5_absolute_parent_and_symlink_escapes_are_rejected_but_in_tree_reads() {
         project.measurements = PyJson::Array(vec![entry_with_path(&raw)]);
         let mut store = MeasurementStore::new(&path, project);
         if raw.ends_with("good.wav") {
-            assert_eq!(store.ir_of("L", 1).unwrap().0, vec![0.25]);
+            assert_eq!(&*store.ir_of("L", 1).unwrap().0, &[0.25]);
         } else {
             assert!(matches!(
                 store.ir_of("L", 1),
@@ -877,9 +931,10 @@ fn project_sources_are_read_only_inside_the_irs_folder_td43() {
     let mut project = Project::from_preset("2.0").unwrap();
     project.measurements = PyJson::Array(entries);
 
-    let sources = load_project_sources(&project, &path);
+    fs::write(&path, project.save_text()).unwrap();
+    let sources = MeasurementStore::open(&path).unwrap().sources_by_position();
     assert_eq!(sources.keys().copied().collect::<Vec<_>>(), vec![1]);
-    assert_eq!(sources[&1]["L"], info);
+    assert_eq!(sources[&1]["L"].as_ref(), &info);
 }
 
 #[cfg(unix)]
@@ -940,7 +995,7 @@ fn oversized_measurement_source_sidecar_is_absent_on_open_td112() {
     fs::write(&project_path, project.save_text()).unwrap();
 
     let store = MeasurementStore::open(&project_path).unwrap();
-    assert!(load_project_sources(store.project(), &project_path).is_empty());
+    assert!(store.sources_by_position().is_empty());
 }
 
 #[test]
@@ -966,7 +1021,7 @@ fn shared_source_materialisation_keeps_only_entries_within_budget_td112() {
     fs::write(&project_path, project.save_text()).unwrap();
 
     let store = MeasurementStore::open(&project_path).unwrap();
-    let sources = load_project_sources(store.project(), &project_path);
+    let sources = store.sources_by_position();
     assert!(!sources.is_empty());
     assert!(sources.len() < 9);
     assert!(sources.contains_key(&1));
@@ -999,9 +1054,12 @@ fn load_project_sources_skips_only_the_bad_sidecar_td112() {
         entry_at(2, "source-skip.irs/bad.wav"),
     ]);
 
-    let sources = load_project_sources(&project, &project_path);
+    fs::write(&project_path, project.save_text()).unwrap();
+    let sources = MeasurementStore::open(&project_path)
+        .unwrap()
+        .sources_by_position();
     assert_eq!(sources.len(), 1);
-    assert_eq!(sources[&1]["L"], info);
+    assert_eq!(sources[&1]["L"].as_ref(), &info);
 }
 
 #[test]
@@ -1033,15 +1091,15 @@ fn ir_cache_rereads_changed_file_and_evicts_to_cap() {
     fs::write(&a, write_wav_float32(&[1.0], 48_000)).unwrap();
     fs::write(&b, write_wav_float32(&[2.0, 2.0], 48_000)).unwrap();
     let mut cache = IrCache::new(8);
-    assert_eq!(cache.load(&a).unwrap().0, vec![1.0]);
+    assert_eq!(&*cache.load(&a).unwrap().0, &[1.0]);
     fs::write(&a, write_wav_float32(&[3.0, 4.0, 5.0], 48_000)).unwrap();
-    assert_eq!(cache.load(&a).unwrap().0, vec![3.0, 4.0, 5.0]);
+    assert_eq!(&*cache.load(&a).unwrap().0, &[3.0, 4.0, 5.0]);
     cache.load(&b).unwrap();
     assert_eq!(cache.len(), 1);
     let loaded = cache.load(&b).unwrap();
-    let mut caller_copy = loaded.0;
+    let mut caller_copy = loaded.0.to_vec();
     caller_copy[0] = 99.0;
-    assert_eq!(cache.load(&b).unwrap().0, vec![2.0, 2.0]);
+    assert_eq!(&*cache.load(&b).unwrap().0, &[2.0, 2.0]);
 }
 
 #[test]
@@ -1056,7 +1114,7 @@ fn ir_cache_keeps_its_byte_cap_and_evicts_least_recently_used_td44() {
     // 12 bytes of samples under an 8-byte cap: returned, not retained.
     let large = wav("large.wav", &[1.0, 2.0, 3.0]);
     let mut cache = IrCache::new(8);
-    assert_eq!(cache.load(&large).unwrap().0, vec![1.0, 2.0, 3.0]);
+    assert_eq!(&*cache.load(&large).unwrap().0, &[1.0, 2.0, 3.0]);
     assert_eq!(cache.retained_bytes(), 0);
     assert!(cache.is_empty());
     cache.remember(&large, &[1.0, 2.0, 3.0], 48_000).unwrap();
@@ -1231,6 +1289,25 @@ fn entry_with_path(path: &str) -> PyJson {
     entry_at(1, path)
 }
 
+fn source_test_project(root: &Path, name: &str) -> (PathBuf, PathBuf) {
+    let project_path = root.join(format!("{name}.secs"));
+    let irs = project_path.with_extension("irs");
+    fs::create_dir_all(&irs).unwrap();
+    let wav = irs.join("L_P1.wav");
+    fs::write(&wav, []).unwrap();
+    let mut project = Project::from_preset("2.0").unwrap();
+    project.measurements = PyJson::Array(vec![entry_at(1, &format!("{name}.irs/L_P1.wav"))]);
+    fs::write(&project_path, project.save_text()).unwrap();
+    (project_path, wav)
+}
+
+fn source_from_project(project_path: &Path) -> Option<SourceInfo> {
+    MeasurementStore::open(project_path)
+        .unwrap()
+        .source_of("L", 1)
+        .map(|source| source.as_ref().clone())
+}
+
 fn entry_at(pos: i64, path: &str) -> PyJson {
     PyJson::Object(vec![
         ("pos".into(), PyJson::Int(pos.to_string())),
@@ -1244,4 +1321,68 @@ fn entry_at(pos: i64, path: &str) -> PyJson {
 #[allow(dead_code)]
 fn save(path: &Path, role: &str, pos: i64) {
     save_ir(path, role, pos, &[0.0], 48_000).unwrap();
+}
+
+#[test]
+fn recorded_sources_past_the_budget_are_written_but_not_kept_and_release_on_remove() {
+    let (_directory, path, store, roles) = setup();
+    let mut store = store.with_source_budget(1_024);
+    let source = SourceInfo {
+        notes: Some("x".repeat(600)),
+        ..SourceInfo::default()
+    };
+
+    let mut first = result("L", 1, "first");
+    first.source_info = Some(source.clone());
+    store.record(first, Some(&roles)).unwrap();
+    assert!(store.source_of("L", 1).is_some());
+
+    let mut second = result("L", 2, "second");
+    second.source_info = Some(source.clone());
+    store.record(second, Some(&roles)).unwrap();
+    assert!(source_path(&path.with_extension("irs").join("L_P2.wav")).is_file());
+    assert!(store.source_of("L", 2).is_none());
+    assert!(store.warnings().iter().any(|warning| {
+        warning.code == "measurement.source.budget" && warning.entry == "position 2, role L"
+    }));
+
+    store.remove_position(1).unwrap();
+    store.replace_source("L", 2, Some(&source)).unwrap();
+    assert_eq!(store.source_of("L", 2).as_deref(), Some(&source));
+}
+
+#[test]
+fn record_replace_remove_and_restore_keep_the_source_map_in_step_with_the_files() {
+    let (_directory, path, mut store, roles) = setup();
+    let first = SourceInfo {
+        notes: Some("first source".into()),
+        ..SourceInfo::default()
+    };
+    let mut measured = result("L", 1, "with-source");
+    measured.source_info = Some(first.clone());
+    store.record(measured, Some(&roles)).unwrap();
+    assert_eq!(store.source_of("L", 1).as_deref(), Some(&first));
+    let wav = store.ir_path_of("L", 1).unwrap();
+    assert_eq!(
+        MeasurementStore::open(&path)
+            .unwrap()
+            .source_of("L", 1)
+            .as_deref(),
+        Some(&first)
+    );
+
+    store.replace_source("L", 1, None).unwrap();
+    assert!(store.source_of("L", 1).is_none());
+    assert!(!source_path(&wav).exists());
+
+    let second = SourceInfo {
+        notes: Some("second source".into()),
+        ..SourceInfo::default()
+    };
+    store.replace_source("L", 1, Some(&second)).unwrap();
+    assert_eq!(store.source_of("L", 1).as_deref(), Some(&second));
+    let removed = store.remove_position(1).unwrap();
+    assert!(store.source_of("L", 1).is_none());
+    store.restore_position(removed).unwrap();
+    assert_eq!(store.source_of("L", 1).as_deref(), Some(&second));
 }

@@ -1,3 +1,4 @@
+#![allow(deprecated)]
 #![forbid(unsafe_code)]
 use secs_audio::level::{analyse_level, level_signal};
 use secs_audio::*;
@@ -50,7 +51,11 @@ fn malformed_calibrations_return_errors_without_panics() {
             char::from_u32(n).unwrap(),
             char::from_u32(255 - n).unwrap()
         );
-        assert!(std::panic::catch_unwind(|| MicCalibration::parse(&text)).is_ok());
+        let parsed = std::panic::catch_unwind(|| MicCalibration::parse(&text))
+            .expect("malformed calibration must not panic");
+        let error = parsed.unwrap_err();
+        assert!(matches!(error, AudioError::UnsupportedFormat(_)));
+        assert!(!error.to_string().is_empty());
     }
 }
 

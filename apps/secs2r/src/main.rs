@@ -12,18 +12,17 @@
 //! unless `SECS2R_SELF_TEST` armed one.
 
 use std::fmt;
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime};
+use std::sync::Arc;
+use std::time::Duration;
 
 mod applog;
-mod apply;
 mod host;
 mod icon;
 mod local_api;
 mod self_test;
 mod update;
 
-use secs_service::{AppEffects, Deps, EventSink, LocalTime, NoEvents, Service};
+use secs_service::{EventSink, LogLevel, NoEvents, Service, SettingsEffect};
 use secs_types::ipc::{Envelope, ErrorCode, IpcError, JobEvent, Request, Response};
 use tauri::{AppHandle, Manager, Webview, ipc::JavaScriptChannelId};
 
@@ -39,6 +38,48 @@ impl fmt::Debug for EventChannel {
 impl EventSink for EventChannel {
     fn send(&self, event: JobEvent) {
         let _ = self.0.send(event);
+    }
+}
+
+struct IconSettingsEffect(AppHandle);
+
+impl fmt::Debug for IconSettingsEffect {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("IconSettingsEffect")
+    }
+}
+
+impl SettingsEffect for IconSettingsEffect {
+    fn changed(
+        &self,
+        previous: &secs_types::ipc::AppSettings,
+        next: &secs_types::ipc::AppSettings,
+    ) {
+        if previous.icon != next.icon {
+            icon::show(&self.0, next.icon);
+        }
+    }
+}
+
+struct LocalApiSettingsEffect(AppHandle);
+
+impl fmt::Debug for LocalApiSettingsEffect {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("LocalApiSettingsEffect")
+    }
+}
+
+impl SettingsEffect for LocalApiSettingsEffect {
+    fn changed(
+        &self,
+        previous: &secs_types::ipc::AppSettings,
+        next: &secs_types::ipc::AppSettings,
+    ) {
+        if previous.local_api != next.local_api {
+            self.0
+                .state::<local_api::Manager>()
+                .apply_settings(previous.local_api, next.local_api);
+        }
     }
 }
 
@@ -71,22 +112,11 @@ async fn secs_call(
     tauri::async_runtime::spawn_blocking(move || {
         let service = app.state::<Arc<Service>>();
         let envelope = handle(service.as_ref(), request, events);
-        if let Envelope::Ok(response) = &envelope
-            && matches!(response.as_ref(), Response::AppSettingsSet(_))
-        {
-            let revised = service.revised_app_settings();
-            app.state::<local_api::Manager>()
-                .apply_revision(app.state::<Mutex<AppEffects>>().inner(), revised);
-        }
         if let Envelope::Err(error) = &envelope {
             log.line(
                 applog::Level::Error,
                 "request",
-                &format!(
-                    "method={method} error_code={:?} message={}",
-                    error.code,
-                    applog::log_value(&error.detail)
-                ),
+                &format!("method={method}{}", applog::error_text(error)),
             );
         }
         envelope
@@ -171,37 +201,47 @@ fn main() {
                 );
                 previous_hook(info);
             }));
-            let updates = Arc::new(update::TauriUpdates::new(handle.clone(), &config_dir));
+            let update_log = log.clone();
+            let updates = Arc::new(update::TauriUpdates::new(
+                handle.clone(),
+                &config_dir,
+                Arc::new(move |level, text| {
+                    let level = match level {
+                        LogLevel::Warn => applog::Level::Warn,
+                        LogLevel::Error => applog::Level::Error,
+                    };
+                    update_log.line(level, "update", text);
+                }),
+            ));
             let hub = secs_local_api::EventHub::default();
             let observer = Arc::new(applog::FanOut {
                 first: Arc::new(hub.clone()),
                 second: Arc::new(log.clone()),
             });
-            let service = Arc::new(Service::new(Deps {
+            let service_log = log.clone();
+            let current = secs_sys::embed::application_executable()
+                .map_err(|error| std::io::Error::other(error.detail))?;
+            let mut deps = secs_sys::embed::native_deps(secs_sys::embed::NativeEmbedding {
                 app_version: env!("CARGO_PKG_VERSION").into(),
-                acceleration: Arc::new(secs_gpu::select),
-                audio_backend: Arc::new(secs_sys::audio::default_backend),
-                rew_transport: Arc::new(|| Box::new(secs_rew::HttpTransport::default())),
-                process: Arc::new(secs_sys::process::OsProcessProbe),
-                memory: Arc::new(secs_sys::memory::OsMemoryProbe),
-                host: Arc::new(host::TauriHost::new(handle.clone())),
-                observer,
-                clock: Arc::new(|| {
-                    let now = SystemTime::now();
-                    LocalTime::from_system(now, secs_sys::clock::utc_offset_seconds(now))
-                }),
-                clock_offset_seconds: Arc::new(|| {
-                    secs_sys::clock::utc_offset_seconds(SystemTime::now())
-                }),
-                app_settings_path: Some(config_dir.join("settings.json")),
                 app_data_path: config_dir.clone(),
-                log_dir: Some(log_dir),
-                eqapo_install: Arc::new(secs_sys::eqapo_install),
-                apply: Arc::new(apply::NativeApply),
-                managed_host: Arc::new(apply::NativeManagedHost),
-                updates: updates.clone(),
-                ..Deps::default()
-            }));
+                shell: Some(secs_sys::embed::ShellAutostart::new(
+                    secs_sys::embed::shell_executable(&current),
+                )),
+            });
+            deps.acceleration = Arc::new(secs_gpu::select);
+            deps.host = Arc::new(host::TauriHost::new(handle.clone()));
+            deps.observer = observer;
+            deps.app_settings_path = Some(config_dir.join("settings.json"));
+            deps.log_dir = Some(log_dir);
+            deps.log = Arc::new(move |level, scope, text| {
+                let level = match level {
+                    secs_service::LogLevel::Warn => applog::Level::Warn,
+                    secs_service::LogLevel::Error => applog::Level::Error,
+                };
+                service_log.line(level, scope, text);
+            });
+            deps.updates = updates.clone();
+            let service = Arc::new(Service::new(deps));
             let start_service = service.clone();
             let start_log = log.clone();
             let _ = std::thread::Builder::new()
@@ -230,20 +270,19 @@ fn main() {
                         ),
                     );
                 });
-            let local_api = local_api::Manager::new(config_dir, service.clone(), hub, handle);
+            let local_api =
+                local_api::Manager::new(config_dir, service.clone(), hub, handle, log.clone());
             app.manage(log);
             app.manage(service.clone());
-            app.manage(Mutex::new(AppEffects::default()));
             app.manage(local_api);
             app.manage(icon::Shown::default());
+            service.register_settings_effect(Arc::new(IconSettingsEffect(app.handle().clone())));
+            service
+                .register_settings_effect(Arc::new(LocalApiSettingsEffect(app.handle().clone())));
             if let Envelope::Ok(response) =
                 service.call(Request::AppSettingsGet, Arc::new(NoEvents))
                 && let Response::AppSettingsGet(settings) = *response
             {
-                *app.state::<Mutex<AppEffects>>()
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner()) =
-                    AppEffects::new(1, settings.clone());
                 updates.start(settings.updates);
                 icon::show(app.handle(), settings.icon);
                 app.state::<local_api::Manager>()
@@ -287,7 +326,7 @@ mod tests {
 
     #[test]
     fn missing_request_argument_is_an_envelope() {
-        let service = Service::new(Deps::default());
+        let service = Service::new(secs_service::Deps::default());
         let Envelope::Err(error) = handle(&service, None, Arc::new(NoEvents)) else {
             panic!("a missing request must be an error envelope");
         };

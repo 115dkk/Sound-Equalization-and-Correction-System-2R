@@ -110,7 +110,7 @@ export function withBandEdge(bands: readonly RcBand[], index: number, edge: "low
 }
 
 /** The edits whose refusal the range card shows at the input it concerns. */
-export type RangeEdit = Extract<SettingEdit, { kind: "rc_lo" | "rc_hi" | "rc_bands" }>;
+type RangeEdit = Extract<SettingEdit, { kind: "rc_lo" | "rc_hi" | "rc_bands" }>;
 export const isRangeEdit = (edit: SettingEdit): edit is RangeEdit => edit.kind === "rc_lo" || edit.kind === "rc_hi" || edit.kind === "rc_bands";
 
 /** The reasons the service gives when it refuses a range edit (`invalid_request` params, ADR 0024). */

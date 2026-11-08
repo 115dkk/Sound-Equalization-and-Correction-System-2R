@@ -51,6 +51,7 @@ const exportMimo: MimoSummary = {
   // IIR supports carry no FIR taps.
   fir_taps_total: 0,
   notes: [],
+  notices: [],
   input_count: SAMPLE_MAINS.length,
   scorecard: [],
   late_energy: [],
@@ -80,7 +81,7 @@ const hostView = (service: ServiceState | null, status: HostState | null = null,
 });
 
 /** 파일만 on both targets (the default), on Windows, nothing read or applied. */
-export const applyIdle: ApplyView = {
+const applyIdle: ApplyView = {
   settings: DEFAULT_APPLY,
   addressDraft: null,
   exeDraft: null,

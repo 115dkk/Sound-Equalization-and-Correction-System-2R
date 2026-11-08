@@ -1,6 +1,8 @@
 import type { JobKind } from "../ipc/bindings/JobKind";
 import type { JobStatus } from "../ipc/bindings/JobStatus";
 import type { Request } from "../ipc/bindings/Request";
+import type { JobStarted } from "../ipc/bindings/JobStarted";
+import type { ResponseOf } from "../ipc/client";
 import type { Session } from "./session";
 import type { FinishedJob, JobRequestContext, LedgerJob } from "./jobLedger";
 import type { JobEvent } from "../ipc/bindings/JobEvent";
@@ -49,14 +51,22 @@ export type ResourceKey = keyof typeof reloads;
 export const projectEdits: readonly Request["method"][] = reloads.project.mutations;
 export const refreshInputs: readonly Request["method"][] = [...inputs, "mic_calibration_attach"];
 export const refreshMeasurements: readonly JobKind[] = recorded;
+/** A request with its response, keyed by `method` so a rule that checks the method reads the response's own type. */
+export type RequestSource = { [M in Request["method"]]: { method: M; request: Extract<Request, { method: M }>; data: ResponseOf<M> } }[Request["method"]];
+/** The one place a generic request and its response become a `RequestSource`. */
+export const requestSource = <M extends Request["method"]>(request: Extract<Request, { method: M }>, data: ResponseOf<M>): RequestSource =>
+  ({ method: request.method, request, data }) as RequestSource;
+/** A job's start reply: what every job-starting method answers. */
+export const isJobStarted = (value: unknown): value is JobStarted =>
+  typeof value === "object" && value !== null && "job" in value && "kind" in value;
 export type EffectContext = Pick<Session, "host" | "stores" | "jobs" | "call" | "configure" | "run" | "canContinueRefresh"> & {
   source:
-    | { request: Request; data: unknown }
+    | RequestSource
     | { job: LedgerJob; event: FinishedJob; request: JobRequestContext | null }
     | { job: LedgerJob; event: Extract<JobEvent, { event: "log" }>; request: JobRequestContext | null };
   replaceProject: () => void;
 };
-export type Rule = {
+type Rule = {
   name: string;
   when: (trigger: Trigger) => boolean;
   reload?: readonly ResourceKey[];
@@ -71,21 +81,16 @@ export const RULES: readonly Rule[] = [
   {
     name: "measurement.response", when: requested("measure_configure", "measure_config_get"),
     beforeReload: ({ source, stores, host }) => {
-      if (!("data" in source)) return;
-      stores.measurementSettings.set(source.data as import("../ipc/bindings/MeasureConfigResult").MeasureConfigResult);
+      if (!("method" in source) || (source.method !== "measure_configure" && source.method !== "measure_config_get")) return;
+      stores.measurementSettings.set(source.data);
       const method = stores.measurementSettings.getSnapshot()!.method;
       host.set({ path: method === "none" ? null : method as import("../screens/connect/types").ConnectPath });
     },
   },
   {
     name: "project.replace", when: requested("project_new", "project_open"),
-    // The epoch, curve generation and host selection reset before reloads.
-    beforeReload: (ctx) => {
-      ctx.replaceProject();
-      ctx.stores.measurementSettings.set(null);
-      ctx.stores.micCalibration.set(null);
-      ctx.host.set({ micCalBusy: null, micCalError: null, path: null, selected: null, mdat: null, warnings: [], runs: {}, applyRuns: {}, mdatScope: "all", designName: "", channel: null, xoGroup: null, xoRecommendation: null, xoRecTurnedOffByEdit: false, failure: null, rangeRejection: null, opened: ctx.host.getSnapshot().opened + 1 });
-    },
+    // The epoch, curve generation, project resources and host fields reset before reloads (projectScope.ts, ADR 0056).
+    beforeReload: (ctx) => { ctx.replaceProject(); },
     // Project replacement reads the stored method; tutorial setup owns writes.
     apply: async ({ call }) => { await call({ method: "measure_config_get" }); },
   },
@@ -104,8 +109,8 @@ export const RULES: readonly Rule[] = [
   {
     name: "rew.driver-response", when: requested("rew_driver_set"),
     beforeReload: ({ source, stores }) => {
-      if (!("data" in source)) return;
-      stores.rew.set(source.data as import("../ipc/bindings/RewInfoResult").RewInfoResult);
+      if (!("method" in source) || source.method !== "rew_driver_set") return;
+      stores.rew.set(source.data);
     },
   },
   {
