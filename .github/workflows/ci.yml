@@ -1389,7 +1389,8 @@ jobs:
             case "$target" in
               jos_parse|mdat_load|mdat_build_template)
                 cp ../src/secs/rew_mdat/template_1.mdat "corpus/$target/template"
-                cp ../oracle/goldens/mdat/*.bin "corpus/$target/" ;;
+                cp ../oracle/goldens/mdat/*.bin "corpus/$target/"
+                cp ../fuzz/corpus/mdat_load/*.mdat "corpus/$target/" 2>/dev/null || true ;;
               liveproject_parse)
                 cp ../crates/secs-dirac/tests/data/*.liveproject "corpus/$target/" ;;
               project_load_text)
