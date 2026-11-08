@@ -7,7 +7,8 @@ import { JobTray } from "../../app/jobs/JobTray";
 import { PrefsScope } from "../../app/prefs";
 import { T0, replay, staticApi } from "../../gallery/frameSpecimens";
 import { translate } from "../../i18n";
-import { createMockService, ipcError, rcEditRefusal } from "../../ipc/mock";
+import { createMockService, ipcError } from "../../ipc/mock";
+import { recordedRefusal } from "../../ipc/recorded";
 import { createSession } from "../../state/session";
 import type { RcBand } from "../../ipc/bindings/RcBand";
 import type { Translate } from "../../i18n/react";
@@ -1575,14 +1576,17 @@ describe("저음 도착 맞추기, 고역 위상 맞추기 and 방 울림 줄이
 
 /* ── Extra correction bands (ADR 0024) ──────────────────────────────────── */
 
-/** The screen with its settings held in state, as the service answers them: an rc_bands list stored sorted, a refusal kept in the view. */
+/**
+ * The screen with its settings held in state, as the service answers them: an rc_bands list stored sorted,
+ * and the service's recorded refusal of an edit it was recorded refusing kept in the view.
+ */
 function BandsHarness({ initial, actions }: { initial: CalibrateView; actions: MockActions }) {
   const [view, setView] = useState(initial);
   const changeSetting: CalibrateActions["changeSetting"] = async (change, accepted) => {
     const edit = settingEdit(change, view.settings);
     if (!edit) return false;
     await actions.changeSetting(edit);
-    const refusal = rcEditRefusal(view.settings, edit);
+    const refusal = recordedRefusal(edit);
     if (refusal) {
       setView((v) => ({ ...v, rangeRejection: rangeRejection(edit, refusal) }));
       return false;
@@ -1671,28 +1675,31 @@ describe("extra correction bands (ADR 0024)", () => {
   });
 
   it("shows a refused band edge's reason at that input, keeps the stored value there, and drops the reason on the next draft", async () => {
+    // The band the service was recorded refusing: 2 kHz up to 1 kHz.
+    const one = { ...fx.extraBandViews.one, settings: { ...fx.extraBandViews.one.settings, rc_bands: [band(2000, 4000)] } };
     const actions = mockActions();
-    renderWith(<BandsHarness initial={fx.extraBandViews.two} actions={actions} />, { locale: "ko" });
+    renderWith(<BandsHarness initial={one} actions={actions} />, { locale: "ko" });
     await act(async () => {
-      commitNumber("calibrate.range.extra.2.upper", "12000");
+      commitNumber("calibrate.range.extra.1.upper", "1000");
     });
-    expect(actions.changeSetting).toHaveBeenLastCalledWith({ kind: "rc_bands", bands: [band(2000, 4000), band(15000, 12000)] });
-    const input = must("calibrate.range.extra.2.upper") as HTMLInputElement;
-    expect(errorOf("calibrate.range.extra.2.upper")).toBe("하한 15,000 Hz보다 높은 값을 넣으십시오.");
+    expect(actions.changeSetting).toHaveBeenLastCalledWith({ kind: "rc_bands", bands: [band(2000, 1000)] });
+    const input = must("calibrate.range.extra.1.upper") as HTMLInputElement;
+    expect(errorOf("calibrate.range.extra.1.upper")).toBe("하한 2,000 Hz보다 높은 값을 넣으십시오.");
     expect(input.getAttribute("aria-invalid")).toBe("true");
-    expect(input.value).toBe("20000");
-    expect(input.getAttribute("aria-valuenow")).toBe("20000");
-    expect(errorOf("calibrate.range.extra.2.lower")).toBeNull();
+    expect(input.value).toBe("4000");
+    expect(input.getAttribute("aria-valuenow")).toBe("4000");
+    expect(errorOf("calibrate.range.extra.1.lower")).toBeNull();
+    fireEvent.change(input, { target: { value: "3000" } });
     expect(errorOf("calibrate.range.extra.1.upper")).toBeNull();
-    // A lower edge raised past its upper edge: the reason moves to that input.
-    await act(async () => {
-      commitNumber("calibrate.range.extra.1.lower", "4500");
-    });
+    cleanupAll();
+    // A lower edge raised past its upper edge: the reason is at that input.
+    setup({ ...fx.extraBandViews.two, rangeRejection: {
+      edit: { kind: "rc_bands", bands: [band(4500, 4000), band(15000, 20000)] },
+      error: ipcError("invalid_request", "", { field: "rc_bands", reason: "rc_band_range", index: "1", lo_hz: "4500", hi_hz: "4000" }),
+    } });
     expect(errorOf("calibrate.range.extra.1.lower")).toBe("상한 4,000 Hz보다 낮은 값을 넣으십시오.");
     expect(errorOf("calibrate.range.extra.2.upper")).toBeNull();
     expect((must("calibrate.range.extra.1.lower") as HTMLInputElement).value).toBe("2000");
-    fireEvent.change(must("calibrate.range.extra.1.lower"), { target: { value: "2500" } });
-    expect(errorOf("calibrate.range.extra.1.lower")).toBeNull();
   });
 
   it("shows each refusal of the primary edges at its input, the stored value kept", () => {

@@ -18,7 +18,8 @@ import type { ResultLinesResult } from "../../ipc/bindings/ResultLinesResult";
 import type { SubResultLines } from "../../ipc/bindings/SubResultLines";
 import type { TargetResult } from "../../ipc/bindings/TargetResult";
 import * as fx from "../../ipc/fixtures";
-import { ipcError, mockInputHpNotes, mockLowProtectNotes, mockRcLines } from "../../ipc/mock";
+import { ipcError } from "../../ipc/mock";
+import { recordKey, recordedCalibration } from "../../ipc/recorded";
 import { bandLayout } from "../../ui/plot/bands";
 import { targetAt } from "../../ui/plot/targetEdit";
 import type { RangeRejection } from "./settingsView";
@@ -634,14 +635,17 @@ export const xoRecStaleView: CalibrateView = {
 
 const NINE_POSITIONS = [1, 2, 3, 4, 5, 6, 7, 8, 9];
 
+/** The service's recorded calibration of the sample room on a new project's settings with this patch (ADR 0052). */
+const recordedRun = (patch: Partial<CalibrationSettings>) => recordedCalibration(recordKey({ ...fx.newProjectSettings, ...patch }));
+
 /**
- * The range card on one upper-limit basis, its RC lines as the mock service's
- * calibration leaves them for these settings (`mockRcLines`). `ranOn` names
- * the settings of the run when they differ from the ones shown (an edit since).
+ * The range card on one upper-limit basis, its RC lines as the service's
+ * recorded calibration leaves them for these settings. `ranOn` names the
+ * settings of the run when they differ from the ones shown (an edit since).
  */
 function rangeView(patch: Partial<CalibrationSettings>, positions: number[] = [1, 2, 3], ranOn: Partial<CalibrationSettings> = patch): CalibrateView {
   const settings = { ...baseSettings, ...patch };
-  return { ...base, positions, settings, lines: { ...base.lines, rc: mockRcLines({ ...baseSettings, ...ranOn }, positions.length) } };
+  return { ...base, positions, settings, lines: { ...base.lines, rc: recordedRun(ranOn).lines.rc } };
 }
 
 export const rangeViews = {
@@ -745,13 +749,17 @@ export const polarityDipView: CalibrateView = (() => {
 
 /* ── 극저역 보호 (ADR 0022) ─────────────────────────────────────────────── */
 
+/** The notes of these codes the service's recorded calibration with this patch carries. */
+const recordedNotes = (patch: Partial<CalibrationSettings>, ...codes: Note["code"][]) =>
+  recordedRun(patch).results.calibration!.notes.filter((note) => codes.includes(note.code));
+
 /**
- * A current result calculated with 극저역 보호, its notes as the mock
- * service's calibration leaves them for these settings (`mockLowProtectNotes`).
+ * A current result calculated with 극저역 보호, its notes as the service's
+ * recorded calibration leaves them for these settings.
  */
 function lowProtectView(patch: Partial<CalibrationSettings>): CalibrateView {
   const settings = { ...baseSettings, ...patch };
-  const notes = [...NOTES, ...mockLowProtectNotes(settings, fx.SAMPLE_ROLES)];
+  const notes = [...NOTES, ...recordedNotes(patch, "low_protect")];
   return { ...base, settings, results: { calibration: summary(false, notes), mimo: null, mimo_export: "off" }, lines: { ...lines(), notes } };
 }
 
@@ -778,10 +786,10 @@ export const lowProtectNotes: Notice[] = [
 
 /* ── 입력 저역 컷 (ADR 0031) ────────────────────────────────────────────── */
 
-/** A current result calculated with the input cut, its note as the mock service leaves it (`mockInputHpNotes`). */
+/** A current result calculated with the input cut, its note as the service's recorded calibration leaves it. */
 function inputHpView(patch: Partial<CalibrationSettings>): CalibrateView {
   const settings = { ...baseSettings, ...patch };
-  const notes = [...NOTES, ...mockLowProtectNotes(settings, fx.SAMPLE_ROLES), ...mockInputHpNotes(settings)];
+  const notes = [...NOTES, ...recordedNotes(patch, "low_protect", "input_hp")];
   return { ...base, settings, results: { calibration: summary(false, notes), mimo: null, mimo_export: "off" }, lines: { ...lines(), notes } };
 }
 

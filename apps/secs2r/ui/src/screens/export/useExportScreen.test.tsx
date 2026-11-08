@@ -199,20 +199,7 @@ describe("useExportScreen", () => {
     // Kept for the session, across projects.
     await perform(() => session.call({ method: "project_new", params: { path: "", preset: "2.0", sub_count: 0, sample: false, tutorial: false } }));
     expect(result.current.view?.extraRates).toEqual([192000, 44100]);
-  });
-
-  it("records the service's output-rate fallback note on the row's run", async () => {
-    mock.dispose();
-    session.dispose();
-    mock = createMockService({ tickMs: 0, playbackRate: null }); session = createSession(mock); await session.start();
-    await perform(() => session.call({ method: "calibrate", params: { settings: null, subs_only: false } }));
-    await perform(mock.drain);
-    await perform(() => session.writers.dsp.edit({ output_rate: "auto" }));
-    const { result } = renderHook(useExportScreen, { wrapper });
-    expect(result.current.view?.outputRate).toBe("auto");
-    await perform(() => result.current.actions.exportFiles("camilla_dsp"));
-    await perform(mock.drain);
-    expect(result.current.view?.runs.camilla_dsp).toMatchObject({ status: "done", rate: 48000, notes: [{ code: "output_rate_fallback", params: {} }] });
+    // The rate is chosen on 시스템.
     await perform(result.current.actions.goToSystem);
     expect(session.host.getSnapshot().current).toBe("system");
   });

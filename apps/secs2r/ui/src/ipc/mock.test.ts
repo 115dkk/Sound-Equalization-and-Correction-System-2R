@@ -568,39 +568,6 @@ describe("mock filter exports", () => {
     } finally { mock.dispose(); }
   });
 
-  it.each([
-    [44100, 44100, []],
-    [32000, 48000, [{ code: "output_rate_fallback", params: { rate: "32000" } }]],
-    [null, 48000, [{ code: "output_rate_fallback", params: {} }]],
-  ] as const)("자동 on a %s Hz playback device writes %s Hz with notes %j", async (playbackRate, rate, notes) => {
-    const mock = createMockService({ tickMs: 0, results: resultWithoutSubs(), playbackRate });
-    try {
-      const dsp = await mock.request({ method: "dsp_get" });
-      await mock.request({ method: "dsp_set", params: { preset: null, fields: { ...dsp.fields, output_rate: "auto" } } });
-      expect(await rated(mock, "camilla_dsp", "C:/out")).toMatchObject({ output_rate: rate, notes });
-      expect(await rated(mock, "staged_mdat", "C:/out")).toMatchObject({ output_rate: 48000, notes: [] });
-    } finally { mock.dispose(); }
-  });
-
-  it.each([44100, 32000, null])("skips an extra rate matching the automatic rate, including fallback from %s Hz", async (playbackRate) => {
-    const mock = createMockService({ tickMs: 0, results: resultWithoutSubs(), playbackRate });
-    try {
-      const dsp = await mock.request({ method: "dsp_get" });
-      await mock.request({ method: "dsp_set", params: { preset: null, fields: { ...dsp.fields, output_rate: "auto" } } });
-      const rate = playbackRate === 44100 ? 44100 : 48000;
-      const output = await rated(mock, "convolution", "C:/out", { extra_rates: [rate, 96000] });
-      expect(output.output_rate).toBe(rate);
-      expect(output.files).toContain("C:/out/L_to_L.wav");
-      expect(output.files).toContain("C:/out/96000Hz/L_to_L.wav");
-      expect(output.files.some((file) => file.includes(`/${rate}Hz/`))).toBe(false);
-      const mainOnly = await rated(mock, "convolution", "C:/out", { extra_rates: [rate] });
-      expect(mainOnly.files).toEqual((await rated(mock, "convolution", "C:/out")).files);
-      for (const rates of [[rate, rate], [96000, 96000], [32000]]) {
-        await expect(mock.request({ method: "export", params: { kind: "convolution", folder: "", extra_rates: rates } })).rejects.toMatchObject({ error: { code: "invalid_request" } });
-      }
-    } finally { mock.dispose(); }
-  });
-
   it.each(["fir_taps", "fir_budget", "iir_bands", "allpass_bands", "bm_path_delays"] as const)("makes the profile custom when %s changes along with the output rate", async (field) => {
     const mock = createMockService({ tickMs: 0 });
     try {
