@@ -567,11 +567,14 @@ fn applied_generation(root: &Path, config: &Path) -> Option<String> {
     }
     let generation = root.join(name);
     let metadata = fs::symlink_metadata(&generation).ok()?;
-    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+    if crate::fs::is_link_or_junction(&metadata, crate::fs::LinkKind::Symlink) || !metadata.is_dir()
+    {
         return None;
     }
     let manifest = fs::symlink_metadata(generation.join("secs-design.json")).ok()?;
-    if manifest.file_type().is_symlink() || !manifest.is_file() {
+    if crate::fs::is_link_or_junction(&manifest, crate::fs::LinkKind::Symlink)
+        || !manifest.is_file()
+    {
         return None;
     }
     name.to_str().map(str::to_owned)
@@ -600,9 +603,9 @@ fn marker_generation(root: &Path, marker: &Path) -> Option<String> {
     let folder = root.join(name);
     let metadata = fs::symlink_metadata(&folder).ok()?;
     let manifest = fs::symlink_metadata(folder.join("secs-design.json")).ok()?;
-    (!metadata.file_type().is_symlink()
+    (!crate::fs::is_link_or_junction(&metadata, crate::fs::LinkKind::Symlink)
         && metadata.is_dir()
-        && !manifest.file_type().is_symlink()
+        && !crate::fs::is_link_or_junction(&manifest, crate::fs::LinkKind::Symlink)
         && manifest.is_file())
     .then(|| name.to_owned())
 }

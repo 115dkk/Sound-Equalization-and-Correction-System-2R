@@ -2,6 +2,32 @@ use std::path::Path;
 
 use secs_types::ipc::{ErrorCode, IpcError};
 
+#[derive(Clone, Copy)]
+pub(crate) enum LinkKind {
+    Symlink,
+    Any,
+}
+
+pub(crate) fn is_link_or_junction(metadata: &std::fs::Metadata, kind: LinkKind) -> bool {
+    if metadata.file_type().is_symlink() {
+        return true;
+    }
+    if matches!(kind, LinkKind::Symlink) {
+        return false;
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt as _;
+        // Win32 FILE_ATTRIBUTE_REPARSE_POINT (audit #155 TD-110).
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+        metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
+}
+
 pub(crate) fn io_failure(path: &Path, error: &std::io::Error, code: ErrorCode) -> IpcError {
     let detail = error.to_string();
     let lowercase = detail.to_ascii_lowercase();

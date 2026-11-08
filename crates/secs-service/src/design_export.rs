@@ -9,6 +9,7 @@ use secs_types::ipc::ExportKind;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+use crate::fs::{LinkKind, is_link_or_junction};
 use crate::{APP_NAME, LogLevel, LogSink};
 
 pub(crate) const MANIFEST_NAME: &str = "secs-design.json";
@@ -428,7 +429,7 @@ fn rebuild_index_from(
             }
             Err(error) => return Err(error.into()),
         };
-        if is_link_or_junction(&metadata) || !metadata.is_dir() {
+        if is_link_or_junction(&metadata, LinkKind::Any) || !metadata.is_dir() {
             return Ok(None);
         }
         let manifest = at.join(MANIFEST_NAME);
@@ -447,7 +448,7 @@ fn rebuild_index_from(
             }
             Err(error) => return Err(error.into()),
         };
-        if is_link_or_junction(&metadata) || !metadata.is_file() {
+        if is_link_or_junction(&metadata, LinkKind::Any) || !metadata.is_file() {
             return Ok(None);
         }
         let bytes = match fs::read(&manifest) {
@@ -517,7 +518,7 @@ fn rebuild_index_from(
             }
             Err(error) => return Err(error.into()),
         };
-        if is_link_or_junction(&metadata) || !metadata.is_dir() {
+        if is_link_or_junction(&metadata, LinkKind::Any) || !metadata.is_dir() {
             return Ok(());
         }
         if let Some(entry) = manifest_entry(base, at, skip_unreadable, log)? {
@@ -569,23 +570,6 @@ fn rebuild_index_from(
         Ok(())
     }
 
-    fn is_link_or_junction(metadata: &fs::Metadata) -> bool {
-        if metadata.file_type().is_symlink() {
-            return true;
-        }
-        #[cfg(windows)]
-        {
-            use std::os::windows::fs::MetadataExt as _;
-            // Win32 FILE_ATTRIBUTE_REPARSE_POINT (audit #155 TD-110).
-            const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
-            metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
-        }
-        #[cfg(not(windows))]
-        {
-            false
-        }
-    }
-
     enum IndexedManifest {
         Current(DesignIndexEntry),
         Missing,
@@ -620,7 +604,7 @@ fn rebuild_index_from(
                     ));
                 }
             };
-            if is_link_or_junction(&metadata) || !metadata.is_dir() {
+            if is_link_or_junction(&metadata, LinkKind::Any) || !metadata.is_dir() {
                 return IndexedManifest::Unsafe;
             }
         }
@@ -637,7 +621,7 @@ fn rebuild_index_from(
                 ));
             }
         };
-        if is_link_or_junction(&metadata) {
+        if is_link_or_junction(&metadata, LinkKind::Any) {
             return IndexedManifest::Unsafe;
         }
         if !metadata.is_file() {

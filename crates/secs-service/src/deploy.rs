@@ -1,8 +1,14 @@
+//! Three replacement conventions are deliberate: [`install`] installs a whole
+//! generation folder without a backup, `design_export::replace_folder` replaces a
+//! bundle with a backup, and `secs_graph::files::install` rolls back per file.
+
 use std::ffi::OsStr;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
 use secs_types::ipc::{ErrorCode, IpcError};
+
+use crate::fs::{LinkKind, is_link_or_junction};
 
 pub(crate) struct Generation {
     pub name: String,
@@ -52,7 +58,7 @@ pub(crate) fn prune(root: &Path, keep: &[&str]) -> Result<(), IpcError> {
         let path = entry.path();
         let metadata = fs::symlink_metadata(&path)
             .map_err(|error| crate::fs::io_failure(&path, &error, ErrorCode::ApplyFailed))?;
-        if metadata.file_type().is_symlink() {
+        if is_link_or_junction(&metadata, LinkKind::Symlink) {
             remove_link(&path)?;
         } else if metadata.is_dir() {
             fs::remove_dir_all(&path)
@@ -75,7 +81,7 @@ pub(crate) fn write_entry(path: &Path, bytes: &[u8]) -> Result<(), IpcError> {
 
 fn refuse_link(path: &Path) -> Result<(), IpcError> {
     match fs::symlink_metadata(path) {
-        Ok(metadata) if metadata.file_type().is_symlink() => Err(IpcError::new(
+        Ok(metadata) if is_link_or_junction(&metadata, LinkKind::Symlink) => Err(IpcError::new(
             ErrorCode::InvalidRequest,
             "deployment root must not be a link or junction",
         )
