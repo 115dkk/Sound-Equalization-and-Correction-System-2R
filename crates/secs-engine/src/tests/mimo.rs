@@ -45,44 +45,62 @@ fn request(fx: &Fixture) -> MimoRequest {
     }
 }
 
-/// The default 60 ms is the pre-change constant `EARLY = 36`: the configured
-/// normal equations must equal the constant-36 path bit for bit. The default
-/// request's results against the recorded goldens (candidates, ranking,
-/// supports of every case and role) are asserted by
-/// `mimo_stage_boundary_goldens` and `mimo_whole_path_goldens`, which run with
-/// `MimoRequest::default()`'s early window.
 #[test]
 fn mimo_early_sixty_keeps_goldens_bit_identical() {
-    use secs_types::calibration::CalibrationSettings;
-
-    let req = MimoRequest::default();
-    assert_eq!(req.mimo_early_ms, 60.0);
-    assert_eq!(crate::mimo::design::early_samples(req.mimo_early_ms), 36);
-    let key = crate::MimoKey::from_settings(&CalibrationSettings::default());
-    assert_eq!(key.mimo_early_ms, 60.0);
-    assert_eq!(key.request().mimo_early_ms, req.mimo_early_ms);
-
-    let fx = Fixture::load("engine_mimo", "room");
-    let stage = &fx.inputs()["stage"]["inputs"]["L"];
-    let xs: Vec<_> = stage["xs"]
-        .as_array()
-        .unwrap()
+    let case = "room";
+    let fx = Fixture::load("engine_mimo", case);
+    let mut req = request(&fx);
+    req.mimo_early_ms = 60.0;
+    let runs: Vec<_> = LABELS
         .iter()
-        .map(|v| fx.f64s(v))
+        .map(|label| Fixture::load("engine_mimo", &format!("{case}_{label}")))
         .collect();
-    let paths: Vec<Vec<Vec<f64>>> = (0..xs.len())
-        .map(|p| vec![fx.f64s(&fx.inputs()["stage"]["paths"]["R"][p])])
-        .collect();
-    let legacy = normal_equations(&xs, &paths, req.taps_low, 10.0, 36);
-    let configured = normal_equations(
-        &xs,
-        &paths,
-        req.taps_low,
-        10.0,
-        crate::mimo::design::early_samples(req.mimo_early_ms),
-    );
-    assert_eq!(legacy.0, configured.0, "FIR normal matrix bits");
-    assert_eq!(legacy.1, configured.1, "FIR right-hand-side bits");
+    let stage = &fx.inputs()["stage"];
+    let mut stats = Statistics::default();
+    for (role, data) in stage["inputs"].as_object().unwrap() {
+        let xs: Vec<_> = data["xs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|value| fx.f64s(value))
+            .collect();
+        let direct = fx.f64s(&data["direct"]);
+        let candidates: Vec<_> = runs[0].outputs()["ranges"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|value| {
+                !value[1].is_null()
+                    && value[0].as_str().unwrap() != role
+                    && !req
+                        .exclude
+                        .iter()
+                        .any(|item| item == value[0].as_str().unwrap())
+            })
+            .map(|value| value[0].as_str().unwrap().to_owned())
+            .collect();
+        let paths: Vec<Vec<Vec<_>>> = (0..xs.len())
+            .map(|position| {
+                candidates
+                    .iter()
+                    .map(|candidate| fx.f64s(&stage["paths"][candidate][position]))
+                    .collect()
+            })
+            .collect();
+        let result =
+            design_input(&xs, &paths, &direct, &candidates, &req, &Context::serial()).unwrap();
+        for (support, taps) in &result.supports {
+            let recorded = &runs[0].outputs()["supports"][role][support];
+            assert!(!recorded.is_null(), "{case}/{role}/{support}");
+            secs_oracle::assert_same(
+                &format!("{case}/{role}/{support}/60ms"),
+                taps,
+                &runs[0].f64s(recorded),
+            );
+        }
+        compare_input(case, role, &result, &runs, &mut stats);
+    }
+    stats.finish(case);
 }
 
 #[test]

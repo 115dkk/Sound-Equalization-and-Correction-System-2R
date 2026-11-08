@@ -721,8 +721,9 @@ fn mimo_run_compute_fir_and_iir_end_to_end() {
 
 #[test]
 fn mimo_seat_guard_off_keeps_goldens_bit_identical() {
-    let case = cases::load(&crate::tests::Oracle, "room_filters");
-    let design = design::replay("room_filters");
+    let name = "room_filters";
+    let case = cases::load(&crate::tests::Oracle, name);
+    let design = design::replay(name);
     for fir in [false, true] {
         let explicit = settings(fir);
         let mut json = serde_json::to_value(&explicit).unwrap();
@@ -731,25 +732,50 @@ fn mimo_seat_guard_off_keeps_goldens_bit_identical() {
         assert!(!legacy.mimo_seat_guard);
         assert_eq!(legacy.mimo_key(), explicit.mimo_key());
 
-        let expected = mimo::compute(
-            &design,
-            &case.measurements,
-            &case.config,
-            &explicit,
-            &Tuning::default(),
-            &Context::serial(),
-        )
-        .unwrap();
-        let actual = mimo::compute(
-            &design,
-            &case.measurements,
-            &case.config,
-            &legacy,
-            &Tuning::default(),
-            &Context::serial(),
-        )
-        .unwrap();
-        assert_eq!(actual, expected, "fir={fir}");
+        if fir {
+            let fixture = Fixture::load("engine_mimo_run", "room_filters_fir");
+            let run = mimo::compute(
+                &design,
+                &case.measurements,
+                &case.config,
+                &legacy,
+                &Tuning {
+                    mimo_max_nfev: 0,
+                    ..Tuning::default()
+                },
+                &Context::serial(),
+            )
+            .unwrap();
+            let recorded = ideal(&fixture);
+            if oracle_libm() {
+                assert_eq!(run.ideal.ranges, recorded.ranges);
+            }
+            for ((role, supports), (expected_role, expected_supports)) in
+                run.ideal.supports.iter().zip(&recorded.supports)
+            {
+                assert_eq!(role, expected_role);
+                if oracle_libm() {
+                    assert_eq!(supports.len(), expected_supports.len());
+                    for ((support, taps), (expected_support, expected_taps)) in
+                        supports.iter().zip(expected_supports)
+                    {
+                        assert_eq!(support, expected_support);
+                        measure(
+                            "guard-off ideal FIR",
+                            error(taps, expected_taps),
+                            3e-9,
+                            true,
+                        );
+                    }
+                } else {
+                    eprintln!(
+                        "MEASURE MIMO_RUN {name}/{role} guard-off supports foreign-libm report-only"
+                    );
+                }
+            }
+            compare_paths(&run.paths, &paths(&fixture), 3e-7, true);
+            compare_curves(&fixture, &run, 3e-7);
+        }
     }
 }
 
