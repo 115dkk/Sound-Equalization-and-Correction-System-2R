@@ -1026,6 +1026,7 @@ tests = [
   "secs-service::dirac_channel_names_suggest_roles",
   "secs-service::dirac_scan_lists_positions_channels_and_sub_flags",
   "secs-service::dirac_import_records_irs_t0_and_source",
+  "secs-service::dirac_rows_keep_a_source_with_the_file_name_td219",
   "secs-service::dirac_import_skips_unplanned_and_outside_rows_and_rejects_bad_files",
   "secs-service::import_rejects_a_row_with_non_finite_samples_naming_it_td263",
   "secs-service::import_rejects_an_empty_row_td263",

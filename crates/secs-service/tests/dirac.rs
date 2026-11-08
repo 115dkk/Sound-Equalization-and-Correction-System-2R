@@ -321,7 +321,39 @@ fn dirac_import_records_irs_t0_and_source() {
         let wav = project_path
             .with_extension("irs")
             .join(format!("{role}_P{position}.wav"));
-        assert!(!secs_project::source_path(&wav).exists());
+        assert!(secs_project::source_path(&wav).is_file());
+    }
+}
+
+#[test]
+fn dirac_rows_keep_a_source_with_the_file_name_td219() {
+    let directory = TempDir::new("source-info");
+    let source = directory.0.join("room.liveproject");
+    fs::write(&source, write(&SyntheticProject::minimal())).unwrap();
+
+    let project_path = directory.0.join("room.secs");
+    let service = Service::new(Deps::default());
+    new_project(&service, &project_path, "2.1", 1);
+    import_dirac(&service, &source);
+
+    let store = secs_project::MeasurementStore::open(&project_path).unwrap();
+    for (role, position, title) in [
+        ("L", 1, "Left P1"),
+        ("SW1", 1, "Subwoofer P1"),
+        ("L", 2, "Left P2"),
+    ] {
+        let wav = project_path
+            .with_extension("irs")
+            .join(format!("{role}_P{position}.wav"));
+        assert!(secs_project::source_path(&wav).is_file());
+        assert_eq!(
+            store.source_of(role, position).as_deref(),
+            Some(&secs_mdat::SourceInfo {
+                strings: vec![("outputName".into(), title.into())],
+                notes: Some("room.liveproject".into()),
+                ..Default::default()
+            })
+        );
     }
 }
 

@@ -12,7 +12,6 @@ use std::path::Path;
 use secs_mdat::SourceInfo;
 use secs_project::{MeasurementResult, MeasurementStore};
 
-#[cfg(test)]
 use crate::{dirac_import, mdat_import};
 
 use crate::measure::{
@@ -34,7 +33,7 @@ pub struct Assignment {
 
 /// One row of a measurement file as the assignment dialog shows it.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct FileRow {
+pub struct FileRow {
     pub title: String,
     /// Suggested, 1-based.
     pub position: i64,
@@ -49,7 +48,7 @@ pub(crate) struct FileRow {
 
 /// The IR one row holds, ready to record.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct ImportedIr {
+pub struct ImportedIr {
     pub samples: Vec<f32>,
     pub sample_rate: u32,
     pub t0_s: f64,
@@ -58,7 +57,7 @@ pub(crate) struct ImportedIr {
 }
 
 /// A format reader: the rows of a file and the IR of each row.
-pub(crate) trait MeasurementReader {
+pub trait MeasurementReader {
     fn rows(&self) -> &[FileRow];
     /// The IR, its sample rate, t0 and the record's uuid and source info.
     fn take(&self, row: usize) -> Result<ImportedIr, MeasureError>;
@@ -75,9 +74,8 @@ pub(crate) fn read(path: &Path, what: &str) -> Result<Vec<u8>, MeasureError> {
     })
 }
 
-/// Reads the file once (256 MiB limit) and picks the reader by extension.
-#[cfg(test)]
-pub(crate) fn open(
+/// Reads a measurement file once and returns its format reader.
+pub fn open(
     path: &Path,
     roles: &[String],
     position: Option<i64>,
@@ -160,9 +158,8 @@ pub(crate) fn record(
     Ok(saved)
 }
 
-/// Validates, prepares and records an import. Kept for the format entry points
-/// and unit tests; the service job calls [`prepare`] before its commit closure.
-pub(crate) fn import(
+/// Validates, prepares, and records selected rows from a measurement reader.
+pub fn import(
     store: &mut MeasurementStore,
     reader: &dyn MeasurementReader,
     file_name: &str,
@@ -533,6 +530,13 @@ mod tests {
                 .collect::<Vec<_>>()
         );
         assert_eq!((ir.sample_rate, ir.t0_s), (48_000, -0.25));
-        assert_eq!(ir.source_info, None);
+        assert_eq!(
+            ir.source_info,
+            Some(SourceInfo {
+                strings: vec![("outputName".into(), "Left P2".into())],
+                notes: Some("minimal.liveproject".into()),
+                ..Default::default()
+            })
+        );
     }
 }

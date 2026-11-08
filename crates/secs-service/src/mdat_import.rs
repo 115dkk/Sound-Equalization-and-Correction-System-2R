@@ -409,10 +409,7 @@ impl MeasurementReader for MdatReader {
 /// `assignment` is per row in file order (missing rows are skipped, as
 /// upstream pads it with `None`); without one every row takes its
 /// suggested role and position.
-#[deprecated(
-    since = "0.23.0",
-    note = "no caller; removed in the next minor (audit #186 TD-219)"
-)]
+#[deprecated(since = "0.23.0", note = "use measurement_file::import")]
 pub fn import(
     store: &mut MeasurementStore,
     path: &Path,

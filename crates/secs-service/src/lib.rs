@@ -33,7 +33,7 @@ pub use measure::{
     plan_for, sample, store_devices, to_audio_plan, to_rew_plan,
 };
 mod measurement;
-mod measurement_file;
+pub mod measurement_file;
 mod mic_calibration;
 mod monitor;
 mod project_edit;
