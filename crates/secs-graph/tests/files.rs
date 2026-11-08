@@ -57,6 +57,16 @@ fn link_directory(target: &Path, link: &Path) {
     std::os::unix::fs::symlink(target, link).unwrap();
 }
 
+/// A Windows directory symlink or junction goes with `remove_dir`; a Unix symlink
+/// to a directory is a file entry and goes with `remove_file`.
+fn unlink_directory(link: &Path) {
+    if cfg!(windows) {
+        fs::remove_dir(link).unwrap();
+    } else {
+        fs::remove_file(link).unwrap();
+    }
+}
+
 /// TD-270: a bundle whose parent folder is a link is refused before any file
 /// is written, naming the link.
 #[test]
@@ -86,6 +96,6 @@ fn symlinked_bundle_parent_is_refused_td270() {
     assert!(error.to_string().contains(&linked.display().to_string()));
     assert!(!outside.join("L.wav").exists());
     assert!(leftovers(&parent, ".stage-").is_empty());
-    fs::remove_dir(&linked).unwrap();
+    unlink_directory(&linked);
     fs::remove_dir_all(parent).unwrap();
 }
