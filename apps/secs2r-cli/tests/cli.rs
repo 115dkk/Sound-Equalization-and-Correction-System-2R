@@ -80,6 +80,109 @@ fn files(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
 }
 
 #[test]
+fn every_scalar_flag_makes_its_edit() {
+    let output = run(&["project", "set", "--list-flags"]).0;
+    assert!(
+        output.status.success(),
+        "scalar flag listing failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let flags: Vec<(String, String)> = serde_json::from_slice(&output.stdout).unwrap();
+    let cases = [
+        (
+            "mimo",
+            "mimo_on",
+            "mimo_on",
+            vec![("on", Value::Bool(true)), ("off", Value::Bool(false))],
+        ),
+        (
+            "mimo-supports",
+            "mimo_fir",
+            "mimo_fir",
+            vec![("iir", Value::Bool(false)), ("fir", Value::Bool(true))],
+        ),
+        (
+            "mimo-early",
+            "mimo_early",
+            "mimo_early_ms",
+            vec![("20", serde_json::json!(20.0))],
+        ),
+        (
+            "mimo-seat-guard",
+            "mimo_seat_guard",
+            "mimo_seat_guard",
+            vec![("on", Value::Bool(true)), ("off", Value::Bool(false))],
+        ),
+        (
+            "low-protect",
+            "low_protect",
+            "low_protect",
+            vec![("on", Value::Bool(true)), ("off", Value::Bool(false))],
+        ),
+        (
+            "lf-align",
+            "lf_align",
+            "lf_align",
+            vec![("on", Value::Bool(true)), ("off", Value::Bool(false))],
+        ),
+        (
+            "mode-decay",
+            "mode_decay",
+            "mode_decay",
+            vec![("on", Value::Bool(true)), ("off", Value::Bool(false))],
+        ),
+        (
+            "hf-phase",
+            "hf_phase",
+            "hf_phase",
+            vec![("on", Value::Bool(true)), ("off", Value::Bool(false))],
+        ),
+        (
+            "dip-limit",
+            "dip_limit",
+            "dip_limit",
+            vec![("on", Value::Bool(true)), ("off", Value::Bool(false))],
+        ),
+        (
+            "input-hp",
+            "input_hp",
+            "input_hp_hz",
+            vec![("25", serde_json::json!(25.0)), ("off", Value::Null)],
+        ),
+    ];
+    assert_eq!(flags.len(), cases.len());
+    let unique: std::collections::BTreeSet<_> = flags.iter().map(|(flag, _)| flag).collect();
+    assert_eq!(unique.len(), flags.len());
+    let root = root("scalar-flags");
+    let project = root.join("room.secs");
+    let path = project.to_string_lossy();
+    assert_success(&run(&["project", "new", &path, "--preset", "2.1"]).0);
+    for (flag, kind) in flags {
+        let (_, expected_kind, field, values) = cases
+            .iter()
+            .find(|(name, ..)| *name == flag)
+            .expect("every listed flag has a literal expectation");
+        assert_eq!(kind, *expected_kind, "{flag}");
+        for (value, expected) in values {
+            let result =
+                assert_success(&run(&["project", "set", &path, &format!("--{flag}"), value]).0);
+            let settings = result
+                .iter()
+                .find(|row| row["reply"]["data"]["method"] == "calibration_settings_get")
+                .unwrap();
+            assert_eq!(
+                &settings["reply"]["data"]["data"][*field], expected,
+                "--{flag} {value}"
+            );
+        }
+    }
+    let help = run(&["project", "set", "--help"]).0;
+    assert!(help.status.success());
+    assert!(!String::from_utf8_lossy(&help.stdout).contains("list-flags"));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn project_set_persists_low_protect_switch() {
     let root = root("low-protect");
     let project = root.join("room.secs");

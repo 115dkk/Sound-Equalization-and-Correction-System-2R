@@ -2416,4 +2416,4 @@ id = "calibration.settings_declaration"
 kind = "internal"
 milestone = "M5"
 status = "implemented"
-tests = ["secs-types::scalar_settings_table_round_trips_defaults_and_keeps_engine_keys", "secs-types::apply_scalar_clamps_and_refuses_by_policy", "secs-types::checked_applies_every_policy_to_a_whole_value", "secs-types::limits_table_has_the_two_new_entries"]
+tests = ["secs2r-cli::every_scalar_flag_makes_its_edit", "secs-types::scalar_constructor_uses_declared_kind_and_payload", "secs-types::scalar_settings_table_round_trips_defaults_and_keeps_engine_keys", "secs-types::apply_scalar_clamps_and_refuses_by_policy", "secs-types::checked_applies_every_policy_to_a_whole_value", "secs-types::limits_table_has_the_two_new_entries"]

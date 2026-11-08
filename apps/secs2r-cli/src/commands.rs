@@ -52,27 +52,42 @@ pub(crate) fn run(action: Action, runner: &mut Runner) {
                 mimo_iir_derivatives,
                 rc_bands,
             } => {
+                use secs_types::calibration::ScalarValue;
                 use secs_types::settings_edit::SettingEdit;
                 runner.open(&path);
-                let mut edits = Vec::new();
-                if let Some(mimo) = mimo {
-                    edits.push(SettingEdit::MimoOn {
-                        on: matches!(mimo, Switch::On),
-                    });
-                }
-                if let Some(kind) = mimo_supports {
-                    edits.push(SettingEdit::MimoFir {
-                        on: matches!(kind, SupportKind::Fir),
-                    });
-                }
-                if let Some(ms) = mimo_early {
-                    edits.push(SettingEdit::MimoEarly { ms });
-                }
-                if let Some(value) = mimo_seat_guard {
-                    edits.push(SettingEdit::MimoSeatGuard {
-                        on: matches!(value, Switch::On),
-                    });
-                }
+                // The array length makes adding a flag without its parsed value a build error.
+                let values: [_; crate::SCALAR_FLAGS.len()] = [
+                    mimo.map(|value| ScalarValue::Bool(matches!(value, Switch::On))),
+                    mimo_supports.map(|value| ScalarValue::Bool(matches!(value, SupportKind::Fir))),
+                    mimo_early.map(ScalarValue::Number),
+                    mimo_seat_guard.map(|value| ScalarValue::Bool(matches!(value, Switch::On))),
+                    low_protect.map(|value| ScalarValue::Bool(matches!(value, Switch::On))),
+                    lf_align.map(|value| ScalarValue::Bool(matches!(value, Switch::On))),
+                    mode_decay.map(|value| ScalarValue::Bool(matches!(value, Switch::On))),
+                    hf_phase.map(|value| ScalarValue::Bool(matches!(value, Switch::On))),
+                    dip_limit.map(|value| ScalarValue::Bool(matches!(value, Switch::On))),
+                    input_hp.map(|InputHpArg(hz)| ScalarValue::OptionalNumber(hz)),
+                ];
+                let mut scalar_edits =
+                    crate::SCALAR_FLAGS
+                        .iter()
+                        .zip(values)
+                        .map(|((_, kind), value)| {
+                            value.map(|value| {
+                                SettingEdit::scalar(kind, value)
+                                    .expect("declared scalar flag and payload")
+                            })
+                        });
+                // Derivative edits retain their position between the MIMO and input flags.
+                let before_derivatives = crate::SCALAR_FLAGS
+                    .iter()
+                    .position(|(flag, _)| *flag == "low-protect")
+                    .expect("input flag boundary");
+                let mut edits = scalar_edits
+                    .by_ref()
+                    .take(before_derivatives)
+                    .flatten()
+                    .collect::<Vec<_>>();
                 if peq_derivatives.is_some() || mimo_iir_derivatives.is_some() {
                     edits.push(SettingEdit::AnalyticDerivatives {
                         peq: peq_derivatives
@@ -81,34 +96,7 @@ pub(crate) fn run(action: Action, runner: &mut Runner) {
                             .map(|choice| matches!(choice, MimoIirDerivativeChoice::Analytic)),
                     });
                 }
-                if let Some(value) = low_protect {
-                    edits.push(SettingEdit::LowProtect {
-                        on: matches!(value, Switch::On),
-                    });
-                }
-                if let Some(value) = lf_align {
-                    edits.push(SettingEdit::LfAlign {
-                        on: matches!(value, Switch::On),
-                    });
-                }
-                if let Some(value) = mode_decay {
-                    edits.push(SettingEdit::ModeDecay {
-                        on: matches!(value, Switch::On),
-                    });
-                }
-                if let Some(value) = hf_phase {
-                    edits.push(SettingEdit::HfPhase {
-                        on: matches!(value, Switch::On),
-                    });
-                }
-                if let Some(value) = dip_limit {
-                    edits.push(SettingEdit::DipLimit {
-                        on: matches!(value, Switch::On),
-                    });
-                }
-                if let Some(InputHpArg(hz)) = input_hp {
-                    edits.push(SettingEdit::InputHp { hz });
-                }
+                edits.extend(scalar_edits.flatten());
                 if let Some(RcBandsArg(bands)) = rc_bands {
                     edits.push(SettingEdit::RcBands { bands });
                 }

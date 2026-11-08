@@ -198,6 +198,16 @@ macro_rules! calibration_settings {
         pub enum SettingEdit {
             $( $(#[$edit_attr])* $variant { $( $(#[$payload_attr])* $payload: $payload_ty, )* }, )*
         }
+        impl SettingEdit {
+            /// Constructs a declared single-payload edit without applying its policy.
+            /// Unknown or structured kinds and mismatched payload types return `None`.
+            pub fn scalar(kind: &str, value: ScalarValue) -> Option<Self> {
+                $( if let Some(edit) = scalar_edit_constructor!(kind, value, [$($kind)?], $variant { $($payload: $payload_ty),* }) {
+                    return Some(edit);
+                } )*
+                None
+            }
+        }
         #[allow(non_upper_case_globals)]
         mod scalar_rules {
             $( pub const $field: (&str, &str) = scalar_policy!($check($($args)*)); )*
@@ -251,6 +261,19 @@ macro_rules! calibration_settings {
         }
     };
 }
+macro_rules! scalar_edit_constructor {
+    ($kind:ident, $value:ident, [$wire:literal], $variant:ident { $payload:ident: $ty:ty }) => {
+        if $kind == $wire {
+            <$ty as ScalarPayload>::from_scalar(&$value).map(|$payload| Self::$variant { $payload })
+        } else {
+            None
+        }
+    };
+    ($kind:ident, $value:ident, [$($wire:literal)?], $variant:ident { $($payload:ident: $ty:ty),* }) => {
+        None::<Self>
+    };
+}
+
 macro_rules! scalar_key {
     ($value:expr, $field:ident, flag) => {
         if *$value {
@@ -342,6 +365,50 @@ pub enum ScalarValue {
     Integer(i64),
     Text(String),
 }
+
+trait ScalarPayload: Sized {
+    fn from_scalar(value: &ScalarValue) -> Option<Self>;
+}
+
+macro_rules! scalar_payload {
+    ($ty:ty, $variant:ident) => {
+        impl ScalarPayload for $ty {
+            fn from_scalar(value: &ScalarValue) -> Option<Self> {
+                match value {
+                    ScalarValue::$variant(value) => Some(*value),
+                    _ => None,
+                }
+            }
+        }
+    };
+}
+scalar_payload!(bool, Bool);
+scalar_payload!(f64, Number);
+scalar_payload!(Option<f64>, OptionalNumber);
+
+impl ScalarPayload for u8 {
+    fn from_scalar(value: &ScalarValue) -> Option<Self> {
+        match value {
+            ScalarValue::Number(value) if (0.0..=255.0).contains(value) && value.fract() == 0.0 => {
+                Some(*value as u8)
+            }
+            ScalarValue::Integer(value) => Self::try_from(*value).ok(),
+            _ => None,
+        }
+    }
+}
+
+macro_rules! scalar_enum_payload {
+    ($($ty:ty),* $(,)?) => {
+        $( impl ScalarPayload for $ty {
+            fn from_scalar(value: &ScalarValue) -> Option<Self> {
+                let ScalarValue::Text(value) = value else { return None; };
+                Self::deserialize(serde::de::value::StrDeserializer::<serde::de::value::Error>::new(value)).ok()
+            }
+        } )*
+    };
+}
+scalar_enum_payload!(Mode, SampleRatePolicy, RcHiBasis);
 
 /// The legacy JSON reader's scalar conversions. Strings may parse as numbers;
 /// integer excludes numeric strings, preserving the transition-factor rule.
@@ -1220,6 +1287,49 @@ mod tests {
 
     fn band(lo_hz: f64, hi_hz: f64) -> RcBand {
         RcBand { lo_hz, hi_hz }
+    }
+
+    #[test]
+    fn scalar_constructor_uses_declared_kind_and_payload() {
+        assert_eq!(
+            SettingEdit::scalar("dip_limit", ScalarValue::Bool(true)),
+            Some(SettingEdit::DipLimit { on: true })
+        );
+        assert_eq!(
+            SettingEdit::scalar("mimo_early", ScalarValue::Number(20.0)),
+            Some(SettingEdit::MimoEarly { ms: 20.0 })
+        );
+        for hz in [None, Some(25.0)] {
+            assert_eq!(
+                SettingEdit::scalar("input_hp", ScalarValue::OptionalNumber(hz)),
+                Some(SettingEdit::InputHp { hz })
+            );
+        }
+        assert_eq!(
+            SettingEdit::scalar("rc_hi_transition", ScalarValue::Number(2.0)),
+            Some(SettingEdit::RcHiTransition { factor: 2 })
+        );
+        assert_eq!(
+            SettingEdit::scalar("mode", ScalarValue::Text("linear".into())),
+            Some(SettingEdit::Mode { mode: Mode::Linear })
+        );
+        assert_eq!(
+            SettingEdit::scalar("dip_limit", ScalarValue::Number(1.0)),
+            None
+        );
+        assert_eq!(
+            SettingEdit::scalar("unknown", ScalarValue::Bool(true)),
+            None
+        );
+        assert_eq!(SettingEdit::scalar("xo", ScalarValue::Number(80.0)), None);
+        assert_eq!(
+            SettingEdit::scalar("rc_hi_transition", ScalarValue::Number(2.5)),
+            None
+        );
+        assert_eq!(
+            SettingEdit::scalar("rc_hi_transition", ScalarValue::Number(f64::NAN)),
+            None
+        );
     }
 
     #[test]
