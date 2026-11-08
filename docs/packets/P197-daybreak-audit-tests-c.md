@@ -1,13 +1,24 @@
 # P197 (Daybreak): audit #186, Category C test-only findings
 
-Phase 3 of `/115dkk-skills:resolve-audit` for issue #186. It runs AFTER
-Phases 1 and 2 (P183..P192) have been rebased into `fix/audit-186`. Start
-from the then-current `fix/audit-186`: Claude re-creates the worktree
-`E:\wt\audit-graph` on a fresh branch `audit/186-tests-c` from it before
-handing you this packet. Work only there. Every cargo command runs with
-`CARGO_TARGET_DIR=C:\cargo-target\audit-graph`. Commit on that branch, one
-commit per finding, in the order below. Do not push, do not rebase, do not
-spawn sub-agents, do not touch `audit-state.md`.
+Phase 3 of `/115dkk-skills:resolve-audit` for issue #186. It runs after
+every Phase 1, Phase 2 and ADR packet has landed on `fix/audit-186`
+(including P189/P203 on the service, P202 on the API, P193/P205 on the
+service and project crates, P199 on the calibration settings). Claude
+created the worktree `E:\wt\audit-host` on a fresh branch
+`audit/186-tests-c` from the current `fix/audit-186` (`git status` is clean
+when you start). Work only there. Every cargo command runs with
+`CARGO_TARGET_DIR=E:\cargo-target\audit-engine` (warm, shared with
+Claude's verification runs; a lock wait is normal). Never run `cargo clean`,
+never delete anything under `E:\cargo-target`, and check after the first
+command that `E:\wt\audit-host\target` does not exist. Commit on that
+branch, one commit per finding, in the order below, with the trailer
+`Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`. Do not push, do
+not rebase, do not spawn sub-agents, do not touch `audit-state.md`.
+
+Line numbers below are from the audit commit; the service integration
+tests were split into `tests/{service,calibration,export,cache}.rs` with a
+shared `tests/support/mod.rs` (B-3), and `crates/secs-project/src/record.rs`
+may be a `record/` directory now (B-26). Search by the names given.
 
 Category C means: no runtime behaviour changes. Only tests, fuzz targets,
 test fixtures, CI seed lines and the policy gates change. The gate for each
@@ -441,7 +452,7 @@ Commit subject: `chore(audit): C-32 마이크 보정 파일과 REW 측정 응답
 ```
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
-cargo test --workspace --locked
+cargo test -p <every crate you touched> --locked --no-fail-fast
 python3 .github/scripts/check_feature_tests.py
 python3 -c "import yaml,sys; yaml.safe_load(open('.github/workflows/ci.yml', encoding='utf-8'))"
 git log --oneline fix/audit-186..audit/186-tests-c

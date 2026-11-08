@@ -1,12 +1,17 @@
 # P196 (ASTRA): audit #186, Category C documentation findings
 
-Phase 3 of `/115dkk-skills:resolve-audit` for issue #186. It runs AFTER
-Phases 1 and 2 (P183..P192) have been rebased into `fix/audit-186`. Start
-from the then-current `fix/audit-186`: Claude re-creates the worktree
-`E:\wt\audit-api` on a fresh branch `audit/186-docs-c` from it before
-handing you this packet. Work only there. Commit on that branch, one commit
-per finding, in the order below. Do not push, do not rebase, do not spawn
-sub-agents, do not touch `audit-state.md`.
+Phase 3 of `/115dkk-skills:resolve-audit` for issue #186. It runs after
+every code packet has landed on `fix/audit-186`, so the documents describe
+the final code. Claude created the worktree `E:\wt\audit-api` on a fresh
+branch `audit/186-docs-c` from the current `fix/audit-186` (`git status`
+shows only an untracked `bindings/python/secs2r/_secs2r.pyd`; leave it).
+Work only there. Commit on that branch, one commit per finding, in the
+order below, with the trailer
+`Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`. Do not push, do
+not rebase, do not spawn sub-agents, do not touch `audit-state.md`. Cargo
+runs only for `cargo doc` and the feature check, with
+`CARGO_TARGET_DIR=C:\cargo-target\audit-api`; never `cargo clean`, never
+delete anything under `C:\cargo-target`.
 
 Category C means: no runtime behaviour change. These items change words
 only: ADR text, repository documents, doc comments (`///` and `//!`), and
@@ -360,6 +365,26 @@ Commit subject: `chore(audit): C-31 엔진 문서와 MIMO 풀이 설명을 코�
   CSP reasons): P192.
 - Tests and fuzz (C-1, C-2, C-8, C-9, C-10, C-12, C-14, C-18, C-19, C-20,
   C-32): P197. CI and configuration (C-17, C-25, C-26, C-27, C-28, C-30): P198.
+
+### Catalog · X-10 and A-42 · the provisional sentences P204 added
+
+P204 (Opus, screens) added these keys with provisional sentences to
+`apps/secs2r/ui/src/i18n/ko.json` and `en.json` (this item may edit those
+two files, nothing else under `apps/`):
+`frame.status.settings_notice.title`, `frame.status.settings_notice.close`,
+`notice.app_settings_unreadable` (`{path}`), `notice.app_settings_newer`
+(`{version}`), `connect.rew_executable`, `connect.rew_executable.placeholder`,
+`connect.rew_executable.help`, `connect.rew_executable.error.relative`.
+Read the screens that show them (`src/app/ProjectStatus.tsx`,
+`src/screens/connect/ConnectScreen.tsx`) and the neighbouring keys of the
+same screens, then rewrite any Korean or English sentence that reads as
+translated, decorated, or unlike its neighbours (하십시오체, labels as noun
+phrases, the effect a control has, no em-dash). Keep the keys and the
+placeholder sets identical in both files. Gate:
+`(cd apps/secs2r/ui && npx vitest run src/i18n)`. If every sentence already
+reads naturally, make no commit and say so.
+
+Commit: `chore(audit): X-10 설정 알림과 REW 실행 파일 입력란의 문구를 다듬습니다 (#186 A10 TD-221)`
 
 ## Verification (foreground)
 
