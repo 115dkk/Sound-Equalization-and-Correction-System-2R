@@ -1,4 +1,3 @@
-import os
 import re
 import socket
 import threading
@@ -86,21 +85,35 @@ def test_client_closed_port_fails_quickly_with_secs_error() -> None:
     assert elapsed < 5.0
 
 
-def test_oracle_project_round_trip_when_supplied(tmp_path: Path) -> None:
-    project = os.environ.get("SECS_ORACLE_PROJECT")
-    if not project:
-        pytest.skip("SECS_ORACLE_PROJECT is not available")
+def test_mock_room_calibrates_and_exports(tmp_path: Path) -> None:
+    project_directory = tmp_path / "project"
+    export_path = tmp_path / "equalizer-apo"
+    project_directory.mkdir()
+    export_path.mkdir()
+    engine = secs2r.Engine(tmp_path / "settings.json")
 
-    engine = secs2r.Engine()
-    opened = engine.call(
-        {"method": "project_open", "params": {"path": str(Path(project).resolve())}}
+    engine.call(
+        {
+            "method": "project_new",
+            "params": {
+                "path": str(project_directory / "mock.secs"),
+                "preset": "7.1.4",
+                "sub_count": 3,
+                "sample": True,
+                "tutorial": False,
+            },
+        }
     )
-    assert opened["method"] == "project_open"
+    engine.call({"method": "measure_configure", "params": {"method": "mock"}})
+    measured = engine.call(
+        {"method": "measure_position", "params": {"position": 1}}
+    )
+    assert engine.wait_job(measured["data"]["job"], 120.0)["status"] == "succeeded"
 
-    started = engine.call({"method": "calibrate", "params": {}})
-    finished = engine.wait_job(started["data"]["job"], 120.0)
-    assert finished["event"] == "finished"
-    assert finished["status"] == "succeeded"
+    calibrated = engine.call({"method": "calibrate", "params": {}})
+    terminal = engine.wait_job(calibrated["data"]["job"], 120.0)
+    assert terminal["event"] == "finished"
+    assert terminal["status"] == "succeeded"
 
     results = engine.call({"method": "results"})
     assert results["data"]["calibration"] is not None
@@ -108,18 +121,11 @@ def test_oracle_project_round_trip_when_supplied(tmp_path: Path) -> None:
     exported = engine.call(
         {
             "method": "export",
-            "params": {
-                "kind": "camilla_dsp",
-                "folder": str(tmp_path),
-                "mdat_scope": None,
-                "design_name": None,
-                "camilla_devices": None,
-            },
+            "params": {"kind": "equalizer_apo", "folder": str(export_path)},
         }
     )
-    terminal = engine.wait_job(exported["data"]["job"], 120.0)
-    assert terminal["status"] == "succeeded"
-    assert any(tmp_path.iterdir())
+    assert engine.wait_job(exported["data"]["job"], 120.0)["status"] == "succeeded"
+    assert any(path.is_file() for path in export_path.rglob("*"))
 
 
 def test_calibration_notes_are_typed_td162(tmp_path: Path) -> None:
