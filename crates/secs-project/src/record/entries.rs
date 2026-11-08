@@ -68,7 +68,10 @@ pub(super) fn value_for<'a>(object: &'a [(String, PyJson)], key: &str) -> Option
         .map(|(_, value)| value)
 }
 
-pub(super) fn value_for_mut<'a>(object: &'a mut [(String, PyJson)], key: &str) -> Option<&'a mut PyJson> {
+pub(super) fn value_for_mut<'a>(
+    object: &'a mut [(String, PyJson)],
+    key: &str,
+) -> Option<&'a mut PyJson> {
     object
         .iter_mut()
         .find(|(name, _)| name == key)
@@ -89,7 +92,10 @@ pub(super) fn setdefault_value(object: &mut Vec<(String, PyJson)>, key: &str, va
     }
 }
 
-pub(super) fn nested_object<'a>(object: &'a [(String, PyJson)], key: &str) -> Option<&'a [(String, PyJson)]> {
+pub(super) fn nested_object<'a>(
+    object: &'a [(String, PyJson)],
+    key: &str,
+) -> Option<&'a [(String, PyJson)]> {
     value_for(object, key).and_then(PyJson::object)
 }
 
@@ -100,7 +106,12 @@ pub(super) fn set_nested(object: &mut [(String, PyJson)], key: &str, role: &str,
     set_value(nested, role, value);
 }
 
-pub(super) fn setdefault_nested(object: &mut Vec<(String, PyJson)>, key: &str, role: &str, value: PyJson) {
+pub(super) fn setdefault_nested(
+    object: &mut Vec<(String, PyJson)>,
+    key: &str,
+    role: &str,
+    value: PyJson,
+) {
     setdefault_value(object, key, PyJson::Object(Vec::new()));
     let nested = value_for_mut(object, key)
         .and_then(PyJson::object_mut)
@@ -164,4 +175,3 @@ pub(super) fn optional_float_map(value: Option<&PyJson>) -> BTreeMap<String, Opt
                 .collect()
         })
 }
-

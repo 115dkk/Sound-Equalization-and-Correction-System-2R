@@ -145,4 +145,3 @@ pub(super) fn cache_key(path: &Path) -> Result<CacheKey, ProjectError> {
         size: metadata.len(),
     })
 }
-

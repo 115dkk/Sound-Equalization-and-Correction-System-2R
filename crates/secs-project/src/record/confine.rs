@@ -38,4 +38,3 @@ pub(super) fn relative_to_project(project: &Path, path: &Path) -> String {
         .to_string_lossy()
         .replace('\\', "/")
 }
-

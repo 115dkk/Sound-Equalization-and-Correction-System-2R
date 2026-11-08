@@ -391,7 +391,10 @@ impl MeasurementStore {
             .collect()
     }
 
-#[deprecated(since = "0.23.0", note = "no caller; removed in the next minor (audit #186 TD-219)")]
+    #[deprecated(
+        since = "0.23.0",
+        note = "no caller; removed in the next minor (audit #186 TD-219)"
+    )]
     pub fn label_for(&self, pos: i64) -> String {
         format!("위치 {pos}")
     }
@@ -743,7 +746,10 @@ impl MeasurementStore {
             .unwrap_or(0.0)
     }
 
-#[deprecated(since = "0.23.0", note = "no caller; removed in the next minor (audit #186 TD-219)")]
+    #[deprecated(
+        since = "0.23.0",
+        note = "no caller; removed in the next minor (audit #186 TD-219)"
+    )]
     pub fn t0_by_role(&self, pos: i64) -> BTreeMap<String, f64> {
         self.entry_for(pos).map_or_else(BTreeMap::new, |entry| {
             entry
@@ -755,7 +761,10 @@ impl MeasurementStore {
         })
     }
 
-#[deprecated(since = "0.23.0", note = "no caller; removed in the next minor (audit #186 TD-219)")]
+    #[deprecated(
+        since = "0.23.0",
+        note = "no caller; removed in the next minor (audit #186 TD-219)"
+    )]
     #[allow(clippy::type_complexity)]
     pub fn irs_by_role(
         &mut self,
@@ -800,8 +809,8 @@ mod source;
 pub use cache::IrCache;
 use confine::*;
 use entries::*;
-pub use source::{save_source, source_path};
 use source::*;
+pub use source::{save_source, source_path};
 
 pub(crate) fn atomic_write(path: &Path, data: &[u8]) -> Result<(), ProjectError> {
     let parent = path.parent().unwrap_or_else(|| Path::new("."));

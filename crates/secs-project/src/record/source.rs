@@ -118,7 +118,10 @@ impl SourceBudget {
         }
     }
 
-    pub(super) fn from_sources(limit: usize, sources: &BTreeMap<(i64, String), Arc<SourceInfo>>) -> Self {
+    pub(super) fn from_sources(
+        limit: usize,
+        sources: &BTreeMap<(i64, String), Arc<SourceInfo>>,
+    ) -> Self {
         let mut budget = Self::new(limit);
         for source in sources.values() {
             let spent = budget.spend(source_info_bytes(source));
@@ -347,7 +350,8 @@ pub(super) const SOURCE_BOXED_FIELDS: [&str; 8] = [
     "calDataLimitApplied",
 ];
 pub(super) const SOURCE_CAL_FIELDS: [&str; 2] = ["meterCal", "scCal"];
-pub(super) const SOURCE_CAL_BOXED: [&str; 4] = ["sensitivitydB", "sensitivitydBFS", "serialNum", "revision"];
+pub(super) const SOURCE_CAL_BOXED: [&str; 4] =
+    ["sensitivitydB", "sensitivitydBFS", "serialNum", "revision"];
 
 pub(super) fn source_to_json(info: &SourceInfo) -> PyJson {
     let mut fields = vec![
@@ -632,4 +636,3 @@ pub(super) fn python_repr(value: &PyJson) -> String {
         _ => python_str(value),
     }
 }
-
