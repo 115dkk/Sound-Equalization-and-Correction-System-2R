@@ -179,7 +179,7 @@ impl Default for BundleLayoutEntry {
 macro_rules! calibration_settings {
     (
         fields { $( $(#[$attr:meta])* $field:ident: $ty:ty = $default:expr;
-            $check:ident($($args:tt)*); $key:tt; )* }
+            $check:ident($($args:tt)*); $key:tt; project($read:ident, $write:ident); )* }
         edits { $( $(#[$edit_attr:meta])* $variant:ident {
             $( $(#[$payload_attr:meta])* $payload:ident: $payload_ty:ty, )*
         } $( [ $kind:literal, $rule_field:ident ] )?
@@ -228,6 +228,22 @@ macro_rules! calibration_settings {
                 $( let _ = scalar_rules::$field; self.$field = Self::$field(self.$field)?; )*
                 self.check_structured()?;
                 Ok(self)
+            }
+            /// Loads one declared scalar with the legacy project-file read policy.
+            /// `empty` distinguishes an empty calibration from a pre-FIR project.
+            pub fn load_project_scalar(&mut self, key: &str, input: Option<ProjectScalarInput<'_>>, empty: bool) {
+                match key {
+                    $( stringify!($field) => { read_project_scalar!(self, $field, input, empty, $default, $check($($args)*), $read); }, )*
+                    _ => {},
+                }
+            }
+            /// Returns a scalar in project-file representation, omitting legacy defaults.
+            /// Structured keys are handled by the project adapter.
+            pub fn project_scalar(&self, key: &str) -> Option<ScalarValue> {
+                match key {
+                    $( stringify!($field) => write_project_scalar!(&self.$field, $default, $write), )*
+                    _ => None,
+                }
             }
             fn scalar_engine_key(&self, field: &str) -> String {
                 match field { $( stringify!($field) => scalar_key!(&self.$field, $field, $key), )* _ => unreachable!("declared field") }
@@ -317,86 +333,213 @@ macro_rules! check_scalar {
     };
 }
 
+/// Typed scalar values shared by edit constructors and project-file adapters.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ScalarValue {
+    Bool(bool),
+    Number(f64),
+    OptionalNumber(Option<f64>),
+    Integer(i64),
+    Text(String),
+}
+
+/// The legacy JSON reader's scalar conversions. Strings may parse as numbers;
+/// integer excludes numeric strings, preserving the transition-factor rule.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ProjectScalarInput<'a> {
+    pub number: Option<f64>,
+    pub integer: Option<i64>,
+    pub text: Option<&'a str>,
+    pub truthy: bool,
+}
+
+fn project_number(input: Option<ProjectScalarInput<'_>>, bounds: (f64, f64)) -> Option<f64> {
+    input
+        .and_then(|v| v.number)
+        .filter(|v| v.is_finite())
+        .map(|v| v.clamp(bounds.0, bounds.1))
+}
+
+fn xo_maps_equal(left: &[(String, f64)], right: &[(String, f64)]) -> bool {
+    let mut left = left.to_vec();
+    let mut right = right.to_vec();
+    left.sort_by(|a, b| a.0.cmp(&b.0));
+    right.sort_by(|a, b| a.0.cmp(&b.0));
+    left == right
+}
+
+macro_rules! project_bounds {
+    (refuse(rc_lo, $($rest:tt)*)) => {
+        crate::rules::RC_LO_READ
+    };
+    (volume()) => {
+        (5.0, CALIBRATION_LIMITS.volume.1)
+    };
+    ($policy:ident($limit:ident $(, $rest:tt)*)) => {
+        CALIBRATION_LIMITS.$limit
+    };
+}
+macro_rules! read_project_scalar {
+    ($s:ident, $field:ident, $input:ident, $empty:ident, $default:expr, $check:ident($($args:tt)*), manual) => {};
+    ($s:ident, $field:ident, $input:ident, $empty:ident, $default:expr, $check:ident($($args:tt)*), number) => {
+        $s.$field = project_number($input, project_bounds!($check($($args)*))).unwrap_or($default)
+    };
+    ($s:ident, $field:ident, $input:ident, $empty:ident, $default:expr, $check:ident($($args:tt)*), optional_number) => {
+        $s.$field = project_number($input, project_bounds!($check($($args)*)))
+    };
+    ($s:ident, $field:ident, $input:ident, $empty:ident, $default:expr, $check:ident($($args:tt)*), integer) => {
+        $s.$field = project_number($input, project_bounds!($check($($args)*))).map_or($default, |v| v.round_ties_even() as i64)
+    };
+    ($s:ident, $field:ident, $input:ident, $empty:ident, $default:expr, $check:ident($($args:tt)*), boolean) => {
+        $s.$field = $input.map_or($default, |v| v.truthy)
+    };
+    ($s:ident, $field:ident, $input:ident, $empty:ident, $default:expr, $check:ident($($args:tt)*), legacy_fir) => {
+        $s.$field = $input.map_or($empty, |v| v.truthy)
+    };
+    ($s:ident, $field:ident, $input:ident, $empty:ident, $default:expr, $check:ident($($args:tt)*), include) => {
+        $s.$field = $input.map_or_else(|| $s.xo.is_empty() || xo_maps_equal(&$s.xo, &$s.xo_rec), |v| v.truthy)
+    };
+    ($s:ident, $field:ident, $input:ident, $empty:ident, $default:expr, $check:ident($($args:tt)*), text) => {
+        $s.$field = $input.and_then(|v| v.text).unwrap_or_default().to_owned()
+    };
+    ($s:ident, $field:ident, $input:ident, $empty:ident, $default:expr, $check:ident($($args:tt)*), transition) => {
+        $s.$field = $input.and_then(|v| v.integer).filter(|v| matches!(v, 1 | 2 | 4)).map_or($default, |v| v as u8)
+    };
+    ($s:ident, $field:ident, $input:ident, $empty:ident, $default:expr, $check:ident($($args:tt)*), mode) => {
+        $s.$field = match $input.and_then(|v| v.text) { Some("zero") => Mode::Zero, Some("linear") => Mode::Linear, Some("ultra") => Mode::Ultra, _ => $default }
+    };
+    ($s:ident, $field:ident, $input:ident, $empty:ident, $default:expr, $check:ident($($args:tt)*), policy) => {
+        $s.$field = match $input.and_then(|v| v.text) { Some("resample") => SampleRatePolicy::Resample, _ => $default }
+    };
+    ($s:ident, $field:ident, $input:ident, $empty:ident, $default:expr, $check:ident($($args:tt)*), basis) => {
+        $s.$field = match $input.and_then(|v| v.text) { Some("lenient") => RcHiBasis::Lenient, Some("agreement") => RcHiBasis::Agreement, _ => $default }
+    };
+}
+macro_rules! write_project_scalar {
+    ($v:expr, $default:expr, manual) => {
+        None
+    };
+    ($v:expr, $default:expr, number) => {
+        Some(ScalarValue::Number(*$v))
+    };
+    ($v:expr, $default:expr, non_default_number) => {
+        (*$v != $default).then_some(ScalarValue::Number(*$v))
+    };
+    ($v:expr, $default:expr, optional_number) => {
+        Some(ScalarValue::OptionalNumber(*$v))
+    };
+    ($v:expr, $default:expr, present_number) => {
+        $v.map(ScalarValue::Number)
+    };
+    ($v:expr, $default:expr, integer) => {
+        Some(ScalarValue::Integer(*$v))
+    };
+    ($v:expr, $default:expr, non_default_integer) => {
+        (*$v != $default).then_some(ScalarValue::Integer(i64::from(*$v)))
+    };
+    ($v:expr, $default:expr, boolean) => {
+        Some(ScalarValue::Bool(*$v))
+    };
+    ($v:expr, $default:expr, true_only) => {
+        (*$v).then_some(ScalarValue::Bool(true))
+    };
+    ($v:expr, $default:expr, false_only) => {
+        (!*$v).then_some(ScalarValue::Bool(false))
+    };
+    ($v:expr, $default:expr, nonempty_text) => {
+        (!$v.is_empty()).then(|| ScalarValue::Text($v.clone()))
+    };
+    ($v:expr, $default:expr, mode) => {
+        Some(ScalarValue::Text(mode_tag(*$v).into()))
+    };
+    ($v:expr, $default:expr, basis) => {
+        (*$v != $default).then(|| ScalarValue::Text($v.as_str().into()))
+    };
+    ($v:expr, $default:expr, policy) => {
+        (*$v != $default).then(|| ScalarValue::Text("resample".into()))
+    };
+}
+
 calibration_settings! {
     fields {
 
-    mode: Mode = Mode::Mixed; identity(); none;
+    mode: Mode = Mode::Mixed; identity(); none; project(mode, mode);
     #[serde(default)]
-    sample_rate_policy: SampleRatePolicy = SampleRatePolicy::Reject; identity(); none;
+    sample_rate_policy: SampleRatePolicy = SampleRatePolicy::Reject; identity(); none; project(policy, policy);
     #[serde(default)]
-    low_protect: bool = false; identity(); flag;
+    low_protect: bool = false; identity(); flag; project(boolean, true_only);
     /// Common LF arrival for the mains (ADR 0025); off keeps upstream phase.
     #[serde(default)]
-    lf_align: bool = false; identity(); flag;
+    lf_align: bool = false; identity(); flag; project(boolean, true_only);
     /// Shorter long-mode decay through pole-replacing cuts (ADR 0025).
     #[serde(default)]
-    mode_decay: bool = false; identity(); flag;
+    mode_decay: bool = false; identity(); flag; project(boolean, true_only);
     /// Unwinds the RC FIR's constant phase above the band (ADR 0030).
     #[serde(default)]
-    hf_phase: bool = false; identity(); flag;
+    hf_phase: bool = false; identity(); flag; project(boolean, true_only);
     /// Limits how much one main fills a narrow response dip (ADR 0034).
     #[serde(default)]
-    dip_limit: bool = false; identity(); flag;
+    dip_limit: bool = false; identity(); flag; project(boolean, true_only);
     /// Common 8th-order Butterworth high-pass on every input before the MIMO
     /// fork, in Hz; `None` is off (ADR 0031).
     #[serde(default)]
-    input_hp_hz: Option<f64> = None; optional_refuse(input_hp, "input_hp", "input_hp_range"); "input_hp=";
-    rc_lo: f64 = 20.0; refuse(rc_lo, "rc_lo", "rc_lo_range"); number;
-    rc_hi: Option<f64> = None; optional_refuse(rc_hi, "rc_hi", "rc_hi_range"); none;
+    input_hp_hz: Option<f64> = None; optional_refuse(input_hp, "input_hp", "input_hp_range"); "input_hp="; project(optional_number, present_number);
+    rc_lo: f64 = 20.0; refuse(rc_lo, "rc_lo", "rc_lo_range"); number; project(number, number);
+    rc_hi: Option<f64> = None; optional_refuse(rc_hi, "rc_hi", "rc_hi_range"); none; project(optional_number, optional_number);
     #[serde(default)]
-    rc_hi_basis: RcHiBasis = RcHiBasis::Strict; identity(); none;
+    rc_hi_basis: RcHiBasis = RcHiBasis::Strict; identity(); none; project(basis, basis);
     #[serde(default = "default_rc_hi_transition")]
-    rc_hi_transition: u8 = 1; transition(); none;
+    rc_hi_transition: u8 = 1; transition(); none; project(transition, non_default_integer);
     /// Extra correction bands, sorted by `lo_hz`, at most four (ADR 0024).
     #[serde(default)]
-    rc_bands: Vec<RcBand> = Vec::new(); identity(); none;
-    room_volume_m3: Option<f64> = None; volume(); none;
-    room_dims_m: Option<[f64; 3]> = None; identity(); none;
-    mimo_on: bool = false; identity(); none;
-    fsiso: f64 = 150.0; clamp(fsiso); number;
-    mimo_low: Option<f64> = None; optional_clamp(mimo_low); none;
+    rc_bands: Vec<RcBand> = Vec::new(); identity(); none; project(manual, manual);
+    room_volume_m3: Option<f64> = None; volume(); none; project(optional_number, optional_number);
+    room_dims_m: Option<[f64; 3]> = None; identity(); none; project(manual, manual);
+    mimo_on: bool = false; identity(); none; project(boolean, boolean);
+    fsiso: f64 = 150.0; clamp(fsiso); number; project(number, number);
+    mimo_low: Option<f64> = None; optional_clamp(mimo_low); none; project(optional_number, optional_number);
     #[ts(type = "number")]
-    mimo_max_supports: i64 = 0; integer(mimo_max); none;
-    mimo_fir: bool = true; identity(); none;
+    mimo_max_supports: i64 = 0; integer(mimo_max); none; project(integer, integer);
+    mimo_fir: bool = true; identity(); none; project(legacy_fir, boolean);
     /// Interval after onset protected from MIMO support action (ms, ADR 0037).
     #[serde(default = "default_mimo_early_ms")]
-    mimo_early_ms: f64 = default_mimo_early_ms(); refuse(mimo_early_ms, "mimo_early_ms", "mimo_early_range"); none;
+    mimo_early_ms: f64 = default_mimo_early_ms(); refuse(mimo_early_ms, "mimo_early_ms", "mimo_early_range"); none; project(number, non_default_number);
     /// Evaluates MIMO guards at each measured position (ADR 0036).
     #[serde(default)]
-    mimo_seat_guard: bool = false; identity(); none;
+    mimo_seat_guard: bool = false; identity(); none; project(boolean, true_only);
     /// Experimental: PEQ fits use closed-form Jacobians (results leave SECS 2).
     #[serde(default)]
-    peq_analytic_derivatives: bool = false; identity(); flag;
+    peq_analytic_derivatives: bool = false; identity(); flag; project(boolean, true_only);
     /// Experimental: MIMO IIR fits use closed-form derivatives (results leave SECS 2).
     #[serde(default)]
-    mimo_iir_analytic_derivatives: bool = false; identity(); none;
+    mimo_iir_analytic_derivatives: bool = false; identity(); none; project(boolean, true_only);
     #[serde(with = "ordered_f64_map")]
     #[ts(as = "BTreeMap<String, f64>")]
-    xo: Vec<(String, f64)> = Vec::new(); xo(); none;
+    xo: Vec<(String, f64)> = Vec::new(); xo(); none; project(manual, manual);
     #[serde(with = "ordered_f64_map")]
     #[ts(as = "BTreeMap<String, f64>")]
-    xo_rec: Vec<(String, f64)> = Vec::new(); identity(); none;
+    xo_rec: Vec<(String, f64)> = Vec::new(); identity(); none; project(manual, manual);
     /// Fingerprint of the inputs used for the stored XO recommendation.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     #[ts(as = "Option<String>", optional)]
-    xo_rec_key: String = String::new(); identity(); none;
+    xo_rec_key: String = String::new(); identity(); none; project(text, nonempty_text);
     /// Recompute the XO recommendation before calibration (ADR 0028).
     #[serde(default = "default_true", skip_serializing_if = "is_true")]
     #[ts(as = "Option<bool>", optional)]
-    xo_rec_include: bool = true; identity(); none;
-    ultra_ms: f64 = 200.0; clamp(ultra_ms); none;
+    xo_rec_include: bool = true; identity(); none; project(include, false_only);
+    ultra_ms: f64 = 200.0; clamp(ultra_ms); none; project(number, number);
     #[serde(with = "ordered_sub_map")]
     #[ts(as = "BTreeMap<String, SubEntry>")]
-    subs_manual: Vec<(String, SubEntry)> = Vec::new(); identity(); none;
-    sub_main_delay_ms: f64 = 0.0; clamp(main_delay); number;
+    subs_manual: Vec<(String, SubEntry)> = Vec::new(); identity(); none; project(manual, manual);
+    sub_main_delay_ms: f64 = 0.0; clamp(main_delay); number; project(number, number);
     #[serde(with = "ordered_layout_map")]
     #[ts(as = "BTreeMap<String, BundleLayoutEntry>")]
-    bundle_layouts: Vec<(String, BundleLayoutEntry)> = Vec::new(); identity(); none;
-    infra_boost_max_db: f64 = 24.0; clamp(infra_boost); number;
-    xo_peq_on: bool = true; identity(); none;
-    boost_max_db: f64 = 10.0; clamp(boost); number;
-    xo_peq_lo: f64 = 0.0; clamp(xo_peq); number;
-    xo_peq_hi: f64 = 0.0; clamp(xo_peq); number;
+    bundle_layouts: Vec<(String, BundleLayoutEntry)> = Vec::new(); identity(); none; project(manual, manual);
+    infra_boost_max_db: f64 = 24.0; clamp(infra_boost); number; project(number, number);
+    xo_peq_on: bool = true; identity(); none; project(boolean, boolean);
+    boost_max_db: f64 = 10.0; clamp(boost); number; project(number, number);
+    xo_peq_lo: f64 = 0.0; clamp(xo_peq); number; project(number, number);
+    xo_peq_hi: f64 = 0.0; clamp(xo_peq); number; project(number, number);
     }
     edits {
     Mode {
