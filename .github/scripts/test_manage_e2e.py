@@ -530,8 +530,7 @@ class OfferTest(unittest.TestCase):
 
             def execute(self, script, *args):
                 self.scripts.append(script)
-                # the combined wait sees the offer; the settle check then passes
-                return "offer" if "return 'offer'" in script else True
+                return True  # offered, then closed; the settle check too
 
             def find(self, selector):
                 return {"selector": selector}
@@ -548,16 +547,13 @@ class OfferTest(unittest.TestCase):
         scenario.dismiss_offer()
         self.assertEqual(scenario.driver.clicked, [m.ui("project.new.cancel")])
 
-    def test_a_reachable_menu_ends_the_wait_with_nothing_to_dismiss(self):
+    def test_no_offer_within_the_wait_means_nothing_to_dismiss(self):
         class Driver:
             def __init__(self):
                 self.clicked = []
-                self.polls = 0
 
             def execute(self, script, *args):
-                # no offer, the frame menu is up with no backdrop (TD-242)
-                self.polls += 1
-                return "menu" if "return 'offer'" in script else True
+                return False if "project.new.cancel" in script else True
 
             def find(self, selector):
                 return {"selector": selector}
@@ -573,7 +569,6 @@ class OfferTest(unittest.TestCase):
         scenario.log = lambda *args, **kwargs: None
         scenario.dismiss_offer(timeout=0.5)
         self.assertEqual(scenario.driver.clicked, [])
-        self.assertEqual(scenario.driver.polls, 1)
 
 
 if __name__ == "__main__":

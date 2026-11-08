@@ -879,26 +879,22 @@ class Scenario:
         # Once the app is ready with no project open it offers 새 프로젝트
         # (App.tsx), and the dialog's backdrop then intercepts the menu click:
         # PR #178's reruns failed there after a relaunch, once before the menu
-        # opened and once after. Wait for whichever comes first: the offer
-        # (cancel it) or the frame's menu with no backdrop in the way (the
-        # project is still held by the service, so no offer will come). The
-        # old fixed 20 s wait spent its whole timeout in the second case
-        # (audit #186 TD-242).
-        seen = wait_for("project offer or menu", self.offer_or_menu, timeout=timeout)
-        if seen != "offer":
+        # opened and once after. The status block is drawn either way, so the
+        # only reliable sign is the dialog itself: wait for it a little and
+        # cancel it; with the project still held by the service it never comes.
+        # A reachable menu is no such sign either: the frame renders before the
+        # session is ready and the offer follows, so ending the wait there let
+        # the offer cover the next click (PR #189, audit #186 TD-242).
+        offered = lambda: self.driver.execute(
+            "return document.querySelector('[data-ui=\"project.new.cancel\"]') !== null;")
+        try:
+            wait_for("project offer", offered, timeout=timeout)
+        except CheckError:
             return
         self.log("dismiss_offer")
         self.click("project.new.cancel")
         wait_for("offer closed", lambda: self.driver.execute(
             "return document.querySelector('.ui-dialog-backdrop') === null;"))
-
-    def offer_or_menu(self):
-        """'offer' when the new-project dialog is up, 'menu' when the frame menu is reachable, else None."""
-        return self.driver.execute(
-            "if (document.querySelector('[data-ui=\"project.new.cancel\"]') !== null) return 'offer';"
-            " if (document.querySelector('.ui-dialog-backdrop') === null"
-            " && document.querySelector('[data-ui=\"frame.project\"]') !== null) return 'menu';"
-            " return null;")
 
     def open_project(self):
         self.dismiss_offer()
