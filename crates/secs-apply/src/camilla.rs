@@ -819,8 +819,12 @@ mod tests {
         let started = Instant::now();
         let result = camilla.status();
         let elapsed = started.elapsed();
+        // One shared deadline ends after a single sleep (about 210 ms); the per-command
+        // deadlines it replaced slept once per command, nine times here (about 2 s). The
+        // bound sits between the two and leaves room for sleep overshoot on a loaded runner
+        // (macOS CI measured 352 ms for the single sleep).
         assert!(
-            elapsed < timeout + Duration::from_millis(150),
+            elapsed < timeout * 4,
             "status took {elapsed:?} for a {timeout:?} deadline"
         );
         assert!(
