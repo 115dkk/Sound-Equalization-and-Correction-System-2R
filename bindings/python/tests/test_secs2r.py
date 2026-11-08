@@ -1,6 +1,7 @@
 import os
 import re
 import socket
+import threading
 import time
 from pathlib import Path
 
@@ -34,6 +35,29 @@ def test_engine_bootstrap_is_a_real_request(tmp_path: Path) -> None:
     events = engine.events()
     assert iter(events) is events
     assert events.dropped_events() == 0
+
+
+def test_dropped_events_does_not_block_while_next_is_waiting_td127() -> None:
+    engine = secs2r.Engine()
+    events = engine.events()
+    waiting = threading.Event()
+
+    def read() -> None:
+        waiting.set()
+        assert next(events, None) is None
+
+    worker = threading.Thread(target=read)
+    worker.start()
+    assert waiting.wait(1), "event receiver did not start"
+    time.sleep(0.1)
+
+    started = time.monotonic()
+    assert events.dropped_events() == 0
+    assert time.monotonic() - started < 1
+
+    events.close()
+    worker.join(timeout=1)
+    assert not worker.is_alive(), "close did not stop the blocked receiver"
 
 
 def test_engine_api_error_has_structured_fields() -> None:
