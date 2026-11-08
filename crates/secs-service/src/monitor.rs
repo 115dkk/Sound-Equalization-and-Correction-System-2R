@@ -11,6 +11,7 @@ use secs_types::ipc::{
 use crate::jobs::JobContext;
 use crate::measure::json::JsonExt;
 use crate::measure::{MeasurementSettings, plan_for};
+use crate::measurement::{input, measure_error as level_error, method};
 use crate::session::{self, ProjectTicket};
 use crate::{EventSink, Service, lock};
 
@@ -31,29 +32,6 @@ struct PlayRequest {
     master_dbfs: f64,
     generation: u64,
     cancel: crate::measure::CancelToken,
-}
-
-fn method(project: &Project) -> &str {
-    project
-        .extra
-        .iter()
-        .find(|(key, _)| key == "devices")
-        .and_then(|(_, value)| value.get("method"))
-        .and_then(JsonExt::str)
-        .unwrap_or("native")
-}
-
-fn input(field: &str, detail: impl Into<String>) -> IpcError {
-    IpcError::new(ErrorCode::MeasurementInput, detail).with_param("field", field)
-}
-
-/// Uses the shared measurement error classification (TD-34).
-fn level_error(
-    error: crate::measure::MeasureError,
-    field: &str,
-    share: secs_audio::SharePreference,
-) -> IpcError {
-    super::measurement::measure_error(error, field, share)
 }
 
 fn rew_error(error: secs_rew::RewError, rew: &crate::measure::RewLink) -> IpcError {

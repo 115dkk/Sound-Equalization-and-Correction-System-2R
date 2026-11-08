@@ -13,7 +13,7 @@ use crate::measure::{
 use crate::{Deps, EventSink, Service, lock, mdat_import, measurement_file, session};
 use secs_types::role::ROLES;
 
-fn input(field: &str, detail: impl Into<String>) -> IpcError {
+pub(crate) fn input(field: &str, detail: impl Into<String>) -> IpcError {
     IpcError::new(ErrorCode::MeasurementInput, detail).with_param("field", field)
 }
 
@@ -101,7 +101,7 @@ fn start_delay(project: &Project) -> u64 {
         .unwrap_or(0)
 }
 
-fn method(project: &Project) -> &str {
+pub(crate) fn method(project: &Project) -> &str {
     project
         .extra
         .iter()
