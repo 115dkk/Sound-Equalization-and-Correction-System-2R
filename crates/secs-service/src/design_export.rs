@@ -9,7 +9,7 @@ use secs_types::ipc::ExportKind;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::fs::{LinkKind, is_link_or_junction};
+use crate::fs::is_link_or_junction;
 use crate::{APP_NAME, LogLevel, LogSink};
 
 pub(crate) const MANIFEST_NAME: &str = "secs-design.json";
@@ -429,7 +429,7 @@ fn rebuild_index_from(
             }
             Err(error) => return Err(error.into()),
         };
-        if is_link_or_junction(&metadata, LinkKind::Any) || !metadata.is_dir() {
+        if is_link_or_junction(&metadata) || !metadata.is_dir() {
             return Ok(None);
         }
         let manifest = at.join(MANIFEST_NAME);
@@ -448,7 +448,7 @@ fn rebuild_index_from(
             }
             Err(error) => return Err(error.into()),
         };
-        if is_link_or_junction(&metadata, LinkKind::Any) || !metadata.is_file() {
+        if is_link_or_junction(&metadata) || !metadata.is_file() {
             return Ok(None);
         }
         let bytes = match fs::read(&manifest) {
@@ -518,7 +518,7 @@ fn rebuild_index_from(
             }
             Err(error) => return Err(error.into()),
         };
-        if is_link_or_junction(&metadata, LinkKind::Any) || !metadata.is_dir() {
+        if is_link_or_junction(&metadata) || !metadata.is_dir() {
             return Ok(());
         }
         if let Some(entry) = manifest_entry(base, at, skip_unreadable, log)? {
@@ -604,7 +604,7 @@ fn rebuild_index_from(
                     ));
                 }
             };
-            if is_link_or_junction(&metadata, LinkKind::Any) || !metadata.is_dir() {
+            if is_link_or_junction(&metadata) || !metadata.is_dir() {
                 return IndexedManifest::Unsafe;
             }
         }
@@ -621,7 +621,7 @@ fn rebuild_index_from(
                 ));
             }
         };
-        if is_link_or_junction(&metadata, LinkKind::Any) {
+        if is_link_or_junction(&metadata) {
             return IndexedManifest::Unsafe;
         }
         if !metadata.is_file() {

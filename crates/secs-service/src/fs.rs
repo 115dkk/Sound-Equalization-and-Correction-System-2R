@@ -2,18 +2,9 @@ use std::path::Path;
 
 use secs_types::ipc::{ErrorCode, IpcError};
 
-#[derive(Clone, Copy)]
-pub(crate) enum LinkKind {
-    Symlink,
-    Any,
-}
-
-pub(crate) fn is_link_or_junction(metadata: &std::fs::Metadata, kind: LinkKind) -> bool {
+pub(crate) fn is_link_or_junction(metadata: &std::fs::Metadata) -> bool {
     if metadata.file_type().is_symlink() {
         return true;
-    }
-    if matches!(kind, LinkKind::Symlink) {
-        return false;
     }
     #[cfg(windows)]
     {

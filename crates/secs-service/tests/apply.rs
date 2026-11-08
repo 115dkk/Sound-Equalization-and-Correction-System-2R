@@ -2176,6 +2176,69 @@ fn applied_eqapo_manifest_names_every_installed_file_with_size_and_hash() {
     fs::remove_dir_all(root).unwrap();
 }
 
+#[cfg(windows)]
+#[test]
+fn a_junction_target_is_refused_like_a_symlink_td197() {
+    let root = root("eqapo-junction-target");
+    let config_root = root.join("EqualizerAPO").join("config");
+    let outside = root.join("outside");
+    fs::create_dir_all(&config_root).unwrap();
+    fs::create_dir_all(&outside).unwrap();
+    fs::write(config_root.join("config.txt"), "Preamp: -3 dB\n").unwrap();
+    let junction = config_root.join("SECS2R");
+    let output = std::process::Command::new("cmd")
+        .args(["/C", "mklink", "/J"])
+        .arg(&junction)
+        .arg(&outside)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "mklink /J failed: {}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let install = EqApoInstall {
+        config_path: config_root.to_string_lossy().into_owned(),
+        install_path: "EqualizerAPO-XT/current".into(),
+        variant: EqApoVariant::Xt,
+    };
+    let service = calibrated_service(
+        &root,
+        Deps {
+            eqapo_install: Arc::new(move || Some(install.clone())),
+            ..Deps::default()
+        },
+    );
+    set_apply(
+        &service,
+        CamillaApply::default(),
+        EqApoApply {
+            level: ApplyLevel::Apply,
+        },
+    );
+    let events = Arc::new(Events::default());
+    let job = started(&service, Request::ApplyEqapo, events.clone());
+    let JobEvent::Finished {
+        status: JobStatus::Failed,
+        error: Some(error),
+        ..
+    } = events.wait(job.job)
+    else {
+        panic!("junction deployment target must be refused")
+    };
+    assert_eq!(error.code, ErrorCode::InvalidRequest);
+    assert_eq!(
+        error.detail,
+        "deployment root must not be a link or junction"
+    );
+    assert_eq!(error.params["path"], junction.to_string_lossy());
+
+    fs::remove_dir(&junction).unwrap();
+    fs::remove_dir_all(root).unwrap();
+}
+
 #[test]
 fn apply_eqapo_prunes_a_link_without_touching_its_target() {
     let root = root("eqapo-linked-stale");

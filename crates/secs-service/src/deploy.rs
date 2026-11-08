@@ -8,7 +8,7 @@ use std::path::{Component, Path, PathBuf};
 
 use secs_types::ipc::{ErrorCode, IpcError};
 
-use crate::fs::{LinkKind, is_link_or_junction};
+use crate::fs::is_link_or_junction;
 
 pub(crate) struct Generation {
     pub name: String,
@@ -58,7 +58,7 @@ pub(crate) fn prune(root: &Path, keep: &[&str]) -> Result<(), IpcError> {
         let path = entry.path();
         let metadata = fs::symlink_metadata(&path)
             .map_err(|error| crate::fs::io_failure(&path, &error, ErrorCode::ApplyFailed))?;
-        if is_link_or_junction(&metadata, LinkKind::Symlink) {
+        if is_link_or_junction(&metadata) {
             remove_link(&path)?;
         } else if metadata.is_dir() {
             fs::remove_dir_all(&path)
@@ -81,7 +81,7 @@ pub(crate) fn write_entry(path: &Path, bytes: &[u8]) -> Result<(), IpcError> {
 
 fn refuse_link(path: &Path) -> Result<(), IpcError> {
     match fs::symlink_metadata(path) {
-        Ok(metadata) if is_link_or_junction(&metadata, LinkKind::Symlink) => Err(IpcError::new(
+        Ok(metadata) if is_link_or_junction(&metadata) => Err(IpcError::new(
             ErrorCode::InvalidRequest,
             "deployment root must not be a link or junction",
         )

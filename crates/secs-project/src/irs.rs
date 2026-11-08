@@ -205,7 +205,7 @@ pub fn read_wav_float32(data: &[u8]) -> Result<(Vec<f32>, u32), ProjectError> {
             format.block_align
         )));
     }
-    if format.tag != 3 || format.bits != 32 || payload.len() % 4 != 0 {
+    if format.tag != 3 || format.bits != 32 || !payload.len().is_multiple_of(4) {
         return Err(ProjectError::Wav(format!(
             "not 32-bit float WAV (fmt={}, bits={})",
             format.tag, format.bits
@@ -234,7 +234,7 @@ pub fn read_mono_float_wav(data: &[u8]) -> Result<(Vec<f32>, u32), ProjectError>
     let bytes_per_sample = usize::from(format.bits.div_ceil(8));
     if bytes_per_sample == 0
         || usize::from(format.block_align) != bytes_per_sample
-        || payload.len() % bytes_per_sample != 0
+        || !payload.len().is_multiple_of(bytes_per_sample)
     {
         return Err(ProjectError::Wav("invalid block alignment".into()));
     }

@@ -1310,7 +1310,7 @@ kind = "ipc"
 milestone = "M6"
 status = "implemented"
 upstream = "new"
-tests = ["secs-service::apply_eqapo_installs_reapplies_repairs_once_and_removes_stale_files", "secs-service::failed_eqapo_generation_install_preserves_every_previous_byte", "secs-service::failed_eqapo_include_repair_keeps_every_generation_the_entry_has_referenced", "secs-service::apply_eqapo_prunes_a_link_without_touching_its_target", "secs-service::applied_eqapo_manifest_names_every_installed_file_with_size_and_hash", "secs2r-cli::apply_eqapo_opens_the_project_and_uses_the_injected_install", "secs-service::eqapo_apply_leaves_no_design_index_in_the_config_root_td153", "secs-service::permission_denied_is_classified_by_kind_not_by_english_text_td154"]
+tests = ["secs-service::apply_eqapo_installs_reapplies_repairs_once_and_removes_stale_files", "secs-service::failed_eqapo_generation_install_preserves_every_previous_byte", "secs-service::failed_eqapo_include_repair_keeps_every_generation_the_entry_has_referenced", "secs-service::apply_eqapo_prunes_a_link_without_touching_its_target", "secs-service::a_junction_target_is_refused_like_a_symlink_td197", "secs-service::applied_eqapo_manifest_names_every_installed_file_with_size_and_hash", "secs2r-cli::apply_eqapo_opens_the_project_and_uses_the_injected_install", "secs-service::eqapo_apply_leaves_no_design_index_in_the_config_root_td153", "secs-service::permission_denied_is_classified_by_kind_not_by_english_text_td154"]
 
 [[feature]]
 id = "ipc.revert_eqapo"
