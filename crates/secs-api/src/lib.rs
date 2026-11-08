@@ -667,6 +667,10 @@ mod engine {
         }
 
         /// Waits for the terminal event of `job_id` until `timeout` expires.
+        ///
+        /// Returns [`Error::Timeout`] with `job: job_id` when the deadline expires.
+        /// Returns [`Error::JobNotFound`] with `job: job_id` if the job is neither
+        /// running nor among the retained terminal events.
         pub fn wait_job(&self, job_id: JobId, timeout: Duration) -> Result<JobEvent> {
             let deadline = Instant::now() + timeout;
             // Query the service before locking the observer. A finishing job may
