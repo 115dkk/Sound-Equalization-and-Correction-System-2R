@@ -471,17 +471,21 @@ mod tests {
 
         let junction = Path::new(r"C:\Documents and Settings");
         let Ok(metadata) = fs::symlink_metadata(junction) else {
-            eprintln!(
+            let message = format!(
                 "skipping system junction test: {} is absent",
                 junction.display()
             );
+            assert!(std::env::var_os("GITHUB_ACTIONS").is_none(), "{message}");
+            eprintln!("{message}");
             return;
         };
         if metadata.file_attributes() & 0x400 == 0 {
-            eprintln!(
+            let message = format!(
                 "skipping system junction test: {} is not a reparse point",
                 junction.display()
             );
+            assert!(std::env::var_os("GITHUB_ACTIONS").is_none(), "{message}");
+            eprintln!("{message}");
             return;
         }
         assert!(matches!(
@@ -500,9 +504,34 @@ mod tests {
         let link = root.join("linked");
         fs::create_dir(&target).unwrap();
         if let Err(error) = symlink_dir(&target, &link) {
-            eprintln!("skipping directory symlink test: {error}");
+            let message = format!("skipping directory symlink test: {error}");
             fs::remove_dir_all(root).unwrap();
+            assert!(std::env::var_os("GITHUB_ACTIONS").is_none(), "{message}");
+            eprintln!("{message}");
             return;
+        }
+        assert!(matches!(
+            validate_update_source(&link.join("bundle")),
+            Err(UpdateReject::Io(_))
+        ));
+        fs::remove_dir(&link).unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn at_least_one_link_rejection_case_runs_td192() {
+        use std::os::windows::fs::symlink_dir;
+
+        let root = root("link-rejection-required");
+        let target = root.join("real");
+        let link = root.join("linked");
+        fs::create_dir(&target).unwrap();
+        if let Err(error) = symlink_dir(&target, &link) {
+            fs::remove_dir_all(root).unwrap();
+            panic!(
+                "directory symlink creation failed: {error}; enable Windows Developer Mode so the link rejection tests can run"
+            );
         }
         assert!(matches!(
             validate_update_source(&link.join("bundle")),
