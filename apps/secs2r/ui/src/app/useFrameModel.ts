@@ -16,6 +16,7 @@ import { exportStepState } from "../screens/export/types";
 export function useFrameModel(views: { system: SystemView | null; connect: ConnectView | null; measure: MeasureView | null; calibrate: CalibrateView | null; export: ExportView | null }) {
   const session = useSession();
   const host = useHost();
+  const bootstrap = useResource("bootstrap");
   const project = useResource("project");
   const config = useResource("config");
   const layout = useResource("layout");
@@ -40,6 +41,8 @@ export function useFrameModel(views: { system: SystemView | null; connect: Conne
       path: { kind: host.path ?? "none", state: pathReady({ path: host.path, methods: views.connect?.methods ?? null }) ? "ok" : "warning" },
       fileName: project?.path ? project.name : null, dirty: project?.dirty ?? false,
       warnings: project?.migration_warnings ?? [], opened: host.opened,
+      // The app's settings notice from the bootstrap (ADR 0051), project or not.
+      settingsNotice: bootstrap?.settings_notice ?? null,
     },
   };
   if (!project) {

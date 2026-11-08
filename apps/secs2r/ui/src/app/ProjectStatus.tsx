@@ -1,11 +1,14 @@
 // Project status summary in the rail: setup, measured positions,
 // correction state, measurement path and file. Each state is a noun
 // phrase; the dot's hue repeats the word, never replaces it. Under it, the
-// warnings raised while reading the project (F5): they stay until closed,
-// and a closed list comes back with the next project opened.
+// app's settings notice (ADR 0051), with or without a project, closed for
+// the session; then the warnings raised while reading the project (F5):
+// they stay until closed, and a closed list comes back with the next
+// project opened.
 import { useId, useState, type ReactNode } from "react";
 import { useT, type Translate } from "../i18n/react";
 import type { MessageKey } from "../i18n";
+import type { Notice } from "../ipc/bindings/Notice";
 import { Button, IconButton } from "../ui/Button";
 import { Icon, Spinner } from "../ui/Icon";
 import type { CalibrationState, PathKind, PathState, ProjectSummary, ProjectWarning } from "./model";
@@ -53,6 +56,65 @@ function Value({ tone, children }: { tone?: Tone | undefined; children: ReactNod
   );
 }
 
+/** Keep the keyboard in the status when a notice's close button goes with it. */
+function focusStatus() {
+  const heading = document.getElementById("frame.status.heading");
+  if (heading) {
+    heading.tabIndex = -1;
+    heading.focus({ preventScroll: true });
+  }
+}
+
+const SETTINGS_NOTICE: Readonly<Record<string, MessageKey>> = {
+  app_settings_unreadable: "notice.app_settings_unreadable",
+  app_settings_newer: "notice.app_settings_newer",
+};
+
+/**
+ * Why the app started from default settings (`BootstrapInfo.settings_notice`):
+ * one sentence, the service's own error behind 자세히, and 닫기 that hides it
+ * for the session. A code the screen does not know shows its raw params there.
+ */
+function SettingsNotice({ notice }: { notice: Notice }) {
+  const t = useT();
+  const id = useId();
+  const [closed, setClosed] = useState(false);
+  if (closed) return null;
+  const key = SETTINGS_NOTICE[notice.code];
+  const { error, ...params } = notice.params;
+  const raw = key ? error : [`[${notice.code}]`, ...Object.entries(notice.params).map(([name, value]) => `${name}: ${value}`)].join("\n");
+  return (
+    <div className="ui-error ui-error--warning project-warnings" role="status" aria-labelledby={`${id}-title`} data-ui="frame.status.settings_notice">
+      <Icon name="warning" size={18} className="ui-error__icon" />
+      <h3 className="ui-error__cause project-warnings__title" id={`${id}-title`}>
+        {t("frame.status.settings_notice.title")}
+      </h3>
+      <IconButton
+        icon="close"
+        size="sm"
+        label={t("frame.status.settings_notice.close")}
+        className="project-warnings__close"
+        data-ui="frame.status.settings_notice.close"
+        onClick={() => {
+          setClosed(true);
+          focusStatus();
+        }}
+      />
+      <div className="project-warnings__body">
+        <div className="project-warnings__group">
+          {key && <p className="project-warnings__text">{t(key, params)}</p>}
+          {raw && (
+            <details className="ui-details">
+              <summary>{t("ui.details")}</summary>
+              <pre className="ui-details__raw">{raw}</pre>
+            </details>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 const NOTHING_HIDDEN: ReadonlySet<string> = new Set();
 
 /**
@@ -84,12 +146,7 @@ function ProjectWarnings({
   if (shown.length === 0) return null;
   const close = () => {
     setClosed({ opened, keys: new Set([...hidden, ...shown.map(warningKey)]) });
-    // The close button goes with the notice; keep the keyboard in the status.
-    const heading = document.getElementById("frame.status.heading");
-    if (heading) {
-      heading.tabIndex = -1;
-      heading.focus({ preventScroll: true });
-    }
+    focusStatus();
   };
   return (
     <div className="ui-error ui-error--warning project-warnings" role="status" aria-labelledby={`${id}-title`} data-ui="frame.status.warnings">
@@ -222,6 +279,7 @@ export function ProjectStatus({
           </Value>
         </div>
       </dl>
+      {project.settingsNotice && <SettingsNotice notice={project.settingsNotice} />}
       <ProjectWarnings warnings={project.warnings ?? []} opened={project.opened} reimport={project.path.kind === "mdat"} onRemeasure={onRemeasure} onOpenPatch={onOpenPatch} />
     </>
   );

@@ -321,6 +321,17 @@ export const frameSpecimens: SpecimenDef[] = [
     ),
   },
   {
+    id: "frame.settings_notice",
+    title: "Frame · app settings notice (ADR 0051: a newer settings file kept, defaults in use)",
+    width: 1280,
+    height: 800,
+    render: () => (
+      <FrameBox frame={model("measure", { ...filledProject, settingsNotice: { code: "app_settings_newer", params: { version: "2" } } })} jobs={initialLedger}>
+        <MeasureContent />
+      </FrameBox>
+    ),
+  },
+  {
     id: "frame.blocked",
     title: "Frame · blocked step",
     width: 1280,

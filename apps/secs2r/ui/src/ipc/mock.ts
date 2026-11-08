@@ -102,6 +102,8 @@ type MockOptions = {
   /** `apply_status` until `setApplyStatus`; CamillaDSP unreachable and no Equalizer APO by default. */
   applyStatus?: ApplyStatus;
   updateStatus?: UpdateStatus;
+  /** What `bootstrap` answers besides the fixture's, such as the app settings notice (ADR 0051). */
+  bootstrap?: Partial<import("./bindings/BootstrapInfo").BootstrapInfo>;
 };
 export const ipcError = (code: ErrorCode, detail = "", params: Record<string, string> = {}): IpcError => ({
   code, params, retryable: code === "job_busy" || code === "rew_unreachable" || code === "device_unavailable", detail,
@@ -709,7 +711,7 @@ export function createMockService(options: MockOptions = {}): MockService {
 
   const answer = (req: Request): Response => {
     switch (req.method) {
-      case "bootstrap": return { method: req.method, data: { ...fx.bootstrapInfo, log_dir: "C:/Users/demo/AppData/Roaming/SECS2R/logs" } };
+      case "bootstrap": return { method: req.method, data: { ...fx.bootstrapInfo, log_dir: "C:/Users/demo/AppData/Roaming/SECS2R/logs", ...options.bootstrap } };
       case "project_info": return { method: req.method, data: needProject() };
       case "project_new": {
         const p = req.params;

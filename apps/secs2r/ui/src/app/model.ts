@@ -1,6 +1,7 @@
 // What the frame shows, as plain data. The screens (P30–P32) and the IPC
 // wiring (P33) compute it from the service; the frame only draws it.
 import type { MessageKey } from "../i18n";
+import type { Notice } from "../ipc/bindings/Notice";
 
 export const STEPS = ["system", "connect", "measure", "calibrate", "export"] as const;
 export type StepId = (typeof STEPS)[number];
@@ -34,6 +35,12 @@ export type ProjectSummary = {
   warnings?: readonly ProjectWarning[];
   /** Changes with every project opened or created (the session's count). */
   opened?: number;
+  /**
+   * Why the app started from default settings (`BootstrapInfo.settings_notice`,
+   * ADR 0051). The app's, not the project's: it shows with or without one,
+   * beside the project warnings, until closed for the session.
+   */
+  settingsNotice?: Notice | null;
 };
 
 export type FrameModel = {
