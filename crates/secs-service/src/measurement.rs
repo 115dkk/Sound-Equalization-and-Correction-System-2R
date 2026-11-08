@@ -13,6 +13,11 @@ use crate::measure::{
 use crate::{Deps, EventSink, Service, lock, mdat_import, measurement_file, session};
 use secs_types::role::ROLES;
 
+fn file_identity(path: &Path) -> Option<(u64, std::time::SystemTime)> {
+    let metadata = std::fs::metadata(path).ok()?;
+    Some((metadata.len(), metadata.modified().ok()?))
+}
+
 pub(crate) fn input(field: &str, detail: impl Into<String>) -> IpcError {
     IpcError::new(ErrorCode::MeasurementInput, detail).with_param("field", field)
 }
@@ -872,10 +877,27 @@ impl Service {
     }
     pub(crate) fn mdat_scan(&self, params: MdatScanParams) -> Result<MdatScanResult, IpcError> {
         let roles = ROLES.into_iter().map(str::to_owned).collect::<Vec<_>>();
-        let reader = measurement_file::open(Path::new(&params.path), &roles, None, 1)
-            .map_err(|e| measure_error(e, "path", secs_audio::SharePreference::Auto))?;
+        let path = Path::new(&params.path);
+        let (reader, cache_reader): (
+            Arc<dyn measurement_file::MeasurementReader>,
+            Option<Arc<mdat_import::MdatReader>>,
+        ) = if crate::dirac_import::is_liveproject(path) {
+            (
+                Arc::new(
+                    crate::dirac_import::DiracReader::read(path, &roles)
+                        .map_err(|e| measure_error(e, "path", secs_audio::SharePreference::Auto))?,
+                ),
+                None,
+            )
+        } else {
+            let reader = Arc::new(
+                mdat_import::MdatReader::read(path, &roles, None, 1)
+                    .map_err(|e| measure_error(e, "path", secs_audio::SharePreference::Auto))?,
+            );
+            (reader.clone(), Some(reader))
+        };
         let rows = reader.rows();
-        Ok(MdatScanResult {
+        let result = MdatScanResult {
             suggestions: rows
                 .iter()
                 .enumerate()
@@ -904,7 +926,11 @@ impl Service {
                     looks_like_sub: row.looks_like_sub,
                 })
                 .collect(),
-        })
+        };
+        if let (Some(reader), Some((len, modified))) = (cache_reader, file_identity(path)) {
+            *lock(&self.scanned_mdat) = Some((path.to_owned(), len, modified, reader));
+        }
+        Ok(result)
     }
     pub(crate) fn start_mdat(
         &self,
@@ -915,15 +941,51 @@ impl Service {
         let ticket = snapshot.ticket;
         let project = snapshot.project;
         let session = self.session.clone();
+        let scanned_mdat = self.scanned_mdat.clone();
         self.start_job(JobKind::MdatImport, events, move |ctx| {
             // Read the file once here, without the session lock; the lock
             // is held only for the import below (TD-37).
             let path = Path::new(&params.path);
             let plan = plan_for(&project, &Default::default());
             let path_error = |e| measure_error(e, "path", secs_audio::SharePreference::Auto);
-            let reader =
-                measurement_file::open(path, &plan.roles, Some(params.position), params.position)
-                    .map_err(path_error)?;
+            let reader: Arc<dyn measurement_file::MeasurementReader> =
+                if crate::dirac_import::is_liveproject(path) {
+                    Arc::new(
+                        crate::dirac_import::DiracReader::read(path, &plan.roles)
+                            .map_err(path_error)?,
+                    )
+                } else if let Some((len, modified)) = file_identity(path) {
+                    let cached = lock(&scanned_mdat)
+                        .as_ref()
+                        .filter(|(cached_path, cached_len, cached_modified, _)| {
+                            cached_path == path
+                                && *cached_len == len
+                                && *cached_modified == modified
+                        })
+                        .map(|(_, _, _, reader)| reader.clone());
+                    match cached {
+                        Some(reader) => reader,
+                        None => Arc::new(
+                            mdat_import::MdatReader::read(
+                                path,
+                                &plan.roles,
+                                Some(params.position),
+                                params.position,
+                            )
+                            .map_err(path_error)?,
+                        ),
+                    }
+                } else {
+                    Arc::new(
+                        mdat_import::MdatReader::read(
+                            path,
+                            &plan.roles,
+                            Some(params.position),
+                            params.position,
+                        )
+                        .map_err(path_error)?,
+                    )
+                };
             let titles = reader
                 .rows()
                 .iter()

@@ -13,10 +13,12 @@ use std::path::Path;
 use secs_mdat::SourceInfo;
 use secs_project::{MeasurementResult, MeasurementStore};
 
+#[cfg(test)]
+use crate::{dirac_import, mdat_import};
+
 use crate::measure::{
     MeasureError, MeasurementSettings, plan_for, position_count, validate_samples,
 };
-use crate::{dirac_import, mdat_import};
 
 /// The largest measurement file a request reads, before the format
 /// parser's own budgets.
@@ -77,11 +79,8 @@ pub(crate) fn read(path: &Path, what: &str) -> Result<Vec<u8>, MeasureError> {
     Ok(bytes)
 }
 
-/// Reads the file once (256 MiB limit) and picks the reader by extension:
-/// `.liveproject` is Dirac Live, anything else REW mdat. `roles` are the
-/// roles to suggest; `position` puts every mdat row there, and `current`
-/// is the position for mdat titles that name none (upstream
-/// `current_position`). Dirac rows always carry their own position.
+/// Reads the file once (256 MiB limit) and picks the reader by extension.
+#[cfg(test)]
 pub(crate) fn open(
     path: &Path,
     roles: &[String],
