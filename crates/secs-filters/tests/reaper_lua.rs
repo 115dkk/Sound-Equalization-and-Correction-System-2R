@@ -81,7 +81,11 @@ fn reaper_script_compiles_when_luac_is_available() {
     let temp = TempDir::new();
     let (script, _) = bundle(&temp, "\"\\\n\r\t\0한글9 ]=]");
     let Some(compiler) = executable("SECS_LUAC", &["luac5.4", "luac"]) else {
-        eprintln!("SKIP: no Lua compiler; set SECS_LUAC (required by Linux CI)");
+        assert!(
+            std::env::var_os("CI").is_none(),
+            "no Lua compiler; set SECS_LUAC (required in CI)"
+        );
+        eprintln!("SKIP: no Lua compiler; set SECS_LUAC");
         return;
     };
     let output = Command::new(compiler)

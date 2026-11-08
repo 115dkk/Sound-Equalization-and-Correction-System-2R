@@ -1222,21 +1222,33 @@ fn output_rates_change_eqapo_text_and_convolution_bundles() {
         }
     }
 
-    for invalid in [
-        Options {
-            output_rate: 96_000,
-            extra_rates: vec![96_000],
-        },
-        Options {
-            output_rate: 96_000,
-            extra_rates: vec![32_000],
-        },
-        Options {
-            output_rate: 96_000,
-            extra_rates: vec![44_100, 44_100],
-        },
+    for (invalid, expected) in [
+        (
+            Options {
+                output_rate: 96_000,
+                extra_rates: vec![96_000],
+            },
+            "extra output sample rate 96000 must be distinct from the main rate and other extra rates",
+        ),
+        (
+            Options {
+                output_rate: 96_000,
+                extra_rates: vec![32_000],
+            },
+            "unsupported extra output sample rate 32000",
+        ),
+        (
+            Options {
+                output_rate: 96_000,
+                extra_rates: vec![44_100, 44_100],
+            },
+            "extra output sample rate 44100 must be distinct from the main rate and other extra rates",
+        ),
     ] {
-        assert!(export_convolution_with_options(&run, &root.0.join("invalid"), &invalid).is_err());
+        assert!(matches!(
+            export_convolution_with_options(&run, &root.0.join("invalid"), &invalid),
+            Err(FiltersError::Invalid(message)) if message == expected
+        ));
     }
 }
 
@@ -2439,6 +2451,20 @@ fn convolution_bundle_contains_complete_paths_and_is_atomic() {
     let plan = make_plan(&chain, None).unwrap();
     let rendered = render_paths(&plan, 1 << 20).unwrap();
     assert_eq!(length, rendered.length);
+    let oracle_path = rendered
+        .paths
+        .iter()
+        .find(|path| path.input == "L" && path.output == "L")
+        .unwrap();
+    let (first_nonzero, sample) = oracle_path
+        .response
+        .iter()
+        .enumerate()
+        .find(|(_, sample)| **sample != 0.0)
+        .unwrap();
+    // Oracle fixture filters/computed_dolby, L -> L response.
+    assert_eq!(first_nonzero, 93);
+    assert_eq!(sample.to_bits(), 4_562_469_665_216_348_470);
     let headroom = (headroom_db(&plan).unwrap() * 2.0).ceil() / 2.0;
     assert_eq!(routing["headroom_db"].as_f64().unwrap(), headroom);
     let attenuation = 10_f64.powf(-headroom / 20.0);
@@ -2551,7 +2577,11 @@ fn convolution_bundle_contains_complete_paths_and_is_atomic() {
         ..run
     };
     let invalid_folder = root.0.join("invalid");
-    assert!(export_convolution(&invalid_run, &invalid_folder).is_err());
+    assert!(matches!(
+        export_convolution(&invalid_run, &invalid_folder),
+        Err(FiltersError::Graph(GraphError::Invalid(message)))
+            if message.starts_with("chain.sample_rate ")
+    ));
     assert!(!invalid_folder.exists());
     eprintln!("convolution bundle oracle length: {length}");
 }
@@ -2877,8 +2907,15 @@ fn output_rate_renderer_rounds_delays_and_scales_bounds() {
         assert!(got.length <= secs_dsp::rate::taps_at(8192, rate));
         assert_eq!(got.rate, rate);
     }
-    assert!(secs_filters::render_paths_at(&plan, 8192, 32000).is_err());
-    assert!(secs_filters::render_paths_at(&plan, 4095, 96000).is_err());
+    assert!(matches!(
+        secs_filters::render_paths_at(&plan, 8192, 32000),
+        Err(FiltersError::Invalid(message)) if message == "unsupported output sample rate"
+    ));
+    assert!(matches!(
+        secs_filters::render_paths_at(&plan, 4095, 96000),
+        Err(FiltersError::Invalid(message))
+            if message == "max_len 8190 is below the minimum 4096"
+    ));
 }
 
 #[test]
