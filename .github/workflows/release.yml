@@ -149,6 +149,15 @@ jobs:
           # shellcheck disable=SC2086
           sudo apt-get update -qq && sudo apt-get install -y -qq $LINUX_DEPS
 
+      - name: Lua compiler for generated REAPER scripts
+        # The REAPER script test requires luac on Linux CI (audit #186 TD-227),
+        # as ci.yml's cargo test job does.
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq lua5.4
+          echo "SECS_LUAC=$(command -v luac5.4)" >> "$GITHUB_ENV"
+          echo "SECS_LUA=$(command -v lua5.4)" >> "$GITHUB_ENV"
+
       - name: Install the pinned toolchain (rust-toolchain.toml)
         shell: bash
         run: |
