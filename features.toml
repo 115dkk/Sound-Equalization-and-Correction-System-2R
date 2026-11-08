@@ -1449,8 +1449,9 @@ note = "release.yml: Windows NSIS + portable zip, macOS dmg, Linux AppImage + de
 id = "release.updater"
 kind = "release"
 milestone = "M6"
-status = "planned"
+status = "partial"
 tests = []
+note = "release.yml signs updater bundles, generates and publishes latest.json with .github/scripts/updater_manifest.py, and updates the fixed updater release (ADR 0020). This registry lists Cargo tests, not workflow checks."
 
 # ---- Service IPC (M4) ----
 

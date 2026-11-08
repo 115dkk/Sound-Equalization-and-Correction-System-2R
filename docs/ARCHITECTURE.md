@@ -74,15 +74,16 @@ ui ──IPC──> secs2r ─┬─> secs-service ─┬─> secs-engine ─┬
                     │                 │                    secs-dsp, secs-types
                     │                 ├─> secs-camilla ──> secs-graph, secs-dsp, secs-types
                     │                 ├─> secs-filters ──> secs-graph, secs-dsp, secs-types
+                    │                 ├─> secs-graph
                     │                 └─> secs-compute, secs-dsp, secs-types
                     ├─> secs-gpu ─────> secs-engine (RidgeBackend seam), secs-compute, secs-types
                     │        └───────> secs-cuda-sys (선택적 네이티브 라이브러리)
                     ├─> secs-sys ─────> wasapi, cpal, OS 조회 크레이트
-                    │        └───────> secs-apply, secs-audio, secs-rew, secs-compute (어댑터가 구현하는 seam)
+                    │        └───────> secs-apply, secs-audio, secs-rew, secs-compute, secs-service, secs-types (adapter와 Deps 조립)
                     ├─> secs-local-api ─> secs-service, secs-types, axum, tokio
                     └─> secs-rew, secs-types
-secs2r-cli ─────────> secs-service, secs-sys, secs-gpu, secs-rew, secs-compute, secs-types
-secs-api ───────────> secs-types; engine 기능: secs-service, secs-audio, secs-rew;
+secs2r-cli ─────────> secs-api, secs-service, secs-sys, secs-gpu, secs-compute, secs-types
+secs-api ───────────> secs-types; engine 기능: secs-service, secs-audio, secs-rew, secs-compute, secs-engine;
                       client 기능: ureq, tungstenite
 secs-graph ─────────> secs-dsp, secs-types (작성기를 의존하지 않음)
 secs-apply ─────────> tungstenite (서비스는 시험에서만 의존)
@@ -172,7 +173,7 @@ IPC의 기본 동작은 바꾸지 않습니다.
 | M3 | MIMO(이상 FIR, IIR 맞춤, FIR 서포트), 메모리 예산 | MIMO 골든 통과, MIMO 실행(기본 IIR 모드) 5배 이상, 최대 메모리 1 GB 이하 ([`MIMO.md`](MIMO.md) 6절) |
 | M4 | 서비스, 잡, 자체 측정, REW, mdat 가져오기, 내보내기 셋, CLI, 무결성 잡 | CLI만으로 샘플 프로젝트 설계·내보내기, 모의 측정으로 흐름 전체 테스트, 하드웨어 프로브 실측 |
 | M5 | 새 화면, 디자인 토큰, 성적표, 작업 트레이, 튜토리얼, 한국어·영어 | 업스트림 기능 목록 전부 화면에서 닿음, 화면 리뷰에서 HIGH 없음 |
-| M6 | 실장비 검증, 업데이터, 서명, 출시 전 성능 감사, GPU 실험과 어댑터 | 실제 방에서 측정부터 CamillaDSP 적용까지 완주, 1.0.0 |
+| M6 | 완료: 업데이터(ADR 0020), GPU adapter(ADR 0008), macOS 자체 서명 인증서(ADR 0041). 남은 작업: 실장비 검증, 출시 전 성능 감사 | 실제 방에서 측정부터 CamillaDSP 적용까지 완주, 1.0.0 |
 
 ## 9. 작업 분배
 

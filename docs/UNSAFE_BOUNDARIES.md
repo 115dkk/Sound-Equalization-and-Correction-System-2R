@@ -1,4 +1,9 @@
-# 네이티브 GPU 경계
+# unsafe 경계
+
+unsafe 예산이 있는 격리 크레이트는 운영체제 경계의 `secs-sys`(ADR 0002), GPU 경계의 `secs-cuda-sys`(ADR 0008), C ABI 경계의 `secs-dotnet-sys`(ADR 0032)입니다.
+각 예산은 `unsafe-budget.toml`에 있으며, 아래에 경계별 계약과 검증을 기록합니다.
+
+## 네이티브 GPU 경계
 
 ADR 0008에 따라 `secs-cuda-sys`만 GPU 로더와 네이티브 호출의 unsafe를
 가집니다. 예산은 `unsafe-budget.toml`에 있고 policy gate가 토큰을 셉니다.
