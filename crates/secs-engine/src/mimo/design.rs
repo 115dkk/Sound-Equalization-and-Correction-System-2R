@@ -792,7 +792,6 @@ impl GuardStep {
     }
 }
 
-/// The last rejected guard step as a note's cause; `None` when every step
 /// One position's energy change in dB for the seat guard (ADR 0036). Energy
 /// that appears where the baseline had none is a violation, not a skipped
 /// position; only a position with no energy before and after says nothing.
@@ -810,6 +809,7 @@ pub(crate) fn seat_change(before: f64, after: f64) -> Option<f64> {
 /// The change reported when a position gains energy it had none of.
 pub(crate) const SEAT_VIOLATION_DB: f64 = 99.0;
 
+/// The last rejected guard step as a note's cause; `None` when every step
 /// passed (no reduction).
 pub(crate) fn guard_cause(
     guards: &[GuardStep],

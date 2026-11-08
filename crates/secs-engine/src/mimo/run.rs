@@ -33,8 +33,11 @@ pub struct MimoKey {
 }
 
 impl MimoKey {
-    /// Normalize legacy fields using project bounds; preserve the early interval
-    /// so the engine rejects invalid direct settings instead of hiding them.
+    /// Clamp `fsiso`, `mimo_low` and `mimo_max_supports` to project bounds.
+    /// These fields predate validation, so saved projects may contain out-of-range
+    /// values. Non-finite `fsiso` uses its default; non-finite `mimo_low` is omitted.
+    /// Preserve `mimo_early_ms` as given so the engine rejects an invalid direct
+    /// setting (ADR 0037; audit #186 TD-261).
     pub fn from_settings(settings: &CalibrationSettings) -> Self {
         let mut exclude: Vec<_> = settings
             .subs_manual

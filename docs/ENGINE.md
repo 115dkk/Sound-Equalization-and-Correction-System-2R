@@ -4,7 +4,7 @@
 
 ## 1. 모양
 
-바깥 인터페이스는 `calibrate(프로젝트 뷰·측정·보정 설정, 계산 환경) -> 보정` 한 번의 호출입니다. 설정 해석, 샘플레이트 정규화, 취소 가능한 운영 맞춤기와 설계를 안에서 연결하고, 설계와 그 설계에 쓴 측정·엔진 설정, 리샘플링 개수를 돌려줍니다. `calibrate_with`는 같은 흐름에 오라클 재생 맞춤기를 넣는 시임입니다. XO 추천도 같은 설정 해석과 정규화 도우미를 쓰되, 후보가 없을 때는 정규화를 생략합니다. 이미 엔진 입력을 가진 단계·수치 호출자는 `design(측정, 설정, 튜닝, 계산 환경) -> 설계`를 쓰며, 설계는 바뀌지 않는 값입니다. 업스트림의 `CorrectionEngine`처럼 생성 뒤 속성을 덮어쓰거나 화면이 내부 배열을 읽는 길은 두지 않습니다. 업스트림이 엔진 안쪽을 읽던 자리(XO 미리 보기, 서브 정렬 보기, mdat 단계 IR, MIMO, CamillaDSP)는 모두 설계에 담긴 신호 사슬 값과 측정 스펙트럼으로 응답 시뮬레이터를 돌려 얻습니다.
+바깥 인터페이스는 `calibrate(프로젝트 뷰·측정·보정 설정, 계산 환경) -> 보정` 한 번의 호출입니다. 설정 해석, 샘플레이트 정규화, 취소 가능한 운영 맞춤기와 설계를 안에서 연결하고, 설계와 그 설계에 쓴 측정·엔진 설정, 리샘플링 개수를 돌려줍니다. `calibrate_with`는 같은 흐름에 오라클 재생 맞춤기를 넣는 시임입니다. XO 추천도 같은 설정 해석과 정규화 도우미를 쓰되, 후보가 없을 때는 정규화를 생략합니다. 단계·수치 시험에서는 `test-support` 기능의 `design(측정, 설정, 튜닝, 계산 환경) -> 설계`를 사용하며, 설계는 바뀌지 않는 값입니다(ADR 0046). 업스트림의 `CorrectionEngine`처럼 생성 뒤 속성을 덮어쓰거나 화면이 내부 배열을 읽는 길은 두지 않습니다. 업스트림이 엔진 안쪽을 읽던 자리(XO 미리 보기, 서브 정렬 보기, mdat 단계 IR, MIMO, CamillaDSP)는 모두 설계에 담긴 신호 사슬 값과 측정 스펙트럼으로 응답 시뮬레이터를 돌려 얻습니다.
 
 | 모듈 | 파일 | 업스트림 | 작업서 |
 |---|---|---|---|
@@ -16,13 +16,36 @@
 | 맞춤 | `fit.rs` | `fit_peq`, `_ring_q_cap`, `_ring_boxes`, `fit_gd_cuts`, `_xo_target_peq` | P07 |
 | 감쇠 | `decay.rs` | BA의 `late_db`, `calibration._late_db`, `mimo.mode_t60`, `mimo._late_peaks` | P08 |
 | 성적표 | `scorecard.rs` | `scorecard.metrics` | P08 |
-| RC | `rc.rs` | `_correction`, `_no_boost_mask`, `_long_mode_mask`, 메인 반복 | P09 |
+| RC | `rc.rs` | `_correction`, `_no_boost_mask`, `_long_mode_mask`, 메인 반복; 딥 보정 제한은 새로(ADR 0034) | P09, P171 |
 | BA | `ba.rs` | `_layout_stage`, `_ba_*`, `_sub_sum`, `_align_subs*`, `_match_two_way`, `_bus_*`, `_term` | P10 |
 | 신호 사슬과 시뮬레이터 | `chain.rs`, `secs-types::chain` | `stage_responses`, `input_response`, `_sub_out`, `xo_preview`, `sub_combine`, `stage_items` | P12 |
 | XO | `xo.rs` | `xo_peq_band`, `recommend_xo`, `xo_scores`, `pick_xo` | P12 |
 | 설계(오케스트레이터) | `design.rs` | `compute()`, `make_engine`, `calibration.compute` | P12 |
 | CamillaDSP 작성기 | `secs-camilla` | `export_camilladsp.py` | P11 |
 | 계산 환경 | `secs-compute` | (새로) 취소, 진행, 순서 보존 map, 메모리 허가 | P06 |
+
+### 뒤에 생긴 module
+
+위 표에 없던 현재 module을 함께 기록합니다. 시험 전용 module도 포함하며, 공개 범위는 ADR 0046을 따릅니다.
+
+| module | 파일 | 업스트림 | 작업서 |
+|---|---|---|---|
+| 보정 진입점과 설정 검증 | `calibration.rs` | `calibration.make_engine`; 검증 규칙은 새로, ADR 0055 | P12c, P89, P199 |
+| MIMO | `mimo/` | `mimo.py`, `mimo_iir.py`; GPU와 위치별 가드·초기 구간은 새로, ADR 0008·0036·0037 | P14, P16, P17, P53, P174, P176, P177, P178 |
+| 극저역 보호 | `low_protect.rs` | 새로; ADR 0022 | P144, P153 |
+| 상대 극성 검사 | `polarity.rs` | 새로; ADR 0033 | P169 |
+| 채널 쌍의 위상 검사 | `pair_phase.rs` | 새로; ADR 0035 | P173, P175 |
+| 계산용 리샘플링 | `normalize.rs` | 새로; 편차 D39 | P60 |
+| 설계 입력과 준비 결과 보관 | `replay.rs` | 새로; ADR 0012·0046 | P93, P188 |
+| 캐시 MIMO 응답 재생 | `replay_mimo.rs` | 새로; 서비스의 재생 계산을 엔진으로 이동 | P93 |
+| 내보내기용 긴 스펙트럼과 시간 축 | `export_view.rs` | `long_spectra`, 단계별 응답 내보내기 | P12d, P93 |
+| 서브 정렬 곡선 | `preview.rs` | `sub_combine` | P12b |
+| 표시용 격자·평활·측정 크기 | `display.rs` | `step5_measure.magnitude_db`, 계산 전 SPL 미리보기 | P93, P143 |
+| 병렬 작업 전 메모리 예약 | `memory.rs` | 새로; ADR 0007 | P164, P194 |
+| 타입 있는 진단 메모 | `notes.rs` | 새로; ADR 0042 | P09, P10, P188, P202 |
+| 엔진 오류 | `error.rs` | 새로 | 뼈대 |
+| 주입한 fixture 저장소와 오라클 재생 | `testkit.rs` | 새로; ADR 0050 | P188, P201 |
+| 내부 단계·골든·회귀 시험 | `tests/` | 오라클과 비교; ADR 0004 | 위 단계별 작업서 |
 
 ## 2. 시간 축
 
@@ -42,7 +65,7 @@ SECS 2R은 두 축을 타입으로 가릅니다. 사슬 값은 출력 축 지연
 
 - **오라클 밖 libm에서의 테스트.** 오라클은 glibc libm 하나에서 돕니다. macOS와 Windows의 libm은 마지막 비트를 한꺼번에 옮기므로, BA의 차분 진화와 문턱·argmax·후보 선택은 어느 사례에서든 오라클과 갈라질 수 있습니다(0.6.0–0.7.0의 CI에서 room_filters가 그랬습니다). Linux에서 `SECS_ORACLE_FOREIGN_LIBM=1`로 돌려도 이 갈라짐은 재현되지 않으므로, 테스트를 처음부터 다음처럼 씁니다. `oracle_libm()`이 거짓이면 (1) 재생 맞춤기는 기록한 결과를 요청 대조 없이 넣고, (2) BA나 문턱 뒤에 정해지는 값(BA 행, 서브 합, 보정 응답, 그 위의 지표·곡선·노트의 숫자·내보낸 IR)은 보고만 하며, (3) 그 앞의 값(측정 준비, 레벨, 정렬 전 곡선, 격자, 이름과 구조)은 그대로 단언합니다. 끝단 게이트는 ADR 0004의 '다른 libm' 규칙을 따릅니다. 작업서는 테스트마다 이 구분을 적게 합니다.
 
-테스트는 크레이트 안쪽(`crates/secs-engine/src/tests/<가족>.rs`)에 두어 단계 함수를 공개하지 않고도 부를 수 있게 합니다. 내부 테스트는 `cfg(test)`에서만 컴파일하는 `test_support`로 사례를 읽고 설계를 재생합니다. `Replay::for_case`는 요청 해시와 RC 공유 준비를 확인하고, `finish`는 단계별 호출 횟수를 확인합니다. 하류 크레이트의 테스트와 `engine_perf` 같은 성능 도구는 `secs-engine-testkit`의 로더와 재생기를 씁니다.
+테스트는 크레이트 안쪽(`crates/secs-engine/src/tests/<가족>.rs`)에 두어 단계 함수를 공개하지 않고도 부를 수 있게 합니다. 내부 테스트는 `cfg(test)` 또는 `test-support` 기능에서 컴파일하는 `testkit`에 fixture 저장소를 주입해 사례를 읽고 설계를 재생합니다(ADR 0050). `Replay::for_case`는 요청 해시와 RC 공유 준비를 확인하고, `finish`는 단계별 호출 횟수를 확인합니다. 하류 크레이트의 테스트와 `engine_perf` 같은 성능 도구는 `secs-engine-testkit`의 로더와 재생기를 씁니다.
 
 ## 4. 순서
 
