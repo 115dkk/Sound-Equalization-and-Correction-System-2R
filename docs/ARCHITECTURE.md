@@ -136,6 +136,8 @@ IPC의 기본 동작은 바꾸지 않습니다.
 | 성적표 | 타입 있는 지표(±1 dB 비율, 위상 바퀴, GD 폭, 1/24 GD 봉우리, 앞울림) | `scorecard.py` |
 | 오케스트레이터 | 단계 캐시(입력 지문), 취소, 진행, XO 추천의 공유 단계 | `calibration.compute`, `compute_mimo` |
 
+바깥(서비스, GPU, 작성기)이 쓸 수 있는 공개 항목은 ADR 0046이 정한 목록뿐입니다. 크레이트 루트는 `calibrate`와 그 입출력(`Calibration`, `CalibrationRequest`, `ProjectView`, `EngineConfig`, `Measurement`, `MeasurementSet`, `Samples`, `Tuning`), 결과 값 `Design`(안쪽 배열은 `fir`, `stage`, `measured` 같은 메서드로만 읽음), `StageResponses`, `RoleLateEnergy`와 `late_energy`, `Metrics`, `SubFilter`, `ExportAxis`, `EngineError`, 메모 기록(`Note`, `MimoNote`, `GuardCause`는 `secs-types`의 재수출, `NoteRecord`, `NoteRecords`), MIMO 입구(`MimoRun`, `MimoKey`, `availability`, `compute_with_acceleration`, `AccelerationSelection`, `AccelerationError`, `RidgeBackend`, `CpuRidgeBackend`, `ShiftedSystem`, `mimo_cap_text`)를 내보내고, 모듈은 `input`, `preview`, `xo`만 공개합니다. 오라클 골든 시험과 `secs-engine-testkit`이 쓰는 단계 함수(`design`, `DesignRequest`, `FitterFactory`, `FitStage`, `calibrate_with`, `normalize_measurements`, MIMO의 단계별 함수)는 `test-support` 기능을 켰을 때만 쓸 수 있습니다. 공개 목록에 항목을 추가하려면 ADR 0046과 `tests/surface.rs`의 `public_surface_is_the_adr_0046_list`를 함께 고쳐야 합니다.
+
 업스트림이 환경 변수로 숨긴 값(`SECS_BOOST_RING_MS`, `SECS_BA_DELAY_MS`, `SECS_BA_EFF`, `SECS_SUB_BUS_FIX`, `SECS_MAIN_W_LO`, `SECS_PHASE_POS`, `SECS_LONG_BOOST_DB`, `SECS_NOBOOST_MS`, `SECS_MIMO_*`)은 명시적 튜닝 값의 필드로 옮기는 대상입니다. 화면에 제공할 때는 해당 기능의 세부 설정에서 펼치며, 사용자 숙련도로 접근을 나누지 않습니다.
 
 ## 6. 수치
