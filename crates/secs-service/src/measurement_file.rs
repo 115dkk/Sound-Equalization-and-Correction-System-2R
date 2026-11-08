@@ -97,51 +97,43 @@ pub(crate) fn open(
     }
 }
 
-/// Validates assignments (one rule: role in the plan, `1..=position_count`,
-/// one record per (position, role)), records every IR with its source and
-/// saves once per IR (C6), and returns the count.
-///
-/// There is one assignment per row; a different count is an error and
-/// changes nothing. A row that breaks the rule, has no role or has no IR is
-/// skipped, as upstream `step5.load_mdat` skips it (upstream lets a position
-/// below 1 through: docs/DEVIATIONS.md F18); a skipped row does not claim
-/// its (position, role). A failing record stops the import; the IRs
-/// recorded before it stay on disk.
-pub(crate) fn import(
-    store: &mut MeasurementStore,
+/// One validated IR, converted and ready for the measurement store.
+#[derive(Debug)]
+pub(crate) struct PreparedRow {
+    result: MeasurementResult,
+}
+
+/// Validates assignments and takes every selected IR without store access.
+pub(crate) fn prepare(
     reader: &dyn MeasurementReader,
     file_name: &str,
     assignments: &[Assignment],
-) -> Result<usize, MeasureError> {
+    roles: &[String],
+    position_count: i64,
+) -> Result<Vec<PreparedRow>, MeasureError> {
     let rows = reader.rows();
     if assignments.len() != rows.len() {
         return Err(MeasureError::Input(
             "assignment count does not match the file's measurement rows".into(),
         ));
     }
-    let plan = plan_for(store.project(), &MeasurementSettings::default());
-    let count = position_count(store.project());
     let mut used = BTreeSet::new();
-    let mut saved = 0;
+    let mut prepared = Vec::new();
     for (index, (row, assignment)) in rows.iter().zip(assignments).enumerate() {
         if row.looks_like_sub.is_none() {
             continue;
         }
-        let Some(role) = assignment
-            .role
-            .as_ref()
-            .filter(|role| plan.roles.contains(role))
-        else {
+        let Some(role) = assignment.role.as_ref().filter(|role| roles.contains(role)) else {
             continue;
         };
         let position = assignment.position.unwrap_or(row.position);
-        if !(1..=count).contains(&position) || !used.insert((position, role.clone())) {
+        if !(1..=position_count).contains(&position) || !used.insert((position, role.clone())) {
             continue;
         }
         let ir = reader.take(index)?;
         validate_samples(&ir.samples, &row.title)?;
-        store.record(
-            MeasurementResult {
+        prepared.push(PreparedRow {
+            result: MeasurementResult {
                 role: role.clone(),
                 pos: position,
                 ir: ir.samples,
@@ -154,11 +146,37 @@ pub(crate) fn import(
                 source: Some(file_name.to_owned()),
                 source_info: ir.source_info,
             },
-            Some(&plan.roles),
-        )?;
+        });
+    }
+    Ok(prepared)
+}
+
+/// Records prepared rows, saving once per IR (C6), and returns the count.
+pub(crate) fn record(
+    store: &mut MeasurementStore,
+    prepared: Vec<PreparedRow>,
+    roles: &[String],
+) -> Result<usize, MeasureError> {
+    let mut saved = 0;
+    for row in prepared {
+        store.record(row.result, Some(roles))?;
         saved += 1;
     }
     Ok(saved)
+}
+
+/// Validates, prepares and records an import. Kept for the format entry points
+/// and unit tests; the service job calls [`prepare`] before its commit closure.
+pub(crate) fn import(
+    store: &mut MeasurementStore,
+    reader: &dyn MeasurementReader,
+    file_name: &str,
+    assignments: &[Assignment],
+) -> Result<usize, MeasureError> {
+    let plan = plan_for(store.project(), &MeasurementSettings::default());
+    let count = position_count(store.project());
+    let prepared = prepare(reader, file_name, assignments, &plan.roles, count)?;
+    record(store, prepared, &plan.roles)
 }
 
 /// The name a record keeps as its source: the file name of `path`.

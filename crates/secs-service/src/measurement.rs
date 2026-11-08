@@ -985,18 +985,31 @@ impl Service {
                 return Err(error);
             }
             let file_name = measurement_file::file_name(path);
-            let (count, info) =
-                session::commit(&session, ticket, &ctx, session::Finality::Final, |open| {
+            let prepared = measurement_file::prepare(
+                &*reader,
+                &file_name,
+                &assignments,
+                &plan.roles,
+                measure::position_count(&project),
+            )
+            .map_err(path_error)?;
+            let (count, info) = session::commit(
+                &session,
+                ticket,
+                &ctx,
+                session::Finality::Final,
+                move |open| {
                     let count = open
                         .store_mut()
-                        .write_result(|store| {
-                            measurement_file::import(store, &*reader, &file_name, &assignments)
+                        .write_result(move |store| {
+                            measurement_file::record(store, prepared, &plan.roles)
                         })
                         .map_err(path_error)?;
                     // The import writes its records to disk.
                     open.mark_saved();
                     Ok(((count, session::info(open)), false))
-                })?;
+                },
+            )?;
             ctx.report_progress("mdat_import", count as u64, count as u64);
             Ok(JobResult::MdatImport(info))
         })
