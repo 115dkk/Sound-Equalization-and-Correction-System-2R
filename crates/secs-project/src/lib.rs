@@ -19,8 +19,8 @@ pub use config::{Band, Speaker, SpeakerConfig, default_bands, ordered_speakers};
 pub use dsp_profile::DspProfile;
 pub use error::ProjectError;
 pub use irs::{
-    MAX_IR_BYTES, ir_directory, ir_file, load_ir, read_mono_float_wav, read_wav_float32, save_ir,
-    try_write_wav_float32, write_wav_float32,
+    MAX_IR_BYTES, ir_directory, ir_file, load_ir, read_bounded, read_mono_float_wav,
+    read_wav_float32, save_ir, try_write_wav_float32, write_wav_float32,
 };
 pub use plan::{
     MeasurementPlan, PlanValidationError, SWEEP_LENGTHS, TimingReference, default_ref_role,

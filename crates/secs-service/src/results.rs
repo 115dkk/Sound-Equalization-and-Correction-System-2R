@@ -12,7 +12,6 @@ use secs_types::ipc::{
 use crate::cache::CachedResults;
 use crate::calibration::xo_rec_key;
 use crate::compute::ComputeIdentity;
-use crate::measure::json::JsonExt;
 
 #[cfg(test)]
 #[path = "results_tests.rs"]

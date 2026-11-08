@@ -12,7 +12,6 @@ use secs_types::ipc::*;
 use secs_types::role::{role_group, role_label};
 use secs_types::rules::{ARRANGEMENT_COUNTS, CONFIG_GROUPS};
 
-use crate::measure::json::JsonExt;
 use crate::measure::store_devices;
 use crate::{Service, lock, session};
 

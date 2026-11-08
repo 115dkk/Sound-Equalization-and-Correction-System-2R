@@ -3,7 +3,6 @@ use std::path::{Path, PathBuf};
 use secs_project::PyJson;
 use secs_types::ipc::{ExportFolderResult, ExportFolderSetParams, IpcError};
 
-use crate::measure::json::JsonExt;
 use crate::{LocalTime, Service, lock};
 
 impl Service {

@@ -1,5 +1,4 @@
 //! Measurement adapters. This is a Rust service seam, not the IPC schema.
-pub(crate) mod json;
 #[allow(dead_code)]
 mod native;
 mod rew;

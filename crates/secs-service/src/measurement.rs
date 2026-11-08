@@ -6,7 +6,6 @@ use secs_project::{Project, PyJson};
 use secs_types::ipc::SampleLoadParams;
 use secs_types::ipc::*;
 
-use crate::measure::json::JsonExt;
 use crate::measure::{
     self, MeasureError, MeasurementSettings, Measurer, plan_for, rew_executable, store_devices,
 };
@@ -112,7 +111,7 @@ pub(crate) fn method(project: &Project) -> &str {
         .iter()
         .find(|(k, _)| k == "devices")
         .and_then(|(_, v)| v.get("method"))
-        .and_then(JsonExt::str)
+        .and_then(PyJson::str)
         .unwrap_or("native")
 }
 const LENGTHS: [(usize, &str); 7] = [

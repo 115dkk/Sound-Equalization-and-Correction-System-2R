@@ -7,7 +7,6 @@
 //! store with the file name as their source.
 
 use std::collections::BTreeSet;
-use std::io::Read;
 use std::path::Path;
 
 use secs_mdat::SourceInfo;
@@ -68,15 +67,12 @@ pub(crate) trait MeasurementReader {
 /// Reads `path` whole, refusing a file over [`FILE_LIMIT`]; `what` names
 /// the format in that refusal.
 pub(crate) fn read(path: &Path, what: &str) -> Result<Vec<u8>, MeasureError> {
-    let file = std::fs::File::open(path).map_err(|error| MeasureError::Input(error.to_string()))?;
-    let mut bytes = Vec::new();
-    file.take(FILE_LIMIT + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|error| MeasureError::Input(error.to_string()))?;
-    if bytes.len() as u64 > FILE_LIMIT {
-        return Err(MeasureError::Input(format!("{what} exceeds file budget")));
-    }
-    Ok(bytes)
+    secs_project::read_bounded(path, FILE_LIMIT, what).map_err(|error| match error {
+        secs_project::ProjectError::Invalid(_) => {
+            MeasureError::Input(format!("{what} exceeds file budget"))
+        }
+        error => MeasureError::Input(error.to_string()),
+    })
 }
 
 /// Reads the file once (256 MiB limit) and picks the reader by extension.

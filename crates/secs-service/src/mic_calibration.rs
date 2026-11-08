@@ -8,7 +8,6 @@ use secs_types::ipc::{
     ErrorCode, IpcError, MicCalibrationFile, MicCalibrationSetParams, MicCalibrationStatus,
 };
 
-use crate::measure::json::JsonExt;
 use crate::measure::store_devices;
 use crate::{Service, lock, session};
 

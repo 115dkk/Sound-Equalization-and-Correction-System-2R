@@ -316,7 +316,8 @@ pub fn load_ir(project: &Path, role: &str, pos: i64) -> Result<(Vec<f32>, u32), 
         .map_err(|error| ProjectError::Wav(format!("{}: {error}", path.display())))
 }
 
-pub(crate) fn read_bounded(path: &Path, limit: u64, kind: &str) -> Result<Vec<u8>, ProjectError> {
+/// Reads at most `limit` bytes and reports an oversized file as invalid.
+pub fn read_bounded(path: &Path, limit: u64, kind: &str) -> Result<Vec<u8>, ProjectError> {
     let mut file = fs::File::open(path)?;
     let mut bytes = Vec::new();
     file.by_ref().take(limit + 1).read_to_end(&mut bytes)?;

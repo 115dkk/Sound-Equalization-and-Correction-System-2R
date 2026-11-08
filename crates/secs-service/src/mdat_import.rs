@@ -1,5 +1,4 @@
 //! Port of wizard/step5_measure.py and mdat_loader.py (SECS 2, GPL-3.0-only).
-use crate::measure::json::JsonExt;
 use crate::measure::{MeasureError, MeasurementSettings, plan_for};
 use crate::measurement_file::{self, FileRow, ImportedIr, MeasurementReader};
 use secs_project::{MeasurementStore, PyJson};
@@ -452,7 +451,7 @@ pub fn mdat_sources(store: &MeasurementStore) -> std::collections::BTreeMap<i64,
             if pos <= 0 {
                 continue;
             }
-            let Some(irs) = entry.get("ir").and_then(JsonExt::object) else {
+            let Some(irs) = entry.get("ir").and_then(PyJson::object) else {
                 continue;
             };
             let mut names = Vec::new();
@@ -463,7 +462,7 @@ pub fn mdat_sources(store: &MeasurementStore) -> std::collections::BTreeMap<i64,
                 let name = entry
                     .get("source")
                     .and_then(|s| s.get(role))
-                    .and_then(JsonExt::str)
+                    .and_then(PyJson::str)
                     .unwrap_or("");
                 if !names.contains(&name) {
                     names.push(name);

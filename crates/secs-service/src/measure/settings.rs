@@ -1,5 +1,4 @@
 // Port of wizard/step5_measure.py::plan and step1_devices.py::_store (SECS 2, GPL-3.0-only).
-use super::json::JsonExt;
 use super::{MeasureError, positive};
 use secs_project::{MeasurementPlan, Project, PyJson, TimingReference};
 

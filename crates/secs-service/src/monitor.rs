@@ -9,7 +9,6 @@ use secs_types::ipc::{
 };
 
 use crate::jobs::JobContext;
-use crate::measure::json::JsonExt;
 use crate::measure::{MeasurementSettings, plan_for};
 use crate::measurement::{input, measure_error as level_error, method};
 use crate::session::{self, ProjectTicket};
