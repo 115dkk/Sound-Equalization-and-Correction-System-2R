@@ -2017,8 +2017,19 @@ fn retire_failure_reaches_the_log_sink_td151() {
     assert_eq!(lines.len(), 1);
     assert_eq!(lines[0].0, LogLevel::Error);
     assert_eq!(lines[0].1, "apply");
-    assert!(lines[0].2.contains(&previous_name));
     assert!(lines[0].2.contains("retire"));
+    // The adapter leaves a file where the applied folder was. Windows reads the
+    // `retained` list under it as absent and fails while pruning, naming the kept
+    // generations; Unix cannot read it (NotADirectory) and skips retirement.
+    if cfg!(windows) {
+        assert!(lines[0].2.contains(&previous_name), "{}", lines[0].2);
+    } else {
+        assert!(
+            lines[0].2.contains("could not read retained"),
+            "{}",
+            lines[0].2
+        );
+    }
     drop(lines);
 
     let applied = root.join("app-data/applied/camilladsp");
