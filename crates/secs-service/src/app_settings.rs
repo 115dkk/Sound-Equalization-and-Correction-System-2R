@@ -164,7 +164,10 @@ impl AppSettingsStore {
                     )
                     .with_param("reason", "app_settings_newer"));
                 }
-                atomic_write(path, &bytes)?;
+                let parent = path.parent().unwrap_or_else(|| Path::new("."));
+                fs::create_dir_all(parent)
+                    .map_err(|error| crate::fs::io_failure(path, &error, ErrorCode::ProjectIo))?;
+                crate::fs::write_atomic(path, &bytes, ErrorCode::ProjectIo)?;
             }
             state.revision = revision;
             state.settings = settings.clone();
@@ -344,12 +347,6 @@ fn read_bounded(path: &Path) -> Result<Vec<u8>, IpcError> {
         return Err(project_io(path, "file exceeds 1 MiB"));
     }
     Ok(bytes)
-}
-
-fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), IpcError> {
-    let parent = path.parent().unwrap_or_else(|| Path::new("."));
-    fs::create_dir_all(parent).map_err(|error| project_io(path, error))?;
-    secs_types::fs::write_atomic_bytes(path, bytes).map_err(|error| project_io(path, error))
 }
 
 fn invalid(field: &str, detail: impl Into<String>) -> IpcError {

@@ -23,6 +23,7 @@ mod export_plan;
 #[cfg(test)]
 mod export_plan_tests;
 mod export_run;
+mod fs;
 mod host;
 mod ipc;
 mod jobs;

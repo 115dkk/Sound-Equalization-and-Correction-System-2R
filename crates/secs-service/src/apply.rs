@@ -532,19 +532,7 @@ fn validate_address(address: &str) -> Result<(), IpcError> {
 }
 
 fn io_error(path: impl AsRef<Path>, error: &std::io::Error) -> IpcError {
-    let detail = error.to_string();
-    let denied = error.kind() == std::io::ErrorKind::PermissionDenied
-        || detail.to_ascii_lowercase().contains("permission denied")
-        || detail.to_ascii_lowercase().contains("access is denied");
-    IpcError::new(
-        if denied {
-            ErrorCode::PermissionDenied
-        } else {
-            ErrorCode::ApplyFailed
-        },
-        detail,
-    )
-    .with_param("path", path.as_ref().to_string_lossy())
+    crate::fs::io_failure(path.as_ref(), error, ErrorCode::ApplyFailed)
 }
 
 fn non_io_error(path: impl AsRef<Path>, error: impl std::fmt::Display) -> IpcError {
@@ -815,7 +803,7 @@ fn write_changed(path: &Path, bytes: &[u8]) -> Result<(), IpcError> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|error| io_error(path, &error))?;
     }
-    secs_types::fs::write_atomic_bytes(path, bytes).map_err(|error| io_error(path, &error))
+    crate::fs::write_atomic(path, bytes, ErrorCode::ApplyFailed)
 }
 
 #[cfg(test)]

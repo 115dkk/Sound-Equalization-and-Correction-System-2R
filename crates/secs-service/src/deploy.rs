@@ -18,7 +18,8 @@ pub(crate) fn install(root: &Path, prefix: &str, stage: &Path) -> Result<Generat
         ));
     }
     refuse_link(root)?;
-    fs::create_dir_all(root).map_err(|error| io_error(root, error))?;
+    fs::create_dir_all(root)
+        .map_err(|error| crate::fs::io_failure(root, &error, ErrorCode::ApplyFailed))?;
     refuse_link(root)?;
     for number in 1_u64.. {
         let name = format!("{prefix}-{number}");
@@ -26,9 +27,10 @@ pub(crate) fn install(root: &Path, prefix: &str, stage: &Path) -> Result<Generat
         match fs::symlink_metadata(&dir) {
             Ok(_) => continue,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => return Err(io_error(&dir, error)),
+            Err(error) => return Err(crate::fs::io_failure(&dir, &error, ErrorCode::ApplyFailed)),
         }
-        fs::rename(stage, &dir).map_err(|error| io_error(&dir, error))?;
+        fs::rename(stage, &dir)
+            .map_err(|error| crate::fs::io_failure(&dir, &error, ErrorCode::ApplyFailed))?;
         return Ok(Generation { name, dir });
     }
     unreachable!("u64 generation names are sufficient")
@@ -36,8 +38,11 @@ pub(crate) fn install(root: &Path, prefix: &str, stage: &Path) -> Result<Generat
 
 pub(crate) fn prune(root: &Path, keep: &[&str]) -> Result<(), IpcError> {
     refuse_link(root)?;
-    for entry in fs::read_dir(root).map_err(|error| io_error(root, error))? {
-        let entry = entry.map_err(|error| io_error(root, error))?;
+    for entry in fs::read_dir(root)
+        .map_err(|error| crate::fs::io_failure(root, &error, ErrorCode::ApplyFailed))?
+    {
+        let entry =
+            entry.map_err(|error| crate::fs::io_failure(root, &error, ErrorCode::ApplyFailed))?;
         if keep
             .iter()
             .any(|name| entry.file_name() == OsStr::new(name))
@@ -45,13 +50,16 @@ pub(crate) fn prune(root: &Path, keep: &[&str]) -> Result<(), IpcError> {
             continue;
         }
         let path = entry.path();
-        let metadata = fs::symlink_metadata(&path).map_err(|error| io_error(&path, error))?;
+        let metadata = fs::symlink_metadata(&path)
+            .map_err(|error| crate::fs::io_failure(&path, &error, ErrorCode::ApplyFailed))?;
         if metadata.file_type().is_symlink() {
             remove_link(&path)?;
         } else if metadata.is_dir() {
-            fs::remove_dir_all(&path).map_err(|error| io_error(&path, error))?;
+            fs::remove_dir_all(&path)
+                .map_err(|error| crate::fs::io_failure(&path, &error, ErrorCode::ApplyFailed))?;
         } else {
-            fs::remove_file(&path).map_err(|error| io_error(&path, error))?;
+            fs::remove_file(&path)
+                .map_err(|error| crate::fs::io_failure(&path, &error, ErrorCode::ApplyFailed))?;
         }
     }
     Ok(())
@@ -59,9 +67,10 @@ pub(crate) fn prune(root: &Path, keep: &[&str]) -> Result<(), IpcError> {
 
 pub(crate) fn write_entry(path: &Path, bytes: &[u8]) -> Result<(), IpcError> {
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|error| io_error(parent, error))?;
+        fs::create_dir_all(parent)
+            .map_err(|error| crate::fs::io_failure(parent, &error, ErrorCode::ApplyFailed))?;
     }
-    secs_types::fs::write_atomic_bytes(path, bytes).map_err(|error| io_error(path, error))
+    crate::fs::write_atomic(path, bytes, ErrorCode::ApplyFailed)
 }
 
 fn refuse_link(path: &Path) -> Result<(), IpcError> {
@@ -73,7 +82,7 @@ fn refuse_link(path: &Path) -> Result<(), IpcError> {
         .with_param("path", path.to_string_lossy())),
         Ok(_) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(io_error(path, error)),
+        Err(error) => Err(crate::fs::io_failure(path, &error, ErrorCode::ApplyFailed)),
     }
 }
 
@@ -82,12 +91,11 @@ fn remove_link(path: &Path) -> Result<(), IpcError> {
         Ok(()) => Ok(()),
         Err(file_error) => match fs::remove_dir(path) {
             Ok(()) => Ok(()),
-            Err(_) => Err(io_error(path, file_error)),
+            Err(_) => Err(crate::fs::io_failure(
+                path,
+                &file_error,
+                ErrorCode::ApplyFailed,
+            )),
         },
     }
-}
-
-fn io_error(path: &Path, error: impl std::fmt::Display) -> IpcError {
-    IpcError::new(ErrorCode::ApplyFailed, error.to_string())
-        .with_param("path", path.to_string_lossy())
 }

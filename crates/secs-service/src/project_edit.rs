@@ -360,12 +360,6 @@ fn read_bounded(path: &Path) -> Result<Vec<u8>, IpcError> {
     Ok(bytes)
 }
 
-fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), IpcError> {
-    let parent = path.parent().unwrap_or_else(|| Path::new("."));
-    fs::create_dir_all(parent).map_err(|error| project_io(path, error))?;
-    secs_types::fs::write_atomic_bytes(path, bytes).map_err(|error| project_io(path, error))
-}
-
 impl Service {
     pub(crate) fn config_get(&self) -> Result<ConfigResult, IpcError> {
         let session = lock(&self.session);
@@ -505,7 +499,10 @@ impl Service {
         let path = PathBuf::from(params.path);
         let mut bytes = vec![0xef, 0xbb, 0xbf];
         bytes.extend_from_slice(text.as_bytes());
-        atomic_write(&path, &bytes)?;
+        let parent = path.parent().unwrap_or_else(|| Path::new("."));
+        fs::create_dir_all(parent)
+            .map_err(|error| crate::fs::io_failure(&path, &error, ErrorCode::ProjectIo))?;
+        crate::fs::write_atomic(&path, &bytes, ErrorCode::ProjectIo)?;
         Ok(PathResult {
             path: path.to_string_lossy().into_owned(),
         })
@@ -700,7 +697,10 @@ impl Service {
         let project = session.require()?.project();
         let path = PathBuf::from(params.path);
         let text = dumps(&project.target.to_json());
-        atomic_write(&path, text.as_bytes())?;
+        let parent = path.parent().unwrap_or_else(|| Path::new("."));
+        fs::create_dir_all(parent)
+            .map_err(|error| crate::fs::io_failure(&path, &error, ErrorCode::ProjectIo))?;
+        crate::fs::write_atomic(&path, text.as_bytes(), ErrorCode::ProjectIo)?;
         Ok(PathResult {
             path: path.to_string_lossy().into_owned(),
         })
