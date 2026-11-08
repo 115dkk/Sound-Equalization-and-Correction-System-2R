@@ -7,7 +7,7 @@ use secs_project::{MeasurementPlan, Project, PyJson, TimingReference};
 /// with a native loopback input channel. The native path no longer reads that
 /// channel (U15): the screen shows the timing reference only for REW, and a
 /// native session already keeps every channel's arrival time on one clock.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct MeasurementSettings {
     pub positions: Option<Vec<i64>>,
     pub loopback_input_channel: Option<u16>,
@@ -16,25 +16,6 @@ pub struct MeasurementSettings {
     pub calibration: Option<secs_audio::MicCalibration>,
     pub calibration_file: Option<secs_mdat::CalFile>,
     pub spl_reference: Option<secs_audio::SplReference>,
-}
-impl Clone for MeasurementSettings {
-    fn clone(&self) -> Self {
-        Self {
-            positions: self.positions.clone(),
-            loopback_input_channel: self.loopback_input_channel,
-            share: self.share,
-            window: self.window,
-            calibration: self.calibration.clone(),
-            calibration_file: self
-                .calibration_file
-                .as_ref()
-                .map(|file| secs_mdat::CalFile {
-                    path: file.path.clone(),
-                    text: file.text.clone(),
-                }),
-            spl_reference: self.spl_reference,
-        }
-    }
 }
 impl Default for MeasurementSettings {
     fn default() -> Self {
