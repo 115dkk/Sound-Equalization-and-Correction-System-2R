@@ -277,10 +277,14 @@ impl Service {
         let session = lock(&self.session);
         let project = session.snapshot().map_err(IpcError::from)?;
         let project_settings = calibration_from_project(&project.project);
+        let is_override = override_settings.is_some();
         let mut settings = override_settings.unwrap_or_else(|| project_settings.clone());
         // A request may carry settings the edit checks never saw; the run, its
         // notes and its export use the bands the engine uses (ADR 0024).
         settings.rc_bands = secs_types::calibration::valid_rc_bands(&settings.rc_bands);
+        if is_override {
+            settings = settings.checked()?;
+        }
         Ok(Snapshot {
             project,
             project_settings,
@@ -873,6 +877,84 @@ mod tests {
     use super::*;
     use secs_mdat::{CalInfo, SourceInfo};
     use secs_project::{MeasurementResult, MeasurementStore};
+
+    fn snapshot_service() -> (Service, std::path::PathBuf) {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let root = std::env::temp_dir().join(format!(
+            "secs-settings-snapshot-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("settings.secs");
+        let mut project = Project::default();
+        store_calibration(&mut project, &CalibrationSettings::default());
+        MeasurementStore::new(&path, project).save().unwrap();
+        let service = Service::new(crate::Deps::default());
+        lock(&service.session).open(path).unwrap();
+        (service, root)
+    }
+
+    #[test]
+    fn calibration_snapshot_clamps_override_boost_like_settings_edit() {
+        let (service, root) = snapshot_service();
+        let settings = CalibrationSettings {
+            boost_max_db: 1e6,
+            ..Default::default()
+        };
+        assert_eq!(
+            service
+                .snapshot(Some(settings))
+                .unwrap()
+                .settings
+                .boost_max_db,
+            10.0
+        );
+        drop(service);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn calibrate_params_settings_are_checked_like_edits() {
+        let (service, root) = snapshot_service();
+        let settings = CalibrationSettings {
+            rc_lo: 5.0,
+            ..Default::default()
+        };
+        let error = service.snapshot(Some(settings)).unwrap_err();
+        assert_eq!(error.code, ErrorCode::InvalidRequest);
+        assert_eq!(error.params["field"], "rc_lo");
+        assert_eq!(error.params["reason"], "rc_lo_range");
+        for m3 in [-1.0, f64::NAN, f64::INFINITY, 0.0] {
+            let settings = CalibrationSettings {
+                room_volume_m3: Some(m3),
+                ..Default::default()
+            };
+            assert_eq!(
+                service
+                    .snapshot(Some(settings))
+                    .unwrap()
+                    .settings
+                    .room_volume_m3,
+                None
+            );
+        }
+        lock(&service.session)
+            .require_mut()
+            .unwrap()
+            .edit(|project| {
+                store_calibration(
+                    project,
+                    &CalibrationSettings {
+                        rc_lo: 10.0,
+                        ..Default::default()
+                    },
+                );
+            });
+        assert_eq!(service.snapshot(None).unwrap().settings.rc_lo, 10.0);
+        drop(service);
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn background_thread_selection_halves_parallelism_and_paces_one_cpu() {
