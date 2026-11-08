@@ -25,6 +25,11 @@ pub(crate) struct ProjectKeys {
 }
 
 impl ProjectKeys {
+    /// `config_key`와 이를 포함하는 `run_key`, `xo_rec_key`는 `SpeakerConfig`와
+    /// `XoSettings`의 `Debug` 표현을 사용합니다. 필드를 추가하면 업그레이드 뒤
+    /// 저장된 결과와 크로스오버 추천은 모두 낡음이 됩니다. 이는 유지보수자가 승인한
+    /// 정책입니다(감사 #186 TD-166, 2026-11-06). 캐시를 무효화하지 않아야 하는
+    /// 변경에서는 두 구조체의 `Debug` 출력을 그대로 유지하십시오.
     pub(crate) fn of(project: &Project) -> Self {
         let identities = match &project.measurements {
             secs_project::PyJson::Array(entries) => entries
