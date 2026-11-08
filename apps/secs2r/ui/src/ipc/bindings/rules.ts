@@ -22,6 +22,7 @@ export const CALIBRATION_LIMITS: CalibrationLimits = {
   mimo_low: [15, 150],
   mimo_max: [0, 12],
   mimo_early_ms: [5, 60],
+  peq_bands: [0, 64],
 } as const;
 export const SWEEP_LENGTHS = ["64k", "128k", "256k", "512k", "1M", "2M", "4M"] as const;
 export const START_DELAYS = ["끄기", "5 초", "10 초", "15 초"] as const;
@@ -34,10 +35,45 @@ export const MANUAL_KEY_FIELDS = ["subs_manual", "bundle_layouts", "sub_main_del
 export const MIMO_KEY_FIELDS = ["fsiso", "mimo_low", "subs_manual", "mimo_max_supports", "mimo_fir", "mimo_iir_analytic_derivatives", "mimo_seat_guard", "mimo_early_ms"] as const;
 export const JOB_GROUPS = [["device", ["measure", "sample_load", "mdat_import", "level_monitor"]], ["compute", ["calibrate", "recommend_xo", "mimo"]], ["export", ["export", "apply"]], ["status_watch", ["status_watch"]]] as const;
 export const SCALAR_EDITS = [{
+  kind: "mode",
+  field: "mode",
+  limit: "-",
+  policy: "-",
+}, {
+  kind: "sample_rate_policy",
+  field: "sample_rate_policy",
+  limit: "-",
+  policy: "-",
+}, {
   kind: "ultra_ms",
   field: "ultra_ms",
   limit: "ultra_ms",
   policy: "clamp",
+}, {
+  kind: "low_protect",
+  field: "low_protect",
+  limit: "-",
+  policy: "-",
+}, {
+  kind: "lf_align",
+  field: "lf_align",
+  limit: "-",
+  policy: "-",
+}, {
+  kind: "mode_decay",
+  field: "mode_decay",
+  limit: "-",
+  policy: "-",
+}, {
+  kind: "hf_phase",
+  field: "hf_phase",
+  limit: "-",
+  policy: "-",
+}, {
+  kind: "dip_limit",
+  field: "dip_limit",
+  limit: "-",
+  policy: "-",
 }, {
   kind: "input_hp",
   field: "input_hp_hz",
@@ -52,6 +88,16 @@ export const SCALAR_EDITS = [{
   kind: "rc_hi",
   field: "rc_hi",
   limit: "rc_hi",
+  policy: "refuse",
+}, {
+  kind: "rc_hi_basis",
+  field: "rc_hi_basis",
+  limit: "-",
+  policy: "-",
+}, {
+  kind: "rc_hi_transition",
+  field: "rc_hi_transition",
+  limit: "-",
   policy: "refuse",
 }, {
   kind: "room_volume",
@@ -69,6 +115,11 @@ export const SCALAR_EDITS = [{
   limit: "xo",
   policy: "clamp",
 }, {
+  kind: "xo_rec_include",
+  field: "xo_rec_include",
+  limit: "-",
+  policy: "-",
+}, {
   kind: "infra_boost",
   field: "infra_boost_max_db",
   limit: "infra_boost",
@@ -83,6 +134,11 @@ export const SCALAR_EDITS = [{
   field: "sub_main_delay_ms",
   limit: "main_delay",
   policy: "clamp",
+}, {
+  kind: "mimo_on",
+  field: "mimo_on",
+  limit: "-",
+  policy: "-",
 }, {
   kind: "fsiso",
   field: "fsiso",
@@ -99,11 +155,22 @@ export const SCALAR_EDITS = [{
   limit: "mimo_max",
   policy: "clamp",
 }, {
+  kind: "mimo_fir",
+  field: "mimo_fir",
+  limit: "-",
+  policy: "-",
+}, {
   kind: "mimo_early",
   field: "mimo_early_ms",
   limit: "mimo_early_ms",
   policy: "refuse",
+}, {
+  kind: "mimo_seat_guard",
+  field: "mimo_seat_guard",
+  limit: "-",
+  policy: "-",
 }] as const;
+export const KNOWN_KEYS = ["mode", "rc_lo", "rc_hi", "room_volume_m3", "room_dims_m", "mimo_on", "fsiso", "mimo_low", "mimo_max_supports", "mimo_fir", "xo", "xo_rec", "ultra_ms", "subs_manual", "sub_main_delay_ms", "bundle_layouts", "infra_boost_max_db", "xo_peq_on", "boost_max_db", "xo_peq_lo", "xo_peq_hi", "rc_bands", "low_protect", "lf_align", "mode_decay", "hf_phase", "dip_limit", "input_hp_hz", "rc_hi_basis", "rc_hi_transition", "sample_rate_policy", "peq_analytic_derivatives", "mimo_iir_analytic_derivatives", "mimo_seat_guard", "mimo_early_ms", "xo_rec_key", "xo_rec_include"] as const;
 export const EXPORT_FOLDER_TAGS = [["camilla_dsp", "camilla"], ["before_after_mdat", "mdat"], ["staged_mdat", "mdat"], ["filter_text", "text"], ["equalizer_apo", "eqapo"], ["convolution", "convolution"]] as const;
 export const MIMO_MIN_POSITIONS = 3;
 export const DESIGN_RATE = 48000;

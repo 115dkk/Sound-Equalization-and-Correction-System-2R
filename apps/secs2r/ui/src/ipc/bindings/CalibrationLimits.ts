@@ -85,4 +85,8 @@ mimo_max: [number, number],
 /**
  * Protected MIMO onset interval (ms, ADR 0037).
  */
-mimo_early_ms: [number, number], };
+mimo_early_ms: [number, number], 
+/**
+ * Input PEQ band count (None uses the engine default).
+ */
+peq_bands: [number, number], };

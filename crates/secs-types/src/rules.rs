@@ -56,6 +56,8 @@ pub struct CalibrationLimits {
     pub mimo_max: (f64, f64),
     /// Protected MIMO onset interval (ms, ADR 0037).
     pub mimo_early_ms: (f64, f64),
+    /// Input PEQ band count (None uses the engine default).
+    pub peq_bands: (f64, f64),
 }
 
 /// Upstream's clamp of a stored RC low edge (calibration.py), kept for reading
@@ -83,6 +85,7 @@ pub const CALIBRATION_LIMITS: CalibrationLimits = CalibrationLimits {
     mimo_low: (15.0, 150.0),
     mimo_max: (0.0, 12.0),
     mimo_early_ms: (5.0, 60.0),
+    peq_bands: (0.0, 64.0),
 };
 
 /// Sweep lengths a measurement plan accepts, shortest first.
@@ -178,92 +181,7 @@ pub struct ScalarEditRule {
 }
 
 /// Scalar edit rules the mock can apply without copying the service match.
-pub const SCALAR_EDITS: &[ScalarEditRule] = &[
-    ScalarEditRule {
-        kind: "ultra_ms",
-        field: "ultra_ms",
-        limit: "ultra_ms",
-        policy: "clamp",
-    },
-    ScalarEditRule {
-        kind: "input_hp",
-        field: "input_hp_hz",
-        limit: "input_hp",
-        policy: "refuse",
-    },
-    ScalarEditRule {
-        kind: "rc_lo",
-        field: "rc_lo",
-        limit: "rc_lo",
-        policy: "refuse",
-    },
-    ScalarEditRule {
-        kind: "rc_hi",
-        field: "rc_hi",
-        limit: "rc_hi",
-        policy: "refuse",
-    },
-    ScalarEditRule {
-        kind: "room_volume",
-        field: "room_volume_m3",
-        limit: "volume",
-        policy: "clamp",
-    },
-    ScalarEditRule {
-        kind: "boost_max",
-        field: "boost_max_db",
-        limit: "boost",
-        policy: "clamp",
-    },
-    ScalarEditRule {
-        kind: "xo",
-        field: "xo",
-        limit: "xo",
-        policy: "clamp",
-    },
-    ScalarEditRule {
-        kind: "infra_boost",
-        field: "infra_boost_max_db",
-        limit: "infra_boost",
-        policy: "clamp",
-    },
-    ScalarEditRule {
-        kind: "rear_trim",
-        field: "rear_trim_ms",
-        limit: "rear_trim",
-        policy: "clamp",
-    },
-    ScalarEditRule {
-        kind: "main_delay",
-        field: "sub_main_delay_ms",
-        limit: "main_delay",
-        policy: "clamp",
-    },
-    ScalarEditRule {
-        kind: "fsiso",
-        field: "fsiso",
-        limit: "fsiso",
-        policy: "clamp",
-    },
-    ScalarEditRule {
-        kind: "mimo_low",
-        field: "mimo_low",
-        limit: "mimo_low",
-        policy: "clamp",
-    },
-    ScalarEditRule {
-        kind: "mimo_max",
-        field: "mimo_max_supports",
-        limit: "mimo_max",
-        policy: "clamp",
-    },
-    ScalarEditRule {
-        kind: "mimo_early",
-        field: "mimo_early_ms",
-        limit: "mimo_early_ms",
-        policy: "refuse",
-    },
-];
+pub use crate::calibration::{KNOWN_KEYS, SCALAR_EDITS};
 
 /// Folder tag used by each `ExportKind` wire name.
 pub const EXPORT_FOLDER_TAGS: &[(&str, &str)] = &[
@@ -381,6 +299,7 @@ mod typescript {
             constant("MIMO_KEY_FIELDS", None, &MIMO_KEY_FIELDS),
             constant("JOB_GROUPS", None, &JOB_GROUPS),
             constant("SCALAR_EDITS", None, &SCALAR_EDITS),
+            constant("KNOWN_KEYS", None, &KNOWN_KEYS),
             constant("EXPORT_FOLDER_TAGS", None, &EXPORT_FOLDER_TAGS),
             constant("MIMO_MIN_POSITIONS", None, &MIMO_MIN_POSITIONS),
             constant("DESIGN_RATE", None, &DESIGN_RATE),
@@ -425,7 +344,7 @@ mod tests {
             "{limits}"
         );
         assert!(
-            limits.ends_with("  mimo_max: [0, 12],\n  mimo_early_ms: [5, 60],\n} as const;\n"),
+            limits.ends_with("  mimo_max: [0, 12],\n  mimo_early_ms: [5, 60],\n  peq_bands: [0, 64],\n} as const;\n"),
             "{limits}"
         );
     }
@@ -435,12 +354,15 @@ mod tests {
     #[test]
     fn exports_architecture_tables_to_typescript() {
         let text = rules_ts();
+        assert!(text.contains("peq_bands: [0, 64]"));
+        assert!(text.contains("filterHz: [10, 300]"));
         for name in [
             "ENGINE_KEY_FIELDS",
             "MANUAL_KEY_FIELDS",
             "MIMO_KEY_FIELDS",
             "JOB_GROUPS",
             "SCALAR_EDITS",
+            "KNOWN_KEYS",
             "EXPORT_FOLDER_TAGS",
             "MIMO_MIN_POSITIONS",
             "DESIGN_RATE",
