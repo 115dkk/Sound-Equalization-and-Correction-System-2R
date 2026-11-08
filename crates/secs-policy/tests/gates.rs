@@ -899,6 +899,94 @@ fn gpu_native_dependencies_stay_in_isolation() {
 }
 
 #[test]
+fn published_crate_sources_read_nothing_outside_the_crate() {
+    let mut violations = Vec::new();
+
+    for krate in first_party_crates() {
+        let manifest = read_toml(&krate.manifest);
+        let publish = manifest
+            .get("package")
+            .and_then(|package| package.get("publish"));
+        let publishes = match publish {
+            Some(toml::Value::Boolean(value)) => *value,
+            Some(toml::Value::Array(registries)) => !registries.is_empty(),
+            Some(toml::Value::Table(table))
+                if table
+                    .get("workspace")
+                    .and_then(toml::Value::as_bool)
+                    .is_some_and(|value| value) =>
+            {
+                read_toml(&repo_root().join("Cargo.toml"))
+                    .get("workspace")
+                    .and_then(|workspace| workspace.get("package"))
+                    .and_then(|package| package.get("publish"))
+                    .and_then(toml::Value::as_bool)
+                    .expect("workspace.package.publish must be a boolean")
+            }
+            Some(value) => panic!(
+                "{}: package.publish has an unsupported value: {value}",
+                krate.manifest.display()
+            ),
+            None => true,
+        };
+        if !publishes {
+            continue;
+        }
+
+        let crate_dir = krate
+            .dir
+            .canonicalize()
+            .unwrap_or_else(|error| panic!("{}: {error}", krate.dir.display()));
+        for source in rust_files(&krate.dir.join("src")) {
+            let code = fs::read_to_string(&source)
+                .unwrap_or_else(|error| panic!("{}: {error}", source.display()));
+            for (index, line) in code.lines().enumerate() {
+                for include in ["include_bytes!(", "include_str!("] {
+                    let Some(start) = line.find(include) else {
+                        continue;
+                    };
+                    let tail = line[start + include.len()..].trim_start();
+                    let Some(literal) = tail
+                        .strip_prefix('"')
+                        .and_then(|tail| tail.split('"').next())
+                    else {
+                        continue;
+                    };
+                    if !literal.contains("../") {
+                        continue;
+                    }
+                    let included = source
+                        .parent()
+                        .expect("Rust source must have a parent")
+                        .join(literal)
+                        .canonicalize()
+                        .unwrap_or_else(|error| {
+                            panic!(
+                                "{}:{}: cannot resolve {literal}: {error}",
+                                source.display(),
+                                index + 1
+                            )
+                        });
+                    if !included.starts_with(&crate_dir) {
+                        violations.push(format!(
+                            "{}:{}: published source reads outside its crate with {include}",
+                            relative_path(&source),
+                            index + 1
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "published crate sources must not read outside their crate:\n{}",
+        violations.join("\n")
+    );
+}
+
+#[test]
 fn os_code_stays_in_secs_sys() {
     const DEPENDENCY_SECTIONS: [&str; 3] =
         ["dependencies", "dev-dependencies", "build-dependencies"];
