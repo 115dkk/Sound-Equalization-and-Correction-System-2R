@@ -1,6 +1,7 @@
+use std::path::Path;
 use std::sync::Arc;
 
-use secs_types::ipc::{Envelope, IpcError, Request, Response};
+use secs_types::ipc::{Envelope, ErrorCode, IpcError, Request, Response};
 
 use crate::{EventSink, Service, lock};
 
@@ -187,22 +188,42 @@ pub(crate) fn dispatch(
         | Request::ResultLines
         | Request::SubTakeValues) => crate::curves::dispatch(service, request),
         Request::DialogOpenProject => service
+            .deps
+            .host
             .dialog_open_project()
             .map(Response::DialogOpenProject),
         Request::DialogSaveProject(params) => service
-            .dialog_save_project(params)
+            .deps
+            .host
+            .dialog_save_project(&params.suggested)
             .map(Response::DialogSaveProject),
-        Request::DialogPickMdat => service.dialog_pick_mdat().map(Response::DialogPickMdat),
+        Request::DialogPickMdat => service
+            .deps
+            .host
+            .dialog_pick_mdat()
+            .map(Response::DialogPickMdat),
         Request::DialogPickFolder(params) => service
-            .dialog_pick_folder(params)
+            .deps
+            .host
+            .dialog_pick_folder(params.start.as_deref().map(Path::new))
             .map(Response::DialogPickFolder),
         Request::DialogSaveFile(params) => service
-            .dialog_save_file(params)
+            .deps
+            .host
+            .dialog_save_file(params.kind, &params.suggested)
             .map(Response::DialogSaveFile),
         Request::DialogOpenFile(params) => service
-            .dialog_open_file(params)
+            .deps
+            .host
+            .dialog_open_file(params.kind)
             .map(Response::DialogOpenFile),
-        Request::OpenFolder(params) => service.open_folder(params).map(Response::OpenFolder),
+        Request::OpenFolder(params) => {
+            let path = Path::new(&params.path);
+            std::fs::create_dir_all(path)
+                .map_err(|error| IpcError::new(ErrorCode::ProjectIo, error.to_string()))
+                .and_then(|()| service.deps.host.open_folder(path))
+                .map(Response::OpenFolder)
+        }
         Request::OpenGpuHelp => service.deps.host.open_gpu_help().map(Response::OpenGpuHelp),
         Request::LevelMonitorStart(params) => service
             .start_level_monitor(params, events)

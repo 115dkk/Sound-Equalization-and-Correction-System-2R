@@ -24,7 +24,6 @@ mod export_plan;
 mod export_plan_tests;
 mod export_run;
 mod fs;
-mod host;
 mod ipc;
 mod jobs;
 pub mod mdat_import;
