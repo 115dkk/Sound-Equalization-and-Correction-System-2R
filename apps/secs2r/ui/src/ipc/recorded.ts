@@ -1,8 +1,13 @@
 // The service's recorded answers (ADR 0014, ADR 0052), written by
 // crates/secs-service/tests/recorded.rs (and the app crate's updater test
 // for `update_transitions.json`). Each file lists `{ params, data }` per
-// request; the mock answers with `data` unchanged. Service output: never
-// edit these by hand, rerun `SECS_RECORD=1 cargo test -p secs-service --test recorded`.
+// request. `recorded()` returns the no-input answers (`RECORDED`) as they
+// are; the keyed ones are read through `recordedCalibration` (by the
+// settings' `recordKey`), `recordedRefusal` (by the edit) and the export
+// and updater tables, and the mock adds only its own state to them (whether
+// a result is still current, the folder written to). recorded.test.ts
+// replays every file against the mock. Service output: never edit these by
+// hand, rerun `SECS_RECORD=1 cargo test -p secs-service --test recorded`.
 import type { CalibrationSettings } from "./bindings/CalibrationSettings";
 import type { ErrorCode } from "./bindings/ErrorCode";
 import type { ExportKind } from "./bindings/ExportKind";
