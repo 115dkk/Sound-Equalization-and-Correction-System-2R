@@ -1394,6 +1394,8 @@ jobs:
                 cp ../crates/secs-dirac/tests/data/*.liveproject "corpus/$target/" ;;
               project_load_text)
                 cp ../oracle/goldens/service_config/*.secs "corpus/$target/" ;;
+              source_info_parse)
+                cp ../crates/secs-project/tests/data/*.src.json "corpus/$target/" ;;
               wav_read)
                 cp ../oracle/goldens/project/wav_*.wav "corpus/$target/" ;;
               *)
