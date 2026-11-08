@@ -93,15 +93,81 @@ fn refuse_link(path: &Path) -> Result<(), IpcError> {
 }
 
 fn remove_link(path: &Path) -> Result<(), IpcError> {
-    match fs::remove_file(path) {
-        Ok(()) => Ok(()),
-        Err(file_error) => match fs::remove_dir(path) {
-            Ok(()) => Ok(()),
-            Err(_) => Err(crate::fs::io_failure(
-                path,
-                &file_error,
-                ErrorCode::ApplyFailed,
-            )),
-        },
+    let metadata = fs::symlink_metadata(path)
+        .map_err(|error| crate::fs::io_failure(path, &error, ErrorCode::ApplyFailed))?;
+    let result = if metadata.is_dir() {
+        fs::remove_dir(path)
+    } else {
+        fs::remove_file(path)
+    };
+    result.map_err(|error| crate::fs::io_failure(path, &error, ErrorCode::ApplyFailed))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    struct TempDir(PathBuf);
+
+    impl TempDir {
+        fn new() -> Self {
+            static NEXT: AtomicU64 = AtomicU64::new(0);
+            let path = std::env::temp_dir().join(format!(
+                "secs-service-deploy-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ));
+            fs::create_dir_all(&path).unwrap();
+            Self(path)
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn install_refuses_a_prefix_that_is_not_one_file_name_td202() {
+        let temp = TempDir::new();
+        let root = temp.0.join("root");
+        for prefix in ["a/b", "..", ""] {
+            let stage = temp
+                .0
+                .join(format!("stage-{}", prefix.replace(['/', '.'], "_")));
+            fs::create_dir(&stage).unwrap();
+            let error = match install(&root, prefix, &stage) {
+                Err(error) => error,
+                Ok(_) => panic!("accepted prefix {prefix:?}"),
+            };
+            assert_eq!(error.code, ErrorCode::InvalidRequest);
+            assert_eq!(error.detail, "generation prefix must be one file name");
+            assert!(stage.is_dir(), "stage was changed for prefix {prefix:?}");
+        }
+    }
+
+    #[test]
+    fn remove_link_removes_a_file_or_an_empty_directory_td202() {
+        let temp = TempDir::new();
+
+        let file = temp.0.join("file");
+        fs::write(&file, b"file").unwrap();
+        remove_link(&file).unwrap();
+        assert!(!file.exists());
+
+        let empty = temp.0.join("empty");
+        fs::create_dir(&empty).unwrap();
+        remove_link(&empty).unwrap();
+        assert!(!empty.exists());
+
+        let nonempty = temp.0.join("nonempty");
+        fs::create_dir(&nonempty).unwrap();
+        fs::write(nonempty.join("held"), b"held").unwrap();
+        let error = remove_link(&nonempty).unwrap_err();
+        assert_eq!(error.code, ErrorCode::ApplyFailed);
+        assert_eq!(error.params["path"], nonempty.to_string_lossy());
+        assert!(nonempty.is_dir());
     }
 }
