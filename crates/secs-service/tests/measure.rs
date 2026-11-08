@@ -1,8 +1,8 @@
 #![forbid(unsafe_code)]
 use secs_project::{MeasurementStore, Project, PyJson};
 use secs_service::{
-    CancelToken, Deps, EventSink, MeasurementSettings, MockMeasurer, NoEvents, RewMeasurer,
-    Service, plan_for, sample, store_devices, to_audio_plan, to_rew_plan,
+    CancelToken, Deps, EventSink, MeasureError, MeasurementSettings, MockMeasurer, NoEvents,
+    RewMeasurer, Service, plan_for, sample, store_devices, to_audio_plan, to_rew_plan,
 };
 use secs_types::ipc::{
     Envelope, JobCancelParams, JobEvent, JobStatus, MeasureConfigureParams, MeasurePositionParams,
@@ -237,6 +237,24 @@ fn test_measurements_follow_contract_shape() {
     assert_eq!(records[0].uuid.len(), p.roles.len());
     std::fs::remove_dir_all(dir).unwrap();
 }
+#[test]
+fn rew_pro_gate_is_reported_through_the_measurer_td220() {
+    let mut fake = secs_rew::FakeRew::new(sample::SampleSource);
+    fake.options.delay = Duration::ZERO;
+    fake.options.pro = false;
+    let mut rew = RewMeasurer::new(fake, Arc::new(|| 0));
+    let error = rew
+        .measure_position(&plan(), 1, &CancelToken::default())
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        MeasureError::Rew(secs_rew::RewError::ProRequired {
+            status: 403,
+            ref path,
+        }) if path == "/measure/sweep/configuration"
+    ));
+}
+
 #[test]
 fn rew_measurements_capture_calibration_and_keep_bad_sensitivity_measurements() {
     let mut p = plan();

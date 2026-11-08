@@ -1131,3 +1131,41 @@ fn segment(s: &str) -> String {
         })
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wait_for_new_measurement_propagates_the_first_transient_error() {
+        let request = Request::new(
+            "GET",
+            "/measurements",
+            None,
+            READ_TIMEOUT.max(Duration::from_secs(10)),
+        );
+        let transport = RecordedTransport::new([RecordedExchange {
+            request,
+            response: Err(RewError::connection(
+                "/measurements",
+                "transient connection failure",
+            )),
+        }]);
+        let copy = transport.clone();
+        let mut client = RewClient::new(transport);
+        client.poll_interval = Duration::ZERO;
+        let error = client
+            .wait_for_new_measurement(
+                &BTreeSet::new(),
+                Duration::from_secs(1),
+                &CancelToken::default(),
+            )
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            RewError::Connection { ref path, .. } if path == "/measurements"
+        ));
+        copy.assert_finished();
+        assert_eq!(copy.calls().len(), 1);
+    }
+}

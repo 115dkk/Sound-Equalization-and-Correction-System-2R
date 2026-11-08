@@ -297,6 +297,19 @@ impl<S: IrSource> FakeRew<S> {
             .map(|(u, ir)| json!({"uuid":u,"sampleRate":ir.sample_rate,"samples":ir.ir.len()}))
             .collect()
     }
+    pub fn configure(&mut self, plan: &MeasurementPlan) -> Result<(), RewError> {
+        self.calls.push((
+            "configure".into(),
+            json!({"sample_rate":plan.sample_rate,"roles":plan.roles}),
+        ));
+        if !self.options.pro {
+            return Err(RewError::ProRequired {
+                status: 403,
+                path: "/measure/sweep/configuration".into(),
+            });
+        }
+        Ok(())
+    }
     pub fn run_position(
         &mut self,
         plan: &MeasurementPlan,
@@ -304,6 +317,7 @@ impl<S: IrSource> FakeRew<S> {
         on_progress: Option<ProgressCallback>,
         cancel: &CancelToken,
     ) -> Result<Vec<MeasurementResult>, RewError> {
+        self.configure(plan)?;
         self.calls
             .push(("run_position".into(), json!({"pos":pos,"roles":plan.roles})));
         let mut results = vec![];

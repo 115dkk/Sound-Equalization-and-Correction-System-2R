@@ -191,7 +191,16 @@ fn rew_headings_are_skipped_and_broken_rows_still_fail() {
     );
     let prefix = "20 0\n1000 0\n#";
     let at_limit = format!("{prefix}{}", " ".repeat(4 * 1024 * 1024 - prefix.len()));
-    assert!(MicCalibration::parse_checked(&at_limit).is_ok());
+    let parsed = MicCalibration::parse_checked(&at_limit).unwrap();
+    assert_eq!(parsed.points().len(), 2);
+    assert_eq!(
+        parsed
+            .points()
+            .iter()
+            .map(|point| point.frequency)
+            .collect::<Vec<_>>(),
+        [20.0, 1000.0]
+    );
     assert!(matches!(
         MicCalibration::parse("heading\n20 broken"),
         Err(AudioError::UnsupportedFormat(message)) if message == "invalid calibration line 2"

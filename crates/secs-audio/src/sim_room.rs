@@ -12,6 +12,7 @@ struct Room {
     latency: usize,
     noise_rms: f64,
     seed: u64,
+    discontinuous_reads: bool,
 }
 
 #[derive(Debug, Default)]
@@ -61,9 +62,19 @@ impl SimRoom {
                 latency,
                 noise_rms: 10_f64.powf(noise_dbfs / 20.0),
                 seed,
+                discontinuous_reads: false,
             }),
             state: Arc::new(Mutex::new(State::default())),
         })
+    }
+
+    /// Makes every third capture read report a gap. Test-only simulator option;
+    /// ordinary rooms keep continuous reads.
+    pub fn with_discontinuous_reads(mut self, enabled: bool) -> Self {
+        Arc::get_mut(&mut self.room)
+            .expect("SimRoom options must be set before cloning")
+            .discontinuous_reads = enabled;
+        self
     }
 
     pub fn endpoint(&self) -> Endpoint {
@@ -168,6 +179,7 @@ impl AudioBackend for SimRoom {
             cursor: 0,
             rng: Noise::new(self.room.seed),
             started: false,
+            reads: 0,
         }))
     }
 }
@@ -235,6 +247,7 @@ struct Input {
     cursor: usize,
     rng: Noise,
     started: bool,
+    reads: usize,
 }
 impl InputSession for Input {
     fn start(&mut self) -> Result<(), AudioError> {
@@ -250,6 +263,8 @@ impl InputSession for Input {
         if !self.started {
             return Err(invalid("simulation input not started"));
         }
+        self.reads += 1;
+        let discontinuity = self.backend.room.discontinuous_reads && self.reads.is_multiple_of(3);
         let state = self
             .backend
             .state
@@ -258,7 +273,7 @@ impl InputSession for Input {
         let Some(data) = &state.captured else {
             return Ok(CaptureRead {
                 frames: 0,
-                discontinuity: false,
+                discontinuity,
                 silent: true,
             });
         };
@@ -274,7 +289,7 @@ impl InputSession for Input {
         self.cursor += frames;
         Ok(CaptureRead {
             frames,
-            discontinuity: false,
+            discontinuity,
             silent: dst.iter().all(|&x| x == 0.0),
         })
     }

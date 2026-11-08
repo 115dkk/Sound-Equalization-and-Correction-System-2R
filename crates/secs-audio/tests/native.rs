@@ -159,7 +159,64 @@ fn cancellation_during_position_returns_no_roles() {
     });
     assert!(matches!(result, Err(AudioError::Cancelled)));
     // The backend can be reused after cancellation (both handles were dropped).
-    assert!(measure_position(&room, &plan, 1, &CancelToken::new(), &mut |_| {}).is_ok());
+    let reused = measure_position(&room, &plan, 1, &CancelToken::new(), &mut |_| {}).unwrap();
+    assert_eq!(
+        reused
+            .roles
+            .iter()
+            .map(|role| role.role.as_str())
+            .collect::<Vec<_>>(),
+        ["L", "R"]
+    );
+}
+
+#[test]
+fn measure_position_reports_a_capture_gap_td220() {
+    let run = |discontinuous_reads| {
+        let room = SimRoom::new(
+            48_000,
+            vec![vec![impulse(256, 12, 0.7)], vec![impulse(256, 20, 0.5)]],
+            31,
+            -80.0,
+            7,
+        )
+        .unwrap()
+        .with_discontinuous_reads(discontinuous_reads);
+        let mut plan = MeasurementPlan::new(
+            room.endpoint(),
+            room.endpoint(),
+            vec![
+                RoleOutput {
+                    role: "L".into(),
+                    channel: 1,
+                },
+                RoleOutput {
+                    role: "R".into(),
+                    channel: 2,
+                },
+            ],
+        );
+        plan.sweep_length = "64k".into();
+        measure_position(&room, &plan, 1, &CancelToken::new(), &mut |_| {})
+    };
+
+    assert!(matches!(
+        run(true),
+        Err(AudioError::Recording {
+            issue: RecordingIssue::Gap,
+            ..
+        })
+    ));
+    let measured = run(false).unwrap();
+    assert_eq!(
+        measured
+            .roles
+            .iter()
+            .map(|role| role.role.as_str())
+            .collect::<Vec<_>>(),
+        ["L", "R"]
+    );
+    assert!(measured.roles.iter().all(|role| role.snr_db.is_finite()));
 }
 
 #[test]
