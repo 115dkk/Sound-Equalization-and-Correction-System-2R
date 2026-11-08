@@ -1248,3 +1248,101 @@ fn design_missing_reference_sub_returns_structured_error() {
         position: actual, role: missing,
     } if actual == position && missing == role));
 }
+
+#[test]
+fn design_rejects_invalid_settings_before_allocation() {
+    use secs_compute::{CancelToken, MemoryBudget, NoProgress};
+    let case = cases::load(&crate::tests::Oracle, "room_manual");
+    let mut bad = Vec::new();
+    for volume in [-1.0, f64::NAN, f64::INFINITY] {
+        let mut config = case.config.clone();
+        config.room_volume_m3 = Some(volume);
+        bad.push(("room_volume_m3 ".to_owned(), config));
+    }
+    let mut config = case.config.clone();
+    config.max_boost_db = f64::NAN;
+    bad.push(("max_boost_db ".into(), config));
+    let mut config = case.config.clone();
+    config.lift_ms = 201.0;
+    bad.push(("lift_ms ".into(), config));
+    let mut config = case.config.clone();
+    config.rc_range = (500.0, Some(100.0));
+    bad.push(("rc_range ".into(), config));
+    let mut config = case.config.clone();
+    config.peq_bands = Some(usize::MAX);
+    bad.push(("peq_bands ".into(), config));
+    let mut config = case.config.clone();
+    let (role, sub) = config.sub_manual.first_mut().expect("manual sub fixture");
+    sub.hp_hz = 100.0;
+    sub.lp_hz = 50.0;
+    let field = format!("sub_manual.{role}.hp_hz ");
+    bad.push((field, config));
+    let mut config = case.config.clone();
+    config.rc_hi_transition = 3;
+    config.rc_range.1 = Some(300.0);
+    bad.push(("rc_hi_transition ".into(), config));
+    let mut failures = Vec::new();
+    for (prefix, config) in bad {
+        let context = Context::new(
+            1,
+            MemoryBudget::new(1024),
+            Arc::new(NoProgress),
+            CancelToken::new(),
+        );
+        let result = design::design(
+            &DesignRequest {
+                measurements: &case.measurements,
+                config: &config,
+                tuning: &case.tuning,
+                subs_only: false,
+                adapter_notes: &[],
+            },
+            &context,
+            &*design::production_fitters(&context),
+        );
+        if !matches!(&result, Err(crate::EngineError::Input(m)) if m.starts_with(&prefix)) {
+            failures.push(format!("{prefix}: {:?}", result.err()));
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "{}",
+        failures.join(
+            "
+"
+        )
+    );
+    for lift_ms in [0.0, 8.0, 28.0, 198.0] {
+        let mut config = case.config.clone();
+        config.lift_ms = lift_ms;
+        assert!(design::check_config(&config).is_ok(), "{lift_ms}");
+    }
+    let mut config = case.config.clone();
+    config.rc_range.0 = 10.0;
+    assert!(design::check_config(&config).is_ok());
+    for peq_bands in [None, Some(0), Some(16), Some(64)] {
+        config.peq_bands = peq_bands;
+        assert!(design::check_config(&config).is_ok(), "{peq_bands:?}");
+    }
+    for volume in [None, Some(0.0), Some(120.0)] {
+        config.room_volume_m3 = volume;
+        assert!(design::check_config(&config).is_ok(), "{volume:?}");
+    }
+}
+
+#[test]
+fn room_volume_predicate_ignores_zero_and_nonfinite() {
+    let mut config = cases::load(&crate::tests::Oracle, "room").config;
+    for volume in [
+        None,
+        Some(0.0),
+        Some(-1.0),
+        Some(f64::NAN),
+        Some(f64::INFINITY),
+    ] {
+        config.room_volume_m3 = volume;
+        assert_eq!(crate::levels::room_volume(&config), None, "{volume:?}");
+    }
+    config.room_volume_m3 = Some(120.0);
+    assert_eq!(crate::levels::room_volume(&config), Some(120.0));
+}

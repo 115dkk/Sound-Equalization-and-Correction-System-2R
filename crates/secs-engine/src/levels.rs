@@ -88,6 +88,10 @@ pub fn band_level(
     )
 }
 
+pub(crate) fn room_volume(config: &EngineConfig) -> Option<f64> {
+    config.room_volume_m3.filter(|v| v.is_finite() && *v > 0.0)
+}
+
 #[derive(Clone, Copy, Default)]
 pub(crate) struct Schroeder {
     pub strict: Option<f64>,
@@ -109,7 +113,7 @@ impl Schroeder {
         ctx: &secs_compute::Context,
     ) -> Result<Self, crate::EngineError> {
         ctx.cancel().check()?;
-        if config.rc_range.1.is_some() || config.room_volume_m3.is_none_or(|v| v == 0.0) {
+        if config.rc_range.1.is_some() || room_volume(config).is_none() {
             return Ok(Self::default());
         }
         let lenient = config.rc_hi_basis == secs_types::calibration::RcHiBasis::Lenient;
@@ -146,7 +150,7 @@ fn strict_until(
     config: &EngineConfig,
     ctx: &secs_compute::Context,
 ) -> Result<Option<f64>, EngineError> {
-    let Some(volume) = config.room_volume_m3.filter(|v| *v != 0.0) else {
+    let Some(volume) = room_volume(config) else {
         return Ok(None);
     };
     let mut t60s = Vec::new();
@@ -201,7 +205,7 @@ fn lenient_until(
     config: &EngineConfig,
     ctx: &secs_compute::Context,
 ) -> Result<Option<(f64, f64, f64)>, EngineError> {
-    let Some(volume) = config.room_volume_m3.filter(|v| v.is_finite() && *v > 0.0) else {
+    let Some(volume) = room_volume(config) else {
         return Ok(None);
     };
     let width = 2.0_f64.powf(1.0 / 6.0);

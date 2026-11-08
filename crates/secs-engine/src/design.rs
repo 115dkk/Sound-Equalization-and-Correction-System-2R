@@ -322,6 +322,111 @@ pub(crate) fn check_input_hp(config: &EngineConfig) -> Result<(), EngineError> {
     }
 }
 
+/// Checks settings before preparing any design arrays.
+pub(crate) fn check_config(config: &EngineConfig) -> Result<(), EngineError> {
+    use secs_types::rules::{
+        CALIBRATION_LIMITS as limits, RC_LO_READ, SUB_LIMITS, TRANSITION_FACTORS,
+    };
+    check_taps(config)?;
+    check_input_hp(config)?;
+    let range = |field: &str, value: f64, bounds: (f64, f64), unit: &str| {
+        if value.is_finite() && (bounds.0..=bounds.1).contains(&value) {
+            Ok(())
+        } else {
+            Err(EngineError::Input(format!(
+                "{field} {value} outside {}..={} {unit}",
+                bounds.0, bounds.1
+            )))
+        }
+    };
+    if let Some(volume) = config.room_volume_m3 {
+        if !volume.is_finite() || volume < 0.0 {
+            return Err(EngineError::Input(format!(
+                "room_volume_m3 {volume} m³ must be greater than 0"
+            )));
+        }
+        range("room_volume_m3", volume, limits.volume, "m³")?;
+    }
+    range("max_boost_db", config.max_boost_db, limits.boost, "dB")?;
+    range("lift_ms", config.lift_ms, (0.0, limits.ultra_ms.1), "ms")?;
+    if let Some(hi) = config.rc_range.1 {
+        if config.rc_range.0 >= hi {
+            return Err(EngineError::Input(format!(
+                "rc_range {}..={hi} Hz must be ascending",
+                config.rc_range.0
+            )));
+        }
+        range("rc_range", hi, limits.rc_hi, "Hz")?;
+    }
+    range("rc_range", config.rc_range.0, RC_LO_READ, "Hz")?;
+    if let Some(bands) = config.peq_bands
+        && bands > limits.peq_bands.1 as usize
+    {
+        return Err(EngineError::Input(format!(
+            "peq_bands {bands} outside 0..={}",
+            limits.peq_bands.1
+        )));
+    }
+    for (role, sub) in &config.sub_manual {
+        for (name, hz) in [("hp_hz", sub.hp_hz), ("lp_hz", sub.lp_hz)] {
+            if hz != 0.0 {
+                range(
+                    &format!("sub_manual.{role}.{name}"),
+                    hz,
+                    SUB_LIMITS.filter_hz,
+                    "Hz",
+                )?;
+            }
+        }
+        if sub.hp_hz != 0.0 && sub.lp_hz != 0.0 && sub.hp_hz >= sub.lp_hz {
+            return Err(EngineError::Input(format!(
+                "sub_manual.{role}.hp_hz {} Hz must be below lp_hz {} Hz",
+                sub.hp_hz, sub.lp_hz
+            )));
+        }
+    }
+    if !TRANSITION_FACTORS.contains(&config.rc_hi_transition) {
+        return Err(EngineError::Input(format!(
+            "rc_hi_transition {} must be 1, 2 or 4",
+            config.rc_hi_transition
+        )));
+    }
+    range(
+        "infra_boost_max_db",
+        config.infra_boost_max_db,
+        limits.infra_boost,
+        "dB",
+    )?;
+    range(
+        "sub_main_delay_ms",
+        config.sub_main_delay_ms,
+        limits.main_delay,
+        "ms",
+    )?;
+    range("xo_peq_lo_hz", config.xo_peq_lo_hz, limits.xo_peq, "Hz")?;
+    range("xo_peq_hi_hz", config.xo_peq_hi_hz, limits.xo_peq, "Hz")?;
+    for (group, hz) in &config.xo {
+        range(&format!("xo.{group}"), *hz, limits.xo, "Hz")?;
+    }
+    if config.rc_bands.len() > limits.rc_bands_max.1 as usize {
+        return Err(EngineError::Input(format!(
+            "rc_bands {} outside 0..={}",
+            config.rc_bands.len(),
+            limits.rc_bands_max.1
+        )));
+    }
+    for &(lo, hi) in &config.rc_bands {
+        range("rc_bands", lo, limits.rc_band, "Hz")?;
+        range("rc_bands", hi, limits.rc_band, "Hz")?;
+        if lo >= hi {
+            return Err(EngineError::Input(format!(
+                "rc_bands {lo}..={hi} Hz must be ascending"
+            )));
+        }
+    }
+    Ok(())
+}
+
 /// Full-grid arrays one `rc::channel` keeps alive at once, in spectra (16
 /// bytes per bin). `prepare_correction` holds `p`, `m`, `u`, `reference`, `mp`
 /// and the minimum-phase buffers (`logm`, `cep`, FFT output) beside the f64
@@ -436,8 +541,7 @@ pub(crate) fn design_observed(
     observed: &(dyn Fn(&str, std::time::Duration) + Sync),
 ) -> Result<Design, EngineError> {
     ctx.cancel().check()?;
-    check_taps(req.config)?;
-    check_input_hp(req.config)?;
+    check_config(req.config)?;
     let prep_started = std::time::Instant::now();
     let config = req.config;
     let setup = Setup::new(config);
@@ -1426,8 +1530,7 @@ fn design_pass(stage: PassContext<'_, '_, '_>) -> Result<(Design, Vec<f64>), Eng
     let prepared = stage.prepared;
     let pass = stage.pass;
     ctx.cancel().check()?;
-    check_taps(req.config)?;
-    check_input_hp(req.config)?;
+    check_config(req.config)?;
     let config = req.config;
     let mut setup = Setup::new(config);
     if matches!(pass, RcPass::Probe) {
