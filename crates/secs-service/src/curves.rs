@@ -34,18 +34,6 @@ pub(crate) type CurvesCache = Mutex<HashMap<CurveCacheKey, Arc<Vec<f64>>>>;
 #[cfg(test)]
 use secs_engine::Design as display;
 
-pub(crate) fn dispatch(service: &Service, request: Request) -> Result<Response, IpcError> {
-    match request {
-        Request::MeasurementCurves(params) => service
-            .measurement_curves(params)
-            .map(Response::MeasurementCurves),
-        Request::ResultCurves(params) => service.result_curves(params).map(Response::ResultCurves),
-        Request::ResultLines => service.result_lines().map(Response::ResultLines),
-        Request::SubTakeValues => service.sub_take_values().map(Response::SubTakeValues),
-        _ => unreachable!("curve dispatch only receives curve requests"),
-    }
-}
-
 fn axes(frequency_hz: [f64; 2], value: [f64; 2], unit: &str) -> CurveAxes {
     CurveAxes {
         frequency_hz,
@@ -192,7 +180,7 @@ fn sub_reference(curve: &[f64]) -> f64 {
 }
 
 impl Service {
-    fn measurement_curves(
+    pub(crate) fn measurement_curves(
         &self,
         params: MeasurementCurvesParams,
     ) -> Result<MeasurementCurvesResult, IpcError> {
@@ -351,7 +339,10 @@ impl Service {
         })
     }
 
-    fn result_curves(&self, params: ResultCurvesParams) -> Result<ResultCurvesResult, IpcError> {
+    pub(crate) fn result_curves(
+        &self,
+        params: ResultCurvesParams,
+    ) -> Result<ResultCurvesResult, IpcError> {
         if params.xo_hz.is_some_and(|hz| !hz.is_finite() || hz <= 0.0) {
             return Err(IpcError::new(
                 ErrorCode::InvalidRequest,
@@ -594,7 +585,7 @@ impl Service {
         })
     }
 
-    fn result_lines(&self) -> Result<ResultLinesResult, IpcError> {
+    pub(crate) fn result_lines(&self) -> Result<ResultLinesResult, IpcError> {
         self.read_open(|open, compute_key| {
             let project = open.project();
             let summary = open.results.summary(project, compute_key);
@@ -786,7 +777,7 @@ impl Service {
             .collect())
     }
 
-    fn sub_take_values(&self) -> Result<CalibrationSettings, IpcError> {
+    pub(crate) fn sub_take_values(&self) -> Result<CalibrationSettings, IpcError> {
         let mut session = lock(&self.session);
         let open = session.require_mut().map_err(IpcError::from)?;
         let run = open.results.live_calibration().ok_or_else(|| {

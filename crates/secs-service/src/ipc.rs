@@ -183,10 +183,12 @@ pub(crate) fn dispatch(
             .host
             .local_api_regenerate_token()
             .map(Response::LocalApiTokenRegenerate),
-        request @ (Request::MeasurementCurves(_)
-        | Request::ResultCurves(_)
-        | Request::ResultLines
-        | Request::SubTakeValues) => crate::curves::dispatch(service, request),
+        Request::MeasurementCurves(params) => service
+            .measurement_curves(params)
+            .map(Response::MeasurementCurves),
+        Request::ResultCurves(params) => service.result_curves(params).map(Response::ResultCurves),
+        Request::ResultLines => service.result_lines().map(Response::ResultLines),
+        Request::SubTakeValues => service.sub_take_values().map(Response::SubTakeValues),
         Request::DialogOpenProject => service
             .deps
             .host
