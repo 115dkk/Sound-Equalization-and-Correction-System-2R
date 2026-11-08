@@ -347,6 +347,9 @@ jobs:
 
       - name: Install tauri-driver 2.1.0 and a signed matching Edge driver
         run: |
+          # This job restores no cache (ADR 0006, see the header), so tauri-driver is
+          # built here once per release, about a minute. The two GUI jobs in ci.yml
+          # reuse the installed binary through rust-cache (audit #186 TD-242).
           cargo install tauri-driver --locked --version 2.1.0
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python -I "$env:GITHUB_WORKSPACE\.github\scripts\manage_e2e.py" prepare-edge "$env:RUNNER_TEMP\update-edge" "$env:RUNNER_TEMP\update-e2e"
