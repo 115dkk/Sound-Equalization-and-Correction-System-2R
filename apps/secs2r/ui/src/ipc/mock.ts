@@ -131,12 +131,14 @@ const SCALAR = new Map<string, (typeof SCALAR_EDITS)[number]>(SCALAR_EDITS.map((
 /**
  * The number a scalar edit sets (`SCALAR_EDITS`, ADR 0052): clamped to its
  * limits, or refused outside them with the service's recorded refusal. Null
- * turns the setting off and passes through.
+ * turns the setting off and passes through, and so does a row without a
+ * numeric limit (`limit: "-"`: the booleans, the enums, and
+ * `rc_hi_transition`, whose 1|2|4 rule `TRANSITION_FACTORS` checks).
  */
 function scalar(edit: SettingEdit): number | null {
   const rule = SCALAR.get(edit.kind);
   const [value = null] = Object.entries(edit).flatMap(([key, item]) => key !== "kind" && (typeof item === "number" || item === null) ? [item as number | null] : []);
-  if (!rule || value === null) return value;
+  if (!rule || value === null || rule.limit === "-") return value;
   const limits = LIMITS[rule.limit];
   if (rule.policy === "clamp") return clamp(value, limits);
   if (!Number.isFinite(value) || value < limits[0] || value > limits[1]) {
