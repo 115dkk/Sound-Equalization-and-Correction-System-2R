@@ -140,6 +140,8 @@ export function useConnectScreen(active: boolean): { view: ConnectView | null; a
         try { await session.call({ method: "rew_driver_set", params: { driver } }); }
         finally { session.host.set({ switchingRewDriver: false }); }
       }),
+      // The method the service holds, with the path ("" for the installed REW); a refusal stays at the field.
+      setRewExecutable: (rew_executable) => session.run(() => session.writers.measurement.edit({ rew_executable })),
       // On the REW path measure_configure also opens the device in REW; read REW again for its channels.
       setInputDevice: (input_device) => session.run(async () => {
         if (!await session.writers.measurement.edit({ input_device })) return;
@@ -173,7 +175,7 @@ export function useConnectScreen(active: boolean): { view: ConnectView | null; a
   } : {};
   return { view: config ? {
     path: host.path, methods, settings, config, sampleRate: settings?.sample_rate ?? 48000,
-    rew: { launch: host.rewLaunch, problem: host.rewProblem, problemDetail: host.rewProblemDetail, readingSettings: host.readingRew, switchingDriver: host.switchingRewDriver, details },
+    rew: { launch: host.rewLaunch, problem: host.rewProblem, problemDetail: host.rewProblemDetail, readingSettings: host.readingRew, switchingDriver: host.switchingRewDriver, details, executableError: host.rewExecutableError },
     micCalibration: { status: micCalibration, busy: host.micCalBusy, error: host.micCalError },
     levels: levels?.levels ?? {},
     level: { monitor: host.monitor, error: host.monitorError, reading: host.meter, playing: host.playing, playingAll: host.playingAll, masterDbfs: host.masterDbfs },

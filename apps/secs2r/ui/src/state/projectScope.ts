@@ -25,6 +25,8 @@ export type ProjectHostState = Pick<MeasureView, "selected" | "mdat" | "warnings
   applyRuns: Partial<Record<ApplyTarget, ApplyRun>>;
   failure: CalibrateView["failure"]; rangeRejection: CalibrateView["rangeRejection"];
   micCalBusy: MicCalibrationView["busy"]; micCalError: MicCalibrationView["error"];
+  /** 연결·점검: the refusal of the REW executable path sent last (the project stores the path). */
+  rewExecutableError: IpcError | null;
   /** Projects opened or created in this window; screens reset what they hid for the previous one when it changes. */
   opened: number;
 };
@@ -63,7 +65,7 @@ export const PROJECT_HOST_DEFAULTS = {
   xoRecTurnedOffByEdit: false, xoRecommendation: null,
   runs: {}, mdatScope: "all", designName: "", applyRuns: {},
   failure: null, rangeRejection: null,
-  micCalBusy: null, micCalError: null,
+  micCalBusy: null, micCalError: null, rewExecutableError: null,
 } satisfies Omit<ProjectHostState, "opened">;
 
 type Stores = Session["stores"];

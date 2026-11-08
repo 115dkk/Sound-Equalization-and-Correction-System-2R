@@ -85,7 +85,7 @@ const base: ConnectView = {
   settings: null,
   config: sampleView.config,
   sampleRate: 48000,
-  rew: { launch: "idle", problem: null, problemDetail: null, readingSettings: false, switchingDriver: false, details: {} },
+  rew: { launch: "idle", problem: null, problemDetail: null, readingSettings: false, switchingDriver: false, details: {}, executableError: null },
   micCalibration: { status: { file: null, attached: 0, attachable: 0 }, busy: null, error: null },
   levels: {},
   level: { monitor: "off", error: null, reading: null, playing: null, playingAll: false, masterDbfs: -20 },
@@ -168,6 +168,19 @@ export const rewJavaView: ConnectView = {
 
 /** REW switching from Java to ASIO: the fields wait until it has reopened its devices. */
 export const rewSwitchingView: ConnectView = { ...rewJavaView, rew: { ...rewJavaView.rew, switchingDriver: true } };
+
+/** A portable REW the project names instead of the installed one (TD-221). */
+export const rewExecutableView: ConnectView = {
+  ...rewJavaView,
+  settings: { ...rewJavaView.settings!, rew_executable: "D:/Tools/REW/roomeqwizard.exe" },
+  rew: { ...rewJavaView.rew, details: { ...rewJavaView.rew.details, executable: "D:/Tools/REW/roomeqwizard.exe" } },
+};
+
+/** A relative path typed into REW 실행 파일: the service's refusal at the field, the stored path kept. */
+export const rewExecutableRefusedView: ConnectView = {
+  ...rewJavaView,
+  rew: { ...rewJavaView.rew, executableError: { code: "measurement_input", params: { field: "rew_executable" }, retryable: false, detail: "executable path must be absolute" } },
+};
 
 /** Native measurement with a USB mic and a 16-output interface; the monitor reads the quiet room. */
 export const nativeView: ConnectView = {

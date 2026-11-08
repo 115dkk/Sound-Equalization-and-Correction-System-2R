@@ -75,7 +75,7 @@ export function createSession(ipc: Ipc) {
     designName: "", camillaDevices: { capture: { type: "file" }, playback: { type: "file" } }, extraRates: [],
     applyRuns: {}, applyAddressDraft: null, applyChecking: false, applyReverting: false,
     applyExeDraft: null, hostInstalling: false, hostStopping: false, hostFailure: null,
-    micCalBusy: null, micCalError: null,
+    micCalBusy: null, micCalError: null, rewExecutableError: null,
     rewLaunch: "idle", rewProblem: null, rewProblemDetail: null, readingRew: false, switchingRewDriver: false, opened: 0,
   });
   // A patch that changes nothing keeps the snapshot, so subscribers do not render again (TD-176).
@@ -249,6 +249,8 @@ export function createSession(ipc: Ipc) {
         }
         // Undo restores saved settings; the previous manual-edit notice is no longer current.
         if (["undo", "redo"].includes(request.method)) host.set({ xoRecTurnedOffByEdit: false });
+        // A REW executable path taken clears the refusal shown at its field.
+        if (request.method === "measure_configure" && (request as Extract<Request, { method: "measure_configure" }>).params.rew_executable !== undefined) host.set({ rewExecutableError: null });
         const effects = effectsOf({ request: request.method });
         const ctx: EffectContext = { host, stores, jobs, call, configure, run, canContinueRefresh, source,
           replaceProject: () => { replaceProject(scope, "request"); epoch = jobs.epoch; },
@@ -271,7 +273,10 @@ export function createSession(ipc: Ipc) {
           // The range card shows a refused edge or extra band at its input (ADR 0024).
           const rangeEdit = request.method === "calibration_settings_edit" && error instanceof IpcFailure
             && rangeRejection((request as Extract<Request, { method: "calibration_settings_edit" }>).params.edit, error.error) !== null;
-          if (!(micCalAction || hostAction || rangeEdit || context?.ownsFailure) || !(error instanceof IpcFailure)) report(error);
+          // 연결·점검 shows a refused REW executable path at its field (TD-221).
+          const rewExecutable = request.method === "measure_configure" && error instanceof IpcFailure && error.error.params.field === "rew_executable";
+          if (rewExecutable) host.set({ rewExecutableError: error.error });
+          if (!(micCalAction || hostAction || rangeEdit || rewExecutable || context?.ownsFailure) || !(error instanceof IpcFailure)) report(error);
         }
         throw error;
       } finally {

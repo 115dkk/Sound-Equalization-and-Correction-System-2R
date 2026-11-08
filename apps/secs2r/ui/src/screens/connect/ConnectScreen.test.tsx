@@ -26,6 +26,8 @@ import {
   rewNotProView,
   rewOffView,
   rewSwitchingView,
+  rewExecutableView,
+  rewExecutableRefusedView,
   rewUntestedView,
   umikFile,
 } from "./fixtures";
@@ -91,6 +93,7 @@ function actionsMock() {
     launchRew: vi.fn(),
     readRewSettings: vi.fn(),
     setRewDriver: vi.fn(),
+    setRewExecutable: vi.fn(),
     setInputDevice: vi.fn(),
     setInputChannel: vi.fn(),
     setOutputDevice: vi.fn(),
@@ -230,6 +233,44 @@ describe("ConnectScreen", () => {
     expect(actions.setOutputDevice).toHaveBeenCalledWith("Speakers (Realtek)");
     fireEvent.change(must("connect.input_device"), { target: { value: "Line In (Realtek)" } });
     expect(actions.setInputDevice).toHaveBeenCalledWith("Line In (Realtek)");
+  });
+
+  it("shows REW 실행 파일 below the REW device fields, stores a changed path on Enter or leaving it, and shows the service's refusal there (TD-221)", () => {
+    const actions = setup(rewExecutableView);
+    const input = must("connect.rew_executable") as HTMLInputElement;
+    expect(input.value).toBe("D:/Tools/REW/roomeqwizard.exe");
+    expect(document.querySelector('label[for="connect.rew_executable"]')?.textContent).toBe(ko("connect.rew_executable"));
+    expect(must("connect.output_device").compareDocumentPosition(input) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // Leaving it unchanged sends nothing; a new path goes on Enter, an emptied one on leaving.
+    fireEvent.blur(input);
+    expect(actions.setRewExecutable).not.toHaveBeenCalled();
+    fireEvent.change(input, { target: { value: " E:/REW/roomeqwizard.exe " } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(actions.setRewExecutable).toHaveBeenLastCalledWith("E:/REW/roomeqwizard.exe");
+    fireEvent.change(input, { target: { value: "" } });
+    fireEvent.blur(input);
+    expect(actions.setRewExecutable).toHaveBeenLastCalledWith("");
+    // Escape puts the stored path back.
+    fireEvent.change(input, { target: { value: "C:/x.exe" } });
+    fireEvent.keyDown(input, { key: "Escape" });
+    expect(input.value).toBe("D:/Tools/REW/roomeqwizard.exe");
+    cleanupScreen();
+    // Empty: the installed REW, said in the box.
+    setup(rewJavaView);
+    expect((must("connect.rew_executable") as HTMLInputElement).placeholder).toBe(ko("connect.rew_executable.placeholder"));
+    cleanupScreen();
+    // The refusal under the field, tied to the box, gone while the path is edited.
+    setup(rewExecutableRefusedView);
+    const refused = must("connect.rew_executable") as HTMLInputElement;
+    expect(document.getElementById("connect.rew_executable-error")?.textContent).toBe(ko("connect.rew_executable.error.relative"));
+    expect(refused.getAttribute("aria-invalid")).toBe("true");
+    expect(refused.getAttribute("aria-describedby")).toContain("connect.rew_executable-error");
+    fireEvent.change(refused, { target: { value: "C:/REW/roomeqwizard.exe" } });
+    expect(document.getElementById("connect.rew_executable-error")).toBeNull();
+    cleanupScreen();
+    // Native measurement has no REW to start.
+    setup(nativeView);
+    expect(ui("connect.rew_executable")).toBeNull();
   });
 
   it("switches REW's driver and keeps a driver name REW reports beyond ASIO and Java", () => {

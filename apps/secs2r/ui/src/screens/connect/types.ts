@@ -84,6 +84,8 @@ export type ConnectView = {
     /** rew_driver_set is waiting for REW to switch its driver and reopen its devices. */
     switchingDriver: boolean;
     details: RewDetails;
+    /** The service's refusal of the REW executable path sent last (`field = rew_executable`), shown at that field; null once one is taken. */
+    executableError: IpcError | null;
   };
   micCalibration: MicCalibrationView;
   /** Stored level per role in dBFS from levels_get, pre-filling the rows. */
@@ -114,6 +116,8 @@ export type ConnectActions = {
   readRewSettings: () => void;
   /** rew_driver_set { driver }: switches REW's audio driver, then reads REW's devices again. */
   setRewDriver: (driver: string) => void;
+  /** measure_configure { rew_executable }: the REW executable to start instead of the installed one; "" clears it (TD-221). */
+  setRewExecutable: (path: string) => void;
   /** measure_configure { input_device } ("" = the default device); on the REW path a REW device name, which REW also opens. */
   setInputDevice: (id: string) => void;
   /** measure_configure { input_channel } (1-based). */

@@ -761,6 +761,11 @@ export function createMockService(options: MockOptions = {}): MockService {
           sweep_level_dbfs: p.sweep_level_dbfs ?? measureConfig.sweep_level_dbfs, timing: p.timing ?? measureConfig.timing,
           loopback_input_channel: p.loopback_input_channel ?? measureConfig.loopback_input_channel,
           timing_ref_output: p.timing_ref_output ?? measureConfig.timing_ref_output, share_mode: p.share_mode ?? measureConfig.share_mode };
+        // State only: the REW executable as sent ("" clears it); the service's path check is not copied (tests inject its refusal).
+        if (p.rew_executable !== undefined) {
+          const { rew_executable: _stored, ...rest } = measureConfig;
+          measureConfig = p.rew_executable ? { ...rest, rew_executable: p.rew_executable } : rest;
+        }
         if (p.output_device) config.device = p.output_device;
         if (p.output_channels.length) {
           config = fx.configOf(config.preset, config.speakers.map((s, i) => ({ ...s, bands: s.bands.map((b, j) => j === 0 ? { ...b, out: p.output_channels[i] ?? b.out } : b) })), config.device);

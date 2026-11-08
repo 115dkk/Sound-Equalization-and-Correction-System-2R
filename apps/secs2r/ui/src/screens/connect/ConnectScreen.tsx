@@ -6,7 +6,7 @@
 // device and mic fields; then the level check plays each channel in turn
 // while the mic meter shows what arrives. The sweep length is set on
 // 측정·가져오기 only (P58); REW's own appears here as a read-only fact.
-import { type ReactNode } from "react";
+import { useState, type KeyboardEvent, type ReactNode } from "react";
 import type { PrimaryAction } from "../../app/StepHeader";
 import { errorText } from "../../app/jobs/jobText";
 import type { MessageKey } from "../../i18n";
@@ -14,7 +14,9 @@ import type { Translate } from "../../i18n/react";
 import { useNumber, useT } from "../../i18n/react";
 import type { MeasureDevice } from "../../ipc/bindings/MeasureDevice";
 import { Advanced, Button, Card, ErrorNotice, HelpTip, Icon, IconButton, LevelMeter, NumberField, Section, Segmented, Select, StatusPill, type Option, type PillTone } from "../../ui";
+import { Field, describedBy } from "../../ui/Field";
 import { roleCode, roleKind } from "../../ui/maps/geometry";
+import { TextBox } from "../export/fields";
 import { roleName } from "../system/text";
 import { MicCalibrationField } from "./MicCalibrationField";
 import { MicMeterPanel, type MicMeterView } from "./MicMeterPanel";
@@ -461,6 +463,7 @@ function DevicesCard({ view, actions }: { view: ConnectView; actions: ConnectAct
         </div>
         {!rew && <MicCalibrationField view={view.micCalibration} actions={actions} />}
       </div>
+      {rew && <RewExecutableField view={view} actions={actions} />}
       {!rew && (
         <Advanced id="connect.devices.details" label={t("connect.share_mode")} defaultOpen={!!settings?.share_mode && settings.share_mode !== "auto"}>
           <Segmented
@@ -479,6 +482,61 @@ function DevicesCard({ view, actions }: { view: ConnectView; actions: ConnectAct
         </Advanced>
       )}
     </Card>
+  );
+}
+
+const REW_EXECUTABLE_ID = "connect.rew_executable";
+
+/**
+ * REW 실행 파일: the REW the service starts, a pasted path (no file dialog:
+ * the host's open-file kinds have no executable). Empty means the installed
+ * REW. Stored on Enter or when the field is left, only when it changed;
+ * Escape puts the stored path back. The service's refusal (a relative path)
+ * shows under the field until the next edit, with the text kept to fix.
+ */
+function RewExecutableField({ view, actions }: { view: ConnectView; actions: ConnectActions }) {
+  const stored = view.settings?.rew_executable ?? "";
+  // A path the service takes resets the draft; a refused one keeps it.
+  return <RewExecutableInput key={stored} stored={stored} refused={view.rew.executableError !== null} actions={actions} />;
+}
+
+function RewExecutableInput({ stored, refused, actions }: { stored: string; refused: boolean; actions: ConnectActions }) {
+  const t = useT();
+  const [draft, setDraft] = useState<string | null>(null);
+  const [typing, setTyping] = useState(false);
+  const text = draft ?? stored;
+  const error = refused && !typing ? t("connect.rew_executable.error.relative") : null;
+  const commit = () => {
+    setTyping(false);
+    if (draft !== null && draft.trim() !== stored) actions.setRewExecutable(draft.trim());
+  };
+  const onKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      commit();
+    } else if (event.key === "Escape" && draft !== null) {
+      // The first Escape puts the stored path back; it does not leave the screen.
+      event.stopPropagation();
+      setDraft(null);
+      setTyping(false);
+    }
+  };
+  return (
+    <Field id={REW_EXECUTABLE_ID} label={t("connect.rew_executable")} help={t("connect.rew_executable.help")} error={error}>
+      <TextBox
+        id={REW_EXECUTABLE_ID}
+        value={text}
+        placeholder={t("connect.rew_executable.placeholder")}
+        onChange={(value) => {
+          setDraft(value);
+          setTyping(true);
+        }}
+        onBlur={commit}
+        onKeyDown={onKeyDown}
+        invalid={!!error}
+        describedBy={describedBy(REW_EXECUTABLE_ID, null, error, true)}
+      />
+    </Field>
   );
 }
 

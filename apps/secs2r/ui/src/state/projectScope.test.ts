@@ -12,6 +12,7 @@ const projectValues = {
   failure: { job: "calibrate", error: { code: "internal", params: {}, retryable: false, detail: "" } },
   rangeRejection: { edit: { kind: "rc_lo", hz: 15 }, error: { code: "invalid_request", params: {}, retryable: false, detail: "" } },
   micCalBusy: "set", micCalError: { code: "internal", params: {}, retryable: false, detail: "" },
+  rewExecutableError: { code: "measurement_input", params: { field: "rew_executable" }, retryable: false, detail: "" },
 } as const;
 const appValues = { current: "export", tab: "gd", camillaDevices: { capture: { type: "file" }, playback: { type: "stdout" } }, extraRates: [96000] } as const;
 

@@ -216,6 +216,33 @@ describe("useConnectScreen", () => {
     expect(result.current.view?.rew.details.current?.outputDevice).toBe("Speakers (Realtek)");
   });
 
+  it("sends the REW executable with the stored method only when it changes, an empty path to clear it, and keeps a refusal at the field (TD-221)", async () => {
+    const { result } = renderHook(() => useConnectScreen(false), { wrapper });
+    await perform(() => result.current.actions.choosePath("rew"));
+    const configures = () => mock.calls.flatMap((call) => (call.method === "measure_configure" ? [call.params] : []));
+    // Another field's edit carries no path.
+    mock.calls.length = 0;
+    await perform(() => result.current.actions.setOutputDevice("Speakers (Realtek)"));
+    expect(configures()).toHaveLength(1);
+    expect(configures()[0]).not.toHaveProperty("rew_executable");
+    mock.calls.length = 0;
+    await perform(() => result.current.actions.setRewExecutable("D:/Tools/REW/roomeqwizard.exe"));
+    expect(configures()).toEqual([expect.objectContaining({ method: "rew", rew_executable: "D:/Tools/REW/roomeqwizard.exe", input_device: null, output_device: null })]);
+    expect(result.current.view?.settings?.rew_executable).toBe("D:/Tools/REW/roomeqwizard.exe");
+    mock.calls.length = 0;
+    await perform(() => result.current.actions.setRewExecutable(""));
+    expect(configures()).toEqual([expect.objectContaining({ method: "rew", rew_executable: "" })]);
+    expect(result.current.view?.settings).not.toHaveProperty("rew_executable");
+    // The service refuses a relative path with its field: kept at the field, not as a global notice.
+    mock.failNext("measure_configure", "measurement_input", "executable path must be absolute", { field: "rew_executable" });
+    await perform(() => result.current.actions.setRewExecutable("REW/roomeqwizard.exe"));
+    expect(result.current.view?.rew.executableError).toMatchObject({ code: "measurement_input", params: { field: "rew_executable" } });
+    expect(session.errors.getSnapshot()).toBeNull();
+    // A path taken clears it.
+    await perform(() => result.current.actions.setRewExecutable("D:/REW/roomeqwizard.exe"));
+    expect(result.current.view?.rew.executableError).toBeNull();
+  });
+
   it("refreshes REW on each opening, monitors only a ready active path, and stops on leaving", async () => {
     await session.configure({ method: "mock" });
     const { result, rerender } = renderHook(({ active }) => useConnectScreen(active), { wrapper, initialProps: { active: false } });
