@@ -35,7 +35,7 @@ pub fn export_view(
     }
 }
 
-/// [`export_view`] on measurements already prepared with the same config;
+/// Rebuilds the 2 s spectra from measurements already prepared with the same config.
 /// Returns `Err(Cancelled)` when the context token is cancelled during the build.
 pub(crate) fn export_view_prepared(
     design: &crate::Design,

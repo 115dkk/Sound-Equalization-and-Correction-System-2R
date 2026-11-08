@@ -14,7 +14,7 @@ pub struct NoteRecord {
     pub params: Vec<(&'static str, String)>,
 }
 
-/// Every stable record code produced by [`NoteRecords::record`] and [`MimoNoteRecords::record`].
+/// Every stable record code that [`NoteRecords::record`] produces for [`Note`] and [`MimoNote`].
 #[cfg(any(test, feature = "test-support"))]
 #[cfg_attr(not(test), allow(dead_code))]
 pub const RECORD_CODES: &[&str] = &[

@@ -262,7 +262,7 @@ fn build_spectra(
     Ok(out)
 }
 
-/// [`prepare_until`] without cancellation.
+/// `prepare_until` without cancellation.
 pub fn prepare(
     set: &MeasurementSet,
     config: &EngineConfig,
