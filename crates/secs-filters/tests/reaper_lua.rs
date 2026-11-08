@@ -81,9 +81,11 @@ fn reaper_script_compiles_when_luac_is_available() {
     let temp = TempDir::new();
     let (script, _) = bundle(&temp, "\"\\\n\r\t\0한글9 ]=]");
     let Some(compiler) = executable("SECS_LUAC", &["luac5.4", "luac"]) else {
+        // ci.yml installs lua5.4 on the Linux runner only, so CI requires the compiler
+        // there and the Windows and macOS runs skip like a local run (audit #186 TD-227).
         assert!(
-            std::env::var_os("CI").is_none(),
-            "no Lua compiler; set SECS_LUAC (required in CI)"
+            std::env::var_os("CI").is_none() || !cfg!(target_os = "linux"),
+            "no Lua compiler; set SECS_LUAC (required in CI on Linux)"
         );
         eprintln!("SKIP: no Lua compiler; set SECS_LUAC");
         return;
