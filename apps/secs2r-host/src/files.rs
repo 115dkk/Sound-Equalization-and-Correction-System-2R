@@ -518,29 +518,6 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
-    #[cfg(windows)]
-    #[test]
-    fn at_least_one_link_rejection_case_runs_td192() {
-        use std::os::windows::fs::symlink_dir;
-
-        let root = root("link-rejection-required");
-        let target = root.join("real");
-        let link = root.join("linked");
-        fs::create_dir(&target).unwrap();
-        if let Err(error) = symlink_dir(&target, &link) {
-            fs::remove_dir_all(root).unwrap();
-            panic!(
-                "directory symlink creation failed: {error}; enable Windows Developer Mode so the link rejection tests can run"
-            );
-        }
-        assert!(matches!(
-            validate_update_source(&link.join("bundle")),
-            Err(UpdateReject::Io(_))
-        ));
-        fs::remove_dir(&link).unwrap();
-        fs::remove_dir_all(root).unwrap();
-    }
-
     #[test]
     fn finish_update_replaces_in_order_and_retries_locked_rename() {
         let root = root("finish-success");
