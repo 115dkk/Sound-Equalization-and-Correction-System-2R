@@ -458,22 +458,20 @@ mod engine {
             self
         }
 
-        /// Supplies an audio backend factory for measurement requests.
+        /// Unstable: supplies an internal audio backend factory for measurement requests.
         ///
-        /// # Stability
-        ///
-        /// The internal [`secs_audio::AudioBackend`] trait is an unstable escape hatch.
+        /// [`secs_audio::AudioBackend`] may change without a compatibility promise
+        /// (ADR 0016). Typed [`Secs`] calls are the stable surface.
         #[must_use]
         pub fn audio_backend_factory(mut self, factory: AudioFactory) -> Self {
             self.deps.audio_backend = factory;
             self
         }
 
-        /// Supplies the REW transport factory used by REW measurement requests.
+        /// Unstable: supplies the internal REW transport factory for measurement requests.
         ///
-        /// # Stability
-        ///
-        /// The internal [`secs_rew::Transport`] trait is an unstable escape hatch.
+        /// [`secs_rew::Transport`] may change without a compatibility promise
+        /// (ADR 0016). Typed [`Secs`] calls are the stable surface.
         #[must_use]
         pub fn rew_transport_factory(mut self, factory: RewFactory) -> Self {
             self.deps.rew_transport = factory;
@@ -703,11 +701,10 @@ mod engine {
             }
         }
 
-        /// Returns the underlying service for operations not wrapped by this crate.
+        /// Unstable: returns the internal service for operations not wrapped by this crate.
         ///
-        /// # Stability
-        /// This is an unstable escape hatch to an internal crate and is not covered by
-        /// the public API compatibility promise.
+        /// Its items may change without a compatibility promise (ADR 0016).
+        /// Typed [`Secs`] calls are the stable surface.
         #[must_use]
         pub fn service(&self) -> &Service {
             &self.service
