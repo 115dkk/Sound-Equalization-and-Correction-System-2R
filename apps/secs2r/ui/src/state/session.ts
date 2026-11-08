@@ -9,7 +9,7 @@ import type { ResultCurvesResult } from "../ipc/bindings/ResultCurvesResult";
 import type { CalibrateActions } from "../screens/calibrate/types";
 import { isRangeEdit, rangeRejection } from "../screens/calibrate/settingsView";
 import { createBandTargets, settingEdit } from "./settingsEdits";
-import { createResource as resource, createStore, type Failure } from "./store";
+import { createPatchStore, createResource as resource, createStore, type Failure } from "./store";
 import { isActiveJob, isMonitorJob } from "./jobRetention";
 import { createJobLedger, type FinishedJob, type JobRequestContext, type LedgerJob } from "./jobLedger";
 import { effectsOf, isJobStarted, projectEdits, refreshInputs, refreshMeasurements, requestSource, type EffectContext } from "./effects";
@@ -23,6 +23,20 @@ import type { LayoutSetParams } from "../ipc/bindings/LayoutSetParams";
 import { wrongOutput } from "../screens/tutorial/questHost";
 import { coalesceExternalChanges, externalRefresh } from "./externalChanges";
 import { PROJECT_RESOURCES, replaceProject, type HostState } from "./projectScope";
+import type { IpcError } from "../ipc/bindings/IpcError";
+import type { MeterReading, MonitorState } from "../screens/connect/types";
+
+/**
+ * The level monitor that 연결·점검's level check and the floating mic meter
+ * show. A Meter event changes it several times a second, so it is a store of
+ * its own and not part of `host`: only what shows a field reads it, and the
+ * screens' hooks that run together in the frame do not run again (TD-176).
+ */
+export type LevelMonitorState = {
+  meter: MeterReading | null; monitor: MonitorState; playing: string | null; playingAll: boolean; masterDbfs: number;
+  /** Why the level monitor job failed (the level check shows it); null once the monitor starts again or is switched off. */
+  monitorError: IpcError | null;
+};
 
 /** A DSP edit: a preset to select, or fields over the latest ones (`preset: null`). */
 type DspEdit = DspFields & { preset: string | null };
@@ -66,11 +80,10 @@ export function createSession(ipc: Ipc) {
     const store = resource(read, failed);
     return { ...store, load: () => track(() => store.load()) };
   }
-  const rawHost = createStore<HostState>({
+  const host = createPatchStore<HostState>({
     computeLoading: true, computeSaving: false, computeError: null,
     current: "system", path: null, selected: null, graphHidden: false, plotRange: { x: null, y: null },
     mdat: null, warnings: [], tab: "spl", channel: null, xoGroup: null, previewHz: null, targetEdit: "idle", xoEdit: "idle",
-    meter: null, monitor: "off", playing: null, playingAll: false, masterDbfs: -20, monitorError: null,
     xoRecTurnedOffByEdit: false, xoRecommendation: null, runs: {}, mdatScope: "all", failure: null, rangeRejection: null,
     designName: "", camillaDevices: { capture: { type: "file" }, playback: { type: "file" } }, extraRates: [],
     applyRuns: {}, applyAddressDraft: null, applyChecking: false, applyReverting: false,
@@ -78,12 +91,7 @@ export function createSession(ipc: Ipc) {
     micCalBusy: null, micCalError: null, rewExecutableError: null,
     rewLaunch: "idle", rewProblem: null, rewProblemDetail: null, readingRew: false, switchingRewDriver: false, opened: 0,
   });
-  // A patch that changes nothing keeps the snapshot, so subscribers do not render again (TD-176).
-  const host = { ...rawHost, set: (patch: Partial<HostState>) => {
-    const current = rawHost.getSnapshot();
-    if ((Object.keys(patch) as (keyof HostState)[]).every((key) => Object.is(current[key], patch[key]))) return;
-    rawHost.set({ ...current, ...patch });
-  } };
+  const level = createPatchStore<LevelMonitorState>({ meter: null, monitor: "off", playing: null, playingAll: false, masterDbfs: -20, monitorError: null });
   const errors = createStore<Failure | null>(null);
   const ready = createStore(false);
   const tutorialReady = createStore(false);
@@ -126,6 +134,7 @@ export function createSession(ipc: Ipc) {
     resultCurves,
     lines: read({ method: "result_lines" }), subWarnings: read({ method: "sub_warnings" }), rew: read({ method: "rew_info" }),
     folder: read({ method: "export_folder_get" }),
+    monitor: level,
     // Read only while a target is set to 적용 (the export screen asks), never at startup:
     // it probes CamillaDSP's websocket and Equalizer APO's install.
     applyStatus: createResource(async () => {
@@ -501,14 +510,14 @@ export function createSession(ipc: Ipc) {
     meterTimer = setTimeout(() => {
       meterTimer = undefined;
       if (!monitorWanted || epoch !== monitorEpoch) return;
-      host.set({ monitor: "stalled" });
+      level.set({ monitor: "stalled" });
       restartingMonitor = true;
       monitorQueue = monitorQueue.catch(() => {}).then(async () => {
         if (!monitorWanted || epoch !== monitorEpoch) return;
         await stopMonitor();
         if (monitorWanted && epoch === monitorEpoch) await startMonitor();
       }).catch((error) => {
-        if (monitorWanted && epoch === monitorEpoch) host.set({ monitor: "offline" });
+        if (monitorWanted && epoch === monitorEpoch) level.set({ monitor: "offline" });
         throw error;
       }).finally(() => { restartingMonitor = false; });
       run(() => monitorQueue);
@@ -554,12 +563,12 @@ export function createSession(ipc: Ipc) {
       if (active && monitoring) return;
       if (active) {
         // Starting again (a play pressed while offline) drops the last failure.
-        host.set({ monitor: "starting", monitorError: null });
+        level.set({ monitor: "starting", monitorError: null });
         try { await startMonitor(); }
-        catch (error) { host.set({ monitor: "offline" }); throw error; }
+        catch (error) { level.set({ monitor: "offline" }); throw error; }
       } else {
         await stopMonitor();
-        host.set({ monitor: "off", meter: null, playing: null, playingAll: false, monitorError: null });
+        level.set({ monitor: "off", meter: null, playing: null, playingAll: false, monitorError: null });
       }
     });
     return track(() => monitorQueue);
@@ -568,7 +577,7 @@ export function createSession(ipc: Ipc) {
     if (event.event === "measure_status") { stores.methods.set(event.status); return; }
     if (event.event === "meter") {
       if (monitorWanted && event.job === monitorJob) {
-        host.set({ meter: event, monitor: "receiving" });
+        level.set({ meter: event, monitor: "receiving" });
         armMeterTimer();
       }
       return;
@@ -594,8 +603,8 @@ export function createSession(ipc: Ipc) {
         // Nothing plays any more and the last reading is not current; the
         // job's error says why on the level check (#120). Not a global
         // notice: the monitor is hidden from the job tray and the panel owns it.
-        host.set({ monitor: "offline", monitorError: event.error ?? unknownMonitorFailure, meter: null, playing: null, playingAll: false });
-      } else if (!restartingMonitor) host.set({ monitor: "off" });
+        level.set({ monitor: "offline", monitorError: event.error ?? unknownMonitorFailure, meter: null, playing: null, playingAll: false });
+      } else if (!restartingMonitor) level.set({ monitor: "off" });
     }
     if ((request?.epoch ?? job.epoch) !== jobs.epoch) return;
     const effects = effectsOf({ finished: job.kind, status: event.status });

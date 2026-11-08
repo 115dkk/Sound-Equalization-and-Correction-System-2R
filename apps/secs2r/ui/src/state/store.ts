@@ -11,6 +11,16 @@ export function createStore<T>(initial: T) {
   };
 }
 
+/** A store of named fields set by patch. A patch that changes nothing keeps the snapshot, so subscribers do not render again (TD-176). */
+export function createPatchStore<T extends object>(initial: T) {
+  const store = createStore(initial);
+  return { ...store, set: (patch: Partial<T>) => {
+    const current = store.getSnapshot();
+    if ((Object.keys(patch) as (keyof T)[]).every((key) => Object.is(current[key], patch[key]))) return;
+    store.set({ ...current, ...patch });
+  } };
+}
+
 export type ResourceLoadState<T> =
   | { status: "loading" }
   | { status: "failed"; error: IpcError }

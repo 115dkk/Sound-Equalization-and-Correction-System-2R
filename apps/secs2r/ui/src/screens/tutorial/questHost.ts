@@ -1,6 +1,6 @@
 import type { StepId } from "../../app/model";
 import type { SystemActions, SystemView } from "../system/types";
-import type { ConnectActions, ConnectView } from "../connect/types";
+import type { ConnectActions, ConnectState } from "../connect/types";
 import type { MeasureActions, MeasureView } from "../measure/types";
 import type { CalibrateActions, CalibrateView } from "../calibrate/types";
 import type { ExportView } from "../export/types";
@@ -9,7 +9,7 @@ import type { ExportView } from "../export/types";
 export type TutorialView = {
   step: StepId;
   system: Pick<SystemView, "config" | "notices">;
-  connect: Pick<ConnectView, "path" | "settings" | "methods" | "levels" | "level">;
+  connect: Pick<ConnectState, "path" | "settings" | "methods" | "levels" | "level">;
   measure: Pick<MeasureView, "project" | "job">;
   calibrate: Pick<CalibrateView, "tab" | "positions" | "settings" | "results" | "lines" | "running" | "measuring">;
   export: Pick<ExportView, "computing" | "results">;

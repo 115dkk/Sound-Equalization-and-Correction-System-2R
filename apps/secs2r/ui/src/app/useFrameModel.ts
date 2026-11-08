@@ -3,7 +3,7 @@ import { useHost, useResource, useSession } from "../state/react";
 import { useJobLedger } from "../state/useJobLedger";
 import { isActiveJob } from "../state/jobRetention";
 import type { SystemView } from "../screens/system/types";
-import type { ConnectView } from "../screens/connect/types";
+import type { ConnectState } from "../screens/connect/types";
 import type { MeasureView } from "../screens/measure/types";
 import type { CalibrateView } from "../screens/calibrate/types";
 import type { ExportView } from "../screens/export/types";
@@ -13,7 +13,7 @@ import { measureStepState } from "../screens/measure/types";
 import { calibrateStepState } from "../screens/calibrate/types";
 import { exportStepState } from "../screens/export/types";
 
-export function useFrameModel(views: { system: SystemView | null; connect: ConnectView | null; measure: MeasureView | null; calibrate: CalibrateView | null; export: ExportView | null }) {
+export function useFrameModel(views: { system: SystemView | null; connect: ConnectState | null; measure: MeasureView | null; calibrate: CalibrateView | null; export: ExportView | null }) {
   const session = useSession();
   const host = useHost();
   const bootstrap = useResource("bootstrap");

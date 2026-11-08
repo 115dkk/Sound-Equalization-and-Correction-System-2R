@@ -7,7 +7,7 @@ import { IpcFailure } from "../../ipc/client";
 import { SessionProvider } from "../../state/react";
 import { createSession } from "../../state/session";
 import { levelRoles } from "./state";
-import { useConnectScreen } from "./useConnectScreen";
+import { useConnectScreen, useLiveLevel, withLiveLevel } from "./useConnectScreen";
 
 let mock: ReturnType<typeof createMockService>;
 let session: ReturnType<typeof createSession>;
@@ -15,6 +15,12 @@ const ticks = (count: number) => { for (let i = 0; i < count; i++) mock.tick(); 
 const wrapper = ({ children }: { children: ReactNode }) => <SessionProvider value={session}>{children}</SessionProvider>;
 async function perform(work: () => unknown) {
   await act(async () => { await work(); await session.settled(); });
+}
+/** The hook with the level monitor's live fields, as the app draws the screen (`LiveConnectScreen`, TD-176). */
+function useConnectView(active: boolean) {
+  const screen = useConnectScreen(active);
+  const live = useLiveLevel();
+  return { ...screen, view: screen.view && withLiveLevel(screen.view, live) };
 }
 beforeEach(async () => {
   mock = createMockService({ tickMs: 0 }); session = createSession(mock); await session.start();
@@ -245,7 +251,7 @@ describe("useConnectScreen", () => {
 
   it("refreshes REW on each opening, monitors only a ready active path, and stops on leaving", async () => {
     await session.configure({ method: "mock" });
-    const { result, rerender } = renderHook(({ active }) => useConnectScreen(active), { wrapper, initialProps: { active: false } });
+    const { result, rerender } = renderHook(({ active }) => useConnectView(active), { wrapper, initialProps: { active: false } });
     await perform(() => rerender({ active: true }));
     expect(mock.calls).toContainEqual({ method: "rew_info" });
     expect(mock.calls).toContainEqual({ method: "level_monitor_start", params: { role: null } });
@@ -262,7 +268,7 @@ describe("useConnectScreen", () => {
 
   it("restarts monitoring on path and device changes", async () => {
     await session.configure({ method: "mock" });
-    const { result } = renderHook(() => useConnectScreen(true), { wrapper });
+    const { result } = renderHook(() => useConnectView(true), { wrapper });
     await perform(() => {});
     mock.calls.length = 0;
     await perform(() => result.current.actions.choosePath("native"));
@@ -353,7 +359,7 @@ describe("useConnectScreen", () => {
   it("clears the playing row when the monitor job fails, keeps its error, and a play restarts the monitor first", async () => {
     await session.configure({ method: "native" });
     const plays = () => mock.calls.filter((call) => call.method === "level_play");
-    const { result } = renderHook(() => useConnectScreen(false), { wrapper });
+    const { result } = renderHook(() => useConnectView(false), { wrapper });
     mock.failLevelPlay("measurement_input", "format not supported: native Output 48000 Hz / 16 channels unavailable", { field: "level" });
     act(result.current.actions.playAllLevels);
     await waitFor(() => expect(plays()).toHaveLength(1));

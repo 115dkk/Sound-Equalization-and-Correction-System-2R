@@ -100,10 +100,20 @@ export type ConnectView = {
     playing: string | null;
     /** Playing every channel in turn. */
     playingAll: boolean;
-    /** Master output for level_play, −40…0 dBFS (host state; −20 by default). */
+    /** Master output for level_play, −40…0 dBFS (the level monitor store; −20 by default). */
     masterDbfs: number;
   };
 };
+
+/** The level monitor fields the mic meter draws: they change with every Meter event (TD-176). */
+export type LiveLevel = Pick<ConnectView["level"], "monitor" | "error" | "reading">;
+
+/**
+ * `ConnectView` without `LiveLevel`: what `useConnectScreen` gives the frame,
+ * the step header and the tutorial, none of which draw the meter. The screen
+ * itself gets the live fields where it is drawn (`withLiveLevel`).
+ */
+export type ConnectState = Omit<ConnectView, "level"> & { level: Omit<ConnectView["level"], keyof LiveLevel> };
 
 export type ConnectActions = {
   /** measure_configure { method } for native, rew and mock; "mdat" is a host choice that skips the step. */

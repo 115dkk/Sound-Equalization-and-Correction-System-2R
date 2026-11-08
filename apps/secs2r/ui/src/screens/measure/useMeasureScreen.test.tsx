@@ -36,11 +36,11 @@ describe("useMeasureScreen", () => {
       await perform(() => mock.events.emit({ event: "finished", job, status: "cancelled", result: null, error: null }));
       job++;
     }
-    await perform(() => session.host.set({ playing: "L" }));
+    await perform(() => session.stores.monitor.set({ playing: "L" }));
     expect(measureStepState(result.current.view!)).toEqual({ status: "blocked", reason: "device_busy" });
-    await perform(() => session.host.set({ playing: null, playingAll: true }));
+    await perform(() => session.stores.monitor.set({ playing: null, playingAll: true }));
     expect(measureStepState(result.current.view!).reason).toBe("device_busy");
-    await perform(() => session.host.set({ playingAll: false }));
+    await perform(() => session.stores.monitor.set({ playingAll: false }));
     expect(measureStepState(result.current.view!).status).toBe("ready");
   });
 

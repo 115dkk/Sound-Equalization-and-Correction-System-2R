@@ -21,7 +21,7 @@ import { roleName } from "../system/text";
 import { MicCalibrationField } from "./MicCalibrationField";
 import { MicMeterPanel, type MicMeterView } from "./MicMeterPanel";
 import { levelRoles, levelsPassed, missingLevels, pathReady } from "./state";
-import type { ConnectActions, ConnectPath, ConnectView, RewProblem } from "./types";
+import type { ConnectActions, ConnectPath, ConnectState, ConnectView, RewProblem } from "./types";
 import "./connect.css";
 
 /** REW's audio drivers (`POST /audio/driver`); a name REW reports beyond these (Core Audio and the like) is shown as is. */
@@ -31,7 +31,7 @@ const REW_DRIVERS = ["ASIO", "Java"] as const;
  * The REW device the screen shows for one direction: the stored name when REW
  * lists it (REW opens it before each sweep), else the device REW has open now (R7).
  */
-function rewDevice(view: ConnectView, kind: "input" | "output"): string | null {
+function rewDevice(view: ConnectState, kind: "input" | "output"): string | null {
   const details = view.rew.details;
   const devices = (kind === "input" ? details.inputs : details.outputs) ?? [];
   const stored = kind === "input" ? view.settings?.input_device : view.settings?.output_device;
@@ -99,7 +99,7 @@ export function ConnectScreen({ view, actions }: { view: ConnectView; actions: C
 }
 
 /** The step header: plays every channel in turn; on the mdat path, opens 측정·가져오기. */
-export function connectHeader(view: ConnectView, actions: ConnectActions, t: Translate): { primary?: PrimaryAction; status?: ReactNode } {
+export function connectHeader(view: ConnectState, actions: ConnectActions, t: Translate): { primary?: PrimaryAction; status?: ReactNode } {
   if (view.path === "mdat") {
     return {
       primary: { id: "connect.next", label: t("connect.primary.next"), onClick: actions.next },
@@ -546,7 +546,7 @@ function inputLabel(t: Translate, n: number, names: readonly string[]): string {
 }
 
 /** "입력 1 · UMIK-1" for the mic meter. */
-export function micInput(t: Translate, view: ConnectView): string | null {
+export function micInput(t: Translate, view: ConnectState): string | null {
   const settings = view.settings;
   if (!settings || view.path === "mdat" || view.path === null) return null;
   if (view.path === "rew") {

@@ -8,7 +8,7 @@ import type { IpcError } from "../ipc/bindings/IpcError";
 import type { MdatScope } from "../ipc/bindings/MdatScope";
 import type { XoRecommendation } from "../ipc/bindings/XoRecommendation";
 import type { CalibrateView } from "../screens/calibrate/types";
-import type { ConnectPath, MeterReading, MicCalibrationView, MonitorState, RewProblem } from "../screens/connect/types";
+import type { ConnectPath, MicCalibrationView, RewProblem } from "../screens/connect/types";
 import type { ApplyRun, ApplyTarget, ExportRun, HostFailure } from "../screens/export/types";
 import type { MeasureView } from "../screens/measure/types";
 import type { Session } from "./session";
@@ -37,9 +37,6 @@ export type AppHostState = Pick<MeasureView, "graphHidden" | "plotRange"> & {
   current: StepId;
   tab: CalibrateView["tab"];
   targetEdit: CalibrateView["targetEdit"]; xoEdit: CalibrateView["xoEdit"];
-  meter: MeterReading | null; monitor: MonitorState; playing: string | null; playingAll: boolean; masterDbfs: number;
-  /** Why the level monitor job failed (the level check shows it); null once the monitor starts again or is switched off. */
-  monitorError: IpcError | null;
   /** 내보내기: the CamillaDSP devices (file placeholders by default) and the convolution IR's extra rates in Hz, kept for the session across projects. */
   camillaDevices: CamillaDevices; extraRates: number[];
   /** 내보내기의 적용: the CamillaDSP address field's unsaved text, an apply_status read and a revert_eqapo in flight. */
@@ -78,7 +75,7 @@ export const PROJECT_RESOURCES = [
   "settings", "micCalibration", "modeSpec", "target", "results", "resultCurves", "lines", "subWarnings", "folder", "applyStatus",
 ] as const satisfies readonly (keyof Stores)[];
 
-/** The resources the window owns (bootstrap, app settings, compute status, methods, REW): the complement of `PROJECT_RESOURCES`. */
+/** The resources the window owns (bootstrap, app settings, compute status, methods, REW, the level monitor): the complement of `PROJECT_RESOURCES`. */
 export function appResources(stores: Stores): AppResource[] {
   return (Object.keys(stores) as (keyof Stores)[]).filter((key): key is AppResource => !(PROJECT_RESOURCES as readonly string[]).includes(key));
 }

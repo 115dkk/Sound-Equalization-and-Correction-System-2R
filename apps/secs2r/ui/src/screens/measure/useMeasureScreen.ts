@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { useHost, useResource, useSession } from "../../state/react";
+import { useHost, useLevelMonitor, useResource, useSession } from "../../state/react";
 import { useJobLedger } from "../../state/useJobLedger";
 import { MEASURING_KINDS, isActiveJob } from "../../state/jobRetention";
 import type { MeasureActions, MeasureView } from "./types";
@@ -14,6 +14,8 @@ export function useMeasureScreen(): { view: MeasureView | null; actions: Measure
   const config = useResource("measurementSettings");
   const records = useResource("records");
   const curves = useResource("curves");
+  // A level burst 연결·점검 plays; a boolean, so a Meter event does not run this hook again (TD-176).
+  const playing = useLevelMonitor((level) => level.playing !== null || level.playingAll);
   const actions = useMemo<MeasureActions>(() => ({
     measurePosition: (position) => session.run(async () => {
       if (!await session.ensureSaved()) return;
@@ -55,7 +57,7 @@ export function useMeasureScreen(): { view: MeasureView | null; actions: Measure
     records: records?.records ?? [], curves,
     sweepOptions: config.sweep_lengths.map((samples) => ({ samples, seconds: samples / config.sample_rate })),
     repetitions: config.repetitions,
-    playing: host.playing !== null || host.playingAll,
+    playing,
     job: running ? { job: running.job, kind: running.kind, status: running.status, progress: running.progress, position: request?.method === "measure_position" ? request.params.position : null } : null,
     warnings: host.warnings, selected: host.selected, graphHidden: host.graphHidden, plotRange: host.plotRange, mdat: host.mdat,
   } : null, actions };
