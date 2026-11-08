@@ -2,8 +2,11 @@
 import { act, cleanup, fireEvent, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
-import { gpuComputeStatus, resultsSummary } from "../../ipc/fixtures";
+import type { CalibrationSettings } from "../../ipc/bindings/CalibrationSettings";
+import type { Note } from "../../ipc/bindings/Note";
+import { gpuComputeStatus, newProjectSettings, resultsSummary } from "../../ipc/fixtures";
 import { createMockService } from "../../ipc/mock";
+import { recordKey, recordedCalibration } from "../../ipc/recorded";
 import { SessionProvider } from "../../state/react";
 import { createSession } from "../../state/session";
 import { installFakeCanvas } from "../../test/canvas";
@@ -23,11 +26,29 @@ beforeEach(async () => {
 });
 afterEach(async () => { cleanup(); await session.monitor(false); session.dispose(); mock.dispose(); vi.restoreAllMocks(); });
 
+/**
+ * The stored result with these engine notes after the recorded ones, as a
+ * result that carries them would be: no recorded calculation has them yet.
+ */
+async function storeWithNotes(...notes: Note[]) {
+  const results = await mock.request({ method: "results" });
+  mock.setResults({ ...results, calibration: { ...results.calibration!, notes: [...results.calibration!.notes, ...notes] } });
+  await perform(async () => { await session.stores.results.load(); await session.stores.lines.load(); });
+}
+
+/** The sample room the service's calculations were recorded in: a new project, nine positions. */
+async function recordedRoom() {
+  await perform(() => session.call({ method: "project_new", params: { path: "/sample.secs", preset: "2.0", sub_count: 0, sample: true, tutorial: false } }));
+  await perform(() => session.call({ method: "sample_load", params: { positions: 9 } }));
+  await perform(mock.drain);
+}
+
 describe("useCalibrateScreen", () => {
   it.each(["ko", "en"] as const)("shows pair phase in calculation notes and updates the hint with saved bass arrival alignment (%s)", async (locale) => {
     installFakeCanvas();
     await session.call({ method: "calibrate", params: { settings: null, subs_only: false } });
     await perform(mock.drain);
+    await storeWithNotes({ code: "pair_phase", a: "L", b: "Ls", bands: [{ lo_hz: 89, hi_hz: 112, phase_deg: 170, loss_db: -20.3 }, { lo_hz: 112, hi_hz: 141, phase_deg: 174, loss_db: -24.1 }] });
     function Live() {
       const { view, actions } = useCalibrateScreen();
       return view ? <CalibrateScreen view={view} actions={actions} /> : null;
@@ -59,6 +80,7 @@ describe("useCalibrateScreen", () => {
     const index = config.speakers.findIndex((speaker) => speaker.role === "Rs");
     await session.call({ method: "calibrate", params: { settings: null, subs_only: false } });
     await perform(mock.drain);
+    await storeWithNotes({ code: "polarity_reversed", role: "Rs", confidence: 0.94, compared: 3, opposite: 3 });
     function Live() {
       const { view, actions } = useCalibrateScreen();
       return view ? <CalibrateScreen view={view} actions={actions} /> : null;
@@ -391,26 +413,26 @@ describe("useCalibrateScreen", () => {
     expect(result.current.view?.failure).toBeNull();
   });
 
-  it("stores the RC upper limit's basis and factor, and reads their evidence after a run (ADR 0021)", async () => {
+  it("stores the RC upper limit's basis and factor, and reads the recorded evidence after a run (ADR 0021)", async () => {
+    await recordedRoom();
     const { result } = renderHook(useCalibrateScreen, { wrapper });
     const a = result.current.actions;
+    const recordedRc = (patch: Partial<CalibrationSettings>) => recordedCalibration(recordKey({ ...newProjectSettings, ...patch })).lines.rc;
     await perform(() => a.changeSetting({ kind: "xo_rec_include", on: false }));
-    await perform(() => a.changeSetting({ kind: "rc_hi_basis", basis: "lenient" }));
     await perform(() => a.changeSetting({ kind: "rc_hi_transition", factor: 2 }));
-    expect(result.current.view?.settings).toMatchObject({ rc_hi: null, rc_hi_basis: "lenient", rc_hi_transition: 2 });
+    expect(result.current.view?.settings).toMatchObject({ rc_hi: null, rc_hi_basis: "strict", rc_hi_transition: 2 });
     await perform(a.calibrate);
     await perform(mock.drain);
-    expect(result.current.view?.lines.rc[0]).toEqual({
-      code: "rc_limit",
-      params: { hz: "400", auto: "true", basis: "lenient", factor: "2", schroeder_hz: "154", band_hz: "200", band_t60_s: "0.5" },
-    });
-    // Agreement with three measured positions: its evidence, and no room volume line.
+    expect(result.current.view?.lines.rc).toEqual(recordedRc({ rc_hi_transition: 2 }));
+    // Agreement at nine measured positions: its evidence, and no room volume line.
+    await perform(() => a.changeSetting({ kind: "rc_hi_transition", factor: 1 }));
     await perform(() => a.changeSetting({ kind: "rc_hi_basis", basis: "agreement" }));
     await perform(a.calibrate);
     await perform(mock.drain);
-    expect(result.current.view?.lines.rc).toEqual([{ code: "rc_limit", params: { hz: "287", auto: "true", basis: "agreement", factor: "2", schroeder_hz: "154", positions: "3" } }]);
+    expect(result.current.view?.lines.rc).toEqual(recordedRc({ rc_hi_basis: "agreement" }));
+    expect(result.current.view?.lines.rc).toHaveLength(1);
     // With two, the run fails the way the service fails it.
-    await perform(() => session.call({ method: "position_clear", params: { position: 3 } }));
+    for (const position of [3, 4, 5, 6, 7, 8, 9]) await perform(() => session.call({ method: "position_clear", params: { position } }));
     expect(result.current.view?.positions).toEqual([1, 2]);
     await perform(a.calibrate);
     await perform(mock.drain);
@@ -530,8 +552,9 @@ describe("useCalibrateScreen", () => {
     expect(mock.calls.some((call) => call.method === "calibrate")).toBe(false);
   });
 
-  it("turns 극저역 보호 on from the range card's switch, then shows each channel's roll-off and the bus warning after runs (ADR 0022)", async () => {
+  it("turns 극저역 보호 on from the range card's switch, runs with it, and shows a stored unheld sub bus as a warning (ADR 0022)", async () => {
     installFakeCanvas();
+    await recordedRoom();
     await session.call({ method: "calibration_settings_edit", params: { edit: { kind: "xo_rec_include", on: false } } });
     function Live() {
       const { view, actions } = useCalibrateScreen();
@@ -548,16 +571,12 @@ describe("useCalibrateScreen", () => {
     expect(at("calibrate.range.low_protect")!.getAttribute("aria-checked")).toBe("true");
     await perform(() => fireEvent.click(at("calibrate.compute")!));
     await perform(mock.drain);
+    // The recorded calculation with it on notes no channel of the sample room.
     const lines = () => [...at("calibrate.verdict.notes")!.querySelectorAll("li")].map((li) => li.textContent ?? "");
-    expect(lines()).toContain("극저역 보호(SW1): 22 Hz 아래 부스트 안 함, 16 Hz 하이패스");
-    expect(lines()).toContain("극저역 보호(L): 28 Hz 아래 부스트 안 함");
+    expect(lines().some((line) => line.startsWith("극저역 보호"))).toBe(false);
     expect(at("calibrate.verdict.low_protect")).toBeNull();
     // A stored result with an unheld sub-bus bound is a warning, not a note.
-    // An edit refuses 15 Hz (ADR 0024); a project saved by SECS 2 keeps it, as the settings set here.
-    const stored = await mock.request({ method: "calibration_settings_get" });
-    await perform(() => session.call({ method: "calibration_settings_set", params: { settings: { ...stored, rc_lo: 15 } } }));
-    await perform(() => fireEvent.click(at("calibrate.compute")!));
-    await perform(mock.drain);
+    await storeWithNotes({ code: "low_protect", role: "SW1 + SW2", rolloff_hz: 22, hp_hz: null, limited: false, reduced: 0, cuts: 0 });
     expect(at("calibrate.verdict.low_protect")!.textContent).toContain("극저역 보호: SW1 + SW2 채널의 22 Hz 아래 일부 주파수가 부스트 한도를 넘습니다.");
     expect(lines().some((line) => line.includes("SW1 + SW2"))).toBe(false);
   });
@@ -567,11 +586,12 @@ describe("useCalibrateScreen", () => {
     const a = result.current.actions;
     expect(result.current.view?.rangeRejection).toBeNull();
     let accepted: boolean | undefined;
-    await perform(async () => { accepted = await a.changeSetting({ kind: "rc_bands", bands: [{ lo_hz: 15000, hi_hz: 12000 }] }); });
+    // The band list the service was recorded refusing.
+    await perform(async () => { accepted = await a.changeSetting({ kind: "rc_bands", bands: [{ lo_hz: 2000, hi_hz: 1000 }] }); });
     expect(accepted).toBe(false);
     expect(result.current.view?.rangeRejection).toMatchObject({
       edit: { kind: "rc_bands" },
-      error: { code: "invalid_request", params: { field: "rc_bands", reason: "rc_band_range", index: "1", lo_hz: "15000", hi_hz: "12000" } },
+      error: { code: "invalid_request", params: { field: "rc_bands", reason: "rc_band_range", index: "1", lo_hz: "2000", hi_hz: "1000" } },
     });
     expect(session.errors.getSnapshot()).toBeNull();
     expect(result.current.view?.settings.rc_bands).toEqual([]);

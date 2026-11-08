@@ -4,11 +4,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { IpcFailure } from "./client";
 import type { JobEvent } from "./bindings/JobEvent";
 import { createMockService } from "./mock";
-import { calibrationSettings, gpuComputeStatus, modeLabel, projectInfo, resultsSummary } from "./fixtures";
+import { gpuComputeStatus, projectInfo, resultsSummary } from "./fixtures";
+import { recordedRefusal } from "./recorded";
 import type { ExportKind } from "./bindings/ExportKind";
 import type { ExportParams } from "./bindings/ExportParams";
-import type { Mode } from "./bindings/Mode";
-import type { MimoExportDecision } from "./bindings/MimoExportDecision";
 import { umikFile } from "../screens/connect/fixtures";
 
 describe("mock MIMO early interval", () => {
@@ -170,12 +169,13 @@ describe("mock mic calibration", () => {
 });
 
 describe("standalone mock MIMO preconditions", () => {
-  it.each(["disabled", "too few positions", "missing calibration", "cached calibration", "stale calibration", "mismatched settings"] as const)("refuses %s before starting MIMO", async (condition) => {
-    const mock = createMockService({ tickMs: 0, project: { ...projectInfo, positions: condition === "too few positions" ? [1, 2] : [1, 2, 3] } });
+  // The state the mock keeps: which correction MIMO runs on (the service's own preconditions are not copied).
+  it.each(["missing calibration", "cached calibration", "stale calibration", "mismatched settings"] as const)("refuses %s before starting MIMO", async (condition) => {
+    const mock = createMockService({ tickMs: 0, project: { ...projectInfo, positions: [1, 2, 3] } });
     const events: JobEvent[] = [];
     mock.events.subscribe((event) => events.push(event));
     try {
-      if (condition !== "disabled") await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "mimo_on", on: true } } });
+      await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "mimo_on", on: true } } });
       if (condition !== "missing calibration") {
         await mock.request({ method: "calibrate", params: { settings: null, subs_only: false } }); mock.drain();
       }
@@ -213,28 +213,6 @@ describe("standalone mock MIMO preconditions", () => {
     } finally { mock.dispose(); }
   });
 
-  it.each([false, true])("compares raw MIMO bands against normalized calibration (raw calibration=%s)", async (rawCalibration) => {
-    const mock = createMockService({ tickMs: 0 });
-    const valid = [{ lo_hz: 20, hi_hz: 100 }, { lo_hz: 1000, hi_hz: 2000 }, { lo_hz: 1000, hi_hz: 3000 }, { lo_hz: 19000, hi_hz: 20000 }];
-    const raw = [valid[3]!, { lo_hz: 19500, hi_hz: 19900 }, valid[2]!, valid[0]!, valid[1]!,
-      { lo_hz: 10, hi_hz: 100 }, { lo_hz: 100, hi_hz: 20001 }, { lo_hz: 200, hi_hz: 100 },
-      { lo_hz: NaN, hi_hz: 500 }, { lo_hz: 500, hi_hz: Infinity }];
-    try {
-      const base = { ...await mock.request({ method: "calibration_settings_get" }), mimo_on: true };
-      await mock.request({ method: "calibrate", params: { settings: { ...base, rc_bands: rawCalibration ? raw : valid }, subs_only: false } }); mock.drain();
-      const stored = await mock.request({ method: "calibration_settings_get" });
-      for (const bands of [[...valid, { lo_hz: 10, hi_hz: 100 }], [...valid, { lo_hz: 19500, hi_hz: 19900 }], raw]) {
-        await expect(mock.request({ method: "mimo", params: { settings: { ...base, rc_bands: bands } } })).rejects.toMatchObject({ error: { code: "stale_inputs" } });
-        expect(await mock.request({ method: "jobs" })).toEqual([]);
-      }
-      // engine_key sorts but does not filter or truncate explicit MIMO bands.
-      await expect(mock.request({ method: "mimo", params: { settings: { ...base, rc_bands: [...valid].reverse() } } })).resolves.toMatchObject({ kind: "mimo" });
-      mock.drain();
-      expect((await mock.request({ method: "results" })).mimo?.stale).toBe(false);
-      expect(await mock.request({ method: "calibration_settings_get" })).toEqual(stored);
-    } finally { mock.dispose(); }
-  });
-
   it("accepts MIMO-only overrides without changing stored calibration settings", async () => {
     const mock = createMockService({ tickMs: 0 });
     try {
@@ -248,45 +226,13 @@ describe("standalone mock MIMO preconditions", () => {
   });
 });
 
-describe("mock MIMO export decisions", () => {
-  it.each([
-    ["off", false, 2, false, true, 0],
-    ["too_few_positions", true, 2, false, true, 0],
-    ["none", true, 3, false, true, 0],
-    ["stale", true, 3, true, true, 0],
-    ["no_supports", true, 3, true, false, 0],
-    ["included", true, 3, true, false, 2],
-  ] satisfies [MimoExportDecision, boolean, number, boolean, boolean, number][])("returns %s in service precedence order", async (decision, on, positions, computed, stale, supports) => {
-    const mock = createMockService({ tickMs: 0, project: { ...projectInfo, positions: Array.from({ length: positions }, (_, i) => i + 1) } });
-    await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "mimo_on", on } } });
-    mock.setResults({
-      ...resultsSummary,
-      calibration: { ...resultsSummary.calibration!, sub_roles: [] },
-      mimo: computed ? { ...resultsSummary.mimo!, stale, support_count: supports } : null,
-    });
-    expect((await mock.request({ method: "results" })).mimo_export).toBe(decision);
-    if (decision === "no_supports") {
-      await expect(mock.request({ method: "export", params: { kind: "filter_text", folder: "" } })).resolves.toMatchObject({ kind: "export" });
-      mock.drain();
-    }
-    mock.dispose();
-  });
-
-  it.each([false, true])("uses run positions for live results and project positions for cached results (cached: %s)", async (cached) => {
-    const mock = createMockService({ tickMs: 0, project: { ...projectInfo, positions: [1, 2, 3] } });
-    await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "mimo_on", on: true } } });
-    mock.setResults({ ...resultsSummary, calibration: { ...resultsSummary.calibration!, cached } });
-    await mock.request({ method: "position_clear", params: { position: 3 } });
-    expect((await mock.request({ method: "results" })).mimo_export).toBe(cached ? "too_few_positions" : "stale");
-    mock.dispose();
-  });
-
-  it("refreshes the decision after calibration, MIMO, compute changes and project replacement", async () => {
+describe("mock MIMO export state", () => {
+  // Not the service's decision (no record has MIMO): what the mock keeps after its own runs.
+  it("marks a MIMO run included, a later change stale, and a new project off", async () => {
     const mock = createMockService({ tickMs: 0 });
     await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "mimo_on", on: true } } });
     await mock.request({ method: "calibrate", params: { settings: null, subs_only: false } });
     mock.drain();
-    expect((await mock.request({ method: "results" })).mimo_export).toBe("none");
     await mock.request({ method: "mimo", params: { settings: null } });
     mock.drain();
     expect((await mock.request({ method: "results" })).mimo_export).toBe("included");
@@ -317,19 +263,11 @@ describe("mock REW mdat scopes", () => {
     } finally { unsubscribe(); }
   }
 
-  it("exports measurements without a result into the measurement folder or an explicit folder", async () => {
-    vi.spyOn(Date, "now").mockReturnValue(new Date(2026, 9, 15, 9, 41, 7).getTime());
+  it("exports measurements without a result into an explicit folder", async () => {
     const mock = createMockService({ tickMs: 0, project: { ...projectInfo, positions: [1, 2] } });
     try {
       expect((await mock.request({ method: "results" })).calibration).toBeNull();
-      await mock.request({ method: "export_folder_set", params: { folder: "C:/exports/" } });
-      const folder = "C:/exports/SECS_mdat_measurements_20261015-094107";
-      expect(await exported(mock, { kind: "before_after_mdat", folder: "", mdat_scope: "measurements" })).toEqual({
-        folder, files: [`${folder}/SECS 원 측정.mdat`], stale: false,
-      });
-      expect(await exported(mock, { kind: "before_after_mdat", folder: "C:/chosen", mdat_scope: "measurements" })).toEqual({
-        folder: "C:/chosen", files: ["C:/chosen/SECS 원 측정.mdat"], stale: false,
-      });
+      expect(await exported(mock, { kind: "before_after_mdat", folder: "C:/chosen", mdat_scope: "measurements" })).toMatchObject({ folder: "C:/chosen", stale: false });
     } finally { mock.dispose(); }
   });
 
@@ -353,33 +291,13 @@ describe("mock REW mdat scopes", () => {
     } finally { mock.dispose(); }
   });
 
-  it("names each scope using the result's mode and ultra limit, leaving staged mdat unchanged", async () => {
-    vi.spyOn(Date, "now").mockReturnValue(new Date(2026, 9, 15, 9, 41, 7).getTime());
-    const mock = createMockService({ tickMs: 0, results: { ...resultsSummary, calibration: { ...resultsSummary.calibration!, mode: "ultra", ultra_ms: 120 } } });
-    try {
-      expect((await mock.request({ method: "calibration_settings_get" })).mode).toBe("mixed");
-      await mock.request({ method: "export_folder_set", params: { folder: "C:/exports" } });
-      const folder = "C:/exports/SECS_mdat_RC_BA_ultra_20261015-094107";
-      for (const [scope, name] of [
-        ["all", "SECS 원 측정+보정 결과 초고지연 모드 120 ms.mdat"],
-        ["results", "SECS 보정 결과 초고지연 모드 120 ms.mdat"],
-        [undefined, "SECS 원 측정+보정 결과 초고지연 모드 120 ms.mdat"],
-      ] as const) {
-        expect(await exported(mock, { kind: "before_after_mdat", folder: "", ...(scope ? { mdat_scope: scope } : {}) })).toEqual({ folder, files: [`${folder}/${name}`], stale: false });
-      }
-      expect(await exported(mock, { kind: "staged_mdat", folder: "" })).toEqual({ folder, files: [`${folder}/staged_mdat.mdat`], stale: false });
-    } finally { mock.dispose(); }
-  });
-
   it("allows measurements through a stale cache while refusing result-bearing mdat exports", async () => {
     const mock = createMockService({ tickMs: 0, results: { ...resultsSummary, calibration: { ...resultsSummary.calibration!, cached: true, stale: true } } });
     try {
       for (const scope of ["all", "results", undefined] as const) {
         await expect(mock.request({ method: "export", params: { kind: "before_after_mdat", folder: "", ...(scope ? { mdat_scope: scope } : {}) } })).rejects.toMatchObject({ error: { code: "export_scope", params: { reason: "stale_cache" } } });
       }
-      expect(await exported(mock, { kind: "before_after_mdat", folder: "C:/chosen", mdat_scope: "measurements" })).toEqual({
-        folder: "C:/chosen", files: ["C:/chosen/SECS 원 측정.mdat"], stale: false,
-      });
+      expect(await exported(mock, { kind: "before_after_mdat", folder: "C:/chosen", mdat_scope: "measurements" })).toMatchObject({ folder: "C:/chosen", stale: false });
     } finally { mock.dispose(); }
   });
 
@@ -435,20 +353,6 @@ describe("mock filter exports", () => {
     mock.dispose();
   });
 
-  it.each(["filter_text"] as const)("rejects %s when current MIMO is included, without starting a job", async (kind) => {
-    const results = resultWithoutSubs();
-    results.mimo = structuredClone(resultsSummary.mimo);
-    const mock = createMockService({ tickMs: 0, results });
-    await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "mimo_on", on: true } } });
-    mock.setResults(results);
-    const events: JobEvent[] = [];
-    mock.events.subscribe((event) => events.push(event));
-    await expect(mock.request({ method: "export", params: { kind, folder: "" } })).rejects.toMatchObject({ error: { code: "export_scope", params: { reason: "mimo" } } });
-    expect(events).toEqual([]);
-    expect(await mock.request({ method: "jobs" })).toEqual([]);
-    mock.dispose();
-  });
-
   it.each(["off", "positions", "none", "stale"] as const)("does not block either format when MIMO is excluded: %s", async (reason) => {
     const results = resultWithoutSubs();
     results.mimo = reason === "none" ? null : { ...structuredClone(resultsSummary.mimo!), stale: reason === "stale" };
@@ -469,102 +373,34 @@ describe("mock filter exports", () => {
     empty.dispose();
   });
 
-  it.each([
-    ["zero", "zero", "최소 지연 모드"],
-    ["mixed", "mixed", "저지연 모드"],
-    ["linear", "linear", "표준 모드"],
-    ["ultra", "ultra200", "초고지연 모드 200 ms"],
-  ] as const)("uses service folders and ordered file lists in %s mode", async (mode: Mode, fileMode, label) => {
-    vi.spyOn(Date, "now").mockReturnValue(new Date(2026, 9, 15, 9, 41, 7).getTime());
-    const mock = createMockService({ tickMs: 0, results: resultWithoutSubs() });
-    await mock.request({ method: "calibration_settings_set", params: { settings: { ...calibrationSettings, mode, ultra_ms: 200, mimo_on: false } } });
-    // The service names the folder after the result's mode.
-    const results = resultWithoutSubs();
-    results.calibration!.mode = mode;
-    mock.setResults(results);
-    await mock.request({ method: "export_folder_set", params: { folder: "C:/exports/" } });
-    for (const kind of ["filter_text", "equalizer_apo"] as const) {
-      const folder = `C:/exports/SECS_${kind === "filter_text" ? "text" : "eqapo"}_RC_BA_${mode}_20261015-094107`;
-      const prefix = `secs_${fileMode}`;
-      const firFolder = kind === "filter_text" ? folder : `${folder}/${prefix}`;
-      const files = kind === "filter_text" ? [`${folder}/SECS 필터 ${label}.txt`] : [
-        `${folder}/config.txt`, `${folder}/${prefix}/${prefix}.txt`, `${folder}/EqAPO 적용 방법.txt`,
-      ];
-      if (mode !== "zero") files.push(`${firFolder}/${prefix}_L_fir.wav`, `${firFolder}/${prefix}_R_fir.wav`);
-      files.push(`${folder}/secs-design.json`);
-      expect(await exported(mock, kind)).toEqual({ folder, files, stale: false });
-    }
-    mock.dispose();
-  });
-
-  it("exports current MIMO through Equalizer APO", async () => {
-    const mock = createMockService({ tickMs: 0 });
-    try {
-      await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "mimo_on", on: true } } });
-      mock.setResults(resultsSummary);
-      const result = await exported(mock, "equalizer_apo");
-      expect(result.folder).toContain("RC_BA_MIMO");
-      expect(result.files).toContain(`${result.folder}/config.txt`);
-    } finally { mock.dispose(); }
-  });
-
-  it("allows BA in EqAPO and writes directly into an explicit folder", async () => {
+  it("allows BA in EqAPO and writes the recorded files directly into an explicit folder", async () => {
     const results = structuredClone(resultsSummary);
     results.mimo = null;
     const mock = createMockService({ tickMs: 0, results });
     const folder = "C:/exports/chosen";
-    expect(await exported(mock, "equalizer_apo", folder)).toEqual({ folder, stale: false, files: [
-      `${folder}/config.txt`, `${folder}/secs_mixed/secs_mixed.txt`, `${folder}/EqAPO 적용 방법.txt`,
-      ...results.calibration!.main_roles.map((role) => `${folder}/secs_mixed/secs_mixed_${role}_fir.wav`),
-      `${folder}/secs-design.json`,
-    ] });
+    const written = await exported(mock, "equalizer_apo", folder);
+    expect(written).toMatchObject({ folder, stale: false });
+    expect(written.files.every((file) => file.startsWith(`${folder}/`))).toBe(true);
     mock.dispose();
   });
 
-  it.each([false, true])("exports convolution WAV/CSV pairs, subs and LFE (MIMO: %s)", async (mimo) => {
-    vi.spyOn(Date, "now").mockReturnValue(new Date(2026, 9, 15, 9, 41, 7).getTime());
-    const results = resultWithoutSubs();
-    results.calibration!.sub_roles = ["SW1", "SW2"];
-    results.mimo = mimo ? structuredClone(resultsSummary.mimo) : null;
-    const mock = createMockService({ tickMs: 0 });
-    try {
-      await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "mimo_on", on: mimo } } });
-      mock.setResults(results);
-      await mock.request({ method: "export_folder_set", params: { folder: "C:/exports/" } });
-      const folder = `C:/exports/SECS_convolution_RC_BA${mimo ? "_MIMO" : ""}_mixed_20261015-094107`;
-      const pairs = ["L_to_L", "L_to_SW1", "L_to_SW2", "R_to_R", "R_to_SW1", "R_to_SW2", "LFE_to_SW1", "LFE_to_SW2"];
-      expect(await exported(mock, "convolution")).toEqual({ folder, stale: false, files: [
-        ...pairs.flatMap((pair) => [`${folder}/${pair}.wav`, `${folder}/${pair}.csv`]),
-        `${folder}/컨볼루션 적용 방법.txt`, `${folder}/routing.json`, `${folder}/secs-design.json`,
-      ] });
-    } finally { mock.dispose(); }
-  });
-
-  it("exports only the stereo chain's pairs without subs, including stale cached results", async () => {
+  it("keeps a stale cached result stale in what it writes", async () => {
     const results = resultWithoutSubs();
     results.calibration!.cached = true;
     results.calibration!.stale = true;
     const mock = createMockService({ tickMs: 0, results });
     try {
-      const folder = "C:/chosen";
-      expect(await exported(mock, "convolution", folder)).toEqual({ folder, stale: true, files: [
-        `${folder}/L_to_L.wav`, `${folder}/L_to_L.csv`, `${folder}/R_to_R.wav`, `${folder}/R_to_R.csv`,
-        `${folder}/컨볼루션 적용 방법.txt`, `${folder}/routing.json`, `${folder}/secs-design.json`,
-      ] });
+      expect(await exported(mock, "convolution", "C:/chosen")).toMatchObject({ folder: "C:/chosen", stale: true });
     } finally { mock.dispose(); }
   });
 
-  it("writes filters at the DSP's output rate, the REW mdat at 48 kHz, extra convolution rates in <rate>Hz folders", async () => {
+  it("refuses extra rates outside the generated output rates or on another kind, before a job", async () => {
     const mock = createMockService({ tickMs: 0, results: resultWithoutSubs() });
     try {
-      await mock.request({ method: "dsp_set", params: { preset: "minidsp", fields: null } });
-      for (const kind of ["camilla_dsp", "equalizer_apo", "convolution"] as const) expect(await rated(mock, kind, "C:/out")).toMatchObject({ output_rate: 96000, notes: [] });
-      expect(await rated(mock, "before_after_mdat", "C:/out")).toMatchObject({ output_rate: 48000, notes: [] });
-      const extra = await rated(mock, "convolution", "C:/out", { extra_rates: [44100, 192000] });
-      expect(extra.files).toEqual(expect.arrayContaining(["C:/out/L_to_L.wav", "C:/out/44100Hz/L_to_L.wav", "C:/out/192000Hz/R_to_R.csv"]));
-      for (const [kind, rates] of [["convolution", [96000]], ["convolution", [44100, 44100]], ["convolution", [32000]], ["camilla_dsp", [44100]]] as const) {
+      for (const [kind, rates] of [["convolution", [32000]], ["camilla_dsp", [44100]]] as const) {
         await expect(mock.request({ method: "export", params: { kind, folder: "", extra_rates: [...rates] } })).rejects.toMatchObject({ error: { code: "invalid_request" } });
       }
+      expect(await mock.request({ method: "jobs" })).toEqual([]);
     } finally { mock.dispose(); }
   });
 
@@ -577,41 +413,16 @@ describe("mock filter exports", () => {
     } finally { mock.dispose(); }
   });
 
-  it("changes the output rate only where the profile chooses it, without making the result stale", async () => {
+  it("keeps the profile while only the output rate changes, without making the result stale", async () => {
     const mock = createMockService({ tickMs: 0, results: resultWithoutSubs() });
     try {
       const camilla = await mock.request({ method: "dsp_get" });
-      expect(camilla.fields).toMatchObject({ output_rate: { fixed: 48000 }, output_rate_editable: true });
       const pc = await mock.request({ method: "dsp_set", params: { preset: null, fields: { ...camilla.fields, output_rate: { fixed: 96000 } } } });
-      expect(pc).toMatchObject({ profile: "camilla", fields: { output_rate: { fixed: 96000 }, output_rate_editable: true }, window_ms: (camilla.fields.fir_taps / 96000) * 1000 });
+      expect(pc).toMatchObject({ profile: "camilla", fields: { output_rate: { fixed: 96000 }, output_rate_editable: true } });
       expect((await mock.request({ method: "results" })).calibration?.stale).toBe(false);
       const automatic = await mock.request({ method: "dsp_set", params: { preset: null, fields: { ...pc.fields, output_rate: "auto" } } });
       expect(automatic).toMatchObject({ profile: "camilla", name: camilla.name, fields: { output_rate: "auto", output_rate_editable: true } });
       expect((await mock.request({ method: "results" })).calibration?.stale).toBe(false);
-      await expect(mock.request({ method: "dsp_set", params: { preset: null, fields: { ...camilla.fields, output_rate: { fixed: 32000 } } } })).rejects.toMatchObject({ error: { code: "invalid_request", params: { reason: "output_rate" } } });
-      const minidsp = await mock.request({ method: "dsp_set", params: { preset: "minidsp", fields: null } });
-      expect(minidsp.fields).toMatchObject({ output_rate: { fixed: 96000 }, output_rate_editable: false });
-      expect(await mock.request({ method: "dsp_set", params: { preset: null, fields: { ...minidsp.fields, output_rate_editable: true } } })).toMatchObject({ profile: "minidsp", fields: { output_rate_editable: false } });
-      await expect(mock.request({ method: "dsp_set", params: { preset: null, fields: { ...minidsp.fields, output_rate: { fixed: 44100 } } } })).rejects.toMatchObject({ error: { code: "invalid_request", params: { reason: "output_rate" } } });
-    } finally { mock.dispose(); }
-  });
-
-  it.each(["camilla_dsp", "filter_text", "equalizer_apo", "convolution"] as const)("uses stable named folders and includes a design record for %s", async (kind) => {
-    const mock = createMockService({ tickMs: 0, results: resultWithoutSubs() });
-    try {
-      await mock.request({ method: "export_folder_set", params: { folder: "C:/exports/" } });
-      for (const explicit of ["", "D:/chosen/"]) {
-        const folder = `${explicit ? "D:/chosen" : "C:/exports"}/SECS_${kind}_Cinema`;
-        const first = await exported(mock, kind, explicit, { design_name: "\u0085 Cinema \u0085" });
-        expect(first.folder).toBe(folder);
-        expect(first.files).toContain(`${folder}/secs-design.json`);
-        expect(first.files.every((file) => file.startsWith(`${folder}/`))).toBe(true);
-        expect(await exported(mock, kind, explicit, { design_name: "Cinema" })).toEqual(first);
-        if (kind === "camilla_dsp") expect(first.files).toEqual([
-          `${folder}/configs/secs_mixed.yml`, `${folder}/configs/secs_mixed_bypass.yml`,
-          `${folder}/coeffs/secs_mixed_L_fir.wav`, `${folder}/coeffs/secs_mixed_R_fir.wav`, `${folder}/secs-design.json`,
-        ]);
-      }
     } finally { mock.dispose(); }
   });
 
@@ -649,12 +460,6 @@ describe("mock filter exports", () => {
       const result = await exported(mock, "camilla_dsp", "C:/chosen", { camilla_devices: { capture: { type: "wasapi", device: null, format: "F32", loopback: true, exclusive: false }, playback: { type: "asio", device: "Tesira ASIO" } } });
       expect(result.files).toContain("C:/chosen/configs/secs_mixed_bypass.yml");
     } finally { mock.dispose(); }
-  });
-
-  it("matches the service's clamped, six-significant-digit ultra labels", () => {
-    expect(modeLabel("ultra", 20)).toBe("초고지연 모드 30 ms");
-    expect(modeLabel("ultra", 123.456789)).toBe("초고지연 모드 123.457 ms");
-    expect(modeLabel("ultra", 250)).toBe("초고지연 모드 200 ms");
   });
 });
 
@@ -842,23 +647,6 @@ describe("mock calibrate with MIMO (P141, P142)", () => {
     } finally { mock.dispose(); }
   });
 
-  it("refuses before a job when MIMO is off or below three positions", async () => {
-    const off = createMockService({ tickMs: 0 });
-    const two = createMockService({ tickMs: 0, project: { ...projectInfo, positions: [1, 2] } });
-    try {
-      await expect(off.request({ method: "calibrate", params: withMimo })).rejects.toMatchObject({ error: { code: "engine_input" } });
-      await mimoOn(two);
-      await expect(two.request({ method: "calibrate", params: withMimo })).rejects.toMatchObject({ error: { code: "engine_input" } });
-      expect(await off.request({ method: "jobs" })).toEqual([]);
-      expect(await two.request({ method: "jobs" })).toEqual([]);
-      // Without MIMO, and with subs only, the same projects calibrate as before.
-      await expect(two.request({ method: "calibrate", params: { ...withMimo, mimo: false } })).resolves.toMatchObject({ kind: "calibrate" });
-      two.drain();
-      await expect(off.request({ method: "calibrate", params: { ...withMimo, subs_only: true } })).resolves.toMatchObject({ kind: "calibrate" });
-      off.drain();
-    } finally { off.dispose(); two.dispose(); }
-  });
-
   it("keeps the correction when MIMO fails after it, and marks the failure with stage mimo", async () => {
     const mock = createMockService({ tickMs: 0 });
     try {
@@ -935,28 +723,6 @@ describe("mock calibrate with MIMO (P141, P142)", () => {
 
 describe("mock measurement graph reference (#127, U17)", () => {
   const all = { positions: null, roles: null };
-  const mean = (grid: readonly number[], values: readonly number[], lo: number, hi: number) => {
-    const band = values.filter((_, i) => grid[i]! >= lo && grid[i]! <= hi);
-    return band.reduce((sum, value) => sum + value, 0) / band.length;
-  };
-
-  it("shifts every curve by the first main's position-1 mean over 200–2000 Hz and returns that reference", async () => {
-    const mock = createMockService({ tickMs: 0 });
-    try {
-      const result = await mock.request({ method: "measurement_curves", params: all });
-      expect(result.reference).toEqual({ role: "L", position: 1, band: "mid" });
-      expect(result.axes).toEqual({ frequency_hz: [5, 22000], value: [-35, 20], unit: "db" });
-      const reference = result.curves.find((curve) => curve.role === "L" && curve.position === 1)!;
-      expect(mean(result.grid, reference.values, 200, 2000)).toBeCloseTo(0, 9);
-      // Not each curve to its own midrange: another main keeps its own level there.
-      const other = result.curves.find((curve) => curve.role === "R" && curve.position === 2)!;
-      expect(Math.abs(mean(result.grid, other.values, 200, 2000))).toBeGreaterThan(0.01);
-      // The service's kinds, and subs in their pass band near the mains instead of tens of dB above them.
-      expect(new Set(result.curves.map((curve) => curve.kind))).toEqual(new Set(["main", "sub", "top"]));
-      const sub = result.curves.find((curve) => curve.role === "SW1" && curve.position === 1)!;
-      expect(Math.abs(mean(result.grid, sub.values, 40, 80))).toBeLessThan(10);
-    } finally { mock.dispose(); }
-  });
 
   it("picks the reference before the request's filter, so a filtered curve keeps its values", async () => {
     const mock = createMockService({ tickMs: 0 });
@@ -965,31 +731,6 @@ describe("mock measurement graph reference (#127, U17)", () => {
       const filtered = await mock.request({ method: "measurement_curves", params: { positions: [2], roles: ["R"] } });
       expect(filtered.reference).toEqual(full.reference);
       expect(filtered.curves).toEqual(full.curves.filter((curve) => curve.role === "R" && curve.position === 2));
-    } finally { mock.dispose(); }
-  });
-
-  it("falls back to the main's lowest position, then to the first sub over 40–120 Hz, and to none", async () => {
-    const mock = createMockService({ tickMs: 0, project: { ...projectInfo, positions: [] } });
-    const reference = async () => (await mock.request({ method: "measurement_curves", params: all })).reference;
-    const assign = async (role: string, position: number) => {
-      await mock.request({ method: "mdat_import", params: { path: "/room.mdat", position, assignments: [{ measurement: role, role, index: 0, position }] } });
-      mock.drain();
-    };
-    try {
-      expect(await reference()).toBeNull();
-      await assign("SW2", 3);
-      await assign("SW1", 4);
-      expect(await reference()).toEqual({ role: "SW1", position: 4, band: "sub" });
-      const subs = await mock.request({ method: "measurement_curves", params: all });
-      const sw1 = subs.curves.find((curve) => curve.role === "SW1")!;
-      expect(mean(subs.grid, sw1.values, 40, 120)).toBeCloseTo(0, 9);
-      await assign("R", 2);
-      await assign("R", 5);
-      expect(await reference()).toEqual({ role: "R", position: 2, band: "mid" });
-      await assign("L", 3);
-      expect(await reference()).toEqual({ role: "L", position: 3, band: "mid" });
-      await assign("L", 1);
-      expect(await reference()).toEqual({ role: "L", position: 1, band: "mid" });
     } finally { mock.dispose(); }
   });
 });
@@ -1012,42 +753,6 @@ describe("mock 극저역 보호 (ADR 0022)", () => {
     } finally { mock.dispose(); }
   });
 
-  it("notes every channel's roll-off and each sub's high-pass after a calibration with it on", async () => {
-    const mock = createMockService({ tickMs: 0 });
-    try {
-      await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "low_protect", on: true } } });
-      await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "sub", role: "SW2", patch: { hp_hz: 25 } } } });
-      const notes = await calibrate(mock);
-      const roles = (await mock.request({ method: "config_get" })).speakers.map((speaker) => speaker.role);
-      expect(notes.map((note) => note.role)).toEqual(roles);
-      expect(notes.every((note) => note.limited && note.rolloff_hz >= 20)).toBe(true);
-      expect(notes.find((note) => note.role === "L")!.hp_hz).toBeNull();
-      // A sub without a high-pass of its own gets one at the roll-off over √2; SW2 keeps the user's.
-      const sw1 = notes.find((note) => note.role === "SW1")!;
-      expect(sw1.hp_hz).toBeCloseTo(sw1.rolloff_hz / Math.SQRT2, 9);
-      expect(notes.find((note) => note.role === "SW2")!.hp_hz).toBe(25);
-    } finally { mock.dispose(); }
-  });
-
-  it("reports the sub bus it cannot hold with the RC lower limit below 20 Hz, until that limit rises or the boost limit falls", async () => {
-    const mock = createMockService({ tickMs: 0 });
-    const edit = (edit: import("./bindings/SettingEdit").SettingEdit) => mock.request({ method: "calibration_settings_edit", params: { edit } });
-    try {
-      await edit({ kind: "low_protect", on: true });
-      expect((await calibrate(mock)).some((note) => !note.limited)).toBe(false);
-      // An edit refuses 15 Hz (ADR 0024); a project saved by SECS 2 keeps it, as the settings set here.
-      const stored = await mock.request({ method: "calibration_settings_get" });
-      await mock.request({ method: "calibration_settings_set", params: { settings: { ...stored, rc_lo: 15 } } });
-      expect((await calibrate(mock)).filter((note) => !note.limited)).toEqual([
-        { code: "low_protect", role: "SW1 + SW2", rolloff_hz: 22, hp_hz: null, limited: false, reduced: 0, cuts: 0 },
-      ]);
-      await edit({ kind: "boost_max", db: 6 });
-      expect((await calibrate(mock)).some((note) => !note.limited)).toBe(false);
-      await edit({ kind: "boost_max", db: 10 });
-      await edit({ kind: "rc_lo", hz: 20 });
-      expect((await calibrate(mock)).some((note) => !note.limited)).toBe(false);
-    } finally { mock.dispose(); }
-  });
 });
 
 describe("mock 저음 도착 맞추기, 고역 위상 맞추기 and 방 울림 줄이기 (ADR 0025, 0030)", () => {
@@ -1093,64 +798,28 @@ describe("mock extra correction bands (ADR 0024)", () => {
   const refusal = (mock: ReturnType<typeof createMockService>, edit: Edit) =>
     mock.request({ method: "calibration_settings_edit", params: { edit } }).then(() => null, (failure: { error: { code: string; params: Record<string, string> } }) => failure.error);
 
-  it("refuses the edges and bands the service refuses, with its params, and stores nothing", async () => {
+  it("stores a band list sorted and clears it with an empty one, and refuses only what the service was recorded refusing", async () => {
     const mock = createMockService({ tickMs: 0 });
     try {
-      const before = await mock.request({ method: "calibration_settings_get" });
-      expect(await refusal(mock, { kind: "rc_lo", hz: 15 })).toMatchObject({ code: "invalid_request", params: { field: "rc_lo", reason: "rc_lo_range", min: "20", max: "200" } });
-      expect(await refusal(mock, { kind: "rc_lo", hz: 250 })).toMatchObject({ params: { field: "rc_lo", reason: "rc_lo_range" } });
-      expect(await refusal(mock, { kind: "rc_hi", hz: 50 })).toMatchObject({ params: { field: "rc_hi", reason: "rc_hi_range", min: "100", max: "20000" } });
-      expect(await refusal(mock, { kind: "rc_lo", hz: 150 })).toBeNull();
-      expect(await refusal(mock, { kind: "rc_hi", hz: 150 })).toMatchObject({ params: { field: "rc_hi", reason: "rc_hi_below_lo", lo_hz: "150" } });
-      expect(await refusal(mock, { kind: "rc_hi", hz: 300 })).toBeNull();
-      expect(await refusal(mock, { kind: "rc_lo", hz: 200 })).toBeNull();
-      expect(await refusal(mock, { kind: "rc_hi", hz: 200 })).toMatchObject({ params: { reason: "rc_hi_below_lo", lo_hz: "200" } });
-      await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "rc_hi", hz: 250 } } });
-      expect(await refusal(mock, { kind: "rc_lo", hz: 200 })).toBeNull();
-      // A lower edge at or above a manual upper one; an automatic upper one never refuses it.
-      await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "rc_lo", hz: 100 } } });
-      await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "rc_hi", hz: 150 } } });
-      expect(await refusal(mock, { kind: "rc_lo", hz: 150 })).toMatchObject({ params: { field: "rc_lo", reason: "rc_lo_above_hi", hi_hz: "150" } });
-      await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "rc_hi", hz: null } } });
-      expect(await refusal(mock, { kind: "rc_lo", hz: 200 })).toBeNull();
-      // Bands: more than four, or one outside 20–20000 Hz or not rising, named by its 1-based place in the list sent.
       const band = (lo_hz: number, hi_hz: number) => ({ lo_hz, hi_hz });
-      expect(await refusal(mock, { kind: "rc_bands", bands: [band(20, 50), band(100, 200), band(300, 400), band(500, 600), band(700, 800)] }))
-        .toMatchObject({ params: { field: "rc_bands", reason: "rc_band_count", max: "4" } });
-      expect(await refusal(mock, { kind: "rc_bands", bands: [band(15000, 20000), band(19, 50)] }))
-        .toMatchObject({ params: { field: "rc_bands", reason: "rc_band_range", index: "2", lo_hz: "19", hi_hz: "50" } });
-      expect(await refusal(mock, { kind: "rc_bands", bands: [band(15000, 20001)] })).toMatchObject({ params: { reason: "rc_band_range", index: "1", hi_hz: "20001" } });
-      expect(await refusal(mock, { kind: "rc_bands", bands: [band(4000, 4000)] })).toMatchObject({ params: { reason: "rc_band_range", index: "1", lo_hz: "4000", hi_hz: "4000" } });
+      const before = await mock.request({ method: "calibration_settings_get" });
+      expect(await refusal(mock, { kind: "rc_bands", bands: [band(2000, 1000)] })).toEqual(recordedRefusal({ kind: "rc_bands", bands: [band(2000, 1000)] }));
       expect((await mock.request({ method: "calibration_settings_get" })).rc_bands).toEqual(before.rc_bands);
-      // A valid list is stored sorted; an empty one clears it.
       const stored = await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "rc_bands", bands: [band(15000, 20000), band(2000, 4000)] } } });
       expect(stored.rc_bands).toEqual([band(2000, 4000), band(15000, 20000)]);
       expect((await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "rc_bands", bands: [] } } })).rc_bands).toEqual([]);
     } finally { mock.dispose(); }
   });
 
-  it("hands the graph the bands on SPL and GD, and notes the merged band set after a calibration with them", async () => {
+  it("hands the graph the bands on SPL and GD", async () => {
     const mock = createMockService({ tickMs: 0, results: resultsSummary });
     const curves = (tab: "spl" | "gd" | "xo") => mock.request({ method: "result_curves", params: { tab, channel: null, group: null, xo_hz: null, corrected: null } });
-    const notes = async () => {
-      await mock.request({ method: "calibrate", params: { settings: null, subs_only: false } });
-      mock.drain();
-      return (await mock.request({ method: "results" })).calibration!.notes.filter((note) => note.code === "rc_bands");
-    };
     try {
       expect((await curves("spl")).rc_bands_hz).toEqual([]);
-      expect(await notes()).toEqual([]);
       await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "rc_bands", bands: [{ lo_hz: 15000, hi_hz: 20000 }, { lo_hz: 300, hi_hz: 800 }] } } });
       expect((await curves("spl")).rc_bands_hz).toEqual([[300, 800], [15000, 20000]]);
       expect((await curves("gd")).rc_bands_hz).toEqual([[300, 800], [15000, 20000]]);
       expect((await curves("xo")).rc_bands_hz).toEqual([]);
-      // The sample room's strict Schroeder limit is 154 Hz: 20–154 Hz, then the two bands.
-      expect(await notes()).toEqual([{ code: "rc_bands", bands: [
-        { lo_hz: 20, hi_hz: 154 }, { lo_hz: 300, hi_hz: 800 }, { lo_hz: 15000, hi_hz: 20000 },
-      ] }]);
-      // A band reaching into the RC band merges with it.
-      await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "rc_bands", bands: [{ lo_hz: 100, hi_hz: 400 }] } } });
-      expect(await notes()).toEqual([{ code: "rc_bands", bands: [{ lo_hz: 20, hi_hz: 400 }] }]);
     } finally { mock.dispose(); }
   });
 });

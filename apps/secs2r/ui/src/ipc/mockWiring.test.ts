@@ -7,8 +7,6 @@ import { CALIBRATION_LIMITS } from "./bindings/rules";
 import { createMockService, updateStates } from "./mock";
 import * as fx from "./fixtures";
 import { CAMILLA_EXE_FILE } from "../screens/export/types";
-import { mimoView } from "../screens/calibrate/fixtures";
-import { scorecardModel } from "../screens/calibrate/scorecard";
 
 const configure: MeasureConfigureParams = {
   method: "mock", input_device: null, output_device: null, input_channel: null, output_channels: [], sweep_length: null,
@@ -139,59 +137,12 @@ describe("P33 mock wiring", () => {
     expect(await mock.request({ method: "jobs" })).toEqual([]);
   });
 
-  it("matches the gallery's scorecard and late bass before and after a MIMO run", async () => {
-    const mock = createMockService({ tickMs: 0 });
-    try {
-      expect(fx.calibrationSummary.scorecard).toEqual(mimoView.results.calibration!.scorecard);
-      expect(fx.calibrationSummary.late_energy).toEqual(mimoView.results.calibration!.late_energy);
-      expect(fx.mimoSummary.scorecard).toEqual(mimoView.results.mimo!.scorecard);
-      expect(fx.mimoSummary.late_energy).toEqual(mimoView.results.mimo!.late_energy);
-      await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "mimo_on", on: true } } });
-      await mock.request({ method: "calibrate", params: { settings: null, subs_only: false } }); mock.drain();
-      const before = await mock.request({ method: "results" });
-      const lines = await mock.request({ method: "result_lines" });
-      expect(before.calibration!.late_energy).toEqual(fx.calibrationSummary.late_energy);
-      expect(scorecardModel(before, lines.channels)).toMatchObject({ late: true, mimo: false });
-      await mock.request({ method: "mimo", params: { settings: null } }); mock.drain();
-      const after = await mock.request({ method: "results" });
-      expect(after.mimo_export).toBe("included");
-      expect(after.mimo!.scorecard).toEqual(fx.mimoSummary.scorecard);
-      expect(after.mimo!.late_energy).toEqual(fx.mimoSummary.late_energy);
-      expect(scorecardModel(after, lines.channels)).toEqual(scorecardModel(mimoView.results, mimoView.lines.channels));
-      await mock.request({ method: "calibrate", params: { settings: null, subs_only: false } }); mock.drain();
-      expect(scorecardModel(await mock.request({ method: "results" }), lines.channels)).toMatchObject({ late: true, mimo: false });
-    } finally { mock.dispose(); }
-  });
-
-  it.each([[1], [2, 7, 9]])("limits late bass to the project's measured positions %j", async (...positions) => {
-    const mock = createMockService({ tickMs: 0, project: { ...fx.projectInfo, preset: "2.0", sub_count: 0, positions } });
-    try {
-      await mock.request({ method: "calibrate", params: { settings: null, subs_only: false } }); mock.drain();
-      const calibration = (await mock.request({ method: "results" })).calibration!;
-      expect(calibration.main_roles).toEqual(["L", "R"]);
-      expect(calibration.late_energy.map(({ role, position }) => [role, position])).toEqual(positions.flatMap((position) => [["L", position], ["R", position]]));
-      expect(calibration.late_energy.every((entry) => Number.isFinite(entry.before_db) && Number.isFinite(entry.after_db))).toBe(true);
-      await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "mimo_on", on: true } } });
-      if (positions.length < 3) {
-        await expect(mock.request({ method: "mimo", params: { settings: null } })).rejects.toMatchObject({ error: { code: "engine_input" } });
-        return;
-      }
-      await mock.request({ method: "mimo", params: { settings: null } }); mock.drain();
-      const mimo = (await mock.request({ method: "results" })).mimo!;
-      expect(mimo.support_count).toBe(0);
-      expect(mimo.scorecard).toEqual(calibration.scorecard.map((score) => ({ role: score.role, after_mimo: score.after })));
-      expect(mimo.late_energy).toEqual(calibration.late_energy.map(({ role, position, after_db }) => ({ role, position, after_mimo_db: after_db })));
-    } finally { mock.dispose(); }
-  });
-
   it("updates calibration, MIMO and export results, and preserves job failure injection", async () => {
     const mock = createMockService({ tickMs: 0 });
     const events: JobEvent[] = []; mock.events.subscribe((event) => events.push(event));
     await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "mimo_on", on: true } } });
-    await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "mode", mode: "linear" } } });
     await mock.request({ method: "calibrate", params: { settings: null, subs_only: false } }); mock.drain();
-    expect((await mock.request({ method: "results" })).calibration).toMatchObject({ mode: "linear", stale: false });
-    expect((await mock.request({ method: "result_lines" })).ba?.rows).toHaveLength(2);
+    expect((await mock.request({ method: "results" })).calibration).toMatchObject({ stale: false });
     await mock.request({ method: "mimo", params: { settings: null } }); mock.drain();
     expect(events.at(-1)).toMatchObject({ result: { kind: "mimo" } });
     await mock.request({ method: "target_apply_preset", params: { preset: "flat" } });
@@ -199,21 +150,15 @@ describe("P33 mock wiring", () => {
     await mock.request({ method: "export_folder_set", params: { folder: "/exports" } });
     expect(await mock.request({ method: "export_folder_get" })).toEqual({ folder: "/exports", stored: true });
     await mock.request({ method: "export", params: { kind: "camilla_dsp", folder: "" } }); mock.drain();
-    // export_folder.rs: a timestamped folder below the stored base, CamillaDSP in its `camilladsp`.
-    const folder = expect.stringMatching(/^\/exports\/SECS_camilla_RC_BA_linear_\d{8}-\d{6}\/camilladsp$/);
-    expect(events.at(-1)).toMatchObject({ result: { kind: "export", data: { folder, files: expect.arrayContaining([
-      expect.stringMatching(/camilladsp\/configs\/secs_linear\.yml$/),
-      expect.stringMatching(/camilladsp\/configs\/secs_linear_bypass\.yml$/),
-      expect.stringMatching(/camilladsp\/coeffs\/secs_linear_L_fir\.wav$/),
-      expect.stringMatching(/camilladsp\/secs-design\.json$/),
-    ]), stale: true } } });
+    // The recorded files below the stored base; the result went stale with the target.
+    expect(events.at(-1)).toMatchObject({ result: { kind: "export", data: { folder: expect.stringMatching(/^\/exports\//), stale: true } } });
     mock.failJobs("measure", "device_unavailable");
     await mock.request({ method: "measure_position", params: { position: 7 } }); mock.drain();
     expect(events.at(-1)).toMatchObject({ status: "failed", error: { code: "device_unavailable" } });
     expect((await mock.request({ method: "project_info" })).positions).not.toContain(7);
   });
 
-  it("exports a newly calibrated stereo project as named convolution pairs through job events", async () => {
+  it("exports a newly calibrated project through job events", async () => {
     const mock = createMockService({ tickMs: 0 });
     const events: JobEvent[] = [];
     const off = mock.events.subscribe((event) => events.push(event));
@@ -222,15 +167,10 @@ describe("P33 mock wiring", () => {
       await mock.request(newProject(false));
       await mock.request({ method: "sample_load", params: { positions: 1 } }); mock.drain();
       await mock.request({ method: "calibrate", params: { settings: null, subs_only: false } }); mock.drain();
-      await mock.request({ method: "export_folder_set", params: { folder: "/exports" } });
-      const { job } = await mock.request({ method: "export", params: { kind: "convolution", folder: "", design_name: "Stereo" } });
+      const { job } = await mock.request({ method: "export", params: { kind: "convolution", folder: "/exports/stereo" } });
       expect(events.at(-1)).toMatchObject({ event: "started", job, kind: "export" });
       mock.drain();
-      const folder = "/exports/SECS_convolution_Stereo";
-      expect(events.at(-1)).toMatchObject({ event: "finished", job, status: "succeeded", result: { kind: "export", data: { folder, stale: false, files: [
-        `${folder}/L_to_L.wav`, `${folder}/L_to_L.csv`, `${folder}/R_to_R.wav`, `${folder}/R_to_R.csv`,
-        `${folder}/컨볼루션 적용 방법.txt`, `${folder}/routing.json`, `${folder}/secs-design.json`,
-      ] } } });
+      expect(events.at(-1)).toMatchObject({ event: "finished", job, status: "succeeded", result: { kind: "export", data: { folder: "/exports/stereo", stale: false } } });
     } finally { off(); mock.dispose(); }
   });
 

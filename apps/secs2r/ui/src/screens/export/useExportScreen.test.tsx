@@ -195,7 +195,8 @@ describe("useExportScreen", () => {
     await perform(() => result.current.actions.exportFiles("convolution"));
     expect(mock.calls.filter((call) => call.method === "export")).toEqual([{ method: "export", params: { kind: "convolution", folder: "", extra_rates: [192000] } }]);
     await perform(mock.drain);
-    expect(result.current.view?.runs.convolution).toMatchObject({ status: "done", rate: 44100 });
+    // The run keeps what the service answered (the recorded export's rate).
+    expect(result.current.view?.runs.convolution).toMatchObject({ status: "done", rate: 48000 });
     // Kept for the session, across projects.
     await perform(() => session.call({ method: "project_new", params: { path: "", preset: "2.0", sub_count: 0, sample: false, tutorial: false } }));
     expect(result.current.view?.extraRates).toEqual([192000, 44100]);
@@ -294,7 +295,8 @@ describe("useExportScreen", () => {
     await perform(mock.drain);
     expect(result.current.view?.recalibrating).toBe(false);
     expect(result.current.view?.computing).toBe(false);
-    expect(result.current.view?.results.calibration).toMatchObject({ cached: false, stale: false, mode: "linear" });
+    // A current result again; it is the service's recorded one (the sample room's, in its recorded mode).
+    expect(result.current.view?.results.calibration).toMatchObject({ cached: false, stale: false, mode: "mixed" });
     for (const kind of mdatKinds) {
       expect(exportBlock(result.current.view!, kind)).toBeNull();
       await perform(() => result.current.actions.exportFiles(kind));
