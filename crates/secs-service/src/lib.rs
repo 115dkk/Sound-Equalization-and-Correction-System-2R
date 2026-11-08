@@ -409,7 +409,7 @@ pub struct Deps {
     pub compute_override: Option<secs_types::compute::ComputePreference>,
     /// Creates an audio backend adapter for one measurement operation.
     pub audio_backend: Arc<dyn Fn() -> Box<dyn secs_audio::AudioBackend> + Send + Sync>,
-    /// Creates the sample-room measurer; tests may inject explicit delayed rooms.
+    /// Test seam for the mock measurement method, separate from the real-device audio backend (audit #186 A28).
     pub mock_measurer: Arc<dyn Fn() -> measure::MockMeasurer + Send + Sync>,
     /// Creates a REW transport adapter for one operation.
     pub rew_transport: Arc<dyn Fn() -> Box<dyn secs_rew::Transport> + Send + Sync>,
