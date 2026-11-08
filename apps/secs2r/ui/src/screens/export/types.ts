@@ -58,8 +58,8 @@ export type CamillaDevice = CamillaCaptureDevice | CamillaPlaybackDevice;
 /** What the REW mdat can carry, in the order the choice shows them (`MdatScope`, DEVIATIONS F19). */
 export const MDAT_SCOPES = ["all", "measurements", "results"] as const satisfies readonly MdatScope[];
 
-/** Upstream `MIMO_MIN_POSITIONS`: MIMO needs three measured positions. */
-export const MIMO_MIN_POSITIONS = 3;
+/** Upstream `MIMO_MIN_POSITIONS`: MIMO needs three measured positions (generated, ADR 0052). */
+export { MIMO_MIN_POSITIONS } from "../../ipc/bindings/rules";
 
 /** How the last export of one kind ended, for the current result. */
 export type ExportRun =
