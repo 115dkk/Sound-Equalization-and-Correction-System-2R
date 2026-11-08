@@ -26,7 +26,7 @@ SECS 2R의 변경 기록입니다. 번호는 major.minor.patch이고, 0.x는 모
 - CLI가 공개 API(`Engine`)를 거쳐 서비스를 부르고, 내보낸 manifest의 `created_utc`는 컴퓨터의 시간대와 상관없이 UTC입니다. 전에는 CLI가 시간대 오프셋을 서비스에 전달하지 않아 한국 시간에서 9시간 어긋났습니다.
 - 앱 로그의 요청·잡 오류 줄에 `key=value` params가 들어가고, 취소된 잡은 늘 경고 수준입니다.
 - 화면에서 프로젝트 대화상자의 오류는 전역 알림으로 다시 뜨지 않고, 프로젝트를 바깥에서 교체하면 설계 이름과 미리듣기가 비며(docs/adr/0056), 새 알림·오류 사유·진행 단계마다 문장이 있습니다. 반올림하면 0이 되는 양수는 `+0.0` 대신 `0.0`으로 보입니다. 화면의 CSP는 그림과 글꼴 출처를 `'self'`로 좁혔습니다.
-- 라이브러리의 공개 항목이 바뀝니다. `secs-project`에서 `load_project_sources`, `load_project_irs`, `LoadedIr`, `load_source`가 사라지고 `MeasurementStore`가 출처(`source_of`, `sources_by_position`)를 가집니다. `secs-service`에서 `AppEffects`, `RevisedAppSettings`, `Service::revised_app_settings`가 사라지고 `SettingsEffect`와 `Service::register_settings_effect`가 생기며, `measure` 모듈은 비공개가 됩니다. `secs-engine`은 ADR 0046의 목록만 공개하고(`Design.chain`, `mimo` 모듈, 리샘플링 상수는 크레이트 안으로), `secs-api`의 `EngineBuilder::from_deps`가 서비스의 의존 묶음을 그대로 받습니다.
+- 라이브러리의 공개 항목이 바뀝니다. `secs-project`에서 `load_project_sources`, `load_project_irs`, `LoadedIr`, `load_source`가 사라지고 `MeasurementStore`가 출처(`source_of`, `sources_by_position`)를 가집니다. `secs-service`에서 `AppEffects`, `RevisedAppSettings`, `Service::revised_app_settings`가 사라지고 `SettingsEffect`와 `Service::register_settings_effect`가 생기며, `measure` 모듈은 비공개가 됩니다. `secs-engine`은 ADR 0046의 목록만 공개하고(`Design.chain`, `mimo` 모듈, 리샘플링 상수는 크레이트 안으로), `secs-api`의 `EngineBuilder::from_deps`가 서비스의 의존 묶음을 그대로 받습니다. `secs-project`의 `PyJson` 접근자가 공개되고, 저장소 밖 호출자가 없는 `secs-rew`, `secs-audio`, `secs-project`, `secs-service`의 공개 항목은 `#[deprecated]`로 표시해 다음 minor 판에서 지웁니다. `secs-audio`의 `CachedBackend`는 호출자가 없어 지웠습니다.
 - 공개 크레이트와 `secs2r`, `Secs2R`의 판이 함께 0.23.0으로 오릅니다.
 
 ### 안쪽에서 바뀐 것
