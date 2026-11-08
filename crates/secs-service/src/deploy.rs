@@ -95,12 +95,29 @@ fn refuse_link(path: &Path) -> Result<(), IpcError> {
 fn remove_link(path: &Path) -> Result<(), IpcError> {
     let metadata = fs::symlink_metadata(path)
         .map_err(|error| crate::fs::io_failure(path, &error, ErrorCode::ApplyFailed))?;
-    let result = if metadata.is_dir() {
+    let result = if is_directory_entry(&metadata) {
         fs::remove_dir(path)
     } else {
         fs::remove_file(path)
     };
     result.map_err(|error| crate::fs::io_failure(path, &error, ErrorCode::ApplyFailed))
+}
+
+/// Whether the entry itself is a directory. `Metadata::is_dir` is false for every link,
+/// but a Windows directory symlink or junction goes with `remove_dir` (PR #189's CI);
+/// a Unix symlink is a file entry and goes with `remove_file`.
+fn is_directory_entry(metadata: &fs::Metadata) -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt as _;
+        // Win32 FILE_ATTRIBUTE_DIRECTORY, set on directory links and junctions too.
+        const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x10;
+        metadata.file_attributes() & FILE_ATTRIBUTE_DIRECTORY != 0
+    }
+    #[cfg(not(windows))]
+    {
+        metadata.is_dir()
+    }
 }
 
 #[cfg(test)]

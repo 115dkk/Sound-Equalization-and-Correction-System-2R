@@ -2263,10 +2263,22 @@ fn apply_eqapo_prunes_a_link_without_touching_its_target() {
     #[cfg(unix)]
     std::os::unix::fs::symlink(&outside, &link).unwrap();
     #[cfg(windows)]
-    if let Err(error) = std::os::windows::fs::symlink_dir(&outside, &link) {
-        eprintln!("skipping Windows link half: {error}");
-        fs::remove_dir_all(root).unwrap();
-        return;
+    if let Err(symlink_error) = std::os::windows::fs::symlink_dir(&outside, &link) {
+        // Without the symlink privilege a junction stands in: a directory reparse
+        // point too, which retirement must remove without following. mklink takes
+        // only backslashes.
+        let native = |path: &Path| path.to_string_lossy().replace('/', "\\");
+        let output = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(native(&link))
+            .arg(native(&outside))
+            .output()
+            .expect("run mklink /J after symlink_dir failed");
+        assert!(
+            output.status.success(),
+            "symlink_dir failed ({symlink_error}); mklink /J failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 
     let install = EqApoInstall {
