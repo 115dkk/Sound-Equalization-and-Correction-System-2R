@@ -26,6 +26,7 @@ name: Monthly audit
 #                  repository_owner_id = 33408534
 #        audience  left empty (https://api.anthropic.com)
 #        CEL       claims.event_name in ["schedule", "workflow_dispatch"]
+#        workspace 치토스
 #      Leave the token lifetime at its default: the GitHub token lives about
 #      five minutes and Anthropic caps its own token at twice that, which is
 #      why the audit step keeps rewriting the token file.
@@ -33,9 +34,12 @@ name: Monthly audit
 #      ANTHROPIC_FEDERATION_RULE_ID (fdrl_...), ANTHROPIC_ORGANIZATION_ID
 #      (the organization UUID) and ANTHROPIC_SERVICE_ACCOUNT_ID (svac_...).
 #      ANTHROPIC_WORKSPACE_ID only when the rule covers more than one
-#      workspace. AUDIT_MODEL only to replace the default claude-fable-5-1:
-#      the organization's API answered 404 for claude-mythos-5-1
-#      (mactype_tauri, 2026-10-16).
+#      workspace. The audit model is set in this file (AUDIT_MODEL,
+#      claude-mythos-5-2), and an AUDIT_MODEL repository variable is no
+#      longer read. It let the audit fall back to claude-fable-5-1 while the
+#      organization's API answered 404 for Mythos (mactype_tauri,
+#      2026-10-16); the API has Cyber Verification Program (CVP) coverage
+#      since 2026-11-09.
 #   3. RELEASE_DEPLOY_KEY, the write deploy key release.yml already uses.
 #      The commit-baseline job pushes the audit tag and TECH_DEBT_AUDIT.md to
 #      main with it: main's 'Required checks' ruleset lets only the deploy
@@ -47,8 +51,10 @@ name: Monthly audit
 #      (public, so no token), and the prompt calls both skills. It is
 #      deliberately unpinned (the plugin manifest pins no version either), so
 #      the audit runs what the maintainer uses; the issue body records the
-#      commit it ran. Claude Code itself is pinned while the plugin is not;
-#      move the CLI pin deliberately in a `ci:` commit.
+#      commit it ran. Claude Code is unpinned for the same reason
+#      (maintainer decision, 2026-11-09, recorded here as audit #186 TD-212
+#      asked): a stale pin keeps an old model list, and 2.1.318 did not know
+#      claude-mythos-5-2, which arrived in 2.1.321.
 #
 # The schedule is the 5th, the day after the API credit resets, and off the
 # hour.
@@ -151,7 +157,7 @@ jobs:
       ANTHROPIC_ORGANIZATION_ID: ${{ vars.ANTHROPIC_ORGANIZATION_ID }}
       ANTHROPIC_SERVICE_ACCOUNT_ID: ${{ vars.ANTHROPIC_SERVICE_ACCOUNT_ID }}
       ANTHROPIC_WORKSPACE_ID: ${{ vars.ANTHROPIC_WORKSPACE_ID }}
-      AUDIT_MODEL: ${{ vars.AUDIT_MODEL || 'claude-fable-5-1' }}
+      AUDIT_MODEL: claude-mythos-5-2
     steps:
       # Ahead of the provisioning below, so a missing variable, a rule that
       # does not match this run or a model the organization cannot use fails
@@ -228,7 +234,7 @@ jobs:
             -H "content-type: application/json" \
             -d "$(printf '{"model": "%s", "max_tokens": 128, "output_config": {"effort": "low"}, "messages": [{"role": "user", "content": "Reply with OK."}]}' "$AUDIT_MODEL")")
           if [ "$status" != 200 ]; then
-            echo "::error::$AUDIT_MODEL refused a one-line request (HTTP $status). If the organization cannot use it, set the AUDIT_MODEL repository variable."
+            echo "::error::$AUDIT_MODEL refused a one-line request (HTTP $status). Check that the federation rule targets the 치토스 workspace (requirement 1)."
             cat "$response"
             exit 1
           fi
@@ -275,8 +281,9 @@ jobs:
         working-directory: apps/secs2r/ui
         run: npm ci --no-audit --no-fund
 
+      # Deliberately unpinned (requirement 4 in the header).
       - name: Install Claude Code
-        run: npm install -g @anthropic-ai/claude-code@2.1.318
+        run: npm install -g @anthropic-ai/claude-code
 
       - name: Install audit skills
         id: skills
