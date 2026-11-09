@@ -367,7 +367,7 @@ function noticeRecordText(t: Translate, number: FormatNumber, notice: Notice, ru
       break;
     }
     case "calibration_roles_unmeasured": {
-      // Configured speakers with no measurement at any position: the engine and the exports leave them out (DEVIATIONS D61).
+      // Configured speakers with no measurement at any position: the engine and the exports leave them out (DEVIATIONS D60).
       const roles = (p.roles ?? "").split(",").filter(Boolean);
       if (roles.length === 1) key = "notice.calibration_roles_unmeasured.one";
       params.roles = roles.map(roleCode).join("·");

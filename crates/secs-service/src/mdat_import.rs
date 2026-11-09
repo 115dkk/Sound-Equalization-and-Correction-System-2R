@@ -129,7 +129,7 @@ pub fn auto_assign(
         .collect()
 }
 /// Whether `title` names a subwoofer by a word and something other than a
-/// number, such as "SUB L" or "서브 우" (docs/DEVIATIONS.md D60). Upstream
+/// number, such as "SUB L" or "서브 우" (docs/DEVIATIONS.md F26). Upstream
 /// reads a sub from a title only with a number ("SUB 2"), and otherwise
 /// leaves the row to the spectral check, which a sub played with its low-pass
 /// off fails; the row then stays unassigned (forum report 2026-11-08).

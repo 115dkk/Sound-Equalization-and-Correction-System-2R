@@ -715,7 +715,7 @@ pub(crate) fn load_measurements_with_notices(
     positions.sort_by_key(|(position, _)| *position);
     // The engine calibrates only the roles it was given and the exports carry
     // only those, so a configured speaker with no measurement anywhere would
-    // drop out without a word (docs/DEVIATIONS.md D61).
+    // drop out without a word (docs/DEVIATIONS.md D60).
     if !positions.is_empty() {
         let measured = positions
             .iter()
