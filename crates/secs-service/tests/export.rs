@@ -984,6 +984,57 @@ fn mdat_scope_is_refused_for_other_kinds() {
 }
 
 #[test]
+fn eqapo_export_uses_windows_lfe_and_the_edited_system_output() {
+    let root = temp_root("eqapo-device-channels");
+    fs::create_dir_all(&root).unwrap();
+    let (path, settings) = write_case(&root, "room");
+    let mut store = MeasurementStore::open(&path).unwrap();
+    store
+        .project_mut()
+        .config
+        .speakers
+        .retain(|speaker| speaker.role != "C");
+    store.save().unwrap();
+
+    let service = deterministic_service();
+    open(&service, &path);
+    for (index, out) in [(3, 6), (2, 5), (3, 4)] {
+        let Response::ConfigSetSpeaker(_) = call_ok(
+            &service,
+            Request::ConfigSetSpeaker(secs_types::ipc::ConfigSetSpeakerParams {
+                index,
+                role: None,
+                size: None,
+                band_index: Some(0),
+                out: Some(out),
+                pol: None,
+            }),
+            Arc::new(NoEvents),
+        ) else {
+            panic!("speaker output edit must succeed")
+        };
+    }
+    let calibration_events = Arc::new(Events::default());
+    let job = start_calibration(&service, calibration_events.clone(), settings);
+    assert!(matches!(
+        finished_result(calibration_events.wait(job, Duration::from_secs(120))),
+        JobResult::Calibration
+    ));
+
+    let folder = root.join("eqapo");
+    export_and_wait(
+        &service,
+        ExportKind::EqualizerApo,
+        &folder,
+        Arc::new(Events::default()),
+    );
+    let config = fs::read_to_string(folder.join("config.txt")).unwrap();
+    assert!(config.contains("Eval: outSW1 = 5"));
+    assert!(config.contains("Eval: inLFE = 4"));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn oracle_project_calibrates_recommends_xo_and_exports() {
     let root = temp_root("oracle-flow");
     fs::create_dir_all(&root).unwrap();
@@ -1220,7 +1271,22 @@ fn oracle_project_calibrates_recommends_xo_and_exports() {
                     rc_pieces: &rc_pieces,
                     stamp: "2024-01-02 03:04",
                 };
-                let direct_files = secs_filters::export_eqapo(&filter_run, &direct_folder).unwrap();
+                let outputs = direct
+                    .config
+                    .mains
+                    .iter()
+                    .chain(&direct.config.subs)
+                    .enumerate()
+                    .map(|(index, role)| (role.clone(), index + 1))
+                    .collect::<Vec<_>>();
+                let direct_files = secs_filters::export_eqapo_observed_with_channels(
+                    &filter_run,
+                    &direct_folder,
+                    &secs_filters::Options::default(),
+                    Some(&outputs),
+                )
+                .unwrap()
+                .files;
                 let mut direct_snapshot: Vec<_> = direct_files
                     .iter()
                     .map(|file| {

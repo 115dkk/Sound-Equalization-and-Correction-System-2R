@@ -101,6 +101,7 @@ pub(crate) struct ExportPlan {
     pub output_rate: u32,
     pub output_rate_notes: Vec<Notice>,
     pub extra_rates: Vec<u32>,
+    pub eqapo_outputs: Option<Vec<(String, usize)>>,
     pub camilla_devices: Option<CamillaDevices>,
     pub mdat_scope: secs_export::MdatScope,
     pub originals: Option<ProjectSnapshot>,

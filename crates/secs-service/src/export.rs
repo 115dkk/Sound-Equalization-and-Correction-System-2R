@@ -130,6 +130,7 @@ impl EqapoWriter {
         run: &secs_filters::FilterRun<'_>,
         destination: &Path,
         options: &secs_filters::Options,
+        outputs: Option<&[(String, usize)]>,
         job: &crate::jobs::JobContext,
     ) -> Result<Self, IpcError> {
         let prepared = PreparedFolder::path_for(destination, job.id());
@@ -138,8 +139,9 @@ impl EqapoWriter {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => return Err(export_error(error)),
         }
-        let installed = secs_filters::export_eqapo_observed_with_options(run, &prepared, options)
-            .map_err(filter_error)?;
+        let installed =
+            secs_filters::export_eqapo_observed_with_channels(run, &prepared, options, outputs)
+                .map_err(filter_error)?;
         let relative_files = installed
             .files
             .iter()
@@ -426,6 +428,20 @@ fn resolve_output_rate(
     }
 }
 
+fn eqapo_outputs(project: &secs_project::Project) -> Option<Vec<(String, usize)>> {
+    project
+        .config
+        .speakers
+        .iter()
+        .map(|speaker| {
+            let [band] = speaker.bands.as_slice() else {
+                return None;
+            };
+            Some((speaker.role.clone(), usize::try_from(band.out).ok()?))
+        })
+        .collect()
+}
+
 /// The extra convolution rates to write. A rate equal to the main rate is
 /// refused when the user chose that rate, and dropped when `Auto` resolved to
 /// it: the screen cannot know the device's rate before the export starts.
@@ -564,6 +580,11 @@ impl Service {
             let mdat_scope = params.mdat_scope.unwrap_or_default();
             let project = open.project();
             let project_keys = ProjectKeys::of(project);
+            let eqapo_outputs = if params.kind == ExportKind::EqualizerApo {
+                eqapo_outputs(project)
+            } else {
+                None
+            };
             let project_mode = secs_types::calibration::mode_tag(
                 secs_project::calibration_from_project(project).mode,
             )
@@ -626,6 +647,7 @@ impl Service {
                     output_rate: 48_000,
                     output_rate_notes: Vec::new(),
                     extra_rates: Vec::new(),
+                    eqapo_outputs: None,
                     camilla_devices: None,
                     mdat_scope,
                     originals: None,
@@ -837,6 +859,7 @@ impl Service {
                 output_rate,
                 output_rate_notes: output_rate_notes.clone(),
                 extra_rates: params.extra_rates.clone(),
+                eqapo_outputs,
                 camilla_devices: params.camilla_devices.clone(),
                 mdat_scope,
                 originals: (params.kind == ExportKind::BeforeAfterMdat
@@ -879,6 +902,7 @@ impl Service {
                 output_rate,
                 output_rate_notes,
                 extra_rates,
+                eqapo_outputs,
                 camilla_devices,
                 mdat_scope,
                 originals,
@@ -1103,7 +1127,13 @@ impl Service {
                             commit_write(&job, || writer.write(&log))?
                         }
                         ExportKind::EqualizerApo => {
-                            let writer = EqapoWriter::prepare(&run, folder, &options, &job)?;
+                            let writer = EqapoWriter::prepare(
+                                &run,
+                                folder,
+                                &options,
+                                eqapo_outputs.as_deref(),
+                                &job,
+                            )?;
                             commit_write(&job, || writer.write(&log))?
                         }
                         ExportKind::Convolution => {

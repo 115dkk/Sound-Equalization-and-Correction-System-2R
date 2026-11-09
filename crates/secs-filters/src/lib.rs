@@ -77,6 +77,68 @@ const WINDOWS_NAMES: [&str; 18] = [
     "TBL", "TBC", "TBR",
 ];
 
+/// One Windows speaker layout in device-channel order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DeviceLayout {
+    /// English layout name used in the Equalizer APO configuration.
+    pub name_en: &'static str,
+    /// Korean layout name used in the application guide.
+    pub name_ko: &'static str,
+    /// SECS roles in device-channel order.
+    pub roles: &'static [&'static str],
+    /// Windows speaker-position names in device-channel order.
+    pub windows_names: &'static [&'static str],
+}
+
+const DEVICE_LAYOUTS: [DeviceLayout; 7] = [
+    DeviceLayout {
+        name_en: "stereo",
+        name_ko: "스테레오",
+        roles: &["L", "R"],
+        windows_names: &["FL", "FR"],
+    },
+    DeviceLayout {
+        name_en: "quadraphonic",
+        name_ko: "쿼드",
+        roles: &["L", "R", "Ls", "Rs"],
+        windows_names: &["FL", "FR", "BL", "BR"],
+    },
+    DeviceLayout {
+        name_en: "quadraphonic",
+        name_ko: "쿼드",
+        roles: &["L", "R", "Lb", "Rb"],
+        windows_names: &["FL", "FR", "BL", "BR"],
+    },
+    DeviceLayout {
+        name_en: "5.1",
+        name_ko: "5.1",
+        roles: &["L", "R", "C", "LFE", "Ls", "Rs"],
+        windows_names: &["FL", "FR", "FC", "LFE", "SL", "SR"],
+    },
+    DeviceLayout {
+        name_en: "5.1",
+        name_ko: "5.1",
+        roles: &["L", "R", "C", "LFE", "Lb", "Rb"],
+        windows_names: &["FL", "FR", "FC", "LFE", "BL", "BR"],
+    },
+    DeviceLayout {
+        name_en: "7.1",
+        name_ko: "7.1",
+        roles: &["L", "R", "C", "LFE", "Lb", "Rb", "Ls", "Rs"],
+        windows_names: &["FL", "FR", "FC", "LFE", "BL", "BR", "SL", "SR"],
+    },
+    DeviceLayout {
+        name_en: "7.1.4",
+        name_ko: "7.1.4",
+        roles: &[
+            "L", "R", "C", "LFE", "Lb", "Rb", "Ls", "Rs", "Tfl", "Tfr", "Tbl", "Tbr",
+        ],
+        windows_names: &[
+            "FL", "FR", "FC", "LFE", "BL", "BR", "SL", "SR", "TFL", "TFR", "TBL", "TBR",
+        ],
+    },
+];
+
 /// Output-rate options for filter exporters.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Options {
@@ -231,6 +293,76 @@ fn position(role: &str) -> Option<usize> {
 
 /// One ordered role-to-channel-number table.
 pub type ChannelNumbers = Vec<(String, usize)>;
+
+/// Device layout and one-based input and output channel numbers for an export.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeviceChannels {
+    /// First Windows speaker layout that carries all inputs and output numbers.
+    pub layout: &'static DeviceLayout,
+    /// Input roles numbered by their position in [`Self::layout`].
+    pub inputs: ChannelNumbers,
+    /// Output roles numbered by the caller's system-stage output table.
+    pub outputs: ChannelNumbers,
+}
+
+/// Choose Windows input channels and caller-supplied system-stage outputs.
+///
+/// Returns `None` when the output table or available Windows layouts cannot
+/// represent the plan. Callers can then retain [`windows_channels`] exactly.
+pub fn device_channels(
+    plan: &FilterPlan,
+    outputs: &[(String, usize)],
+) -> Result<Option<DeviceChannels>, FiltersError> {
+    plan.check_structure()?;
+    let mut used = std::collections::BTreeSet::new();
+    if outputs
+        .iter()
+        .any(|(_, number)| !(1..=256).contains(number) || !used.insert(*number))
+    {
+        return Ok(None);
+    }
+    let outputs = plan
+        .outputs
+        .iter()
+        .map(|role| {
+            outputs
+                .iter()
+                .find(|(name, _)| name == role)
+                .map(|(_, number)| (role.clone(), *number))
+        })
+        .collect::<Option<Vec<_>>>();
+    let Some(outputs) = outputs else {
+        return Ok(None);
+    };
+    let largest_output = outputs.iter().map(|(_, number)| *number).max().unwrap_or(0);
+    let Some(layout) = DEVICE_LAYOUTS.iter().find(|layout| {
+        largest_output <= layout.roles.len()
+            && plan
+                .inputs
+                .iter()
+                .all(|role| layout.roles.contains(&role.as_str()))
+    }) else {
+        return Ok(None);
+    };
+    let inputs = plan
+        .inputs
+        .iter()
+        .map(|role| {
+            let number = layout
+                .roles
+                .iter()
+                .position(|candidate| *candidate == role)
+                .expect("chosen layout contains every input")
+                + 1;
+            (role.clone(), number)
+        })
+        .collect();
+    Ok(Some(DeviceChannels {
+        layout,
+        inputs,
+        outputs,
+    }))
+}
 
 /// Return default one-based Windows input and output channel numbers.
 pub fn windows_channels(
@@ -870,9 +1002,11 @@ pub fn eqapo_config(
         out_num,
         latency_ms,
         SAMPLE_RATE,
+        None,
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn eqapo_config_at(
     plan: &FilterPlan,
     include: &str,
@@ -881,6 +1015,7 @@ fn eqapo_config_at(
     out_num: &[(String, usize)],
     latency_ms: Option<f64>,
     output_rate: u32,
+    device: Option<&DeviceChannels>,
 ) -> Result<String, FiltersError> {
     plan.check_structure()?;
     let mut rows = plan
@@ -915,6 +1050,17 @@ fn eqapo_config_at(
         "# (C:\\Program Files\\EqualizerAPO\\config) - keep the old config.txt somewhere first.".into(),
         format!("# Device format: {output_rate} Hz (the FIR wav files are {} kHz). Speaker setup: enough channels for the numbers below.", format_rate_khz(output_rate)), "#".into(),
         "# Default channel numbers (1 = first channel of the device, Windows order FL FR FC LFE BL BR SL SR ...):".into()];
+    if let Some(device) = device {
+        lines[3] = format!(
+            "# Device format: {output_rate} Hz (the FIR wav files are {} kHz). Speaker setup: {}.",
+            format_rate_khz(output_rate),
+            device.layout.name_en
+        );
+        lines[5] = format!(
+            "# Default channel numbers (1 = first channel of the device): inputs follow the Windows {} speaker setup, outputs the outputs set in the SECS system step.",
+            device.layout.name_en
+        );
+    }
     lines.extend(rows);
     if let Some(ms) = latency_ms {
         lines.push(format!("# Latency of the filters: {} ms (video: delay the picture or set the player audio offset).", format_fixed(ms, 1, false)));
@@ -983,6 +1129,7 @@ pub fn eqapo_guide(
         latency_ms,
         preamp_db,
         SAMPLE_RATE,
+        None,
     )
 }
 
@@ -996,6 +1143,7 @@ fn eqapo_guide_at(
     latency_ms: Option<f64>,
     preamp_db: f64,
     output_rate: u32,
+    device: Option<&DeviceChannels>,
 ) -> String {
     let mut lines = vec![format!("SECS 2 보정 → Equalizer APO ({mode_label})"), String::new(), "■ 적용 순서".into(),
         "1. Equalizer APO 를 설치하고 Configurator 에서 쓸 출력 장치(오디오 인터페이스)에 체크한 뒤 재부팅합니다.".into(),
@@ -1014,6 +1162,17 @@ fn eqapo_guide_at(
             format_rate_khz(output_rate)
         );
     }
+    if let Some(device) = device {
+        lines[4] = format!(
+            "2. 윈도우 소리 설정에서 그 장치의 형식을 {output_rate} Hz로, 스피커 구성을 {}로 맞추십시오.",
+            device.layout.name_ko
+        );
+        lines[10] = format!(
+            "■ 채널 번호(장치 채널, 1부터. 입력은 윈도우 {} 배치의 채널, 출력은 SECS 시스템 단계에서 정한 출력)",
+            device.layout.name_ko
+        );
+        lines[11] = "   역할    입력        출력".into();
+    }
     for role in plan.inputs.iter().chain(
         plan.outputs
             .iter()
@@ -1027,10 +1186,37 @@ fn eqapo_guide_at(
             .iter()
             .find(|(name, _)| name == role)
             .map_or("   -".into(), |(_, n)| format!("{n:4}"));
-        lines.push(format!(
-            "   {role:<6} {input}  {output}  {}",
-            windows_name(role, plan)
-        ));
+        if let Some(device) = device {
+            let name = |number: Option<usize>, missing: &str| {
+                number.map_or_else(String::new, |number| {
+                    device
+                        .layout
+                        .windows_names
+                        .get(number - 1)
+                        .copied()
+                        .unwrap_or(missing)
+                        .to_owned()
+                })
+            };
+            let input_number = in_num
+                .iter()
+                .find(|(name, _)| name == role)
+                .map(|(_, number)| *number);
+            let output_number = out_num
+                .iter()
+                .find(|(name, _)| name == role)
+                .map(|(_, number)| *number);
+            lines.push(format!(
+                "   {role:<6} {input} {:<5} {output} {}",
+                name(input_number, "-"),
+                name(output_number, "-")
+            ));
+        } else {
+            lines.push(format!(
+                "   {role:<6} {input}  {output}  {}",
+                windows_name(role, plan)
+            ));
+        }
     }
     lines.extend(["   배선이 다르면 config.txt 맨 위 입력·출력 Eval 줄의 숫자만 고칩니다(0 = 안 씀, 장치에 없는 번호는 저절로 건너뜀):".into(),
         "   · 입력: \"Eval: inL = 1\" — 그 소리가 들어오는 장치 채널".into(), "   · 출력: \"Eval: outL = 1\" — 그 스피커가 꽂힌 장치 채널".into(),
@@ -1420,6 +1606,7 @@ pub fn write_eqapo(
         note,
         latency_ms,
         SAMPLE_RATE,
+        None,
         &|_, _| Ok(()),
     )?
     .files)
@@ -1444,6 +1631,7 @@ pub fn write_eqapo_observed(
         note,
         latency_ms,
         SAMPLE_RATE,
+        None,
         after_stage_write,
     )
 }
@@ -1457,6 +1645,7 @@ fn write_eqapo_observed_at(
     note: &str,
     latency_ms: Option<f64>,
     output_rate: u32,
+    device: Option<&DeviceChannels>,
     after_stage_write: &dyn Fn(usize, &Path) -> std::io::Result<()>,
 ) -> Result<Installed, FiltersError> {
     let safe = ensure_safe_component(name)?;
@@ -1464,27 +1653,41 @@ fn write_eqapo_observed_at(
     let sub = out.join(&safe);
     let (firs, wavs) = fir_files(plan, &format!("{safe}_"), output_rate)?;
     let body = eqapo_filters(plan, &firs, note)?.into_bytes();
-    let (inputs, outputs) = windows_channels(plan)?;
+    let fallback = device
+        .is_none()
+        .then(|| windows_channels(plan))
+        .transpose()?;
+    let (inputs, outputs) = match device {
+        Some(device) => (device.inputs.as_slice(), device.outputs.as_slice()),
+        None => {
+            let (inputs, outputs) = fallback
+                .as_ref()
+                .expect("fallback channels were built without a device layout");
+            (inputs.as_slice(), outputs.as_slice())
+        }
+    };
     let preamp = secs_graph::headroom_db_half_db(plan)?;
     let config = eqapo_config_at(
         plan,
         &format!("{safe}\\{safe}.txt"),
         preamp,
-        &inputs,
-        &outputs,
+        inputs,
+        outputs,
         latency_ms,
         output_rate,
+        device,
     )?
     .into_bytes();
     let guide = utf8_bom(&eqapo_guide_at(
         plan,
-        &inputs,
-        &outputs,
+        inputs,
+        outputs,
         &safe,
         mode_label,
         latency_ms,
         preamp,
         output_rate,
+        device,
     ));
     let body_relative = PathBuf::from(&safe).join(format!("{safe}.txt"));
     let guide_relative = PathBuf::from(EQAPO_GUIDE);
@@ -1598,6 +1801,19 @@ pub fn export_eqapo_observed_with_options(
     folder: &Path,
     options: &Options,
 ) -> Result<Installed, FiltersError> {
+    export_eqapo_observed_with_channels(run, folder, options, None)
+}
+
+/// Export Equalizer APO files with optional system-stage output channels.
+///
+/// Invalid, incomplete, or unrepresentable output tables retain the same
+/// channel numbers and text as [`export_eqapo_observed_with_options`].
+pub fn export_eqapo_observed_with_channels(
+    run: &FilterRun<'_>,
+    folder: &Path,
+    options: &Options,
+    outputs: Option<&[(String, usize)]>,
+) -> Result<Installed, FiltersError> {
     validate_options(options, false)?;
     if let Some(block) = filter_export_block(
         ExportKind::EqualizerApo,
@@ -1608,6 +1824,10 @@ pub fn export_eqapo_observed_with_options(
     }
     validate_run(run)?;
     let graph = ExportGraph::build(run.chain, run.mimo, LfeChoice::DOLBY)?;
+    let device = outputs
+        .map(|outputs| device_channels(graph.plan(), outputs))
+        .transpose()?
+        .flatten();
     let mode = run.mode;
     write_eqapo_observed_at(
         graph.plan(),
@@ -1617,6 +1837,7 @@ pub fn export_eqapo_observed_with_options(
         run.note,
         Some(run.latency_ms),
         options.output_rate,
+        device.as_ref(),
         &|_, _| Ok(()),
     )
 }
@@ -2137,6 +2358,310 @@ mod generation_entry_tests {
         let guide = super::convolution_guide(48_000, 4096, 2.25, &[route], &[]);
         assert!(guide.contains("모든 파일에 2.2 dB 감쇠"));
         assert!(guide.contains("L → L | L_to_L.wav | +2.2 dB | 1.234 ms"));
+    }
+}
+
+#[cfg(test)]
+mod device_channel_tests {
+    use super::*;
+    use secs_types::chain::{BandType, MainChannel, SignalChain, SubChannel};
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static TEMP: AtomicU64 = AtomicU64::new(0);
+
+    fn plan(inputs: &[&str], outputs: &[&str]) -> FilterPlan {
+        let mains = inputs
+            .iter()
+            .copied()
+            .filter(|role| *role != "LFE")
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        FilterPlan {
+            inputs: inputs.iter().map(|role| (*role).to_owned()).collect(),
+            outputs: outputs.iter().map(|role| (*role).to_owned()).collect(),
+            pre_ops: Vec::new(),
+            input_ops: mains
+                .iter()
+                .map(|role| (role.clone(), Vec::new()))
+                .collect(),
+            main_ops: mains
+                .iter()
+                .map(|role| (role.clone(), Vec::new()))
+                .collect(),
+            send_ops: Vec::new(),
+            lfe_ops: Vec::new(),
+            subs: Vec::new(),
+            mimo: Vec::new(),
+        }
+    }
+
+    fn numbered(outputs: &[&str]) -> ChannelNumbers {
+        outputs
+            .iter()
+            .enumerate()
+            .map(|(index, role)| ((*role).to_owned(), index + 1))
+            .collect()
+    }
+
+    fn input_number(channels: &DeviceChannels, role: &str) -> usize {
+        channels
+            .inputs
+            .iter()
+            .find(|(candidate, _)| candidate == role)
+            .unwrap()
+            .1
+    }
+
+    type LayoutCase = (
+        &'static [&'static str],
+        &'static [&'static str],
+        &'static str,
+        &'static [(&'static str, usize)],
+    );
+
+    #[test]
+    fn standard_speaker_plans_choose_windows_layouts_and_input_numbers() {
+        let cases: &[LayoutCase] = &[
+            (&["L", "R"], &["L", "R"], "stereo", &[("L", 1), ("R", 2)]),
+            (
+                &["L", "R", "LFE"],
+                &["L", "R", "SW1"],
+                "5.1",
+                &[("L", 1), ("R", 2), ("LFE", 4)],
+            ),
+            (
+                &["L", "R", "LFE"],
+                &["L", "R", "SW1", "SW2"],
+                "5.1",
+                &[("L", 1), ("R", 2), ("LFE", 4)],
+            ),
+            (
+                &["L", "R", "C"],
+                &["L", "R", "C"],
+                "5.1",
+                &[("L", 1), ("R", 2), ("C", 3)],
+            ),
+            (
+                &["L", "R", "Ls", "Rs"],
+                &["L", "R", "Ls", "Rs"],
+                "quadraphonic",
+                &[("L", 1), ("R", 2), ("Ls", 3), ("Rs", 4)],
+            ),
+            (
+                &["L", "R", "Ls", "Rs", "LFE"],
+                &["L", "R", "SW1", "Ls", "Rs"],
+                "5.1",
+                &[("L", 1), ("R", 2), ("LFE", 4), ("Ls", 5), ("Rs", 6)],
+            ),
+            (
+                &["L", "R", "C", "Ls", "Rs", "LFE"],
+                &["L", "R", "C", "SW1", "Ls", "Rs"],
+                "5.1",
+                &[("C", 3), ("LFE", 4), ("Ls", 5), ("Rs", 6)],
+            ),
+            (
+                &["L", "R", "C", "Lb", "Rb", "Ls", "Rs", "LFE"],
+                &["L", "R", "C", "SW1", "Lb", "Rb", "Ls", "Rs"],
+                "7.1",
+                &[("LFE", 4), ("Lb", 5), ("Rb", 6), ("Ls", 7), ("Rs", 8)],
+            ),
+            (
+                &[
+                    "L", "R", "C", "Lb", "Rb", "Ls", "Rs", "Tfl", "Tfr", "Tbl", "Tbr", "LFE",
+                ],
+                &[
+                    "L", "R", "C", "SW1", "Lb", "Rb", "Ls", "Rs", "Tfl", "Tfr", "Tbl", "Tbr",
+                ],
+                "7.1.4",
+                &[
+                    ("LFE", 4),
+                    ("Tfl", 9),
+                    ("Tfr", 10),
+                    ("Tbl", 11),
+                    ("Tbr", 12),
+                ],
+            ),
+        ];
+        for (inputs, outputs, name, expected) in cases {
+            let plan = plan(inputs, outputs);
+            let channels = device_channels(&plan, &numbered(outputs)).unwrap().unwrap();
+            assert_eq!(channels.layout.name_en, *name);
+            for &(role, number) in *expected {
+                assert_eq!(input_number(&channels, role), number, "{name} {role}");
+            }
+        }
+    }
+
+    #[test]
+    fn two_two_uses_lfe_four_and_system_stage_sub_outputs() {
+        let plan = plan(&["L", "R", "LFE"], &["L", "R", "SW1", "SW2"]);
+        let outputs = vec![
+            ("L".into(), 1),
+            ("R".into(), 2),
+            ("SW1".into(), 3),
+            ("SW2".into(), 4),
+        ];
+        let channels = device_channels(&plan, &outputs).unwrap().unwrap();
+        assert_eq!(channels.layout.name_en, "5.1");
+        assert_eq!(
+            channels.inputs,
+            vec![("L".into(), 1), ("R".into(), 2), ("LFE".into(), 4)]
+        );
+        assert_eq!(channels.outputs, outputs);
+
+        let moved = vec![
+            ("L".into(), 1),
+            ("R".into(), 2),
+            ("SW1".into(), 5),
+            ("SW2".into(), 4),
+        ];
+        let channels = device_channels(&plan, &moved).unwrap().unwrap();
+        assert_eq!(channels.layout.name_en, "5.1");
+        assert_eq!(channels.outputs, moved);
+    }
+
+    #[test]
+    fn invalid_or_unrepresentable_output_tables_request_the_fallback() {
+        let two_two = plan(&["L", "R", "LFE"], &["L", "R", "SW1", "SW2"]);
+        for outputs in [
+            vec![],
+            vec![("L".into(), 1), ("R".into(), 2), ("SW1".into(), 3)],
+            vec![
+                ("L".into(), 1),
+                ("R".into(), 2),
+                ("SW1".into(), 0),
+                ("SW2".into(), 4),
+            ],
+            vec![
+                ("L".into(), 1),
+                ("R".into(), 2),
+                ("SW1".into(), 2),
+                ("SW2".into(), 4),
+            ],
+            vec![
+                ("L".into(), 1),
+                ("R".into(), 2),
+                ("SW1".into(), 257),
+                ("SW2".into(), 4),
+            ],
+            vec![
+                ("L".into(), 1),
+                ("R".into(), 2),
+                ("SW1".into(), 3),
+                ("SW2".into(), 13),
+            ],
+        ] {
+            assert_eq!(device_channels(&two_two, &outputs).unwrap(), None);
+        }
+
+        let roles = [
+            "L", "R", "C", "LFE", "Lb", "Rb", "Ls", "Rs", "Lw", "Rw", "Tfl", "Tfr", "Tml", "Tmr",
+            "Tbl", "Tbr",
+        ];
+        let plan = plan(&roles, &roles);
+        assert_eq!(device_channels(&plan, &numbered(&roles)).unwrap(), None);
+    }
+
+    fn two_two_chain() -> SignalChain {
+        let mains = ["L", "R"]
+            .into_iter()
+            .map(|role| MainChannel {
+                role: role.into(),
+                input_peq: Vec::new(),
+                fir: vec![1.0],
+                gain_db: 0.0,
+                polarity: None,
+                delay_ms: 0.0,
+                xo_hz: Some(80.0),
+                top_peq: Vec::new(),
+                align_delay_ms: 0.0,
+            })
+            .collect();
+        let subs = ["SW1", "SW2"]
+            .into_iter()
+            .map(|role| SubChannel {
+                role: role.into(),
+                gain_db: 0.0,
+                delay_ms: 0.0,
+                polarity: 1,
+                allpass: Vec::new(),
+                hp_hz: 0.0,
+                hp_type: BandType::Lr24,
+                lp_hz: 0.0,
+                lp_type: BandType::Lr24,
+                peq: Vec::new(),
+                mode: "auto".into(),
+            })
+            .collect();
+        SignalChain {
+            sample_rate: SAMPLE_RATE,
+            mains,
+            subs,
+            sub_bus_peq: Vec::new(),
+            main_extra_ms: 0.0,
+            lift_ms: 0.0,
+            latency_ms: 0.0,
+            input_hp_hz: None,
+        }
+    }
+
+    #[test]
+    fn two_two_export_names_the_layout_and_uses_separate_input_and_output_channels() {
+        let root = std::env::temp_dir().join(format!(
+            "secs-filters-device-channels-{}-{}",
+            std::process::id(),
+            TEMP.fetch_add(1, Ordering::Relaxed)
+        ));
+        let chain = two_two_chain();
+        let run = FilterRun {
+            chain: &chain,
+            mimo: None,
+            mode: "mixed",
+            note: "test",
+            label: "test",
+            latency_ms: 0.0,
+            rc_pieces: &[],
+            stamp: "2026-11-09 00:00",
+        };
+        let outputs = vec![
+            ("L".into(), 1),
+            ("R".into(), 2),
+            ("SW1".into(), 3),
+            ("SW2".into(), 4),
+        ];
+        let installed =
+            export_eqapo_observed_with_channels(&run, &root, &Options::default(), Some(&outputs))
+                .unwrap();
+        assert!(!installed.files.is_empty());
+        let config = std::fs::read_to_string(root.join("config.txt")).unwrap();
+        assert!(config.contains("Eval: inLFE = 4"));
+        assert!(config.contains("Eval: outSW1 = 3"));
+        assert!(config.contains("Eval: outSW2 = 4"));
+        assert!(config.contains(
+            "# Device format: 48000 Hz (the FIR wav files are 48 kHz). Speaker setup: 5.1."
+        ));
+        assert!(config.contains(
+            "# Default channel numbers (1 = first channel of the device): inputs follow the Windows 5.1 speaker setup, outputs the outputs set in the SECS system step."
+        ));
+        let guide = std::fs::read(root.join(EQAPO_GUIDE)).unwrap();
+        let guide = std::str::from_utf8(guide.strip_prefix(&[0xef, 0xbb, 0xbf]).unwrap()).unwrap();
+        assert!(guide.contains(
+            "2. 윈도우 소리 설정에서 그 장치의 형식을 48000 Hz로, 스피커 구성을 5.1로 맞추십시오."
+        ));
+        assert!(guide.contains(
+            "■ 채널 번호(장치 채널, 1부터. 입력은 윈도우 5.1 배치의 채널, 출력은 SECS 시스템 단계에서 정한 출력)"
+        ));
+        assert!(guide.contains("   역할    입력        출력"));
+        for row in [
+            format!("   {:<6} {:>4} {:<5} {:>4} {}", "L", 1, "FL", 1, "FL"),
+            format!("   {:<6} {:>4} {:<5} {:>4} {}", "R", 2, "FR", 2, "FR"),
+            format!("   {:<6} {:>4} {:<5} {:>4} {}", "LFE", 4, "LFE", "-", ""),
+            format!("   {:<6} {:>4} {:<5} {:>4} {}", "SW1", "-", "", 3, "FC"),
+            format!("   {:<6} {:>4} {:<5} {:>4} {}", "SW2", "-", "", 4, "LFE"),
+        ] {
+            assert!(guide.contains(&row), "missing guide row {row:?}");
+        }
+        std::fs::remove_dir_all(root).unwrap();
     }
 }
 
