@@ -90,28 +90,28 @@ fn reaper_script_compiles_when_luac_is_available() {
         eprintln!("SKIP: no Lua compiler; set SECS_LUAC");
         return;
     };
-    let output = Command::new(compiler)
-        .arg("-p")
-        .arg(script)
-        .arg(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/tests/reaper/mock.lua"
-        ))
-        .arg(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/tests/reaper/harness.lua"
-        ))
-        .arg(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/tests/reaper/playback.lua"
-        ))
-        .output()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    // One file per run: Lua 5.4.4's luac (Ubuntu 22.04, release.yml's Linux runner)
+    // double-frees when it combines several files into one chunk, a regression
+    // reported on lua-l in 2022-02; a single file never takes that path.
+    let fixtures = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/reaper");
+    for file in [
+        script,
+        fixtures.join("mock.lua"),
+        fixtures.join("harness.lua"),
+        fixtures.join("playback.lua"),
+    ] {
+        let output = Command::new(&compiler)
+            .arg("-p")
+            .arg(&file)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}: {}",
+            file.display(),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
 }
 
 #[test]
