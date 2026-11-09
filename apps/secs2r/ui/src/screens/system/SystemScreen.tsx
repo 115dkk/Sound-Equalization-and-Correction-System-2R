@@ -752,13 +752,10 @@ function DspCard({ view, actions, initialAdvanced }: { view: SystemView; actions
         onChange={(key) => actions.setDspPreset(key)}
       />
       <OutputRate fields={dsp.fields} onChange={(output_rate) => edit({ output_rate })} />
-      <Advanced id="system.dsp.advanced" count={5} defaultOpen={initialAdvanced}>
+      <Advanced id="system.dsp.advanced" count={2} defaultOpen={initialAdvanced}>
         <div className="system-dsp__fields">
           <Select id="system.dsp.fir_taps" label={t("system.dsp.fir_taps")} value={String(dsp.fields.fir_taps)} options={taps.map((n) => ({ value: String(n), label: tapLabel(n) }))} onChange={(v) => edit({ fir_taps: Number(v) })} />
           <NumberField id="system.dsp.fir_budget" label={t("system.dsp.fir_budget")} value={dsp.fields.fir_budget} min={0} max={4194304} step={1024} unit={t("system.dsp.unit.taps")} size={9} onChange={(v) => edit({ fir_budget: v })} />
-          <NumberField id="system.dsp.iir_bands" label={t("system.dsp.iir_bands")} value={dsp.fields.iir_bands} min={0} max={64} step={1} unit={t("system.dsp.unit.bands")} size={4} onChange={(v) => edit({ iir_bands: v })} />
-          <NumberField id="system.dsp.allpass_bands" label={t("system.dsp.allpass_bands")} value={dsp.fields.allpass_bands} min={0} max={64} step={1} unit={t("system.dsp.unit.bands")} size={4} onChange={(v) => edit({ allpass_bands: v })} />
-          <NumberField id="system.dsp.bm_path_delays" label={t("system.dsp.bm_path_delays")} value={dsp.fields.bm_path_delays} min={0} max={64} step={1} unit={t("system.dsp.unit.slots")} size={4} onChange={(v) => edit({ bm_path_delays: v })} />
         </div>
         <p className="system-dsp__note tabular" data-ui="system.dsp.note">
           {t("system.dsp.note", { window: number(dsp.window_ms, 0), resolution: number(dsp.resolution_hz, 1) })}

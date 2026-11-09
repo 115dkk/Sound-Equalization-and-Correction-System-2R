@@ -104,7 +104,7 @@ SECS 2R이 업스트림 SECS 2와 일부러 다르게 동작하는 자리의 목
 | 번호 | 업스트림 동작 | 바꾸는 동작 | 출처 | 상태 |
 |---|---|---|---|---|
 | U1 | 레벨 체크의 출력 슬라이더가 측정 스윕 레벨과 이어져 있지 않고, 레벨 결과는 튜토리얼 밖에서 쓰이지 않습니다. 건너뛰면 그럴듯한 가짜 값을 씁니다. | 0.27.2에서 뺐습니다. 권장 스윕 레벨 찾기(`level_check`, `level_apply`)는 쓰임새가 분명하지 않았고 소리가 멈추지 않는다는 제보가 있어, 업스트림처럼 스윕 레벨을 −20 dBFS 기본값으로 둡니다. 이미 적용한 값은 프로젝트에 남아 측정에 쓰입니다. | `wizard/step3_level.py`, `rewapi/rew.py configure` | 철회 |
-| U2 | DSP 프로필 칸 여섯 개를 엔진이 읽지 않습니다(MIMO FIR 예산 문구만 씀). | '내보낼 DSP'로 바꾸고 예산 경고에만 쓴다고 화면에 적습니다. | `wizard/step2_config.py:1090-1125` | 계획 |
+| U2 | DSP 프로필 칸 여섯 개를 엔진이 읽지 않습니다(MIMO FIR 예산 문구만 씀). | 카드 이름을 '내보낼 DSP'로 하고, 설명에 출력 레이트와 FIR 용량 경고만 정한다고, 파일 형식은 내보내기 단계에서 고른다고 적습니다. PC 프리셋 이름에 Equalizer APO를 넣습니다(2026-11-08 스피커 갤러리 제보: EQ APO가 목록에 없어 무엇을 고를지 몰랐습니다). 아무도 읽지 않는 IIR 밴드, 올패스 밴드, 베이스 매니지먼트 경로 딜레이 칸은 화면에서 빼고, 값은 프로젝트 파일에 그대로 남깁니다. 화면 `SystemScreen.test.tsx`의 DSP 카드 시험. | `wizard/step2_config.py:1090-1125` | 적용 |
 | U3 | 단계별 REW mdat 내보내기가 숨겨져 닿을 수 없습니다. | 내보내기의 고급에 되살립니다. | `wizard/step_calibration.py` 내보내기 카드 | 계획 |
 | U4 | 마지막 단계의 '완료'가 아무 일도 하지 않습니다. | 없앱니다. | `wizard/window.py advance` | 계획 |
 | U5 | 측정을 지우는 동작(프리셋·서브 수·배치 변경, 마지막 위치 다시)이 확인 없이 측정을 지웁니다. | 프리셋·서브 수·배치 변경은 측정이 있으면 먼저 `confirm_required`를 돌려주고, 확인한 변경만 측정을 지웁니다. 이 변경과 `position_clear`는 프로젝트별 최근 16개 단일 사용 토큰으로 기록을 복원하며, `position_clear`의 즉시 저장·깨끗한 상태는 그대로 두고 구성·배치 복원은 저장 전 더티 상태로 둡니다. `secs-service::{destructive_config_and_layout_edits_require_confirmation_and_undo_once,position_clear_undo_is_byte_exact_and_single_use}`가 확인, 복원, 토큰 재사용 거절과 기존 `.secs` 바이트 복원을 지킵니다. | `wizard/step2_config.py`, `step4_layout.py`, `step5_measure.py` | 적용 |
