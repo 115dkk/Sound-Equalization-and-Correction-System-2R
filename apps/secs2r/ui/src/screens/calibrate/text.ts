@@ -366,6 +366,13 @@ function noticeRecordText(t: Translate, number: FormatNumber, notice: Notice, ru
       });
       break;
     }
+    case "calibration_roles_unmeasured": {
+      // Configured speakers with no measurement at any position: the engine and the exports leave them out (DEVIATIONS D61).
+      const roles = (p.roles ?? "").split(",").filter(Boolean);
+      if (roles.length === 1) key = "notice.calibration_roles_unmeasured.one";
+      params.roles = roles.map(roleCode).join("·");
+      break;
+    }
     case "calibration_curve_invalid":
       // A curve attached to a measurement's source that could not be read; the calculation left it out.
       Object.assign(params, { code: code(), position: f("position") });

@@ -1314,6 +1314,8 @@
   "notice.mimo_guard.tail": "{hz} Hz mode tail energy {db} dB",
   "notice.mimo_iir_seed_fallback": "IIR support fitting for input {code} did not converge, so the starting filters were kept.",
   "notice.calibration_curve_invalid": "Calculated without a calibration curve attached to {code} at position {position} that could not be read.",
+  "notice.calibration_roles_unmeasured": "{roles} have no measurement, so the calibration and the exported filters leave them out.",
+  "notice.calibration_roles_unmeasured.one": "{roles} has no measurement, so the calibration and the exported filters leave it out.",
   "notice.mode_decay": "Shorten room ringing ({role}): {hz} Hz room mode measured T60 {t60_s} s, target {target_s} s, {depth_db} dB cut",
   "notice.mode_decay_none": "Shorten room ringing ({role}): target T60 {target_s} s, no room mode eligible for a cut",
   "notice.sub_narrow_band": "{code}: HP {hp_hz} Hz, LP {lp_hz} Hz. The range between the two filters is too narrow, so the sub plays almost nothing. Change the HP or the LP.",
