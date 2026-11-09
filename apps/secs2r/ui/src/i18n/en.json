@@ -1434,7 +1434,7 @@
   "export.kind.filter_text.where": "SECS_text_RC_BA_{mode}_<save time> folder",
   "export.kind.filter_text.run": "Save filter text",
   "export.kind.equalizer_apo": "Equalizer APO configuration",
-  "export.kind.equalizer_apo.body": "Saves an Equalizer APO configuration and filters for RC, BA and MIMO at the export DSP's output rate, including WAVs when FIR is used. Match the input and output channel numbers in config.txt to your wiring before use.",
+  "export.kind.equalizer_apo.body": "Saves an Equalizer APO configuration and filters for RC, BA and MIMO at the export DSP's output rate, including WAVs when FIR is used. Output channel numbers follow the measurement outputs set in System, input channel numbers the Windows speaker setup. If your wiring differs, change the numbers in config.txt before use.",
   "export.kind.equalizer_apo.where": "SECS_eqapo_{what}_{mode}_<save time> folder",
   "export.kind.equalizer_apo.run": "Save EqAPO configuration",
   "export.kind.convolution": "Convolution IR",

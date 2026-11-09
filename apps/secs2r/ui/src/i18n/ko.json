@@ -1434,7 +1434,7 @@
   "export.kind.filter_text.where": "SECS_text_RC_BA_{mode}_<저장 시각> 폴더",
   "export.kind.filter_text.run": "필터 값 텍스트 저장",
   "export.kind.equalizer_apo": "Equalizer APO 설정",
-  "export.kind.equalizer_apo.body": "RC, BA, MIMO용 Equalizer APO 설정과 필터를 내보낼 DSP의 출력 레이트로 저장합니다. FIR을 쓰면 WAV도 저장합니다. 적용 전에 config.txt의 입출력 채널 번호를 배선에 맞추십시오.",
+  "export.kind.equalizer_apo.body": "RC, BA, MIMO용 Equalizer APO 설정과 필터를 내보낼 DSP의 출력 레이트로 저장합니다. FIR을 쓰면 WAV도 저장합니다. 출력 채널 번호는 시스템 단계의 측정 출력을, 입력 채널 번호는 Windows 스피커 구성을 따릅니다. 배선이 다르면 적용 전에 config.txt의 번호를 고치십시오.",
   "export.kind.equalizer_apo.where": "SECS_eqapo_{what}_{mode}_<저장 시각> 폴더",
   "export.kind.equalizer_apo.run": "EqAPO 설정 저장",
   "export.kind.convolution": "컨볼루션 IR",
