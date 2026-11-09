@@ -1206,11 +1206,12 @@ fn eqapo_guide_at(
                 .iter()
                 .find(|(name, _)| name == role)
                 .map(|(_, number)| *number);
-            lines.push(format!(
+            let row = format!(
                 "   {role:<6} {input} {:<5} {output} {}",
                 name(input_number, "-"),
                 name(output_number, "-")
-            ));
+            );
+            lines.push(row.trim_end().to_owned());
         } else {
             lines.push(format!(
                 "   {role:<6} {input}  {output}  {}",
@@ -2659,7 +2660,11 @@ mod device_channel_tests {
             format!("   {:<6} {:>4} {:<5} {:>4} {}", "SW1", "-", "", 3, "FC"),
             format!("   {:<6} {:>4} {:<5} {:>4} {}", "SW2", "-", "", 4, "LFE"),
         ] {
-            assert!(guide.contains(&row), "missing guide row {row:?}");
+            let row = row.trim_end();
+            assert!(
+                guide.lines().any(|line| line == row),
+                "missing guide row {row:?}"
+            );
         }
         std::fs::remove_dir_all(root).unwrap();
     }
