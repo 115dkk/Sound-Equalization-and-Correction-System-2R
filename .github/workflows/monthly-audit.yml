@@ -87,7 +87,7 @@ env:
 jobs:
   check-changes:
     name: Code changed since the last audit
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       should_audit: ${{ steps.detect.outputs.should_audit }}
       last_audit_ref: ${{ steps.detect.outputs.last_audit_ref }}
@@ -142,7 +142,11 @@ jobs:
     name: Architecture and tech debt audit
     needs: check-changes
     if: needs.check-changes.outputs.should_audit == 'true'
-    runs-on: ubuntu-latest
+    # The same image as ci.yml's Linux jobs (6e6318f5), so the session's
+    # cargo and npm checks run where CI's do and reuse its test cache. On
+    # Ubuntu 26.04 exact goldens can differ by a few ulp, and the session
+    # would report that as a finding.
+    runs-on: ubuntu-24.04
     timeout-minutes: 240
     # Only this job asks GitHub for an OIDC token. It reads the repository
     # and files the issue; it cannot push.
@@ -680,7 +684,7 @@ jobs:
     # commits: main's baseline and change detection follow main alone.
     needs: audit
     if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Both pushes go over SSH with RELEASE_DEPLOY_KEY; the token only reads.
     permissions:
       contents: read
