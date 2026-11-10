@@ -151,7 +151,12 @@ class WavTests(unittest.TestCase):
                                         "gain_db": 20 * math.log10(2)})
             np.testing.assert_allclose(actual.samples, [0.5, -1])
             self.assertEqual(actual.t0, -0.25)
+            # pack accepts either separator and stores "eval/L.wav": a path
+            # written on Windows must load on Linux too.
+            np.testing.assert_allclose(
+                art.load_ir(root, {"wav": "eval\\L.wav", "t0": 0}).samples, [0.25, -0.5])
             for name in ("../outside.wav", "eval/../../outside.wav", str(root / "eval/L.wav"),
+                         "..\\outside.wav", "eval\\..\\..\\outside.wav",
                          "C:\\outside.wav", "C:outside.wav"):
                 with self.subTest(name=name), self.assertRaises(ValueError):
                     art.load_ir(root, {"wav": name, "t0": 0})
