@@ -6,3 +6,7 @@ oracle/goldens/** -text
 # Calibration file fixtures keep their vendor line endings (the UMIK-1 one is
 # CRLF on purpose; the parser test checks it).
 crates/secs-audio/tests/data/umik1_*_synthetic.txt -text
+
+# Encrypted reference bundles (docs/adr/0026): cases.toml holds their SHA-256,
+# so a checkout must hand them out byte for byte.
+reference/art/*.art -text

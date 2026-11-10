@@ -1,0 +1,303 @@
+# ART reference cases (docs/adr/0026). Names, files, hashes, settings and metric groups only:
+# no measurement and no value belongs here. reference/art/README.md says how to add a case.
+schema = 1
+
+[[case]]
+name = "art-a-4.2"
+file = "art-a-4.2.art"
+sha256 = "156af9029cdaf95e6d6632e94293fd5cccfc8b1dea42844ab4b740b10504d2f8"
+kind = "art"
+groups = ["arrival", "gd_excess", "pre", "decay"]
+
+[case.variants]
+"base" = []
+"lf_align" = ["--lf-align", "on"]
+"mode_decay" = ["--mode-decay", "on"]
+"lf_align+mode_decay" = ["--lf-align", "on", "--mode-decay", "on"]
+"mimo_early_20" = ["--mimo-early", "20"]
+"lf_align+mode_decay+mimo_early_20" = ["--lf-align", "on", "--mode-decay", "on", "--mimo-early", "20"]
+
+[[case]]
+name = "input-a-2.2-1"
+file = "input-a-2.2-1.art"
+sha256 = "e4d42e0b67c8afd8aab1b88b42175255d5f7b07231c0433af9283f4dd03d781d"
+kind = "input"
+groups = ["arrival", "gd_excess", "pre"]
+
+[case.variants]
+"base" = []
+"lf_align" = ["--lf-align", "on"]
+"mode_decay" = ["--mode-decay", "on"]
+"lf_align+mode_decay" = ["--lf-align", "on", "--mode-decay", "on"]
+"mimo_early_20" = ["--mimo-early", "20"]
+"lf_align+mode_decay+mimo_early_20" = ["--lf-align", "on", "--mode-decay", "on", "--mimo-early", "20"]
+
+[[case]]
+name = "input-a-2.2-2"
+file = "input-a-2.2-2.art"
+sha256 = "f139c1b83090a0e2630eb52f061489fb6144541db5b5576460b9075068a56763"
+kind = "input"
+groups = ["arrival", "gd_excess", "pre"]
+
+[case.variants]
+"base" = []
+"lf_align" = ["--lf-align", "on"]
+"mode_decay" = ["--mode-decay", "on"]
+"lf_align+mode_decay" = ["--lf-align", "on", "--mode-decay", "on"]
+"mimo_early_20" = ["--mimo-early", "20"]
+"lf_align+mode_decay+mimo_early_20" = ["--lf-align", "on", "--mode-decay", "on", "--mimo-early", "20"]
+
+[[case]]
+name = "input-a-2.2-3"
+file = "input-a-2.2-3.art"
+sha256 = "dcb0d1cbe949d96c30ddd0d41b77ccc57659fc7a59bfd30e68f8d4605fbdb7f3"
+kind = "input"
+groups = ["arrival", "gd_excess", "pre"]
+
+[case.variants]
+"base" = []
+"lf_align" = ["--lf-align", "on"]
+"mode_decay" = ["--mode-decay", "on"]
+"lf_align+mode_decay" = ["--lf-align", "on", "--mode-decay", "on"]
+"mimo_early_20" = ["--mimo-early", "20"]
+"lf_align+mode_decay+mimo_early_20" = ["--lf-align", "on", "--mode-decay", "on", "--mimo-early", "20"]
+
+[[case]]
+name = "input-a-2.2-4"
+file = "input-a-2.2-4.art"
+sha256 = "4c0eb8bf50e89f1307f8318213fc4681a06a4e1d0433f9b1f631919f25e5fa39"
+kind = "input"
+groups = ["arrival", "gd_excess", "pre"]
+
+[case.variants]
+"base" = []
+"lf_align" = ["--lf-align", "on"]
+"mode_decay" = ["--mode-decay", "on"]
+"lf_align+mode_decay" = ["--lf-align", "on", "--mode-decay", "on"]
+"mimo_early_20" = ["--mimo-early", "20"]
+"lf_align+mode_decay+mimo_early_20" = ["--lf-align", "on", "--mode-decay", "on", "--mimo-early", "20"]
+
+[[case]]
+name = "input-a-2.2-5"
+file = "input-a-2.2-5.art"
+sha256 = "27bf32c34b6a06d1654aa7198cb8676df5cec3013efc0f9ac3e24adda18368ae"
+kind = "input"
+groups = ["arrival", "gd_excess", "pre"]
+
+[case.variants]
+"base" = []
+"lf_align" = ["--lf-align", "on"]
+"mode_decay" = ["--mode-decay", "on"]
+"lf_align+mode_decay" = ["--lf-align", "on", "--mode-decay", "on"]
+"mimo_early_20" = ["--mimo-early", "20"]
+"lf_align+mode_decay+mimo_early_20" = ["--lf-align", "on", "--mode-decay", "on", "--mimo-early", "20"]
+
+[[case]]
+name = "input-a-2.2-6"
+file = "input-a-2.2-6.art"
+sha256 = "c2f0906bb287521356333a22fa94ed7661dbe5aad5e24ac51f6e165e267c5e98"
+kind = "input"
+groups = ["arrival", "gd_excess", "pre"]
+
+[case.variants]
+"base" = []
+"lf_align" = ["--lf-align", "on"]
+"mode_decay" = ["--mode-decay", "on"]
+"lf_align+mode_decay" = ["--lf-align", "on", "--mode-decay", "on"]
+"mimo_early_20" = ["--mimo-early", "20"]
+"lf_align+mode_decay+mimo_early_20" = ["--lf-align", "on", "--mode-decay", "on", "--mimo-early", "20"]
+
+[[case]]
+name = "input-a-4.2-1"
+file = "input-a-4.2-1.art"
+sha256 = "10917ca41b328ef6d276e7c3428b491e3f8d518275b327b1afb5d0cd71c85f73"
+kind = "input"
+groups = ["arrival", "gd_excess", "pre"]
+
+[case.variants]
+"base" = []
+"lf_align" = ["--lf-align", "on"]
+"mode_decay" = ["--mode-decay", "on"]
+"lf_align+mode_decay" = ["--lf-align", "on", "--mode-decay", "on"]
+"mimo_early_20" = ["--mimo-early", "20"]
+"lf_align+mode_decay+mimo_early_20" = ["--lf-align", "on", "--mode-decay", "on", "--mimo-early", "20"]
+
+[[case]]
+name = "input-a-4.2-2"
+file = "input-a-4.2-2.art"
+sha256 = "bf83d26e5bca4d949181aebd2d05d973723243ff8281bf25505701b68203da49"
+kind = "input"
+groups = ["arrival", "gd_excess", "pre"]
+
+[case.variants]
+"base" = []
+"lf_align" = ["--lf-align", "on"]
+"mode_decay" = ["--mode-decay", "on"]
+"lf_align+mode_decay" = ["--lf-align", "on", "--mode-decay", "on"]
+"mimo_early_20" = ["--mimo-early", "20"]
+"lf_align+mode_decay+mimo_early_20" = ["--lf-align", "on", "--mode-decay", "on", "--mimo-early", "20"]
+
+[[case]]
+name = "input-a-4.2-3"
+file = "input-a-4.2-3.art"
+sha256 = "d05e12c328a0878e8fd0c2a2fdbf7bcf65926949ad0658a36cd442e062acc3e5"
+kind = "input"
+groups = ["arrival", "gd_excess", "pre"]
+
+[case.variants]
+"base" = []
+"lf_align" = ["--lf-align", "on"]
+"mode_decay" = ["--mode-decay", "on"]
+"lf_align+mode_decay" = ["--lf-align", "on", "--mode-decay", "on"]
+"mimo_early_20" = ["--mimo-early", "20"]
+"lf_align+mode_decay+mimo_early_20" = ["--lf-align", "on", "--mode-decay", "on", "--mimo-early", "20"]
+
+[[case]]
+name = "input-b-2.2"
+file = "input-b-2.2.art"
+sha256 = "fa332826b2a52c188c9fc058ba9e48ba5916ac609542206b76683374a638fa4e"
+kind = "input"
+groups = ["arrival", "gd_excess", "pre"]
+
+[case.variants]
+"base" = []
+"lf_align" = ["--lf-align", "on"]
+"mode_decay" = ["--mode-decay", "on"]
+"lf_align+mode_decay" = ["--lf-align", "on", "--mode-decay", "on"]
+"mimo_early_20" = ["--mimo-early", "20"]
+"lf_align+mode_decay+mimo_early_20" = ["--lf-align", "on", "--mode-decay", "on", "--mimo-early", "20"]
+
+[[case]]
+name = "input-b-4.2"
+file = "input-b-4.2.art"
+sha256 = "124e799fce5d15cd02ab9af81c00d916b0a828df7f096b11940f26c194550351"
+kind = "input"
+groups = ["arrival", "gd_excess", "pre"]
+
+[case.variants]
+"base" = []
+"lf_align" = ["--lf-align", "on"]
+"mode_decay" = ["--mode-decay", "on"]
+"lf_align+mode_decay" = ["--lf-align", "on", "--mode-decay", "on"]
+"mimo_early_20" = ["--mimo-early", "20"]
+"lf_align+mode_decay+mimo_early_20" = ["--lf-align", "on", "--mode-decay", "on", "--mimo-early", "20"]
+
+[[case]]
+name = "input-b-4.4"
+file = "input-b-4.4.art"
+sha256 = "0a9ccfdbeed52361365c1418bd4268eab3c6083e09c1212f017eb597c626023b"
+kind = "input"
+groups = ["arrival", "gd_excess", "pre"]
+
+[case.variants]
+"base" = []
+"lf_align" = ["--lf-align", "on"]
+"mode_decay" = ["--mode-decay", "on"]
+"lf_align+mode_decay" = ["--lf-align", "on", "--mode-decay", "on"]
+"mimo_early_20" = ["--mimo-early", "20"]
+"lf_align+mode_decay+mimo_early_20" = ["--lf-align", "on", "--mode-decay", "on", "--mimo-early", "20"]
+
+[[case]]
+name = "input-b-4.4.2"
+file = "input-b-4.4.2.art"
+sha256 = "ef6cb9b12511c0ae506bdbc2bc833711f842e1bcbc15affc89f3d73bd252317a"
+kind = "input"
+groups = ["arrival", "gd_excess", "pre"]
+
+[case.variants]
+"base" = []
+"lf_align" = ["--lf-align", "on"]
+"mode_decay" = ["--mode-decay", "on"]
+"lf_align+mode_decay" = ["--lf-align", "on", "--mode-decay", "on"]
+"mimo_early_20" = ["--mimo-early", "20"]
+"lf_align+mode_decay+mimo_early_20" = ["--lf-align", "on", "--mode-decay", "on", "--mimo-early", "20"]
+
+[[case]]
+name = "input-b-4.4.4"
+file = "input-b-4.4.4.art"
+sha256 = "264ecdc35035d14f0f588de6ea09de7c24ae6e5c37c0a09847d52de3dc5c21cf"
+kind = "input"
+groups = ["arrival", "gd_excess", "pre"]
+
+[case.variants]
+"base" = []
+"lf_align" = ["--lf-align", "on"]
+"mode_decay" = ["--mode-decay", "on"]
+"lf_align+mode_decay" = ["--lf-align", "on", "--mode-decay", "on"]
+"mimo_early_20" = ["--mimo-early", "20"]
+"lf_align+mode_decay+mimo_early_20" = ["--lf-align", "on", "--mode-decay", "on", "--mimo-early", "20"]
+
+[[case]]
+name = "input-b-5.2"
+file = "input-b-5.2.art"
+sha256 = "b849c411a1df327a09f86595acce0d547bda52f53877192fe54a734b042eebbe"
+kind = "input"
+groups = ["arrival", "gd_excess", "pre"]
+
+[case.variants]
+"base" = []
+"lf_align" = ["--lf-align", "on"]
+"mode_decay" = ["--mode-decay", "on"]
+"lf_align+mode_decay" = ["--lf-align", "on", "--mode-decay", "on"]
+"mimo_early_20" = ["--mimo-early", "20"]
+"lf_align+mode_decay+mimo_early_20" = ["--lf-align", "on", "--mode-decay", "on", "--mimo-early", "20"]
+
+[[case]]
+name = "input-b-5.2.2"
+file = "input-b-5.2.2.art"
+sha256 = "7edccb1f28e970fa92642d78ab53e18a6c1e3f9f1692b463bad60aabdd17ba23"
+kind = "input"
+groups = ["arrival", "gd_excess", "pre"]
+
+[case.variants]
+"base" = []
+"lf_align" = ["--lf-align", "on"]
+"mode_decay" = ["--mode-decay", "on"]
+"lf_align+mode_decay" = ["--lf-align", "on", "--mode-decay", "on"]
+"mimo_early_20" = ["--mimo-early", "20"]
+"lf_align+mode_decay+mimo_early_20" = ["--lf-align", "on", "--mode-decay", "on", "--mimo-early", "20"]
+
+[[case]]
+name = "input-b-6.2"
+file = "input-b-6.2.art"
+sha256 = "c0878541c970c5caa606a3ed685c34a3c461b8bc3e14eff3a82aae42adbc3e41"
+kind = "input"
+groups = ["arrival", "gd_excess", "pre"]
+
+[case.variants]
+"base" = []
+"lf_align" = ["--lf-align", "on"]
+"mode_decay" = ["--mode-decay", "on"]
+"lf_align+mode_decay" = ["--lf-align", "on", "--mode-decay", "on"]
+"mimo_early_20" = ["--mimo-early", "20"]
+"lf_align+mode_decay+mimo_early_20" = ["--lf-align", "on", "--mode-decay", "on", "--mimo-early", "20"]
+
+[[case]]
+name = "input-b-6.2.2"
+file = "input-b-6.2.2.art"
+sha256 = "5a79cb7700446a43dd12c973a6266fc2c75bbe7ae539b54419a36f608afa76e0"
+kind = "input"
+groups = ["arrival", "gd_excess", "pre"]
+
+[case.variants]
+"base" = []
+"lf_align" = ["--lf-align", "on"]
+"mode_decay" = ["--mode-decay", "on"]
+"lf_align+mode_decay" = ["--lf-align", "on", "--mode-decay", "on"]
+"mimo_early_20" = ["--mimo-early", "20"]
+"lf_align+mode_decay+mimo_early_20" = ["--lf-align", "on", "--mode-decay", "on", "--mimo-early", "20"]
+
+[[case]]
+name = "input-b-6.2.4"
+file = "input-b-6.2.4.art"
+sha256 = "e074044f4a56f60ff6b7ba3a347b9aa5dd0750f9828a143dc35cee6f2eab19a7"
+kind = "input"
+groups = ["arrival", "gd_excess", "pre"]
+
+[case.variants]
+"base" = []
+"lf_align" = ["--lf-align", "on"]
+"mode_decay" = ["--mode-decay", "on"]
+"lf_align+mode_decay" = ["--lf-align", "on", "--mode-decay", "on"]
+"mimo_early_20" = ["--mimo-early", "20"]
+"lf_align+mode_decay+mimo_early_20" = ["--lf-align", "on", "--mode-decay", "on", "--mimo-early", "20"]
