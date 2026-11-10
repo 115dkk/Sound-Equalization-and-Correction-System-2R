@@ -26,7 +26,7 @@ python .github/scripts/art_gate.py run --manifest reference/art/cases.toml --cli
 
 ## 사례 추가
 
-1. 사례 폴더를 만듭니다. `case.json`, 프로젝트(`project/<이름>.secs`와 그 IR 폴더), 평가 위치의 출력별 보정 전 측정을 넣습니다. ART 측정이 있으면 입력별 WAV를 `art/`에 넣고 `case.json`의 `art`에 적습니다. 형식은 `.github/scripts/art_gate.py`의 머리말에 있습니다.
+1. 사례 폴더를 만듭니다. `case.json`, 프로젝트(`project/<이름>.secs`와 그 IR 폴더), 평가 위치의 출력별 보정 전 측정을 넣습니다. 프로젝트의 보정 모드는 선형으로 두고 MIMO를 켭니다. 저음 도착 맞추기는 선형과 울트라 모드에서만 온전히 작동하고(ADR 0025), 지금 있는 사례가 모두 그 설정입니다. ART 측정이 있으면 입력별 WAV를 `art/`에 넣고 `case.json`의 `art`에 적습니다. 형식은 `.github/scripts/art_gate.py`의 머리말에 있습니다.
 2. `python .github/scripts/art_gate.py pack --case-dir <폴더> --name <이름> --out reference/art/<이름>.art`로 암호화합니다.
 3. 출력된 `sha256`을 `cases.toml`의 새 항목에 적습니다. ART 측정이 있으면 `kind = "art"`, 없으면 `kind = "input"`입니다.
 4. `.liveproject` 원본, 계정 ID, 파일 경로, 측정 UUID가 폴더에 남아 있지 않은지 확인합니다.
