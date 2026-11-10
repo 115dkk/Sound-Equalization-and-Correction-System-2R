@@ -379,7 +379,7 @@ impl MdatReader {
         position: Option<i64>,
         current: i64,
     ) -> Result<Self, MeasureError> {
-        let bytes = measurement_file::read(path, "mdat")?;
+        let bytes = measurement_file::read(path, "mdat", measurement_file::MDAT_FILE_LIMIT)?;
         // The parser's own graph and array budgets apply on top.
         let loaded = secs_mdat::load_mdat_project(&bytes, &Default::default())
             .map_err(|e| MeasureError::Input(e.to_string()))?;
