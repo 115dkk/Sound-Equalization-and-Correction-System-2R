@@ -595,7 +595,7 @@ dependencies = [
 
 [[package]]
 name = "secs-audio"
-version = "0.23.0"
+version = "0.23.1"
 dependencies = [
  "secs-dsp",
  "secs-types",
@@ -605,14 +605,14 @@ dependencies = [
 
 [[package]]
 name = "secs-dirac"
-version = "0.23.0"
+version = "0.23.1"
 dependencies = [
  "thiserror 2.0.21",
 ]
 
 [[package]]
 name = "secs-dsp"
-version = "0.23.0"
+version = "0.23.1"
 dependencies = [
  "faer",
  "faer-traits",
@@ -626,14 +626,14 @@ dependencies = [
 
 [[package]]
 name = "secs-jos"
-version = "0.23.0"
+version = "0.23.1"
 dependencies = [
  "thiserror 2.0.21",
 ]
 
 [[package]]
 name = "secs-mdat"
-version = "0.23.0"
+version = "0.23.1"
 dependencies = [
  "secs-dsp",
  "secs-jos",
@@ -643,7 +643,7 @@ dependencies = [
 
 [[package]]
 name = "secs-project"
-version = "0.23.0"
+version = "0.23.1"
 dependencies = [
  "ryu",
  "secs-mdat",
@@ -654,7 +654,7 @@ dependencies = [
 
 [[package]]
 name = "secs-types"
-version = "0.23.0"
+version = "0.23.1"
 dependencies = [
  "serde",
  "strum",
