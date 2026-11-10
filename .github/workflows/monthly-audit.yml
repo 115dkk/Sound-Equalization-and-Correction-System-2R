@@ -339,6 +339,8 @@ jobs:
           fi
 
       - name: Run combined audit
+        env:
+          AUDITED_SHA: ${{ steps.head.outputs.sha }}
         run: |
           report="$RUNNER_TEMP/audit/combined-audit-report.md"
 
@@ -398,10 +400,19 @@ jobs:
           # CLAUDE_CODE_ENABLE_TASKS and CLAUDE_CODE_ENABLE_TODO_TOOLS turn on
           # TaskCreate, TaskUpdate and TaskList, which -p sessions leave off, so
           # the audit can plan its dimensions and work through them in order.
+          # --append-system-prompt carries the code-ownership sentence from
+          # Anthropic's Fable 5.2 prompting guide ("Say who owns the code"):
+          # without it the 5.2 models add to the existing structure and
+          # report nearby problems instead of judging the design as its
+          # owner would. The same guide notes that the sentence also makes
+          # the model change code nobody asked for, so the prompt tells the
+          # session that only its two reports leave the job and that every
+          # change it would make goes into a finding instead.
           set +e
           env -u ACTIONS_ID_TOKEN_REQUEST_TOKEN -u ACTIONS_ID_TOKEN_REQUEST_URL \
           CLAUDE_CODE_ENABLE_TASKS=1 CLAUDE_CODE_ENABLE_TODO_TOOLS=1 claude \
             --model "$AUDIT_MODEL" \
+            --append-system-prompt "This codebase is yours: what it's for and how it's built are your call, and you'll keep building on it." \
             --effort xhigh \
             --settings "{\"availableModels\": [\"$AUDIT_MODEL\"]}" \
             --permission-mode auto \
@@ -418,6 +429,14 @@ jobs:
           completion summary to stdout: in this non-interactive session only
           the final message reaches stdout, so anything not written to a
           file is lost.
+
+          Only the two report files leave this job. Any other change you make
+          in this checkout is discarded when the job ends, so the repository
+          keeps the code you were given. When you find something you would
+          fix or restructure, write the change into its finding (what to
+          change, where, and why) instead of making it, and judge every
+          finding, including whether an earlier one is resolved, against the
+          code as you were given it. Do not commit.
 
           ENVIRONMENT:
           - This checkout is main of 115dkk/Sound-Equalization-and-Correction-System-2R
@@ -500,6 +519,14 @@ jobs:
           " > "$report" 2>&1
           claude_exit=$?
           set -e
+
+          # The prompt asks the session not to commit; say so when it did,
+          # because its reports may then describe code main does not have.
+          # The commit-baseline job tags the audited commit either way.
+          if [ "$(git rev-parse HEAD)" != "$AUDITED_SHA" ]; then
+            echo "::warning::The audit session committed on top of the audited commit ${AUDITED_SHA}. Check findings marked resolved against that commit."
+            git log --oneline "$AUDITED_SHA..HEAD" || true
+          fi
 
           if [ ! -s "$report" ]; then
             echo "Audit produced no output." > "$report"
