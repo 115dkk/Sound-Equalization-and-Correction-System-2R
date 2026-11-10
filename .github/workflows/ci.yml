@@ -855,8 +855,10 @@ jobs:
         with:
           python-version: "3.13"
 
+      # A block scalar: ":all: " in a plain one-line value is a YAML error.
       - name: numpy and cryptography for the gate (pinned wheels)
-        run: python -m pip install --disable-pip-version-check --only-binary :all: numpy==2.4.6 cryptography==50.0.2
+        run: |
+          python -m pip install --disable-pip-version-check --only-binary :all: numpy==2.4.6 cryptography==50.0.2
 
       - name: Build the CLI (release)
         run: cargo build --release --locked -p secs2r-cli
