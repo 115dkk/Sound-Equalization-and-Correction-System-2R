@@ -89,7 +89,7 @@ jobs:
   gate:
     name: Release gate
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # The bump push authenticates with the deploy key, not the workflow token.
     permissions:
       contents: read
@@ -387,7 +387,7 @@ jobs:
       ${{ !cancelled() && needs.gate.outputs.should_release == 'true'
         && needs.build.result == 'success'
         && (needs.update-check.result == 'success' || needs.update-check.result == 'skipped') }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
     env:
@@ -463,7 +463,7 @@ jobs:
     name: Publish the crates.io crates
     needs: [gate, build]
     if: needs.gate.outputs.should_release == 'true' && needs.gate.outputs.api_publish == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # crates.io accepts this job's OIDC token only from this workflow file and
     # this environment (the trusted publisher of every published crate).
     environment: crates-io
@@ -508,7 +508,7 @@ jobs:
     # not main as it is now: main may have moved on at the same API version,
     # and PyPI and nuget.org must get the code crates.io got (audit #155 TD-137).
     if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && (inputs.pypi_only || inputs.nuget_only)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
     outputs:
@@ -566,7 +566,7 @@ jobs:
             target: universal2-apple-darwin
             manylinux: ""
           - name: linux
-            os: ubuntu-latest
+            os: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
             manylinux: "2_17"
     runs-on: ${{ matrix.os }}
@@ -616,7 +616,7 @@ jobs:
     name: Publish secs2r to PyPI
     needs: [gate, pypi-build]
     if: ${{ !cancelled() && needs.pypi-build.result == 'success' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment: pypi
     permissions:
       contents: read
@@ -723,7 +723,7 @@ jobs:
     name: Pack and test the NuGet package
     needs: [gate, api-ref, nuget-build]
     if: ${{ !cancelled() && needs.nuget-build.result == 'success' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -776,7 +776,7 @@ jobs:
     name: Publish Secs2R to nuget.org
     needs: nuget-pack
     if: ${{ !cancelled() && needs.nuget-pack.result == 'success' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # nuget.org's trusted-publishing policy for Secs2R accepts this job's OIDC
     # token only from this workflow file and this environment.
     environment: nuget

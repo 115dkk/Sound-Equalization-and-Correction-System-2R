@@ -75,6 +75,10 @@ name: CI
 #             the *-light jobs at the end report those names instead.
 #
 # Pin macOS 15 ARM64 after repeated macOS 26 runner allocation failures.
+# Pin Ubuntu 24.04: ubuntu-latest moved to 26.04 on 2026-11-10, where the
+# pinned Playwright cannot install Chromium and setup-python has no
+# Python 3.9. The test and integrity matrices keep the value ubuntu-latest,
+# which the required checks carry in their names, and map it to 24.04.
 
 on:
   pull_request:
@@ -105,7 +109,7 @@ jobs:
   # the pull request waits for a rerun instead of merging untested.
   scope:
     name: change scope
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     # paths-filter lists the pull request's files, as the scope job does.
     permissions:
@@ -148,7 +152,7 @@ jobs:
 
   lint:
     name: fmt + clippy + policy gates
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -212,7 +216,9 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-15]
-    runs-on: ${{ matrix.os }}
+    # The required checks carry the matrix value in their names, so the
+    # value stays ubuntu-latest and only the runner is pinned.
+    runs-on: ${{ matrix.os == 'ubuntu-latest' && 'ubuntu-24.04' || matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -269,7 +275,7 @@ jobs:
   feature-registry:
     name: feature registry (all OSes)
     needs: test
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -283,7 +289,7 @@ jobs:
 
   python-changes:
     name: Python package changes
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # paths-filter lists the pull request's files, as the scope job does.
     permissions:
       contents: read
@@ -324,7 +330,7 @@ jobs:
             manylinux: ""
             python: "3.13"
           - name: linux
-            os: ubuntu-latest
+            os: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
             manylinux: "2_17"
             python: "3.9"
@@ -398,7 +404,7 @@ jobs:
     name: Python wheels
     needs: [python-changes, python-wheels]
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Check the change detection and the wheel jobs
         env:
@@ -414,7 +420,7 @@ jobs:
 
   dotnet-changes:
     name: NuGet package changes
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # paths-filter lists the pull request's files, as the scope job does.
     permissions:
       contents: read
@@ -541,7 +547,7 @@ jobs:
   dotnet-package-all:
     name: NuGet package (all platforms)
     needs: dotnet-package
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -583,7 +589,7 @@ jobs:
     name: NuGet package
     needs: [dotnet-changes, dotnet-package, dotnet-package-all]
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Check the change detection and the package jobs
         env:
@@ -608,7 +614,9 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-15]
-    runs-on: ${{ matrix.os }}
+    # The required checks carry the matrix value in their names, so the
+    # value stays ubuntu-latest and only the runner is pinned.
+    runs-on: ${{ matrix.os == 'ubuntu-latest' && 'ubuntu-24.04' || matrix.os }}
     defaults:
       run:
         shell: bash
@@ -732,7 +740,7 @@ jobs:
     name: CamillaDSP playback
     needs: [lint, scope]
     if: needs.scope.outputs.heavy == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -774,7 +782,7 @@ jobs:
     name: REAPER convolution playback
     needs: [lint, scope]
     if: needs.scope.outputs.heavy == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -829,7 +837,7 @@ jobs:
     name: ART reference (similarity)
     needs: [lint, scope]
     if: needs.scope.outputs.heavy == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1062,7 +1070,7 @@ jobs:
 
   frontend:
     name: screen (typecheck, tests, build, IPC bindings)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: apps/secs2r/ui
@@ -1112,7 +1120,7 @@ jobs:
     name: screen gallery (Chromium screenshots)
     needs: scope
     if: needs.scope.outputs.heavy == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: apps/secs2r/ui
@@ -1343,7 +1351,7 @@ jobs:
 
   docs:
     name: rustdoc (deny warnings)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -1367,7 +1375,7 @@ jobs:
 
   deny:
     name: cargo-deny
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -1387,7 +1395,7 @@ jobs:
     name: Miri (secs-jos, secs-mdat, secs-dirac)
     needs: scope
     if: needs.scope.outputs.heavy == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -1418,7 +1426,7 @@ jobs:
     name: fuzz (parsers, 60 s per target)
     needs: scope
     if: needs.scope.outputs.heavy == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       FUZZ_TARGET: x86_64-unknown-linux-gnu
     defaults:
@@ -1498,7 +1506,7 @@ jobs:
     needs: scope
     if: needs.scope.outputs.heavy == 'false'
     strategy: *test-strategy
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps: &light-steps
       - name: Skipped for a ci or docs pull request
         run: echo "Every commit is a ci or docs commit and no heavy job reads a changed file; see the change scope job."
@@ -1508,7 +1516,7 @@ jobs:
     needs: scope
     if: needs.scope.outputs.heavy == 'false'
     strategy: *integrity-strategy
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps: *light-steps
 
   eqapo-light:
@@ -1516,7 +1524,7 @@ jobs:
     needs: scope
     if: needs.scope.outputs.heavy == 'false'
     strategy: *eqapo-strategy
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps: *light-steps
 
   bundle-light:
@@ -1524,5 +1532,5 @@ jobs:
     needs: scope
     if: needs.scope.outputs.heavy == 'false'
     strategy: *bundle-strategy
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps: *light-steps
