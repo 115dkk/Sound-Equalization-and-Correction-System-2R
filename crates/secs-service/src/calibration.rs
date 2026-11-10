@@ -713,6 +713,30 @@ pub(crate) fn load_measurements_with_notices(
         return Err(IpcError::new(ErrorCode::Cancelled, "cancelled"));
     }
     positions.sort_by_key(|(position, _)| *position);
+    // The engine calibrates only the roles it was given and the exports carry
+    // only those, so a configured speaker with no measurement anywhere would
+    // drop out without a word (docs/DEVIATIONS.md D60).
+    if !positions.is_empty() {
+        let measured = positions
+            .iter()
+            .flat_map(|(_, roles)| roles.iter())
+            .map(|(role, _)| role.split(':').next().unwrap_or(role))
+            .collect::<std::collections::BTreeSet<_>>();
+        let missing = store
+            .project()
+            .config
+            .speakers
+            .iter()
+            .map(|speaker| speaker.role.as_str())
+            .filter(|role| !measured.contains(role))
+            .collect::<Vec<_>>();
+        if !missing.is_empty() {
+            notices.push(Notice {
+                code: "calibration_roles_unmeasured".into(),
+                params: [("roles".into(), missing.join(","))].into(),
+            });
+        }
+    }
     Ok(LoadedMeasurements {
         measurements: MeasurementSet { positions },
         notices,
@@ -1042,6 +1066,56 @@ mod tests {
             source: None,
             source_info,
         }
+    }
+
+    /// A 2.2 project whose file brought only L and R (the 2026-11-08 forum
+    /// report: "SUB L" and "SUB R" stayed unassigned): the engine calibrates
+    /// the measured roles and the export leaves the subs out, so the result
+    /// says which configured speakers it calibrated without.
+    #[test]
+    fn calibration_names_configured_speakers_without_a_measurement() {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let root = std::env::temp_dir().join(format!(
+            "secs-service-unmeasured-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let mut store =
+            MeasurementStore::new(root.join("room.secs"), Project::from_preset("2.2").unwrap());
+        let impulse = vec![1.0, 0.5, 0.25, 0.125];
+        for role in ["L", "R"] {
+            store
+                .record(stored_result(role, 1, impulse.clone(), None), None)
+                .unwrap();
+        }
+        let cancel = secs_compute::CancelToken::new();
+        let unmeasured = |store: &mut MeasurementStore| {
+            load_measurements_with_notices(store, &BTreeMap::new(), &cancel)
+                .unwrap()
+                .notices
+                .into_iter()
+                .filter(|notice| notice.code == "calibration_roles_unmeasured")
+                .collect::<Vec<_>>()
+        };
+        let notices = unmeasured(&mut store);
+        assert_eq!(notices.len(), 1);
+        assert_eq!(notices[0].params["roles"], "SW1,SW2");
+
+        store
+            .record(stored_result("SW1", 2, impulse.clone(), None), None)
+            .unwrap();
+        let notices = unmeasured(&mut store);
+        assert_eq!(
+            notices[0].params["roles"], "SW2",
+            "a role measured at any position counts"
+        );
+
+        store
+            .record(stored_result("SW2", 1, impulse, None), None)
+            .unwrap();
+        assert!(unmeasured(&mut store).is_empty());
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

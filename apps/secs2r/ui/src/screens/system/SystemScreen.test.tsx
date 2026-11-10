@@ -46,9 +46,6 @@ export const REACH_IDS = [
   "system.dsp.advanced",
   "system.dsp.fir_taps",
   "system.dsp.fir_budget",
-  "system.dsp.iir_bands",
-  "system.dsp.allpass_bands",
-  "system.dsp.bm_path_delays",
   "system.dsp.note",
   "system.layout",
   "system.arrangement",
@@ -293,7 +290,7 @@ describe("SystemScreen", () => {
     const actions = setup(sampleView);
     // The device list in DSP_ORDER, with SECS 2R's TesiraFORTÉ preset (U18) after the Tesira SERVER.
     expect([...(must("system.dsp.device") as HTMLSelectElement).options].map((option) => [option.value, option.textContent])).toEqual([
-      ["camilla", "CamillaDSP · BruteFIR"],
+      ["camilla", "PC · Equalizer APO · CamillaDSP"],
       ["tesira", "Tesira SERVER-IO"],
       ["tesira_forte", "TesiraFORTÉ VI / VT"],
       ["qsys", "Q-SYS Core"],
@@ -306,10 +303,12 @@ describe("SystemScreen", () => {
     fireEvent.click(must("system.dsp.advanced"));
     fireEvent.change(must("system.dsp.fir_taps"), { target: { value: "4096" } });
     expect(actions.setDspFields).toHaveBeenLastCalledWith({ ...sampleView.dsp.fields, fir_taps: 4096 });
-    const iir = must("system.dsp.iir_bands") as HTMLInputElement;
-    fireEvent.change(iir, { target: { value: "24" } });
-    fireEvent.keyDown(iir, { key: "Enter" });
-    expect(actions.setDspFields).toHaveBeenLastCalledWith({ ...sampleView.dsp.fields, iir_bands: 24 });
+    const budget = must("system.dsp.fir_budget") as HTMLInputElement;
+    fireEvent.change(budget, { target: { value: "65536" } });
+    fireEvent.keyDown(budget, { key: "Enter" });
+    expect(actions.setDspFields).toHaveBeenLastCalledWith({ ...sampleView.dsp.fields, fir_budget: 65536 });
+    // Nothing reads the IIR, all-pass and bass-management counts (DEVIATIONS U2), so the card leaves them out.
+    for (const id of ["system.dsp.iir_bands", "system.dsp.allpass_bands", "system.dsp.bm_path_delays"]) expect(ui(id)).toBeNull();
     expect(must("system.dsp.note").textContent).toContain("1,365");
   });
 

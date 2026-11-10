@@ -488,3 +488,56 @@ fn test_mdat_dialog_repeated_duplicate_skip_and_cancel() {
         assert!(problems(&[Some("L".into()), Some("L".into())], &[1, 2]).is_empty());
     }
 }
+
+/// A REW file whose subwoofer rows carry a side instead of a number ("SUB L",
+/// "SUB R", the titles of the 2026-11-08 forum report) and whose subs play
+/// full range (low-pass off): the titles name subs, so the rows take the free
+/// sub roles in file order even though the spectral check says otherwise.
+#[test]
+fn sub_rows_titled_with_a_side_take_the_free_sub_roles() {
+    let dir = TempDir::new("mdat-sub-sides");
+    let path = dir.0.join("sides.mdat");
+    let impulse = |at: usize| {
+        let mut samples = vec![0.0; 4096];
+        samples[at] = 1.0;
+        samples
+    };
+    let rows = ["L", "R", "SUB L", "SUB R"]
+        .into_iter()
+        .enumerate()
+        .map(|(index, title)| secs_mdat::MeasurementInput {
+            title: title.into(),
+            notes: String::new(),
+            sample_rate_hz: 48_000,
+            samples: impulse(100 + index),
+            start_time_s: 0.0,
+            spl_offset_db: None,
+            source_info: None,
+            computed: false,
+        })
+        .collect::<Vec<_>>();
+    let mut uuid = 0_u128;
+    let bytes = secs_mdat::build(&rows, secs_mdat::TEMPLATE, None, 0, &mut || {
+        uuid += 1;
+        uuid
+    })
+    .unwrap();
+    std::fs::write(&path, bytes).unwrap();
+    let roles = ["L", "R", "SW1", "SW2"].map(String::from);
+    let scan = scan_for(&path, &roles, None, 1).unwrap();
+    assert_eq!(
+        scan.measurements
+            .iter()
+            .map(|m| m.looks_like_sub)
+            .collect::<Vec<_>>(),
+        [Some(false); 4],
+        "the impulses are full range, so only the titles can name the subs"
+    );
+    assert_eq!(
+        scan.measurements
+            .iter()
+            .map(|m| m.role.as_deref())
+            .collect::<Vec<_>>(),
+        [Some("L"), Some("R"), Some("SW1"), Some("SW2")]
+    );
+}

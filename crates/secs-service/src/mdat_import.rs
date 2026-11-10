@@ -128,6 +128,20 @@ pub fn auto_assign(
         })
         .collect()
 }
+/// Whether `title` names a subwoofer by a word and something other than a
+/// number, such as "SUB L" or "서브 우" (docs/DEVIATIONS.md F26). Upstream
+/// reads a sub from a title only with a number ("SUB 2"), and otherwise
+/// leaves the row to the spectral check, which a sub played with its low-pass
+/// off fails; the row then stays unassigned (forum report 2026-11-08).
+fn titled_as_sub(title: &str) -> bool {
+    let mut words = title
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|word| !word.is_empty());
+    words.next().is_some_and(|first| {
+        ["SUB", "SW", "LFE", "SUBWOOFER", "서브", "서브우퍼"]
+            .contains(&first.to_uppercase().as_str())
+    }) && words.next().is_some()
+}
 fn is_sub(role: &str) -> bool {
     role.split(':')
         .next()
@@ -319,7 +333,14 @@ fn scan_loaded(
             .collect::<Vec<_>>();
         let flags = indices
             .iter()
-            .map(|i| measurements[*i].looks_like_sub)
+            .map(|i| {
+                let m = &measurements[*i];
+                if titled_as_sub(&m.title_base) {
+                    Some(true)
+                } else {
+                    m.looks_like_sub
+                }
+            })
             .collect::<Vec<_>>();
         for (i, r) in indices.into_iter().zip(auto_assign(&titles, roles, &flags)) {
             measurements[i].role = r;

@@ -131,8 +131,13 @@ describe("calculation notes", () => {
     expect(lines("en", [n("mimo_iir_seed_fallback", { input: "Rb", status: "-1" })])).toEqual(["IIR support fitting for input Rrs did not converge, so the starting filters were kept."]);
   });
 
+  it("names the configured speakers calibrated without a measurement", () => {
+    expect(lines("ko", [n("calibration_roles_unmeasured", { roles: "SW1,SW2" })])).toEqual(["SW1·SW2 측정이 없어 이 스피커들을 빼고 보정했습니다. 내보내는 필터에도 들어가지 않습니다."]);
+    expect(lines("en", [n("calibration_roles_unmeasured", { roles: "Tfl" })])).toEqual(["Ltf has no measurement, so the calibration and the exported filters leave it out."]);
+  });
+
   it("has a sentence for every calibration notice code in both locales", () => {
-    const codes = ["measurement_resampled", "rc_limit", "rc_room_volume", "rc_no_room_volume", "rc_auto_cap", "rc_bands", "lf_align", "mode_decay", "mode_decay_none", "hf_phase", "hf_phase_none", "dip_limit", "pair_phase", "input_hp", "polarity_reversed", "polarity_split", "sub_narrow_band", "sub_high_gain", "lift_capped", "latency", "phase_strength", "phase_band", "long_mode_boost", "gd_cuts", "two_way", "sub_filters", "sub_filter_peq", "ba_cost", "ba_bus_pass", "bus_gain_anchored", "layout_fallback", "layout", "ba_manual", "low_protect", "calibration_curve_invalid", "mimo_iir_seed_fallback"];
+    const codes = ["measurement_resampled", "rc_limit", "rc_room_volume", "rc_no_room_volume", "rc_auto_cap", "rc_bands", "lf_align", "mode_decay", "mode_decay_none", "hf_phase", "hf_phase_none", "dip_limit", "pair_phase", "input_hp", "polarity_reversed", "polarity_split", "sub_narrow_band", "sub_high_gain", "lift_capped", "latency", "phase_strength", "phase_band", "long_mode_boost", "gd_cuts", "two_way", "sub_filters", "sub_filter_peq", "ba_cost", "ba_bus_pass", "bus_gain_anchored", "layout_fallback", "layout", "ba_manual", "low_protect", "calibration_curve_invalid", "calibration_roles_unmeasured", "mimo_iir_seed_fallback"];
     for (const locale of ["ko", "en"] as const) {
       const { t, number } = words(locale);
       for (const code of codes) expect(noticeText(t, number, n(code, {})), `${locale}: ${code}`).not.toBeNull();
