@@ -52,6 +52,9 @@ class HeavyInputsTest(unittest.TestCase):
             # Named by the scripts, not by ci.yml.
             ".github/blackhole.toml",
             ".github/reaper.toml",
+            # art-reference runs art_gate.py, which imports art_metrics.py.
+            ".github/scripts/art_gate.py",
+            ".github/scripts/art_metrics.py",
         ):
             self.assertIn(path, HEAVY)
 
@@ -73,7 +76,8 @@ class HeavyInputsTest(unittest.TestCase):
         self.assertEqual(
             set(s.gated_jobs(WORKFLOW)),
             {"test", "feature-registry", "integrity", "eqapo-playback", "camilla-playback",
-             "reaper-playback", "bundle", "manage-e2e", "update-e2e", "gallery", "miri", "fuzz"})
+             "reaper-playback", "art-reference", "bundle", "manage-e2e", "update-e2e", "gallery",
+             "miri", "fuzz"})
 
     def test_needs_in_any_form_carries_the_gate(self):
         workflow = (

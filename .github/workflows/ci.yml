@@ -55,10 +55,17 @@ name: CI
 #             issue #107)
 #   manage-e2e  installed Windows app and shell driven through WebDriver:
 #             real service takeover, restart, Equalizer APO repair and removal
+#   art-reference  not a required check: the calculations that leave
+#             upstream (bass arrival, mode decay, the MIMO early window) run
+#             on private room measurements and are compared with Dirac ART
+#             measurements of the same rooms (docs/adr/0026). The
+#             measurements are encrypted files under reference/art/; the log
+#             and the summary carry case, setting and metric names with a
+#             verdict, never a value. Without the key (a fork) it skips.
 #
 #   scope     whether the heavy jobs run: test, integrity, the three
-#             playbacks, bundle (and the end-to-end jobs after it), gallery,
-#             miri and fuzz. They are skipped when every commit of the pull
+#             playbacks, art-reference, bundle (and the end-to-end jobs after
+#             it), gallery, miri and fuzz. They are skipped when every commit of the pull
 #             request's own is a ci: or docs: commit and every changed file
 #             is under docs/ or .github/ or ends in .md, but is neither this
 #             file nor one a heavy job runs or reads
@@ -811,6 +818,64 @@ jobs:
           name: reaper-playback
           path: ${{ runner.temp }}/reaper-artifacts
           if-no-files-found: ignore
+
+  # Not a required check, and green whatever the verdicts are: they are
+  # reference information until more rooms have ART measurements
+  # (docs/adr/0026). It fails only when the gate cannot compute: a ciphertext
+  # that does not match the manifest, a wrong key, or a room the CLI cannot
+  # calibrate. Nothing is uploaded: the decrypted measurements stay in
+  # RUNNER_TEMP and the runner is discarded.
+  art-reference:
+    name: ART reference (similarity)
+    needs: [lint, scope]
+    if: needs.scope.outputs.heavy == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: ALSA for cpal (the CLI links secs-sys)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq libasound2-dev
+
+      - name: Install the pinned toolchain (rust-toolchain.toml)
+        run: |
+          rustup toolchain install
+          rustup show active-toolchain
+
+      # The integrity job builds the same release CLI; read its cache and
+      # leave the saving to it.
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: integrity
+          save-if: false
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+
+      - name: numpy and cryptography for the gate (pinned wheels)
+        run: python -m pip install --disable-pip-version-check --only-binary :all: numpy==2.4.6 cryptography==50.0.2
+
+      - name: Build the CLI (release)
+        run: cargo build --release --locked -p secs2r-cli
+
+      # The lint job runs these tests too, but without numpy and without a
+      # CLI, where the numeric and the end-to-end ones skip themselves.
+      - name: Gate unit tests on synthetic data, with numpy and the built CLI
+        env:
+          SECS2R_CLI: ${{ github.workspace }}/target/release/secs2r-cli
+        run: python -m unittest discover -s .github/scripts -p "test_art_*.py" -v
+
+      - name: Compare with the ART measurements
+        env:
+          ART_REFERENCE_KEY: ${{ secrets.ART_REFERENCE_KEY }}
+        run: >-
+          python .github/scripts/art_gate.py run
+          --manifest reference/art/cases.toml
+          --cli target/release/secs2r-cli
+          --summary "$GITHUB_STEP_SUMMARY"
 
   manage-e2e:
     name: Manage end to end (Windows GUI)
