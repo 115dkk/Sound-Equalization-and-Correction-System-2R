@@ -47,7 +47,7 @@ jobs:
   changes:
     name: screen changes
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # paths-filter lists the pull request's files, as the scope job does.
     permissions:
       contents: read
@@ -77,7 +77,7 @@ jobs:
        (needs.changes.result == 'success' &&
         needs.changes.outputs.ui == 'true' &&
         github.event.pull_request.head.repo.full_name == github.repository))
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: apps/secs2r/ui
@@ -116,7 +116,7 @@ jobs:
   publish:
     name: branch and review issue
     needs: shots
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
       issues: write
@@ -223,7 +223,7 @@ jobs:
     name: Screen tour
     needs: [changes, shots]
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Check the change detection and the tour
         env:
