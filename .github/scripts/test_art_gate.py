@@ -902,6 +902,38 @@ class MainTests(unittest.TestCase):
             self.assertIn("case missing", stderr.getvalue())
 
 
+class ResolveCliTests(unittest.TestCase):
+    """ci.yml passes the CLI relative to the checkout; stages run elsewhere."""
+
+    def test_relative_file_becomes_absolute_and_bare_command_is_kept(self):
+        with tempfile.TemporaryDirectory() as temporary, contextlib.chdir(temporary):
+            root = Path(temporary).resolve()
+            write_file(root, "target/release/tool")
+            write_file(root, "local-tool")
+            self.assertEqual(
+                Path(art_gate.resolve_cli(Path("target/release/tool"))),
+                root / "target" / "release" / "tool",
+            )
+            # A bare name that is a file here is that file, not a PATH lookup.
+            self.assertEqual(Path(art_gate.resolve_cli(Path("local-tool"))), root / "local-tool")
+            self.assertEqual(art_gate.resolve_cli(Path("some-command")), "some-command")
+            absolute = root / "local-tool"
+            self.assertEqual(Path(art_gate.resolve_cli(absolute)), absolute)
+
+    def test_windows_executable_suffix_is_found(self):
+        with tempfile.TemporaryDirectory() as temporary, contextlib.chdir(temporary):
+            root = Path(temporary).resolve()
+            write_file(root, "bin/tool.exe")
+            self.assertEqual(Path(art_gate.resolve_cli(Path("bin/tool"))), root / "bin" / "tool")
+
+    def test_missing_path_is_a_configuration_error(self):
+        with tempfile.TemporaryDirectory() as temporary, contextlib.chdir(temporary):
+            with self.assertRaises(art_gate.ConfigError):
+                art_gate.resolve_cli(Path("target/release/missing"))
+            with self.assertRaises(art_gate.ConfigError):
+                art_gate.resolve_cli(Path(temporary) / "missing")
+
+
 class EndToEndTests(unittest.TestCase):
     def _run_setup(self, command: list[str], cwd: Path) -> subprocess.CompletedProcess:
         return subprocess.run(
@@ -1039,6 +1071,53 @@ class EndToEndTests(unittest.TestCase):
                 "post20_80_120",
             ):
                 self.assertTrue(any(f"metric={metric} " in line for line in art_lines))
+
+    def test_main_runs_with_the_cli_given_relative_to_the_current_folder(self):
+        """As ci.yml starts it: on 2026-11-10 every stage failed in CI because
+        the relative path was looked up from each stage's own work folder."""
+        cli = self._require_dependencies()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            case_root, _ = self._make_real_case(root, cli)
+            key = b"r" * 32
+            bundle = root / "synthetic-input.art"
+            digest, _ = art_gate.pack_case(case_root, "synthetic-input", bundle, key)
+            manifest = write_manifest(
+                root,
+                valid_case_toml(
+                    name="synthetic-input",
+                    file_name="synthetic-input.art",
+                    digest=digest,
+                    kind="input",
+                    groups='["arrival", "gd_excess", "pre"]',
+                ),
+            )
+            relative = Path(os.path.relpath(cli, cli.parent.parent))
+            output, errors = io.StringIO(), io.StringIO()
+            environment = {"ART_E2E_KEY": base64.b64encode(key).decode("ascii")}
+            with (
+                contextlib.chdir(cli.parent.parent),
+                mock.patch.dict(os.environ, environment),
+                contextlib.redirect_stdout(output),
+                contextlib.redirect_stderr(errors),
+            ):
+                os.environ.pop("CI", None)
+                os.environ.pop("GITHUB_ACTIONS", None)
+                code = art_gate.main(
+                    [
+                        "run",
+                        "--manifest", str(manifest),
+                        "--cli", str(relative),
+                        "--key-env", "ART_E2E_KEY",
+                        "--summary", str(root / "summary.md"),
+                    ]
+                )
+            self.assertEqual(code, 0, errors.getvalue())
+            # run_gate writes to the stream it was defined with, so the
+            # summary file is what this test reads.
+            summary = (root / "summary.md").read_text(encoding="utf-8")
+            self.assertIn("synthetic-input", summary)
+            self.assertNotIn("계산 실패", summary)
 
 
 if __name__ == "__main__":

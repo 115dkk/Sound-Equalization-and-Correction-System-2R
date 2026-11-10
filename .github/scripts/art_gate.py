@@ -482,6 +482,26 @@ def verify_cases(cases: Sequence[Case], manifest_dir: Path, out: TextIO = sys.st
     return 1 if failed else 0
 
 
+def resolve_cli(cli: Path) -> str:
+    """Return the CLI as every stage can start it.
+
+    A stage runs with its own work folder as the current folder, so a path
+    given relative to the caller's folder (``target/release/secs2r-cli`` in
+    ci.yml) is made absolute here.  A bare command name that is not a file in
+    the caller's folder is left for the PATH lookup.  A path that names no
+    file is a configuration error: without this check every stage of every
+    case would fail the same way.
+    """
+    if not cli.is_absolute():
+        candidate = Path.cwd() / cli
+        if len(cli.parts) == 1 and not candidate.is_file():
+            return str(cli)
+        cli = candidate
+    if not (cli.is_file() or cli.with_name(cli.name + ".exe").is_file()):
+        raise ConfigError("--cli: no such file")
+    return str(cli.resolve())
+
+
 def _command_prefix(cli: str | Path | Sequence[str]) -> list[str]:
     if isinstance(cli, (str, Path)):
         return [str(cli)]
@@ -988,7 +1008,7 @@ def main(argv: list[str] | None = None) -> int:
                 raise ConfigError("ART reference: key not set")
             print("ART reference: key not set, skipped")
             return 0
-        cli = [str(args.cli), *args.cli_arg]
+        cli = [resolve_cli(args.cli), *args.cli_arg]
         result = run_gate(cases, args.manifest.parent, cli, key)
         if args.summary is not None:
             append_summary(args.summary, result)
