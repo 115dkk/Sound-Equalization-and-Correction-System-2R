@@ -474,3 +474,24 @@ fn delay_matches_numpy_bit_for_bit() {
         }
     }
 }
+
+/// Issue #203: a log sweep puts each harmonic's response ahead of the linear
+/// one (548 ms for the second harmonic of the default 256k sweep at 48 kHz).
+#[test]
+fn onset_ignores_a_response_separated_from_the_peak_by_a_quiet_gap() {
+    let harmonic = 1_000;
+    let linear = harmonic + 26_304;
+    let mut ir = vec![0.0; linear + 4_800];
+    for (i, v) in ir[harmonic..harmonic + 480].iter_mut().enumerate() {
+        *v = 0.4 * (-(i as f64) / 120.0).exp();
+    }
+    ir[linear - 3] = 0.12;
+    ir[linear] = 1.0;
+    assert_eq!(onset_index(&Samples::F64(ir.clone().into())), linear - 3);
+
+    // Upstream's rule is unchanged while the stretches below the threshold
+    // are shorter than the gap: the first crossing before the peak.
+    ir[linear - 2_000] = 0.2;
+    ir[linear - 4_300] = -0.2;
+    assert_eq!(onset_index(&Samples::F64(ir.into())), linear - 4_300);
+}

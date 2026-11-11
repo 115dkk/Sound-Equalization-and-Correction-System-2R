@@ -50,6 +50,20 @@ pub(crate) fn preparation_bytes(set: &MeasurementSet, setup: &Setup) -> u64 {
     spectra_bytes(set).saturating_add(build_scratch_bytes(setup.sub_filters.len()))
 }
 
+/// The longest stretch below the onset threshold that still belongs to the
+/// arrival holding the peak: 50 ms.
+const ONSET_GAP: usize = SR as usize / 20;
+
+/// The first sample at a tenth of the absolute peak or more, among the
+/// samples that reach the peak without a stretch longer than `ONSET_GAP`
+/// below that threshold.
+///
+/// Upstream takes the first such sample of the whole response. A log sweep
+/// puts the response of each harmonic ahead of the linear one (548 ms for the
+/// second harmonic of a 256k sweep from 20 Hz to 20 kHz at 48 kHz), and a
+/// driver with a tenth of its output in harmonics, common for a subwoofer,
+/// then had its arrival read off that earlier response (DEVIATIONS D61).
+/// A response without such a gap gives upstream's index.
 pub fn onset_index(ir: &Samples) -> usize {
     if ir.is_empty() {
         return 0;
@@ -61,9 +75,15 @@ pub fn onset_index(ir: &Samples) -> usize {
         }
     }
     let threshold = 0.1 * ir.at(peak).abs();
-    (0..=peak)
-        .find(|&i| ir.at(i).abs() >= threshold)
-        .unwrap_or(peak)
+    let mut onset = peak;
+    for i in (0..peak).rev() {
+        if ir.at(i).abs() >= threshold {
+            onset = i;
+        } else if onset - i > ONSET_GAP {
+            break;
+        }
+    }
+    onset
 }
 
 fn window(ir: &Samples, start: usize, length: usize, taper: f64) -> (Vec<f64>, usize) {
