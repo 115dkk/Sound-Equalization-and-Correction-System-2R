@@ -797,7 +797,8 @@ mod client {
     use std::fs;
     use std::net::{SocketAddr, TcpStream};
     use std::path::{Path, PathBuf};
-    use std::sync::mpsc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Arc, mpsc};
     use std::time::{Duration, Instant};
 
     use secs_types::ipc::{IpcError, JobEvent, JobId, Request, Response};
@@ -813,6 +814,12 @@ mod client {
     const BODY_LIMIT: u64 = 16 * 1024 * 1024;
     // The app answers on the loopback at once; this only bounds a server that hangs.
     const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
+    /// How long a quiet event socket rests before it looks again for an event
+    /// and for its closer's flag.
+    const EVENT_POLL: Duration = Duration::from_millis(10);
+    /// The reason of the `Closed` event a subscription ends with when its
+    /// closer ended it.
+    const CLOSED_BY_CALLER: &str = "subscription closed";
 
     #[derive(Deserialize)]
     struct WireEnvelope {
@@ -905,7 +912,7 @@ mod client {
             // A server that accepts the connection but never answers the
             // upgrade must not hold the caller forever, so connecting and the
             // handshake have a time limit. The events themselves then wait as
-            // long as the server is quiet; EventsCloser ends that wait.
+            // long as the server is quiet; the closer ends that wait.
             let socket_error =
                 |error: std::io::Error| Error::Transport(format!("event socket: {error}"));
             let address = SocketAddr::from(([127, 0, 0, 1], self.port));
@@ -931,9 +938,21 @@ mod client {
             if let MaybeTlsStream::Plain(stream) = socket.get_ref() {
                 stream.set_read_timeout(None).map_err(socket_error)?;
                 stream.set_write_timeout(None).map_err(socket_error)?;
+                // From here the socket does not block. A read blocked on a
+                // quiet server could be ended only through the socket, and
+                // neither way holds everywhere. On Windows shutting a socket
+                // down is not sure to wake a blocked read (std's own test of
+                // it, `close_read_wakes_up`, is off there), so the wait can
+                // last until the server closes its side; and a receive that
+                // times out leaves the connection in an indeterminate state
+                // (Winsock, SO_RCVTIMEO). The reader looks again every
+                // EVENT_POLL instead and ends on the closer's flag, with no
+                // help from the server.
+                stream.set_nonblocking(true).map_err(socket_error)?;
             }
             Ok(RawEvents {
                 socket,
+                closed: Arc::new(AtomicBool::new(false)),
                 finished: false,
             })
         }
@@ -1055,6 +1074,8 @@ mod client {
 
     struct RawEvents {
         socket: WebSocket<MaybeTlsStream<TcpStream>>,
+        /// Set by the closer; the reader ends at its next look.
+        closed: Arc<AtomicBool>,
         finished: bool,
     }
 
@@ -1072,7 +1093,10 @@ mod client {
             match self.socket.get_ref() {
                 MaybeTlsStream::Plain(stream) => stream
                     .try_clone()
-                    .map(|stream| RawEventsCloser { stream })
+                    .map(|stream| RawEventsCloser {
+                        stream,
+                        closed: Arc::clone(&self.closed),
+                    })
                     .map_err(|error| Error::Transport(format!("event socket: {error}"))),
                 _ => Err(Error::Protocol(
                     "event socket is not a plain TCP stream".into(),
@@ -1084,10 +1108,14 @@ mod client {
     #[derive(Debug)]
     struct RawEventsCloser {
         stream: TcpStream,
+        closed: Arc<AtomicBool>,
     }
 
     impl RawEventsCloser {
+        /// Ends the reader through its flag, then tells the server by
+        /// shutting the socket down.
         pub fn close(&self) {
+            self.closed.store(true, Ordering::Release);
             let _ = self.stream.shutdown(std::net::Shutdown::Both);
         }
     }
@@ -1100,7 +1128,16 @@ mod client {
                 return None;
             }
             loop {
-                match self.socket.read() {
+                let read = self.socket.read();
+                if self.closed.load(Ordering::Acquire) {
+                    // The caller ended the subscription: that is why the
+                    // stream ends, whatever the socket said last.
+                    self.finished = true;
+                    return Some(Ok(Event::Closed {
+                        reason: CLOSED_BY_CALLER.into(),
+                    }));
+                }
+                match read {
                     Ok(tungstenite::Message::Text(text)) => {
                         return Some(
                             serde_json::from_str::<ServerEvent>(text.as_ref())
@@ -1124,6 +1161,13 @@ mod client {
                         return Some(Ok(Event::Closed { reason }));
                     }
                     Ok(_) => {}
+                    // Nothing to read yet (a frame may be half arrived;
+                    // tungstenite keeps what it has): rest, then look again.
+                    Err(tungstenite::Error::Io(error))
+                        if error.kind() == std::io::ErrorKind::WouldBlock =>
+                    {
+                        std::thread::sleep(EVENT_POLL);
+                    }
                     Err(tungstenite::Error::ConnectionClosed) => {
                         self.finished = true;
                         return Some(Ok(Event::Closed {
@@ -1242,6 +1286,61 @@ mod client {
                     .map(|home| home.join(".config"))
             })
             .unwrap_or_else(|| PathBuf::from("."))
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use std::net::TcpListener;
+
+        /// A server that upgrades the connection and then neither sends, reads
+        /// nor closes until the test lets go of it.
+        fn mute_server() -> (u16, mpsc::Sender<()>, std::thread::JoinHandle<()>) {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let (release, held) = mpsc::channel::<()>();
+            let server = std::thread::spawn(move || {
+                let (stream, _) = listener.accept().unwrap();
+                let socket = tungstenite::accept(stream).unwrap();
+                let _ = held.recv();
+                drop(socket);
+            });
+            (port, release, server)
+        }
+
+        #[test]
+        fn closing_a_subscription_ends_its_reader_without_the_server() {
+            let (port, release, server) = mute_server();
+            let subscription = Client::new(port, "token").subscribe().unwrap();
+            let closer = subscription.closer.clone();
+            let (finished, waiting) = mpsc::channel();
+            let reader = std::thread::spawn(move || {
+                let last = subscription.receiver.recv();
+                let _ = finished.send((last, subscription.receiver));
+            });
+            // By now the reader waits on a quiet stream.
+            std::thread::sleep(Duration::from_millis(200));
+            closer.close();
+            // The server never lets go, so only the closer can end this wait;
+            // the limit is wide for a runner that is slow to schedule threads.
+            let (last, receiver) = waiting
+                .recv_timeout(Duration::from_secs(10))
+                .expect("closing must end the reader while the server still holds the connection");
+            assert_eq!(
+                last,
+                Ok(Event::Closed {
+                    reason: "subscription closed".into()
+                })
+            );
+            // The thread that fed the receiver is gone as well.
+            assert_eq!(
+                receiver.recv_timeout(Duration::from_secs(10)),
+                Err(mpsc::RecvTimeoutError::Disconnected)
+            );
+            reader.join().unwrap();
+            let _ = release.send(());
+            server.join().unwrap();
+        }
     }
 }
 
