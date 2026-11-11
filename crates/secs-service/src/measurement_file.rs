@@ -18,9 +18,15 @@ use crate::measure::{
     MeasureError, MeasurementSettings, plan_for, position_count, validate_samples,
 };
 
-/// The largest measurement file a request reads, before the format
-/// parser's own budgets.
-const FILE_LIMIT: u64 = 256 * 1024 * 1024;
+/// The largest REW mdat a request reads, before the parser's own budgets.
+pub(crate) const MDAT_FILE_LIMIT: u64 = 256 * 1024 * 1024;
+
+/// The largest Dirac Live project a request reads: the parser's own file
+/// budget. A project keeps every recording, so 14 channels at 9 positions
+/// already pass the 256 MiB an mdat is held to.
+pub(crate) fn dirac_file_limit() -> u64 {
+    secs_dirac::Limits::default().max_file_bytes as u64
+}
 
 /// A row's role and position as the dialog (or a caller) assigned them.
 /// Per-row positions let the dialog override the file's suggestion.
@@ -63,10 +69,10 @@ pub trait MeasurementReader {
     fn take(&self, row: usize) -> Result<ImportedIr, MeasureError>;
 }
 
-/// Reads `path` whole, refusing a file over [`FILE_LIMIT`]; `what` names
+/// Reads `path` whole, refusing a file over `limit` bytes; `what` names
 /// the format in that refusal.
-pub(crate) fn read(path: &Path, what: &str) -> Result<Vec<u8>, MeasureError> {
-    secs_project::read_bounded(path, FILE_LIMIT, what).map_err(|error| match error {
+pub(crate) fn read(path: &Path, what: &str, limit: u64) -> Result<Vec<u8>, MeasureError> {
+    secs_project::read_bounded(path, limit, what).map_err(|error| match error {
         secs_project::ProjectError::Invalid(_) => {
             MeasureError::Input(format!("{what} exceeds file budget"))
         }
@@ -537,6 +543,34 @@ mod tests {
                 notes: Some("minimal.liveproject".into()),
                 ..Default::default()
             })
+        );
+    }
+
+    /// A Dirac project keeps every recording, so its size grows with
+    /// channels times positions. The 14-channel, 9-position project whose
+    /// import was refused on 2026-11-10 is 278 MB: over an mdat's budget,
+    /// inside the Dirac one.
+    #[test]
+    fn dirac_projects_read_under_the_parsers_file_budget() {
+        assert_eq!(
+            dirac_file_limit(),
+            secs_dirac::Limits::default().max_file_bytes as u64
+        );
+        let refused_project_bytes = 278_284_457;
+        assert!(refused_project_bytes > MDAT_FILE_LIMIT);
+        assert!(refused_project_bytes <= dirac_file_limit());
+    }
+
+    #[test]
+    fn read_refuses_only_a_file_over_the_given_limit() {
+        let directory = TempDir::new();
+        let path = directory.0.join("five.bin");
+        std::fs::write(&path, b"12345").unwrap();
+        assert_eq!(read(&path, "test file", 5).unwrap(), b"12345");
+        let refusal = read(&path, "test file", 4).unwrap_err();
+        assert!(
+            matches!(&refusal, MeasureError::Input(message) if message == "test file exceeds file budget"),
+            "{refusal:?}"
         );
     }
 }

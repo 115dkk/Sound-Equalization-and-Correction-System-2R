@@ -200,11 +200,12 @@ pub(crate) struct DiracReader {
 }
 
 impl DiracReader {
-    /// Reads `path` (256 MiB limit) and lists its measured channels per
+    /// Reads `path` (1 GiB limit) and lists its measured channels per
     /// position. Dirac position p is position p + 1; roles come from the
     /// channel names, subwoofers from SW1 in order (ADR 0013).
     pub(crate) fn read(path: &Path, roles: &[String]) -> Result<Self, MeasureError> {
-        let bytes = measurement_file::read(path, "Dirac project")?;
+        let bytes =
+            measurement_file::read(path, "Dirac project", measurement_file::dirac_file_limit())?;
         let project = secs_dirac::parse(&bytes, &Limits::default()).map_err(|error| {
             let message = if error == secs_dirac::DiracError::NoMeasurements {
                 "Dirac project holds no measured impulse responses".into()
