@@ -109,12 +109,17 @@ impl ConvolutionWriter {
         mut self,
         folder: &Path,
         log: &crate::LogSink,
+        job: &crate::jobs::JobContext,
     ) -> Result<Vec<std::path::PathBuf>, IpcError> {
         let installed = self
             .prepared
             .take()
             .expect("convolution writer was prepared")
-            .install_observed(folder)
+            .install_reported(
+                folder,
+                &|done, total| job.report_progress("export.write", done, total),
+                &|done, total| job.report_progress("export.install", done, total),
+            )
             .map_err(filter_error)?;
         log_leftover_backup(log, installed.leftover_backup);
         Ok(installed.files)
@@ -139,9 +144,16 @@ impl EqapoWriter {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => return Err(export_error(error)),
         }
-        let installed =
-            secs_filters::export_eqapo_observed_with_channels(run, &prepared, options, outputs)
-                .map_err(filter_error)?;
+        let installed = secs_filters::export_eqapo_reported(
+            run,
+            &prepared,
+            options,
+            outputs,
+            &|done, total| job.report_progress("export.prepare", done, total),
+            &|done, total| job.report_progress("export.write", done, total),
+            &|done, total| job.report_progress("export.install", done, total),
+        )
+        .map_err(filter_error)?;
         let relative_files = installed
             .files
             .iter()
@@ -183,9 +195,15 @@ impl FilterTextWriter {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => return Err(export_error(error)),
         }
-        let installed =
-            secs_filters::export_filter_text_observed_with_options(run, &prepared, options)
-                .map_err(filter_error)?;
+        let installed = secs_filters::export_filter_text_reported(
+            run,
+            &prepared,
+            options,
+            &|done, total| job.report_progress("export.prepare", done, total),
+            &|done, total| job.report_progress("export.write", done, total),
+            &|done, total| job.report_progress("export.install", done, total),
+        )
+        .map_err(filter_error)?;
         let relative_files = installed
             .files
             .iter()
@@ -227,7 +245,11 @@ impl BeforeAfterMdatWriter {
         spl_offset: Option<f64>,
         now_ms: i64,
         uuid: &crate::UuidSource,
+        job: &crate::jobs::JobContext,
     ) -> Result<Self, IpcError> {
+        if run.is_some() {
+            job.report_progress("export.responses", 0, 0);
+        }
         let items = secs_export::rew_mdat_items(run, scope, originals, mimo, sources)
             .map_err(rew_export_error)?;
         let label = run.map(|run| run.settings.label()).unwrap_or_default();
@@ -237,9 +259,14 @@ impl BeforeAfterMdatWriter {
             .collect::<Result<Vec<_>, _>>()
             .map_err(export_error)?;
         let mut uuids = uuids.into_iter();
-        let bytes = secs_mdat::build(&items, secs_mdat::TEMPLATE, spl_offset, now_ms, &mut || {
-            uuids.next().expect("one UUID per before-after mdat item")
-        })
+        let bytes = secs_mdat::build_reported(
+            &items,
+            secs_mdat::TEMPLATE,
+            spl_offset,
+            now_ms,
+            &mut || uuids.next().expect("one UUID per before-after mdat item"),
+            &|done, total| job.report_progress("export.prepare", done, total),
+        )
         .map_err(export_error)?;
         Ok(Self {
             destination: folder.join(secs_export::rew_mdat_filename(scope, &label)),
@@ -247,11 +274,11 @@ impl BeforeAfterMdatWriter {
         })
     }
 
-    fn write(self) -> Result<std::path::PathBuf, IpcError> {
+    fn write(self, job: &crate::jobs::JobContext) -> Result<std::path::PathBuf, IpcError> {
         if let Some(parent) = self.destination.parent() {
             std::fs::create_dir_all(parent).map_err(export_error)?;
         }
-        secs_types::fs::write_atomic_bytes(&self.destination, &self.bytes).map_err(export_error)?;
+        write_mdat_reported(&self.destination, &self.bytes, job)?;
         Ok(self.destination)
     }
 }
@@ -269,8 +296,10 @@ impl StagedMdatWriter {
         spl_offset: Option<f64>,
         now_ms: i64,
         uuid: &crate::UuidSource,
+        job: &crate::jobs::JobContext,
     ) -> Result<Self, IpcError> {
         let label = run.settings.label();
+        job.report_progress("export.responses", 0, 0);
         let items = match mimo {
             Some(mimo) => secs_export::stage_items_mimo(run, mimo, Some(&label)),
             None => secs_export::stage_items(run, Some(&label)),
@@ -282,9 +311,14 @@ impl StagedMdatWriter {
             .collect::<Result<Vec<_>, _>>()
             .map_err(export_error)?;
         let mut uuids = uuids.into_iter();
-        let bytes = secs_mdat::build(&items, secs_mdat::TEMPLATE, spl_offset, now_ms, &mut || {
-            uuids.next().expect("one UUID per staged mdat item")
-        })
+        let bytes = secs_mdat::build_reported(
+            &items,
+            secs_mdat::TEMPLATE,
+            spl_offset,
+            now_ms,
+            &mut || uuids.next().expect("one UUID per staged mdat item"),
+            &|done, total| job.report_progress("export.prepare", done, total),
+        )
         .map_err(export_error)?;
         Ok(Self {
             destination: folder.join(format!("SECS 보정 설계 {label}.mdat")),
@@ -292,13 +326,45 @@ impl StagedMdatWriter {
         })
     }
 
-    fn write(self) -> Result<std::path::PathBuf, IpcError> {
+    fn write(self, job: &crate::jobs::JobContext) -> Result<std::path::PathBuf, IpcError> {
         if let Some(parent) = self.destination.parent() {
             std::fs::create_dir_all(parent).map_err(export_error)?;
         }
-        secs_types::fs::write_atomic_bytes(&self.destination, &self.bytes).map_err(export_error)?;
+        write_mdat_reported(&self.destination, &self.bytes, job)?;
         Ok(self.destination)
     }
+}
+
+/// Writes an mdat's bytes in chunks so the job can say how far the write is.
+/// The count is the bytes handed to the file: `write_atomic` syncs once after
+/// the last chunk and renames, as it did for the whole buffer (a sync per
+/// chunk would only slow the save).
+fn write_mdat_reported(
+    destination: &Path,
+    bytes: &[u8],
+    job: &crate::jobs::JobContext,
+) -> Result<(), IpcError> {
+    const CHUNK_BYTES: usize = 1024 * 1024;
+
+    let total = u64::try_from(bytes.len()).expect("the resident mdat length fits in u64");
+    if total == 0 {
+        return secs_types::fs::write_atomic(destination, |_| Ok(())).map_err(export_error);
+    }
+    job.report_progress("export.write", 0, total);
+    secs_types::fs::write_atomic(destination, |file| {
+        use std::io::Write as _;
+
+        let mut done = 0_u64;
+        for chunk in bytes.chunks(CHUNK_BYTES) {
+            file.write_all(chunk)?;
+            done = done
+                .checked_add(u64::try_from(chunk.len()).expect("one mdat chunk length fits in u64"))
+                .expect("written mdat bytes do not exceed the total");
+            job.report_progress("export.write", done, total);
+        }
+        Ok(())
+    })
+    .map_err(export_error)
 }
 
 struct CamillaWriter<'a> {
@@ -342,10 +408,16 @@ impl CamillaWriter<'_> {
         options.mode = self.labels.mode.clone();
         let name = format!("secs_{}", options.mode);
         self.main_config = self.folder.join("configs").join(format!("{name}.yml"));
-        job.report_progress("export.camilla.prepare", 0, 1);
         self.prepared = Some(
-            secs_camilla::prepare_config(self.chain, self.folder, &name, &options, self.mimo)
-                .map_err(export_error)?,
+            secs_camilla::prepare_config_reported(
+                self.chain,
+                self.folder,
+                &name,
+                &options,
+                self.mimo,
+                &|done, total| job.report_progress("export.prepare", done, total),
+            )
+            .map_err(export_error)?,
         );
         Ok(())
     }
@@ -353,12 +425,13 @@ impl CamillaWriter<'_> {
     fn write(
         self,
         log: &crate::LogSink,
+        job: &crate::jobs::JobContext,
     ) -> Result<(Vec<std::path::PathBuf>, std::path::PathBuf), IpcError> {
-        let installed = secs_camilla::install_prepared(
+        let installed = secs_camilla::install_prepared_reported(
             self.folder,
             self.prepared.expect("CamillaDSP writer was prepared"),
-            &|_, _| Ok(()),
-            &|_, _| Ok(()),
+            &|done, total| job.report_progress("export.write", done, total),
+            &|done, total| job.report_progress("export.install", done, total),
         )
         .map_err(export_error)?;
         log_leftover_backup(log, installed.leftover_backup);
@@ -938,8 +1011,9 @@ impl Service {
                     None,
                     now_ms,
                     &uuid,
+                    &job,
                 )?;
-                let mut paths = vec![commit_write(&job, || writer.write())?];
+                let mut paths = vec![commit_write(&job, || writer.write(&job))?];
                 if let Some(path) = write_compute_provenance(folder, None)? {
                     paths.push(path);
                 }
@@ -1108,7 +1182,7 @@ impl Service {
                         main_config: std::path::PathBuf::new(),
                     };
                     writer.prepare(&job)?;
-                    let (files, config) = commit_write(&job, || writer.write(&log))?;
+                    let (files, config) = commit_write(&job, || writer.write(&log, &job))?;
                     main_config = Some(config);
                     files
                 }
@@ -1143,7 +1217,7 @@ impl Service {
                                 requested_design_name.as_deref(),
                                 &ctx,
                             )?;
-                            commit_write(&job, || writer.write(folder, &log))?
+                            commit_write(&job, || writer.write(folder, &log, &job))?
                         }
                         _ => unreachable!(),
                     }
@@ -1152,13 +1226,11 @@ impl Service {
                     let (design, settings) = if let Some(values) = live_values.take() {
                         values
                     } else {
-                        job.report_progress("design", 0, 1);
                         let loaded = replay_snapshot
                             .ok_or_else(|| {
                                 IpcError::new(ErrorCode::Internal, "replay snapshot disappeared")
                             })?
                             .load_measurements(&job, ctx.budget())?;
-                        job.report_progress("read_measurements", 1, 1);
                         job.cancel()
                             .check()
                             .map_err(|_| IpcError::new(ErrorCode::Cancelled, "cancelled"))?;
@@ -1208,7 +1280,6 @@ impl Service {
                         .map_err(super::calibration::engine_error)?;
                         let design = calibration.design;
                         drop(loaded);
-                        job.report_progress("design", 1, 1);
                         if let Some(paths) = cached_mimo_paths.as_ref() {
                             mimo = Some(
                                 description.mimo_responses(
@@ -1239,8 +1310,9 @@ impl Service {
                             spl_offset,
                             now_ms,
                             &uuid,
+                            &job,
                         )?;
-                        vec![commit_write(&job, || writer.write())?]
+                        vec![commit_write(&job, || writer.write(&job))?]
                     } else {
                         let writer = BeforeAfterMdatWriter::prepare(
                             Some(&run),
@@ -1252,8 +1324,9 @@ impl Service {
                             spl_offset,
                             now_ms,
                             &uuid,
+                            &job,
                         )?;
-                        vec![commit_write(&job, || writer.write())?]
+                        vec![commit_write(&job, || writer.write(&job))?]
                     }
                 }
             };
@@ -1280,8 +1353,12 @@ impl Service {
                     bypass_config: (kind == ExportKind::CamillaDsp)
                         .then(|| format!("configs/secs_{}_bypass.yml", description.camilla().mode)),
                 };
-                let (manifest_path, id) = crate::design_export::write_manifest(folder, &metadata)
-                    .map_err(export_error)?;
+                let (manifest_path, id) = crate::design_export::write_manifest_reported(
+                    folder,
+                    &metadata,
+                    &|done, total| job.report_progress("export.manifest", done, total),
+                )
+                .map_err(export_error)?;
                 paths.push(manifest_path);
                 written_design_id = Some(id);
             }

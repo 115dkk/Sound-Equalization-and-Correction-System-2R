@@ -141,6 +141,9 @@ export const exportRecalibrating: ExportView = { ...exportStaleCache, computing:
 
 export const exportExporting: ExportView = { ...exportReady, tab: "rew", exporting: "before_after_mdat" };
 
+/** The convolution IR being exported (the job tray shows how far it is). */
+export const exportConvolutionExporting: ExportView = { ...exportReady, tab: "convolution", exporting: "convolution" };
+
 export const exportDone: ExportView = {
   ...exportReady,
   folder: { folder: "D:/Audio/거실 보정", stored: true },

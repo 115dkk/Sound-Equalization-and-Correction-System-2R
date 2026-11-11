@@ -53,7 +53,7 @@ import { CAMILLA_EXE_FILE, addressProblem, designNameFor, designNameProblem, isF
 
 export type Method = Request["method"];
 type DialogMethod = Extract<Method, `dialog_${string}`>;
-type Stage = { stage: string | null; total: number; ticks?: number };
+type Stage = { stage: string | null; total: number; ticks?: number; reports?: number[] };
 type Log = { atTick: number; code: string; params: Record<string, string> };
 type SimJob = {
   id: JobId; kind: JobKind; stages: Stage[]; stageIndex: number; done: number;
@@ -418,13 +418,33 @@ export function createMockService(options: MockOptions = {}): MockService {
   };
   const methods = () => clone(fx.measureMethods);
 
-  const plan = (kind: JobKind): { stages: Stage[]; logs: Log[] } => {
+  const plan = (kind: JobKind, exportKind: ExportParams["kind"] = "camilla_dsp"): { stages: Stage[]; logs: Log[] } => {
     const mains = config.speakers.filter((s) => !s.role.startsWith("SW")).length;
     switch (kind) {
       case "calibrate": return { stages: [{ stage: "engine.design", total: mains + 1 }], logs: [] };
       case "recommend_xo": return { stages: [{ stage: "engine.xo_recommendation", total: 4 }], logs: [] };
       case "mimo": return { stages: [{ stage: "engine.mimo", total: 2 }, { stage: "engine.mimo_iir", total: Math.max(1, mains) }], logs: [] };
-      case "export": case "apply": return { stages: [{ stage: "design", total: 1 }], logs: [] };
+      case "export": case "apply": {
+        // Fixed specimen work: FIR files, rendered/encoded pairs, or serialized measurements.
+        const contents = exportKind === "convolution" ? 2 * 13 * 13
+          : exportKind === "before_after_mdat" ? 234 : exportKind === "staged_mdat" ? 585 : 11;
+        const mdat = exportKind === "before_after_mdat" || exportKind === "staged_mdat";
+        const files = exportKind === "convolution" ? 341 : 14;
+        const bytes = (exportKind === "convolution" ? 64
+          : exportKind === "before_after_mdat" ? 32 : exportKind === "staged_mdat" ? 80 : 8) * 1024 ** 2;
+        return { stages: [
+          // A few reports per stage, not one tick per item or per byte: the demo's export takes seconds, as a real one does.
+          { stage: exportKind === "convolution" ? "filters.convolution" : "export.prepare", total: contents,
+            reports: [0, Math.floor(contents / 3), Math.floor(contents * 2 / 3), contents] },
+          { stage: "export.write", total: bytes, reports: [0, bytes / 2, bytes] },
+          // A bundle's files are then moved into the export folder one by one; an mdat is one file and one rename.
+          ...(mdat ? [] : [
+            { stage: "export.install", total: files, reports: [0, Math.floor(files / 2), files] },
+            // The design manifest reads every installed file back to record its checksum.
+            { stage: "export.manifest", total: files, reports: [0, Math.floor(files / 2), files] },
+          ]),
+        ], logs: [] };
+      }
       case "sample_load": return { stages: [{ stage: null, total: 0, ticks: 3 }], logs: [] };
       case "mdat_import": return { stages: [{ stage: "mdat_import", total: 1 }], logs: [] };
       case "level_monitor": case "status_watch": return { stages: [], logs: [] };
@@ -487,7 +507,7 @@ export function createMockService(options: MockOptions = {}): MockService {
     if (stage) {
       if (stage.total === 0) { if (job.ticks >= (stage.ticks ?? 1)) job.stageIndex++; }
       else {
-        job.done++;
+        job.done = stage.reports ? stage.reports.shift()! : job.done + 1;
         events.emit({ event: "progress", job: job.id, stage: stage.stage ?? "", done: job.done, total: stage.total });
         if (job.kind === "measure") job.stageIndex++;
         else if (job.done >= stage.total) { job.stageIndex++; job.done = 0; }
@@ -510,10 +530,10 @@ export function createMockService(options: MockOptions = {}): MockService {
   const tick = () => { for (const job of [...jobs.values()]) step(job); };
   const busy = () => [...jobs.values()].some((job) => !isMonitorJob(job.kind) || job.cancelRequested);
   /** `then`: stages that follow the kind's own, reached through `phase` (the combined calibrate). */
-  const start = (kind: JobKind, complete: () => JobResult, error?: IpcError, then?: { stages: Stage[]; phase: Omit<NonNullable<SimJob["phase"]>, "at"> }) => {
+  const start = (kind: JobKind, complete: () => JobResult, error?: IpcError, then?: { stages: Stage[]; phase: Omit<NonNullable<SimJob["phase"]>, "at"> }, exportKind?: ExportParams["kind"]) => {
     if ([...jobs.values()].some((job) => jobGroup(job.kind) === jobGroup(kind))) throw new MockError(ipcError("job_busy", `a ${kind} job is running`));
     const id = nextJob++;
-    const own = plan(kind);
+    const own = plan(kind, exportKind);
     const stages = then ? [...own.stages, ...then.stages] : own.stages;
     const phase = then ? { ...then.phase, at: own.stages.length } : undefined;
     jobs.set(id, { id, kind, stages, logs: own.logs, stageIndex: 0, done: 0, ticks: 0, cancelRequested: false, complete, error, phase });
@@ -955,7 +975,7 @@ export function createMockService(options: MockOptions = {}): MockService {
         const scope = req.params.mdat_scope ?? "all";
         if (kind === "before_after_mdat" && scope === "measurements") {
           if (project.positions.length === 0) throw new MockError(ipcError("engine_input", "no measurements to export", { reason: "no_measurements" }));
-          return { method: req.method, data: start("export", () => ({ kind: "export", data: exported(req.params, false) })) };
+          return { method: req.method, data: start("export", () => ({ kind: "export", data: exported(req.params, false) }), undefined, undefined, kind) };
         }
         if (!results.calibration) throw new MockError(ipcError("engine_input", "no calibration result to export"));
         if ((kind === "staged_mdat" || kind === "before_after_mdat") && results.calibration.cached && results.calibration.stale) {
@@ -966,7 +986,7 @@ export function createMockService(options: MockOptions = {}): MockService {
           const reason = kind === "filter_text" ? calibration.sub_roles.length > 0 ? "subs" : results.mimo_export === "included" ? "mimo" : null : null;
           if (reason) throw new MockError(ipcError("export_scope", `${kind} cannot export a result with ${reason}`, { reason }));
         }
-        return { method: req.method, data: start("export", () => ({ kind: "export", data: exported(req.params, calibration.stale) })) };
+        return { method: req.method, data: start("export", () => ({ kind: "export", data: exported(req.params, calibration.stale) }), undefined, undefined, kind) };
       }
       case "measure_position": {
         needProject(); const position = req.params.position; const roles = [...measureConfig.roles];
@@ -1139,7 +1159,7 @@ export function createMockService(options: MockOptions = {}): MockService {
           // Mock only: a CamillaDSP that answers now runs this design.
           if (applyStatus.camilla.reachable) applyStatus = { ...applyStatus, camilla: { ...applyStatus.camilla, design: { kind: "this", design_id: fx.MOCK_DESIGN_ID } } };
           return { kind: "apply", data: { outcome: { kind: handedOver ? "handed_over" : "applied" }, design_id: fx.MOCK_DESIGN_ID, folder: APPLIED_CAMILLA, stale } };
-        }) };
+        }, undefined, undefined, "camilla_dsp") };
       }
       case "apply_eqapo": {
         if (appSettings.apply.eqapo.level === "files") throw new MockError(ipcError("unsupported", "the target is configured for file export only", { target: "equalizer_apo" }));
@@ -1155,7 +1175,7 @@ export function createMockService(options: MockOptions = {}): MockService {
           if (managed) manage({ eqapo: { config_path: configPath, design_id: fx.MOCK_DESIGN_ID } });
           applyStatus = { ...applyStatus, eqapo: { ...applyStatus.eqapo, include: "present", applied_design_id: fx.MOCK_DESIGN_ID } };
           return { kind: "apply", data: { outcome: { kind: "applied" }, design_id: fx.MOCK_DESIGN_ID, folder, stale } };
-        }) };
+        }, undefined, undefined, "equalizer_apo") };
       }
       case "revert_eqapo":
         if (!applyStatus.eqapo.installed) throw new MockError(ipcError("unsupported", "Equalizer APO is not installed", { target: "equalizer_apo" }));

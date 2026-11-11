@@ -445,7 +445,7 @@ function TutorialFrame() {
 
 export const trayAndMenuSpecimens: SpecimenDef[] = [
   { id: "jobs.idle", title: "Job tray · idle", width: 960, render: () => <JobTray api={staticApi(initialLedger, T0)} /> },
-  { id: "jobs.running", title: "Job tray · three jobs (determinate, indeterminate, cancel requested)", width: 1020, render: () => <JobTray api={staticApi(twoJobs, T0 + 18000)} /> },
+  { id: "jobs.running", title: "Job tray · three jobs (a measured bar, no report and so no bar, cancel requested)", width: 1020, render: () => <JobTray api={staticApi(twoJobs, T0 + 18000)} /> },
   { id: "jobs.history", title: "Job tray · history with a log, a cancel and an error", width: 960, render: () => <JobTray api={staticApi(historyJobs, T0 + 30000)} defaultOpen /> },
   {
     id: "frame.project-menu",

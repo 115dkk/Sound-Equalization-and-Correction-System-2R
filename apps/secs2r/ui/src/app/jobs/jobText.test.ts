@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { translate, type Locale } from "../../i18n";
 import { ipcError } from "../../ipc/mock";
 import { failureText } from "../../screens/export/apply";
-import { JOB_NAME, WARNING_LOGS, errorText, isVisibleLog, logText, stageText } from "./jobText";
+import { JOB_NAME, WARNING_LOGS, errorText, isVisibleLog, logText, progressText, sizeProgressText, stageText } from "./jobText";
 
 it("excludes calibration settings diagnostics without hiding unknown user notices", () => {
   expect(isVisibleLog("calibration_settings")).toBe(false);
@@ -150,6 +150,41 @@ describe.each(["ko", "en"] as const)("reasons, logs and stages the service names
   it("names the sweep's phases and the CamillaDSP preparation instead of reading them as roles", () => {
     for (const stage of ["sweep", "running", "process", "done", "cancelled"]) expect(stageText(t, "measure", stage)).toBe(t(`jobs.stage.${stage}` as Parameters<typeof translate>[1]));
     expect(stageText(t, "measure", "Tfl")).toBe(t("jobs.stage.measure_role", { code: "Ltf" }));
-    expect(stageText(t, "export", "export.camilla.prepare")).toBe(t("jobs.stage.export.camilla.prepare"));
+    for (const stage of ["export.prepare", "export.write", "filters.convolution"] as const) {
+      expect(stageText(t, "export", stage)).toBe(t(`jobs.stage.${stage}`));
+    }
+  });
+});
+
+
+describe("byte progress units", () => {
+  it.each([
+    [0, 1023, "0 / 1023 B"],
+    [511, 1023, "511 / 1023 B"],
+    [512, 1024, "1 / 1 KB"],
+    [512 * 1024, 1024 ** 2 - 1, "512 / 1024 KB"],
+    [512 * 1024, 1024 ** 2, "0.5 / 1.0 MB"],
+    [512 * 1024 ** 2, 1024 ** 3 - 1, "512.0 / 1024.0 MB"],
+    [512 * 1024 ** 2, 1024 ** 3, "0.50 / 1.00 GB"],
+    [1023, 1023, "1023 / 1023 B"],
+    [1024, 1024, "1 / 1 KB"],
+    [1024 ** 2, 1024 ** 2, "1.0 / 1.0 MB"],
+    [1024 ** 3, 1024 ** 3, "1.00 / 1.00 GB"],
+    [52_428_800, 131_596_288, "50.0 / 125.5 MB"],
+    [1, 1024 ** 3, "0.00 / 1.00 GB"],
+  ] as const)("formats %s of %s bytes as %s using the total's unit", (done, total, expected) => {
+    expect(sizeProgressText(done, total)).toBe(expected);
+  });
+});
+
+describe.each(["ko", "en"] as const)("progress units (%s)", (locale) => {
+  const t = (key: Parameters<typeof translate>[1], values?: Parameters<typeof translate>[2]) => translate(locale, key, values);
+
+  it("formats only export.write as sizes", () => {
+    expect(progressText(t, "export.write", 52_428_800, 131_596_288)).toBe("50.0 / 125.5 MB");
+    for (const stage of ["export.prepare", "filters.convolution", "engine.design", "future.stage", "export.write.extra", null]) {
+      expect(progressText(t, stage, 41, 117)).toBe("41/117");
+      expect(progressText(t, stage, 1024, 2048)).toBe("1024/2048");
+    }
   });
 });

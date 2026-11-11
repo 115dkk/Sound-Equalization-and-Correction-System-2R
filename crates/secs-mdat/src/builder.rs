@@ -437,6 +437,25 @@ pub fn build(
     now_ms: i64,
     uuid: &mut dyn FnMut() -> u128,
 ) -> Result<Vec<u8>, MdatError> {
+    build_reported(
+        measurements,
+        template,
+        spl_offset_db,
+        now_ms,
+        uuid,
+        &|_, _| {},
+    )
+}
+
+/// [`build`], calling `built(done, total)` in measurements.
+pub fn build_reported(
+    measurements: &[MeasurementInput],
+    template: &[u8],
+    spl_offset_db: Option<f64>,
+    now_ms: i64,
+    uuid: &mut dyn FnMut() -> u128,
+    built: &dyn Fn(u64, u64),
+) -> Result<Vec<u8>, MdatError> {
     let limits = Limits::default();
     if measurements.is_empty() {
         return Err(MdatError::Input(
@@ -549,6 +568,9 @@ pub fn build(
         values.extend(s.clone_values(&preview));
     }
     values.push(block(&mut s, 3));
+    let total =
+        u64::try_from(measurements.len()).expect("measurement count is bounded by i32::MAX");
+    built(0, total);
     for (index, item) in measurements.iter().enumerate() {
         let copied = s.clone_values(&[Value::Node(prototype)]);
         let id = object(&s, copied.first())
@@ -563,6 +585,10 @@ pub fn build(
                 3
             },
         ));
+        built(
+            u64::try_from(index + 1).expect("measurement index is bounded by i32::MAX"),
+            total,
+        );
     }
     s.values = values;
     Ok(secs_jos::try_write(&s)?)

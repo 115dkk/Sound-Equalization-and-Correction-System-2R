@@ -245,7 +245,7 @@ struct CancelConvolution {
 impl EventSink for CancelConvolution {
     fn send(&self, event: JobEvent) {
         self.events.send(event.clone());
-        if matches!(&event, JobEvent::Progress { stage, done: 1, .. } if stage == "filters.convolution")
+        if matches!(&event, JobEvent::Progress { stage, done, total, .. } if stage == "filters.convolution" && *done > 0 && done < total)
             && !self.requested.swap(true, Ordering::SeqCst)
         {
             let job = match event {

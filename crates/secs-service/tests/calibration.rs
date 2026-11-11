@@ -591,6 +591,53 @@ fn calibrate_with_mimo_matches_separate_runs_and_orders_progress() {
         .position(|stage| *stage == "engine.mimo")
         .expect("MIMO progress");
     assert!(calibration_stage < mimo_stage);
+    let values = lock(&combined_events.values);
+    let progress: Vec<_> = values
+        .iter()
+        .filter_map(|event| match event {
+            JobEvent::Progress {
+                stage, done, total, ..
+            } => Some((stage.as_str(), *done, *total)),
+            _ => None,
+        })
+        .collect();
+    let mut completed = Vec::new();
+    let mut start = 0;
+    while start < progress.len() {
+        let (stage, done, total) = progress[start];
+        assert!(!completed.contains(&stage), "stage restarted: {stage}");
+        assert_eq!(done, 0, "{stage}");
+        if stage == "engine.ba" {
+            // The bass alignment cannot be counted before it runs: it is
+            // announced once with no total, so the screen names it, barless.
+            assert_eq!(total, 0, "{stage}");
+            assert!(progress.get(start + 1).is_none_or(|next| next.0 != stage));
+            completed.push(stage);
+            start += 1;
+            continue;
+        }
+        assert!(total > 0, "{stage}");
+        let end = progress[start..]
+            .iter()
+            .position(|p| p.0 != stage)
+            .map_or(progress.len(), |offset| start + offset);
+        let phase = &progress[start..end];
+        assert!(phase.iter().all(|p| p.2 == total && p.1 <= total));
+        assert!(phase.windows(2).all(|pair| pair[0].1 <= pair[1].1));
+        assert_eq!(phase.last().unwrap().1, total, "{stage}");
+        completed.push(stage);
+        start = end;
+    }
+    assert_eq!(completed.first(), Some(&"read_measurements"));
+    assert_eq!(completed.last(), Some(&"engine.mimo_responses"));
+    assert!(
+        completed
+            .iter()
+            .position(|s| *s == "engine.late_energy")
+            .unwrap()
+            < completed.iter().position(|s| *s == "engine.mimo").unwrap()
+    );
+    drop(values);
     let combined = read_results(&service);
     assert!(!combined.calibration.as_ref().unwrap().stale);
     assert!(!combined.mimo.as_ref().unwrap().stale);

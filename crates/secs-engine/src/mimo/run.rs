@@ -330,7 +330,6 @@ fn compute_observed_accelerated(
     });
     let acceleration = iir_reference.as_ref().or(acceleration);
     let req = key.request();
-    let progress = ctx.stage("engine.mimo", 2);
     let started = std::time::Instant::now();
     let prepared = super::prepared::Prepared::new(design, measurements, config, ctx)?;
     observe("preparation", started.elapsed());
@@ -347,7 +346,6 @@ fn compute_observed_accelerated(
     )?
     .0;
     observe("design_wall", started.elapsed());
-    progress.advance(1);
     check(ctx)?;
     let started = std::time::Instant::now();
     let mut realization_notes = Vec::new();
@@ -379,7 +377,6 @@ fn compute_observed_accelerated(
         run.compute = acceleration.report();
     }
     observe("assemble", started.elapsed());
-    progress.advance(1);
     Ok(run)
 }
 
@@ -556,6 +553,14 @@ pub(crate) fn assemble_prepared(
     // These caches live beside the preparation's held spectra. The second
     // amount makes the admission check include both before acquiring the cache.
     let _cache_permit = crate::memory::reserve(ctx, cache_bytes, prepared.reserved)?;
+    let total = design.spectra.positions.len() * (support_roles.len() + design.chain.mains.len())
+        + supports.iter().map(|(_, paths)| paths.len()).sum::<usize>();
+    let progress = (total > 0).then(|| ctx.stage("engine.mimo_responses", total as u64));
+    let advance = || {
+        if let Some(progress) = &progress {
+            progress.advance(1);
+        }
+    };
     let mut path_spectra = Vec::with_capacity(design.spectra.positions.len());
     for &position in &design.spectra.positions {
         let mut paths = Vec::with_capacity(support_roles.len());
@@ -571,6 +576,7 @@ pub(crate) fn assemble_prepared(
                     &prepared.align_delay_ms,
                 )?,
             ));
+            advance();
         }
         path_spectra.push((position, paths));
     }
@@ -585,6 +591,7 @@ pub(crate) fn assemble_prepared(
                         Support::Iir(support) => support.response(f),
                         Support::Fir { taps, fs_low } => fir_response(taps, *fs_low, f),
                     };
+                    advance();
                     Ok((support.clone(), response))
                 })
                 .collect::<Result<Vec<_>, EngineError>>()?;
@@ -628,6 +635,7 @@ pub(crate) fn assemble_prepared(
                 final_resp.push((role.clone(), base));
                 applied.push((role.clone(), sum));
             }
+            advance();
         }
     }
     check(ctx)?;

@@ -218,7 +218,7 @@ kind = "perf"
 milestone = "M2"
 status = "implemented"
 upstream = "calibration.compute, recommend_xo, previews and exports"
-tests = ["secs-engine::design_matches_recorded_stages", "secs-engine::engine_e2e_spread", "secs-engine::peq_cached_residual_is_bit_equal", "secs-engine::design_parallel_progress_counts_completed_channels", "secs-engine::preview_sub_combine_replayed_designs", "secs-dsp::cached_bounds_match_smoothing_bits_and_errors", "secs-engine::xo_preparation_is_candidate_independent", "secs-engine::xo_shared_preparation_preserves_candidate_bits", "secs-engine::xo_shared_windows_preserve_filtered_bits", "secs-camilla::streaming_json_matches_recursive_bytes"]
+tests = ["secs-engine::design_matches_recorded_stages", "secs-engine::engine_e2e_spread", "secs-engine::peq_cached_residual_is_bit_equal", "secs-engine::design_parallel_progress_counts_completed_rc_tasks", "secs-engine::preview_sub_combine_replayed_designs", "secs-dsp::cached_bounds_match_smoothing_bits_and_errors", "secs-engine::xo_preparation_is_candidate_independent", "secs-engine::xo_shared_preparation_preserves_candidate_bits", "secs-engine::xo_shared_windows_preserve_filtered_bits", "secs-camilla::streaming_json_matches_recursive_bytes"]
 note = "docs/perf/engine.md records the paired release audit (P13, P13b, P13c): every operation is faster than SECS 2 in both configurations and Rust uses less aggregate memory. Timing is not a CI gate; the tests prove the speed-ups kept the results."
 
 [[feature]]
@@ -1255,6 +1255,15 @@ tests = [
   "secs-service::changing_only_output_rate_keeps_calibration_fresh_for_export",
 ]
 note = "Projects keep a fixed or automatic output sample rate outside calibration identity. Export resolves automatic mode from the default output device, falls back to 48 kHz with a notice, converts every filter bundle explicitly, and keeps REW mdat at 48 kHz. The miniDSP preset uses 96 kHz; convolution exports may include distinct additional supported rates."
+
+[[feature]]
+id = "export.progress"
+kind = "export"
+milestone = "M6"
+status = "implemented"
+upstream = "new"
+tests = ["secs-service::export_jobs_report_real_prepare_and_write_progress"]
+note = "Every export job reports completed content items before staged and synced output bytes, with fixed nonzero totals and stable stage ids."
 
 [[feature]]
 id = "export.convolution_reaper"

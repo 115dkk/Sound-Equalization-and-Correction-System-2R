@@ -3,7 +3,9 @@
 #![cfg(not(miri))]
 
 use secs_jos::{ArrayData, Node, Stream, Value};
-use secs_mdat::{Boxed, MdatError, MeasurementInput, TEMPLATE, build, load, load_mdat_project};
+use secs_mdat::{
+    Boxed, MdatError, MeasurementInput, TEMPLATE, build, build_reported, load, load_mdat_project,
+};
 use secs_oracle::{Fixture, number};
 use serde_json::Value as Json;
 
@@ -332,6 +334,45 @@ fn builds_match_bytes_except_nine_one_ulp_caches() {
         "cache budget exceeded: {}",
         failures.join("; ")
     );
+}
+
+#[test]
+fn reported_build_matches_bytes_and_counts_each_measurement() {
+    let fixture = Fixture::load("mdat", "build_3_real_48000");
+    let input = inputs(&fixture);
+    let uuids = fixture.inputs()["uuid"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|value| value.as_str().unwrap().parse::<u128>().unwrap())
+        .collect::<Vec<_>>();
+    let mut ordinary_ids = uuids.iter().copied();
+    let expected = build(
+        &input,
+        TEMPLATE,
+        fixture.inputs()["spl_offset_db"].as_f64(),
+        fixture.inputs()["now_ms"].as_i64().unwrap(),
+        &mut || ordinary_ids.next().unwrap(),
+    )
+    .unwrap();
+    let reports = std::cell::RefCell::new(Vec::new());
+    let mut reported_ids = uuids.iter().copied();
+
+    let actual = build_reported(
+        &input,
+        TEMPLATE,
+        fixture.inputs()["spl_offset_db"].as_f64(),
+        fixture.inputs()["now_ms"].as_i64().unwrap(),
+        &mut || reported_ids.next().unwrap(),
+        &|done, total| reports.borrow_mut().push((done, total)),
+    )
+    .unwrap();
+
+    assert_eq!(actual, expected);
+    let total = u64::try_from(input.len()).unwrap();
+    let mut expected_reports = vec![(0, total)];
+    expected_reports.extend((1..=total).map(|done| (done, total)));
+    assert_eq!(reports.into_inner(), expected_reports);
 }
 
 #[test]

@@ -509,7 +509,7 @@ fn design_reserves_preparation_and_one_channel_before_allocating() {
 }
 
 #[test]
-fn design_parallel_progress_counts_completed_channels() {
+fn design_parallel_progress_counts_completed_rc_tasks() {
     use secs_compute::{CancelToken, MemoryBudget, Progress, ProgressSink};
     #[derive(Debug, Default)]
     struct Sink(Mutex<Vec<Progress>>);
@@ -557,10 +557,17 @@ fn design_parallel_progress_counts_completed_channels() {
         }
     }
     let reports = sink.0.lock().unwrap();
-    assert_eq!(reports.first().unwrap().done, 0);
-    assert_eq!(reports.last().unwrap().done, 4);
-    assert!(reports.iter().all(|p| p.total == 4));
-    assert!(reports.windows(2).all(|p| p[0].done <= p[1].done));
+    assert_eq!(
+        super::progress::assert_contract(&reports),
+        ["engine.ba", "engine.top", "engine.design"]
+    );
+    let design = reports
+        .iter()
+        .filter(|p| p.stage == "engine.design")
+        .collect::<Vec<_>>();
+    let expected = parallel.chain.mains.len() as u64 * crate::rc::channel_steps(parallel.config());
+    assert_eq!(design.last().unwrap().done, expected);
+    assert!(design.iter().all(|p| p.total == expected));
 }
 
 #[test]

@@ -1252,9 +1252,7 @@ fn output_rates_change_eqapo_text_and_convolution_bundles() {
     }
 }
 
-#[test]
-fn convolution_prepare_reports_progress_until_done_equals_total() {
-    const FIXTURE_PATH_COUNT: u64 = 2;
+fn assert_convolution_progress(extra_rates: Vec<u32>) {
     let chain = f11_synthetic_chain(true, true, false);
     let run = FilterRun {
         chain: &chain,
@@ -1266,9 +1264,10 @@ fn convolution_prepare_reports_progress_until_done_equals_total() {
         rc_pieces: &[],
         stamp: "2026-11-02 00:00",
     };
+    let rate_count = 1 + extra_rates.len();
     let options = Options {
         output_rate: 96_000,
-        extra_rates: vec![44_100],
+        extra_rates,
     };
     let progress = Arc::new(RecordingProgress::default());
     let ctx = Context::new(
@@ -1281,12 +1280,30 @@ fn convolution_prepare_reports_progress_until_done_equals_total() {
     prepare_convolution_named_with_options(&run, &options, None, &ctx).unwrap();
 
     let reports = progress.0.lock().unwrap();
-    let last = reports
+    let reports = reports
         .iter()
-        .rfind(|report| report.stage == "filters.convolution")
-        .expect("convolution progress");
-    assert_eq!(last.done, last.total);
-    assert_eq!(last.total, FIXTURE_PATH_COUNT);
+        .filter(|report| report.stage == "filters.convolution")
+        .collect::<Vec<_>>();
+    let pairs = chain.mains.len() * chain.mains.len();
+    let expected_total = u64::try_from(rate_count * 2 * pairs).unwrap();
+    assert_eq!((reports[0].done, reports[0].total), (0, expected_total));
+    assert_eq!(
+        (reports.last().unwrap().done, reports.last().unwrap().total),
+        (expected_total, expected_total)
+    );
+    assert!(reports.iter().all(|report| report.total == expected_total));
+    assert!(reports.windows(2).all(|pair| pair[0].done <= pair[1].done));
+    assert!(reports.iter().all(|report| report.done <= report.total));
+}
+
+#[test]
+fn convolution_prepare_reports_progress_for_one_rate() {
+    assert_convolution_progress(Vec::new());
+}
+
+#[test]
+fn convolution_prepare_reports_progress_until_done_equals_total() {
+    assert_convolution_progress(vec![44_100]);
 }
 
 #[test]

@@ -323,11 +323,9 @@ fn filter_text_export_matches_direct_and_reopened_bytes_without_redesign() {
         live_snapshot,
         snapshot_relative_files(&folder, &cached.files)
     );
-    assert!(
-        !lock(&reopened_events.values).iter().any(|event| {
-            matches!(event, JobEvent::Progress { stage, .. } if stage == "design")
-        })
-    );
+    assert!(!lock(&reopened_events.values).iter().any(|event| {
+        matches!(event, JobEvent::Progress { stage, .. } if stage == "read_measurements")
+    }));
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -390,18 +388,24 @@ fn exports_after_reopening_match_pre_close_bytes() {
             )),
             "reopened export must not launch calibration"
         );
-        let has_design = values.iter().any(|event| {
+        let recomputed_design = values.iter().any(|event| {
             matches!(
                 event,
                 JobEvent::Progress {
                     stage,
                     ..
-                } if stage == "design"
+                } if stage == "read_measurements"
             )
         });
         assert_eq!(
-            has_design,
+            recomputed_design,
             matches!(kind, ExportKind::StagedMdat | ExportKind::BeforeAfterMdat)
+        );
+        assert!(
+            !values.iter().any(
+                |event| matches!(event, JobEvent::Progress { stage, .. } if stage == "design")
+            ),
+            "{kind:?} must not report the removed design placeholder"
         );
         if kind == ExportKind::BeforeAfterMdat {
             let loaded = secs_mdat::load_mdat_project(
@@ -734,11 +738,9 @@ fn convolution_export_with_subs_and_mimo_reopens_byte_identically() {
     );
     assert_eq!(Path::new(&after.folder), folder);
     assert_eq!(before, snapshot_relative_files(&folder, &after.files));
-    assert!(
-        !lock(&events.values).iter().any(|event| {
-            matches!(event, JobEvent::Progress { stage, .. } if stage == "design")
-        })
-    );
+    assert!(!lock(&events.values).iter().any(|event| {
+        matches!(event, JobEvent::Progress { stage, .. } if stage == "read_measurements")
+    }));
     fs::remove_dir_all(root).unwrap();
 }
 

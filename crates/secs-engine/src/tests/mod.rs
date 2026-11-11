@@ -22,6 +22,7 @@ mod mimo_run;
 mod mode_decay;
 mod prep;
 mod preview;
+mod progress;
 mod rc;
 mod rc_bands;
 mod rc_upper;
