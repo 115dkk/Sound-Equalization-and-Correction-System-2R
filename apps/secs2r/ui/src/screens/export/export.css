@@ -113,9 +113,10 @@
  * and sharing what is left. A tab is the place an export goes to (its sign
  * and its name) over what that place is, so the row answers "where does
  * this go" before anything is opened. The chosen tab carries the accent
- * (its sign, a soft fill, the line that joins it to its panel); a tab whose
- * format cannot carry the result goes quiet. Once something happened in a
- * tab its dot says what, in the frame's status colours.
+ * (its sign, a soft fill, the line that joins it to its panel). A tab whose
+ * format cannot carry the result is written in the disabled ink and says
+ * so where it said what the place is. Once something happened in a tab, a
+ * mark after its name says what: a spinner, the outcome's check, a warning.
  */
 .export-tabs {
   display: flex;
@@ -172,7 +173,7 @@
   color: var(--accent);
 }
 
-/* The name, and right after it the dot of what happened here: the dot belongs to this name, not to the next tab's edge. */
+/* The name, and right after it the mark of what happened here: the mark belongs to this name, not to the next tab's edge. */
 .export-tab__title {
   display: flex;
   grid-column: 2;
@@ -193,6 +194,18 @@
   display: inline-flex;
   flex: none;
   align-items: center;
+}
+
+.export-tab__mark--busy {
+  color: var(--info);
+}
+
+.export-tab__mark--done {
+  color: var(--success);
+}
+
+.export-tab__mark--failed {
+  color: var(--danger);
 }
 
 .export-tab__use {
@@ -224,11 +237,14 @@
   }
 }
 
-.export-tab[data-state="blocked"]:not([aria-selected="true"]) .export-tab__name {
-  color: var(--text-muted);
-}
-
-.export-tab[data-state="blocked"] .export-tab__icon {
+/*
+ * A place this result cannot go to: its name and sign in the disabled ink
+ * (DESIGN.md §2, --text-faint), far enough from a usable tab's name to tell
+ * the two apart at a glance, and its caption saying so in the caption's own
+ * legible ink. Chosen, it looks chosen; the caption and the panel say why.
+ */
+.export-tab[data-state="blocked"]:not([aria-selected="true"]) .export-tab__name,
+.export-tab[data-state="blocked"]:not([aria-selected="true"]) .export-tab__icon {
   color: var(--text-faint);
 }
 

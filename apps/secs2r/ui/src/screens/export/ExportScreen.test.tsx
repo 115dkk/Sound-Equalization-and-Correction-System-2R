@@ -1143,7 +1143,7 @@ describe("내보내기", () => {
     expect(tabState({ ...exportFailedAfterApply, apply: { ...exportFailedAfterApply.apply, applying: "camilla" } }, "camilla_dsp")).toBe("busy");
   });
 
-  it("marks each tab's state with a dot and hidden words in both languages, and leaves idle unmarked", () => {
+  it("marks a running, saved or failed tab with its sign and hidden words in both languages, writes a blocked tab's state as its caption, and leaves idle unmarked", () => {
     const cases: [ExportView, ExportTab, TabState][] = [
       [exportRcOnly, "camilla_dsp", "idle"],
       [exportExporting, "rew", "busy"],
@@ -1162,24 +1162,34 @@ describe("내보내기", () => {
     ];
     const words = {
       ko: { busy: "진행 중", failed: "실패", done: "완료", blocked: "이 결과에 사용 불가" },
-      en: { busy: "In progress", failed: "Failed", done: "Done", blocked: "Not available for this result" },
+      en: { busy: "In progress", failed: "Failed", done: "Done", blocked: "Not for this result" },
     };
-    const dots = { busy: "status-dot status-dot--busy", failed: "status-dot status-dot--danger", done: "status-dot status-dot--success", blocked: "status-dot" };
     for (const locale of ["ko", "en"] as const) {
       for (const [view, tab, state] of cases) {
         const { unmount } = renderWith(<Mounted view={view} act={actions()} />, { locale });
         const button = ui(`export.tab.${tab}`)!;
         expect(tabState(view, tab)).toBe(state);
         expect(button.getAttribute("data-state")).toBe(state);
+        // No dot anywhere: a dot's colour alone told a reader nothing (2026-11-11 review).
+        expect(button.querySelector(".status-dot")).toBeNull();
         if (state === "idle") {
           expect(button.querySelector(".export-tab__mark")).toBeNull();
-          expect(button.querySelector(".status-dot")).toBeNull();
           expect(button.querySelector(".visually-hidden")).toBeNull();
+          expect(button.querySelector(".export-tab__use")?.textContent).toBe(translate(locale, `export.tab.${tab}.use`));
+        } else if (state === "blocked") {
+          // The caption gives way to the state, in words a sighted reader sees too.
+          expect(button.querySelector(".export-tab__mark")).toBeNull();
+          expect(button.querySelector(".visually-hidden")).toBeNull();
+          expect(button.querySelector(".export-tab__use")?.textContent).toBe(words[locale].blocked);
+          expect(screen.getByRole("tab", { name: `${translate(locale, `export.tab.${tab}`)} ${words[locale].blocked}` })).toBe(button);
         } else {
-          expect(button.querySelectorAll(".status-dot")).toHaveLength(1);
-          expect([...button.querySelector(".status-dot")!.classList].filter((name) => name.startsWith("status-dot"))).toEqual(dots[state].split(" "));
-          expect(button.querySelector(".status-dot")?.getAttribute("aria-hidden")).toBe("true");
+          const marks = button.querySelectorAll(".export-tab__mark");
+          expect(marks).toHaveLength(1);
+          expect([...marks[0]!.classList]).toEqual(["export-tab__mark", `export-tab__mark--${state}`]);
+          expect(marks[0]!.querySelectorAll("svg")).toHaveLength(1);
+          expect(marks[0]!.querySelector("svg")?.getAttribute("aria-hidden")).toBe("true");
           expect(button.querySelector(".visually-hidden")?.textContent).toBe(words[locale][state]);
+          expect(button.querySelector(".export-tab__use")?.textContent).toBe(translate(locale, `export.tab.${tab}.use`));
           expect(screen.getByRole("tab", { name: `${translate(locale, `export.tab.${tab}`)} ${words[locale][state]} ${translate(locale, `export.tab.${tab}.use`)}` })).toBe(button);
         }
         unmount();
@@ -1195,14 +1205,14 @@ describe("내보내기", () => {
       const { unmount } = renderWith(<Mounted view={running} act={actions()} />);
       expect.soft(tabState(running, tab), target).toBe("busy");
       expect.soft(ui(`export.tab.${tab}`)?.getAttribute("data-state"), target).toBe("busy");
-      expect.soft(ui(`export.tab.${tab}`)?.querySelector(".status-dot--busy"), target).not.toBeNull();
+      expect.soft(ui(`export.tab.${tab}`)?.querySelector(".export-tab__mark--busy"), target).not.toBeNull();
       unmount();
       // Ended at 파일만: the panel shows no apply outcome there, so the tab shows none either.
       const ended: ExportView = { ...base, apply: { ...base.apply, applying: null, settings: files, runs: { [target]: { status: "applied", designId: "0c1f9e7a", folder: "C:/applied" } } } };
       const { unmount: unmountEnded } = renderWith(<Mounted view={ended} act={actions()} />);
       expect.soft(tabState(ended, tab), target).toBe("idle");
       expect.soft(ui(`export.tab.${tab}`)?.getAttribute("data-state"), target).toBe("idle");
-      expect.soft(ui(`export.tab.${tab}`)?.querySelector(".status-dot"), target).toBeNull();
+      expect.soft(ui(`export.tab.${tab}`)?.querySelector(".export-tab__mark"), target).toBeNull();
       expect.soft(ui(`export.apply.${target}.outcome`), target).toBeNull();
       unmountEnded();
     }

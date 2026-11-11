@@ -1720,8 +1720,10 @@
    chosen bus is engaged like the current step: the accent fill and the 3 px
    band, here along the edge that meets its panel. A bus whose format cannot
    carry the result is a cancelled departure: faint ink, its name struck, a
-   dashed rule under the cell; it stays on the board. What happened on a bus
-   shows in the square lamp beside its name (the kit's dot). */
+   dashed rule under the cell, and the words for it where the bus said what
+   it is; it stays on the board. What happened on a bus is the mark after
+   its name (a spinner, a check, a warning): a square lamp there said nothing
+   without a legend of its own (2026-11-11 review). */
 [data-skin="matrix"] .export-tabs {
   gap: 1px;
   border-bottom-color: var(--border-control);

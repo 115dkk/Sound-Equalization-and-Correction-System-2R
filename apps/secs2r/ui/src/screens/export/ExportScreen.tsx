@@ -106,12 +106,18 @@ const TAB_TEXT: Record<ExportTab, { name: MessageKey; use: MessageKey; icon: Ico
   rew: { name: "export.tab.rew", use: "export.tab.rew.use", icon: "axes" },
 };
 
-/** A tab's state as the frame's status dot (a spinner while it runs) and the words a screen reader hears after the tab's name. */
-const TAB_STATE: Record<Exclude<TabState, "idle">, { text: MessageKey; dot: "success" | "danger" | "busy" | null }> = {
-  busy: { text: "export.tab.state.busy", dot: "busy" },
-  done: { text: "export.tab.state.done", dot: "success" },
-  failed: { text: "export.tab.state.failed", dot: "danger" },
-  blocked: { text: "export.tab.state.blocked", dot: null },
+/**
+ * What happened at a tab, as a mark that needs no legend: a spinner while it
+ * runs, the check the panel's own outcome carries once it is saved or
+ * applied, the warning sign when it failed; with the words a screen reader
+ * hears after the tab's name. A tab the result cannot go to carries no mark
+ * (a grey dot there told a reader nothing): its caption says so in words.
+ */
+type TabMarkState = Exclude<TabState, "idle" | "blocked">;
+const TAB_MARK: Record<TabMarkState, { text: MessageKey; icon: IconName | null }> = {
+  busy: { text: "export.tab.state.busy", icon: null },
+  done: { text: "export.tab.state.done", icon: "check" },
+  failed: { text: "export.tab.state.failed", icon: "warning" },
 };
 
 /** The filled action of a target set beyond 파일만. */
@@ -491,7 +497,8 @@ function FilesCard({
 /**
  * The destinations as tabs, one tab stop: the arrows, Home and End move and
  * choose. A tab reads its place's name, what that place is, and, once
- * something happened there, a status dot with its words for a screen reader.
+ * something happened there, the mark of it with its words for a screen
+ * reader. A place the result cannot go to says so where it said what it is.
  */
 function DestinationTabs({ view, actions }: { view: ExportView; actions: ExportActions }) {
   const t = useT();
@@ -533,9 +540,9 @@ function DestinationTabs({ view, actions }: { view: ExportView; actions: ExportA
             <Icon name={text.icon} size={20} className="export-tab__icon" />
             <span className="export-tab__title">
               <span className="export-tab__name">{t(text.name)}</span>
-              {state !== "idle" && <TabMark state={state} />}
+              {state !== "idle" && state !== "blocked" && <TabMark state={state} />}
             </span>
-            <span className="export-tab__use">{t(text.use)}</span>
+            <span className="export-tab__use">{t(state === "blocked" ? "export.tab.state.blocked" : text.use)}</span>
           </button>
         );
       })}
@@ -543,12 +550,12 @@ function DestinationTabs({ view, actions }: { view: ExportView; actions: ExportA
   );
 }
 
-function TabMark({ state }: { state: Exclude<TabState, "idle"> }) {
+function TabMark({ state }: { state: TabMarkState }) {
   const t = useT();
-  const mark = TAB_STATE[state];
+  const mark = TAB_MARK[state];
   return (
-    <span className="export-tab__mark">
-      {mark.dot === "busy" ? <Spinner size={12} className="status-dot status-dot--busy" /> : <span className={mark.dot ? `status-dot status-dot--${mark.dot}` : "status-dot"} aria-hidden="true" />}
+    <span className={`export-tab__mark export-tab__mark--${state}`}>
+      {mark.icon ? <Icon name={mark.icon} size={16} weight="semibold" /> : <Spinner size={14} />}
       <span className="visually-hidden">{t(mark.text)}</span>
     </span>
   );

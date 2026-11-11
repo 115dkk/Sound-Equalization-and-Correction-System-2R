@@ -1380,7 +1380,7 @@
   "export.tab.state.busy": "In progress",
   "export.tab.state.done": "Done",
   "export.tab.state.failed": "Failed",
-  "export.tab.state.blocked": "Not available for this result",
+  "export.tab.state.blocked": "Not for this result",
   "export.folder": "Export folder",
   "export.folder.default": "Default: a folder named by date and project name under SECS_export, next to the project",
   "export.folder.stored": "Location set for this project",

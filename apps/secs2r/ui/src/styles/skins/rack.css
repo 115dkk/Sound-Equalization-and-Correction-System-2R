@@ -1791,8 +1791,10 @@
    in a recessed bed, one per output. A cap reads its output's name as an
    engraved legend over what that output is; the chosen cap latches down and
    its legend lights amber, like the segment bank. A cap whose format cannot
-   carry the result is a powered-down unit under the dark film. What happened
-   at an output shows in the bezel LED beside its legend (the kit's dot). */
+   carry the result is a powered-down unit under the dark film, its legend
+   unlit, and says so under the legend. What happened at an output is the
+   mark after its legend (a spinner, a check, a warning): a bezel LED there
+   said nothing without a legend of its own (2026-11-11 review). */
 [data-skin="rack"] .export-tabs {
   gap: 3px;
   padding: 3px;
@@ -1844,6 +1846,19 @@
 
 [data-skin="rack"] .export-tab[data-state="blocked"]:not([aria-selected="true"]) {
   background: var(--skin-film-layer), var(--skin-cap);
+}
+
+/* On the latched cap's dark lens the marks light in the lamps' colours. */
+[data-skin="rack"] .export-tab[aria-selected="true"] .export-tab__mark--busy {
+  color: var(--skin-legend);
+}
+
+[data-skin="rack"] .export-tab[aria-selected="true"] .export-tab__mark--done {
+  color: var(--skin-lamp-green);
+}
+
+[data-skin="rack"] .export-tab[aria-selected="true"] .export-tab__mark--failed {
+  color: var(--skin-lamp-red);
 }
 
 /* The chosen output's panel is a 1U output module: its action beside its

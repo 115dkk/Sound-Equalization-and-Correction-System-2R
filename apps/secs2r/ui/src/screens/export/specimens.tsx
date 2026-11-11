@@ -243,7 +243,7 @@ export const exportSpecimens: SpecimenDef[] = [
     <ExportSpecimen view={exportRecalibrating} jobs={calibrateJob} initialAdvanced tab="rew" />
   )),
   frame("screen.export.ready", "Export · ready, MIMO included: the CamillaDSP tab", () => <ExportSpecimen view={exportReady} />),
-  frame("screen.export.filters", "Export · subs and MIMO: the filter text tab says why it cannot carry the result", () => (
+  frame("screen.export.filters", "Export · subs and MIMO: the filter text tab says why it cannot carry the result (unchosen, the tab is faint and reads 이 결과에 사용 불가)", () => (
     <ExportSpecimen view={exportReady} tab="filter_text" />
   )),
   frame("screen.export.mdat.all", "Export · REW mdat 모두 (default): 'SECS 원 측정+보정 결과 <모드>.mdat'", () => (
@@ -308,8 +308,8 @@ export const exportSpecimens: SpecimenDef[] = [
     <ExportSpecimen view={exportRateFallback} jobs={exportHistory} />
   )),
   frame("screen.export.exporting", "Export · REW mdat being saved", () => <ExportSpecimen view={exportExporting} jobs={exportJob} />),
-  frame("screen.export.done", "Export · done, files written: the CamillaDSP tab, the REW tab's dot lit too", () => <ExportSpecimen view={exportDone} jobs={exportHistory} fileName="거실 7.1.4.secs" />),
-  frame("screen.export.failed", "Export · CamillaDSP export failed: the tab's dot and the panel say so", () => <ExportSpecimen view={exportFailed} />),
+  frame("screen.export.done", "Export · done, files written: the CamillaDSP tab, the REW tab checked too", () => <ExportSpecimen view={exportDone} jobs={exportHistory} fileName="거실 7.1.4.secs" />),
+  frame("screen.export.failed", "Export · CamillaDSP export failed: the tab's warning sign and the panel say so", () => <ExportSpecimen view={exportFailed} />),
   frame("screen.export.advanced", "Export · the REW tab, 고급 open (staged mdat, U3), MIMO left out", () => <ExportSpecimen view={exportNoMimo} tab="rew" initialAdvanced />),
   frame("screen.export.tutorial", "Export · tutorial (no export folder)", () => (
     <TutorialAccent>
