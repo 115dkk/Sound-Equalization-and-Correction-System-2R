@@ -170,12 +170,18 @@ fn xo_parallel_order_progress_and_cancellation() {
     let reports = sink.0.lock().unwrap();
     let done: Vec<_> = reports.iter().map(|p| p.done).collect();
     assert_eq!(done.first(), Some(&0), "{done:?}");
-    assert_eq!(done.last(), Some(&3), "{done:?}");
+    let total = reports.first().unwrap().total;
+    assert!(total > candidates.len() as u64);
+    assert_eq!(done.last(), Some(&total), "{done:?}");
+    assert_eq!(
+        super::progress::assert_contract(&reports),
+        ["engine.xo_recommendation"]
+    );
     assert!(done.windows(2).all(|w| w[0] <= w[1]), "{done:?}");
     assert!(
         reports
             .iter()
-            .all(|p| p.total == 3 && p.stage == "engine.xo_recommendation")
+            .all(|p| p.total == total && p.stage == "engine.xo_recommendation")
     );
     cancel.cancel();
     assert!(matches!(

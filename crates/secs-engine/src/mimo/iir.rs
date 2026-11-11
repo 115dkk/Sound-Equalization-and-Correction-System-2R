@@ -1215,7 +1215,6 @@ pub fn design_mimo_iir_with_options(
     validate_request(req, t)?;
     options.validate()?;
     if ideal.supports.iter().all(|(_, s)| s.is_empty()) {
-        let _progress = ctx.stage("engine.mimo_iir", 0);
         return Ok(MimoIir::default());
     }
     let prepared = super::prepared::Prepared::new(design, measurements, config, ctx)?;
@@ -1261,10 +1260,10 @@ pub(crate) fn design_mimo_iir_prepared_with_options(
         .iter()
         .filter(|(_, s)| !s.is_empty())
         .collect();
-    let progress = ctx.stage("engine.mimo_iir", inputs.len() as u64);
     if inputs.is_empty() {
         return Ok(MimoIir::default());
     }
+    let progress = ctx.stage("engine.mimo_iir", inputs.len() as u64);
     let spectra = &prepared.spectra;
     let positions = &design.spectra.positions;
     let results = crate::memory::try_map(

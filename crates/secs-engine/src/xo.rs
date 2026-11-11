@@ -287,7 +287,7 @@ pub fn pick_xo(table: &mut [(String, Vec<XoRow>)]) -> Vec<(String, f64)> {
 }
 
 /// Designs independent XO candidates on the context's ordered map, then scores them.
-/// Progress counts finished candidates, not their internal design stages. Cancellation
+/// Progress counts top-PEQ fits, RC tasks and scoring across all candidates. Cancellation
 /// is shared with every production fitter; no process pool is created.
 pub fn recommend_xo(
     view: &ProjectView<'_>,
@@ -313,7 +313,6 @@ pub fn recommend_xo(
     } else {
         PeqDerivatives::TwoPoint
     };
-    let progress = ctx.stage("engine.xo_recommendation", candidates.len() as u64);
     // Reserve the shared preparation and score windows before allocating them
     // (TD-24); each batch of candidates reserves its designs out of the rest.
     let (shared, candidate) = if candidates.is_empty() {
@@ -356,17 +355,33 @@ pub fn recommend_xo(
     // A candidate's permit is taken on this thread for its whole batch, never
     // inside a pool task (TD-23); its design runs on a serial child of this
     // job, so it reserves nothing more and waits on no pool work.
-    let trials = crate::memory::try_map(
-        ctx,
-        candidates.to_vec(),
-        shared,
-        |_| candidate,
-        |fc| {
-            // engine_inputs depends on the trial only through settings.xo.
-            // Keep its zero-value fallback and ordering in the same helper.
+    let configs: Vec<_> = candidates
+        .iter()
+        .map(|&fc| {
             let mut config = inputs.config.clone();
             let selected: Vec<_> = groups.iter().map(|g| (g.clone(), fc)).collect();
             config.xo = resolve_xo(&config.groups, &selected, view.project_xo);
+            config
+        })
+        .collect();
+    let total = configs
+        .iter()
+        .map(|config| {
+            crate::design::recommendation_work(
+                config,
+                tuning,
+                prepared.as_ref().expect("nonempty candidates"),
+            )
+        })
+        .sum();
+    let progress = (total > 0).then(|| ctx.stage("engine.xo_recommendation", total));
+    let trials = crate::memory::try_map(
+        ctx,
+        configs,
+        shared,
+        |_| candidate,
+        |config| {
+            let progress = progress.as_ref().expect("nonempty candidates");
             let prepared = prepared.as_ref().expect("nonempty candidates");
             let inner = ctx.child_serial();
             let result = design_prepared_for_xo(
@@ -381,6 +396,7 @@ pub fn recommend_xo(
                 &*production_fitters_with(&inner, peq_derivatives),
                 prepared,
                 schroeder,
+                progress,
             )?;
             // Only the unfiltered windows are shared. The final multiplication
             // by BA-derived sub filters still happens per candidate, in order.

@@ -707,11 +707,10 @@ fn mimo_run_compute_fir_and_iir_end_to_end() {
                 }
             }
             let events = events.0.lock().unwrap();
-            assert!(
-                events
-                    .iter()
-                    .any(|p| p.stage == "engine.mimo" && p.done == 2 && p.total == 2)
-            );
+            let stages = super::progress::assert_contract(&events);
+            assert!(stages.contains(&"engine.mimo"));
+            assert_eq!(stages.last(), Some(&"engine.mimo_responses"));
+            assert!(events.iter().all(|p| p.total >= 3));
             if fir {
                 assert!(!events.iter().any(|p| p.stage == "engine.mimo_iir"));
             }

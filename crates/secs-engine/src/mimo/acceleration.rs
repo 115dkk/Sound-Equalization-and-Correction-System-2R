@@ -251,6 +251,7 @@ fn search(
     problem: &RidgeProblem<'_>,
     system: &mut dyn ShiftedSystem,
     cancel: &CancelToken,
+    advance: &dyn Fn(usize),
 ) -> Result<SweepResult, AccelerationError> {
     let mut evaluate = |log: f64| -> Result<(Vec<f64>, f64), AccelerationError> {
         cancelled(cancel)?;
@@ -279,14 +280,16 @@ fn search(
     };
     let (mut lo, mut hi) = (-8.0, 4.0);
     let (mut u, mut ratio) = evaluate(hi)?;
+    advance(1);
     let mut trajectory = vec![LambdaStep {
         mid: hi,
         ratio,
         accepted: ratio <= problem.target,
     }];
-    for _ in 0..18 {
+    for step in 0..18 {
         let mid = (lo + hi) / 2.0;
         let (trial, r) = evaluate(mid)?;
+        advance(step + 2);
         trajectory.push(LambdaStep {
             mid,
             ratio: r,
@@ -309,11 +312,30 @@ fn search(
     })
 }
 
+#[cfg(test)]
 pub(crate) fn run_sweep(
     problem: RidgeProblem<'_>,
     cancel: &CancelToken,
     acceleration: Option<&RunAcceleration<'_>>,
 ) -> Result<SweepResult, EngineError> {
+    run_sweep_progress(problem, cancel, acceleration, &|| {})
+}
+
+pub(crate) fn run_sweep_progress(
+    problem: RidgeProblem<'_>,
+    cancel: &CancelToken,
+    acceleration: Option<&RunAcceleration<'_>>,
+    advance: &dyn Fn(),
+) -> Result<SweepResult, EngineError> {
+    // A GPU failure can replay already solved shifts on CPU. Count each index
+    // once, without changing either attempt or the fallback's arithmetic.
+    let completed = std::cell::Cell::new(0);
+    let report = |done| {
+        while completed.get() < done {
+            completed.set(completed.get() + 1);
+            advance();
+        }
+    };
     let mut fallback: Option<(ComputeReason, String)> = None;
     let mut small = false;
     if let Some(run) = acceleration
@@ -327,7 +349,7 @@ pub(crate) fn run_sweep(
             // The prepared GPU object/lease is dropped before a CPU restart.
             let attempt = backend
                 .factor(problem.ata, problem.atb, cancel)
-                .and_then(|mut system| search(&problem, &mut *system, cancel));
+                .and_then(|mut system| search(&problem, &mut *system, cancel, &report));
             match attempt {
                 Ok(result) => {
                     run.completed(true, None, false);
@@ -343,7 +365,7 @@ pub(crate) fn run_sweep(
     let cpu = CpuRidgeBackend;
     let result = cpu
         .factor(problem.ata, problem.atb, cancel)
-        .and_then(|mut system| search(&problem, &mut *system, cancel))
+        .and_then(|mut system| search(&problem, &mut *system, cancel, &report))
         .map_err(|error| match error {
             AccelerationError::Cancelled => EngineError::Cancelled,
             AccelerationError::Failed { detail, .. } => EngineError::Solver(detail),
@@ -466,7 +488,12 @@ mod tests {
         let calls = Arc::new(AtomicUsize::new(0));
         let selection = selection(ComputePreference::Gpu, calls.clone(), 3, false, 0);
         let run = RunAcceleration::new(&selection);
-        let actual = run_sweep(problem(), &cancel, Some(&run)).unwrap();
+        let completed = std::cell::Cell::new(0);
+        let actual = run_sweep_progress(problem(), &cancel, Some(&run), &|| {
+            completed.set(completed.get() + 1);
+        })
+        .unwrap();
+        assert_eq!(completed.get(), 19, "CPU retries must not count twice");
         assert_eq!(actual.trajectory.len(), 19);
         assert_eq!(actual.trajectory, expected.trajectory);
         assert_eq!(actual.u, expected.u);
@@ -644,7 +671,7 @@ pub fn replay_ridge(
         direct_energy: decay::energy(input.direct).max(1e-30),
     };
     let mut system = backend.factor(input.ata, input.atb, cancel)?;
-    let result = search(&problem, &mut *system, cancel)?;
+    let result = search(&problem, &mut *system, cancel, &|_| {})?;
     Ok(RidgeReplayOutput {
         u: result.u,
         ratio: result.ratio,
