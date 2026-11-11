@@ -346,7 +346,7 @@ class GuiContractTest(unittest.TestCase):
         scenario.driver.execute.return_value = name
         scenario.choose_virtual_output()
         clicks = [call.args[0] for call in scenario.click.call_args_list]
-        self.assertEqual(clicks, ["export.devices", "export.devices.capture.backend.wasapi",
+        self.assertEqual(clicks, ["export.tab.camilla_dsp", "export.devices", "export.devices.capture.backend.wasapi",
                                  "export.devices.capture.loopback", "export.devices.capture.format.F32",
                                  "export.devices.playback.backend.wasapi", "export.devices.playback.format.F32"])
         self.assertEqual(scenario.driver.click.call_args_list, [mock.call("vbcable"), mock.call("vbcable")])

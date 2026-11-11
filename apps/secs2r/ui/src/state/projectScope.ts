@@ -9,7 +9,7 @@ import type { MdatScope } from "../ipc/bindings/MdatScope";
 import type { XoRecommendation } from "../ipc/bindings/XoRecommendation";
 import type { CalibrateView } from "../screens/calibrate/types";
 import type { ConnectPath, MicCalibrationView, RewProblem } from "../screens/connect/types";
-import type { ApplyRun, ApplyTarget, ExportRun, HostFailure } from "../screens/export/types";
+import type { ApplyRun, ApplyTarget, ExportRun, ExportTab, HostFailure } from "../screens/export/types";
 import type { MeasureView } from "../screens/measure/types";
 import type { Session } from "./session";
 
@@ -39,6 +39,8 @@ export type AppHostState = Pick<MeasureView, "graphHidden" | "plotRange"> & {
   targetEdit: CalibrateView["targetEdit"]; xoEdit: CalibrateView["xoEdit"];
   /** 내보내기: the CamillaDSP devices (file placeholders by default) and the convolution IR's extra rates in Hz, kept for the session across projects. */
   camillaDevices: CamillaDevices; extraRates: number[];
+  /** 내보내기: the destination tab the user picked, kept for the session across projects; null until one is picked. */
+  exportTab: ExportTab | null;
   /** 내보내기의 적용: the CamillaDSP address field's unsaved text, an apply_status read and a revert_eqapo in flight. */
   applyAddressDraft: string | null; applyChecking: boolean; applyReverting: boolean;
   /** 관리: the CamillaDSP executable field's unsaved text, a host_install or host_stop_managing in flight, and the last of them that failed. */

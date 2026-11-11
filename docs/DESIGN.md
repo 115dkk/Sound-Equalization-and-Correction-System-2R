@@ -10,7 +10,7 @@ SECS 2R의 사용자는 그래프와 숫자를 읽는 애호가와 설치 기사
 - **화면마다 채운 기본 동작 하나.** 단계 머리의 주 동작만 강조색으로 채웁니다. 나머지 단추는 보조(secondary)이거나 조용한(quiet) 단추입니다. 예외는 `go` 단추 하나입니다. 결과 바로 옆에서 그 결과를 다시 만드는 주 동작과 함께, 다음 단계로 넘어가는 동작에만 씁니다(보정 결과의 '내보내기'). 강조색이 아니라 끝난 단계의 색(`--success`)으로 채워서, 주 동작과 색으로 구별됩니다(`ui/Button.tsx`, `ui/ui.css`, 감사 #92 TD-103).
 - **강조색 하나.** 강조색은 '누를 수 있음'과 '지금 고른 것'을 뜻합니다. 정적인 글자에는 쓰지 않습니다.
 - **글자는 14px 아래로 내리지 않습니다.** 캡션(축 눈금, 단위, 단축키 힌트, 메타데이터)만 13px입니다.
-- **단추는 그것이 가리키는 글 바로 옆에 둡니다.** 이름이나 문장은 왼쪽에 있는데 단추가 넓은 카드의 오른쪽 끝에 있으면, 사용자는 줄마다 눈을 화면 끝에서 끝까지 굴려야 합니다. 여러 줄의 단추는 가장 긴 이름 바로 뒤의 한 열에 세우고(내보내기의 subgrid), 알림의 동작은 문장 바로 뒤에 둡니다. 결과를 만드는 동작은 단계 머리가 아니라 그 결과 바로 옆에 둡니다(보정 결과 카드의 '보정 계산', 결과 뒤의 '다시 측정하기'·'다시 보정하기'). 동작이 있는 알림은 문장과 동작만큼만 넓어져 동작이 아이콘과 같은 안쪽 여백으로 상자를 닫고, 동작은 상자 높이의 가운데에 섭니다. 넓은 상자 안에 떠 있거나 첫 줄에 붙은 단추는 대칭이 어긋나 보입니다. 줄의 남는 너비는 스킨의 장식이 씁니다. EqualizerAPO-XT v2.42.0의 판례(27인치 화면 제보, '내용은 왼쪽에 있는데 버튼은 오른쪽에 있어 눈을 많이 굴린다')를 따릅니다.
+- **단추는 그것이 가리키는 글 바로 옆에 둡니다.** 이름이나 문장은 왼쪽에 있는데 단추가 넓은 카드의 오른쪽 끝에 있으면, 사용자는 줄마다 눈을 화면 끝에서 끝까지 굴려야 합니다. 여러 줄의 단추는 가장 긴 이름 바로 뒤의 한 열에 세우고(내보내기의 subgrid), 알림의 동작은 문장 바로 뒤에 둡니다. 결과를 만드는 동작은 단계 머리가 아니라 그 결과 바로 옆에 둡니다(보정 결과 카드의 '보정 계산', 결과 뒤의 '다시 측정하기'·'다시 보정하기', 내보내기에서 고른 탭의 제목 바로 뒤에 있는 주 동작). 그 동작이 꺼진 이유와 끝난 결과도 단추 바로 아래에 둡니다. 동작이 있는 알림은 문장과 동작만큼만 넓어져 동작이 아이콘과 같은 안쪽 여백으로 상자를 닫고, 동작은 상자 높이의 가운데에 섭니다. 넓은 상자 안에 떠 있거나 첫 줄에 붙은 단추는 대칭이 어긋나 보입니다. 줄의 남는 너비는 스킨의 장식이 씁니다. EqualizerAPO-XT v2.42.0의 판례(27인치 화면 제보, '내용은 왼쪽에 있는데 버튼은 오른쪽에 있어 눈을 많이 굴린다')를 따릅니다.
 - **바뀌는 숫자는 `tabular-nums`.** 진행, 경과 시간, 레벨, 표의 숫자 칸이 해당합니다.
 - **긴 계산은 화면을 막지 않습니다.** 잡은 작업 트레이 한 곳에 보이고, 취소하면 실제로 멈춥니다(U8).
 - **문장은 하십시오체, 상태와 라벨은 명사구.** 서술은 -ㅂ니다, 지시는 -십시오로 씁니다(유지보수자 결정 2026-10-30, -세요를 쓰지 않습니다). 오류는 원인과 다음 행동을 적고, 원문은 '자세히'에 둡니다.
@@ -283,7 +283,9 @@ WCAG 대비는 추정하지 않고 계산합니다. `styles/contrast.test.ts`가
 | 그래프 | `<id>`, `<id>.axes`, `<id>.legend.role.<role>`, `<id>.legend.position.<n>`, `<id>.point.<n>` |
 | 배치도 | `<id>.speaker.<role>`, `<id>.unassigned.<n>`, `<id>.position.<n>` |
 | 내보내기 적용 방식(P121, P122) | `export.apply.<target>.panel`, `export.apply.<target>.level`, `export.apply.<target>.level.files`, `export.apply.<target>.level.apply` (`<target>`은 `camilla` 또는 `eqapo`) |
-| 적용 동작·입력 오류 | `export.apply.camilla`(단계 머리), `export.apply.eqapo`(Equalizer APO 행), `export.run.camilla_dsp`('적용'에서는 행의 설정 저장), `export.status.problem` |
+| 내보낼 곳 탭 | `export.tabs`, `export.tab.<tab>`(`data-state`: `idle`·`busy`·`done`·`failed`·`blocked`), `export.panel`(`data-tab`). `<tab>`은 `camilla_dsp`, `equalizer_apo`, `convolution`, `filter_text`, `rew`이고, 고른 탭의 내보내기(`export.kind.<kind>`)만 문서에 있습니다 |
+| 탭의 주 동작 | `export.run.<kind>`(채운 단추, 단계별 mdat은 보조 단추), 내보낼 폴더의 출처는 `export.folder.help` |
+| 적용 동작·입력 오류 | `export.apply.camilla`, `export.apply.eqapo`('적용'·'관리'에서 탭의 채운 주 동작), `export.run.<kind>`(그 옆의 보조 동작), `export.status.problem`(단계 머리의 알약, 지금 탭의 문제만) |
 | CamillaDSP 주소·장치 안내 | `export.apply.camilla.address.field`, `export.apply.camilla.address`, `export.apply.camilla.address.problem`, `export.apply.camilla.address.remote`, `export.apply.camilla.devices_note` |
 | 적용 상태·설계 | `export.apply.<target>.state`, `export.apply.<target>.refresh`, `export.apply.<target>.reason`, `export.apply.<target>.design`, `export.apply.camilla.design.title`, `export.apply.camilla.clipped` |
 | Equalizer APO 설정·빼기 | `export.apply.eqapo.folder`, `export.apply.eqapo.line`, `export.apply.eqapo.line_note`, `export.apply.eqapo.revert`, `export.apply.eqapo.revert.confirm`, `export.apply.eqapo.revert.confirm.cancel`, `export.apply.eqapo.revert.confirm.confirm` |

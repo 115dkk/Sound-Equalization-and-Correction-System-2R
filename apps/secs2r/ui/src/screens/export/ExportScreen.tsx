@@ -1,21 +1,20 @@
 import { HelpTip } from "../../ui/HelpTip";
-// 내보내기: write what the DSP, the player and REW need. What the correction
-// is (mode, delay, channels, MIMO, RC range), where the files go, and the
-// exports in two groups: the filters for the DSP or player (the design name
-// once above them, F21; the CamillaDSP configuration, the step's primary
-// action in the header, with its devices folded in its row, F20; the filter
-// values as text; the Equalizer APO configuration; the convolution IR) and
-// the responses for REW (the REW mdat with what it carries, F19, and the
-// staged mdat under 고급, U3). A filter format that cannot carry the result
-// says why in its row (upstream 1.3.0 `_filter_card`).
-// The CamillaDSP and Equalizer APO rows choose 파일만, 적용 or 관리 (ADR 0018,
-// apply.tsx): with 적용 the header's primary applies to CamillaDSP and the
-// row keeps its export as a secondary button; Equalizer APO's row applies
-// with its own button and keeps its export beside it, quiet. With 관리 the
-// same actions apply and then hand the design to the SECS 2R Host service.
+// 내보내기: write what the DSP, the player and REW need. The result on top
+// (mode, delay, channels, MIMO, RC range), then one card of destinations as
+// tabs: CamillaDSP, Equalizer APO, the convolution IR, the filter values as
+// text, and REW. A tab names the place an export goes to and what that
+// place is; its panel holds that export alone: its one filled action beside
+// its title, the design name (F21), the folder and what lands in it, its
+// options (CamillaDSP's devices, F20; the convolution IR's extra rates; what
+// the REW mdat carries, F19, with the staged mdat under 고급, U3) and how
+// it ended. A format that cannot carry the result says why in its panel
+// (upstream 1.3.0 `_filter_card`), and its tab shows it.
+// The CamillaDSP and Equalizer APO panels choose 파일만, 적용 or 관리 (ADR
+// 0018, apply.tsx): with 적용 the filled action applies and the export stays
+// beside it as a secondary button. With 관리 the same action applies and
+// then hands the design to the SECS 2R Host service.
 // No 완료 button (U4): the step is done once the current result is exported.
-import { useEffect, useId, useRef, type ReactNode } from "react";
-import type { PrimaryAction } from "../../app/StepHeader";
+import { useEffect, useId, useRef, type KeyboardEvent, type ReactNode } from "react";
 import { errorText } from "../../app/jobs/jobText";
 import type { MessageKey } from "../../i18n";
 import { useNumber, useT, type Translate } from "../../i18n/react";
@@ -25,15 +24,19 @@ import type { ExportKind } from "../../ipc/bindings/ExportKind";
 import type { MdatScope } from "../../ipc/bindings/MdatScope";
 import type { Mode } from "../../ipc/bindings/Mode";
 import type { Notice } from "../../ipc/bindings/Notice";
-import { Advanced, Button, Card, EmptyState, ErrorNotice, Icon, Segmented, StatusPill, type PillTone } from "../../ui";
+import { Advanced, Button, Card, EmptyState, ErrorNotice, Icon, Segmented, Spinner, StatusPill, type PillTone } from "../../ui";
+import type { IconName } from "../../ui/Icon";
 import { roleCode } from "../../ui/maps/geometry";
 import { noticeText } from "../calibrate/text";
 import { DESIGN_RATE, rateText } from "../system/outputRate";
-import { ApplyBlock, eqapoReason } from "./apply";
+import { ApplyBlock, ApplyOutcome, eqapoReason } from "./apply";
 import { CamillaDevicesDisclosure, DESIGN_NAME_ID, DesignNameField, ExtraRatesDisclosure } from "./fields";
 import {
   EXPORT_KINDS,
+  EXPORT_TABS,
   MDAT_SCOPES,
+  TAB_KINDS,
+  TAB_TARGET,
   applyLevel,
   applyProblem,
   canApply,
@@ -41,7 +44,6 @@ import {
   designNameFor,
   designNameRejection,
   exportBlock,
-  exportGroupBusy,
   exportStepState,
   filterModeName,
   inputProblem,
@@ -50,14 +52,18 @@ import {
   mdatScopeFor,
   mimoInclusion,
   rateFallback,
+  tabState,
   type ApplyProblem,
   type ApplyTarget,
   type ExportActions,
   type ExportRun,
+  type ExportTab,
   type ExportView,
   type HostProblem,
   type InputProblem,
   type MimoInclusion,
+  type ScreenApplyLevel,
+  type TabState,
 } from "./types";
 import "./export.css";
 
@@ -67,8 +73,8 @@ const MODE_TEXT: Record<Exclude<Mode, "ultra">, MessageKey> = {
   linear: "export.mode.linear",
 };
 
-const KIND_TEXT: Record<ExportKind, { title: MessageKey; body: MessageKey; run?: MessageKey; exporting: MessageKey }> = {
-  camilla_dsp: { title: "export.kind.camilla_dsp", body: "export.kind.camilla_dsp.body", exporting: "export.status.exporting.camilla_dsp" },
+const KIND_TEXT: Record<ExportKind, { title: MessageKey; body: MessageKey; run: MessageKey; exporting: MessageKey }> = {
+  camilla_dsp: { title: "export.kind.camilla_dsp", body: "export.kind.camilla_dsp.body", run: "export.kind.camilla_dsp.run", exporting: "export.status.exporting.camilla_dsp" },
   before_after_mdat: {
     title: "export.kind.before_after_mdat",
     body: "export.kind.before_after_mdat.body",
@@ -90,6 +96,44 @@ const KIND_TEXT: Record<ExportKind, { title: MessageKey; body: MessageKey; run?:
     exporting: "export.status.exporting.convolution",
   },
 };
+
+/** A tab: the place the export goes to, what that place is, and its sign. */
+const TAB_TEXT: Record<ExportTab, { name: MessageKey; use: MessageKey; icon: IconName }> = {
+  camilla_dsp: { name: "export.tab.camilla_dsp", use: "export.tab.camilla_dsp.use", icon: "chip" },
+  equalizer_apo: { name: "export.tab.equalizer_apo", use: "export.tab.equalizer_apo.use", icon: "sliders" },
+  convolution: { name: "export.tab.convolution", use: "export.tab.convolution.use", icon: "impulse" },
+  filter_text: { name: "export.tab.filter_text", use: "export.tab.filter_text.use", icon: "text" },
+  rew: { name: "export.tab.rew", use: "export.tab.rew.use", icon: "axes" },
+};
+
+/**
+ * What happened at a tab, as a mark that needs no legend: a spinner while it
+ * runs, the check the panel's own outcome carries once it is saved or
+ * applied, the warning sign when it failed; with the words a screen reader
+ * hears after the tab's name. A tab the result cannot go to carries no mark
+ * (a grey dot there told a reader nothing): its caption says so in words.
+ */
+type TabMarkState = Exclude<TabState, "idle" | "blocked">;
+const TAB_MARK: Record<TabMarkState, { text: MessageKey; icon: IconName | null }> = {
+  busy: { text: "export.tab.state.busy", icon: null },
+  done: { text: "export.tab.state.done", icon: "check" },
+  failed: { text: "export.tab.state.failed", icon: "warning" },
+};
+
+/** The filled action of a target set beyond 파일만. */
+const APPLY_RUN: Record<ApplyTarget, Record<Exclude<ScreenApplyLevel, "files">, MessageKey>> = {
+  camilla: { apply: "export.apply.camilla.run", manage: "export.manage.camilla.run" },
+  eqapo: { apply: "export.apply.eqapo.run", manage: "export.manage.eqapo.run" },
+};
+
+/** The one panel under the tabs. */
+const PANEL_ID = "export.panel";
+/** The step header's pill (`StepHeader`): an action held off by a field on this screen, or by another job, points at it. */
+const HEADER_STATUS_ID = "frame.header.export.status";
+/** The blocked step's reason in the step header: an action off for want of a result points at it. */
+const HEADER_BLOCKED_ID = "frame.header.export.blocked";
+/** The hint under the REW mdat's contents (`Segmented`): without a result it says what can be saved, or that nothing can. */
+const MDAT_SCOPE_HINT_ID = "export.mdat.scope-hint";
 
 /** What a done export says next about its folder: where the files go (Equalizer APO) or how to hang them (the convolution IR). */
 const OUTCOME_HINT: Partial<Record<ExportKind, MessageKey>> = {
@@ -191,8 +235,8 @@ export function ExportScreen({
   const rootRef = useRef<HTMLDivElement>(null);
   const runsRef = useRef(view.runs);
   const applyRunsRef = useRef(view.apply.runs);
-  // A run that ends (the header's primary starts one far above its row) brings
-  // its outcome into view inside the content's scroll area; the first draw does not scroll.
+  // A run that ends brings its outcome into view inside the content's scroll
+  // area (a long panel may hold it below the fold); the first draw does not scroll.
   useEffect(() => {
     const before = runsRef.current;
     runsRef.current = view.runs;
@@ -200,7 +244,7 @@ export function ExportScreen({
     const el = changed ? rootRef.current?.querySelector<HTMLElement>(`[data-ui="export.outcome.${changed}"]`) : null;
     if (el) revealInside(el);
   }, [view.runs]);
-  // The same for an apply (CamillaDSP's starts in the header too).
+  // The same for an apply.
   useEffect(() => {
     const before = applyRunsRef.current;
     applyRunsRef.current = view.apply.runs;
@@ -229,28 +273,48 @@ function revealInside(el: HTMLElement) {
 }
 
 /**
- * The step header: the primary exports the CamillaDSP configuration, with
- * CamillaDSP set to 적용 applies it to the running CamillaDSP, and with 관리
- * also hands it to the service; the pill says what runs, what holds the
- * primary off, that an export or an apply failed, that the result is stale,
- * or that the step is done.
+ * What the tab on show needs changed before its filled action can start: for
+ * a target set to 적용 or 관리 what holds the apply off, else what holds
+ * the export off.
  */
-export function exportHeader(view: ExportView, actions: ExportActions, t: Translate): { primary?: PrimaryAction; status?: ReactNode } {
+function tabProblem(view: ExportView): InputProblem | ApplyProblem | null {
+  const target = TAB_TARGET[view.tab];
+  if (target !== undefined && applyLevel(view, target) !== "files") return applyProblem(view, target);
+  return inputProblem(view, TAB_KINDS[view.tab][0]);
+}
+
+/**
+ * Where the frame says why an action is off when nothing in its panel holds
+ * it: the pill names the export or the apply that runs (jobs run one at a
+ * time), and the blocked step's reason says there is no result yet. The REW
+ * mdat without a result is off only when nothing was measured, which the
+ * hint under its contents says.
+ */
+function heldReasonId(view: ExportView, kind?: ExportKind): string | undefined {
+  if (view.exporting !== null || view.apply.applying !== null) return HEADER_STATUS_ID;
+  if (kind === "before_after_mdat" && !view.results.calibration) return MDAT_SCOPE_HINT_ID;
+  return exportStepState(view).status === "blocked" ? HEADER_BLOCKED_ID : undefined;
+}
+
+/** Where the screen says why `target`'s apply is off: Equalizer APO's own sentence or the header's pill for a field, else what holds every action. */
+function applyReasonId(view: ExportView, target: ApplyTarget): string | undefined {
+  const problem = applyProblem(view, target);
+  if (problem) return (target === "eqapo" ? eqapoReason(view) : undefined) ?? (problemStatus(problem) ? HEADER_STATUS_ID : undefined);
+  return canApply(view, target) || view.apply.applying === target ? undefined : heldReasonId(view);
+}
+
+/**
+ * The step header carries no action here: each tab's filled action stands
+ * beside its title. The pill says what runs, what the tab on show needs
+ * changed before its action can start (the field under it says what to
+ * change), that an export or an apply failed (it may be in another tab),
+ * that the result is stale, or that the step is done.
+ */
+export function exportHeader(view: ExportView, t: Translate): { status?: ReactNode } {
   const state = exportStepState(view);
-  const level = applyLevel(view, "camilla");
-  const applying = level !== "files";
-  // What holds the primary off makes the pill its reason (StepHeader
-  // describes the primary by it) and the row below says what to change:
-  // for the export a design name that cannot be a folder or an ASIO side
-  // without a driver, for 적용 the address or that ASIO side, for 관리 also
-  // Windows, the executable and the service.
-  const problem = applying ? applyProblem(view, "camilla") : inputProblem(view, "camilla_dsp");
+  const problem = tabProblem(view);
   const problemPill = problem ? problemStatus(problem) : null;
   const applyingTarget = view.apply.applying;
-  // A blocked step already says why under the title; the pill adds what runs,
-  // that an export or an apply failed (its row may be below the fold), that
-  // the result no longer matches the inputs (it still exports), or that it
-  // is exported or applied.
   const failed = EXPORT_KINDS.some((kind) => view.runs[kind]?.status === "failed");
   const applyFailed = Object.values(view.apply.runs).some((run) => run?.status === "failed" || run?.status === "rolled_back");
   const applied = Object.values(view.apply.runs).some((run) => run?.status === "applied");
@@ -273,16 +337,7 @@ export function exportHeader(view: ExportView, actions: ExportActions, t: Transl
   ) : state.status === "done" ? (
     <StatusPill tone="success">{t(applied ? "export.status.applied" : "export.status.done")}</StatusPill>
   ) : undefined;
-  // Export and apply jobs run one at a time: busy while this one runs, off
-  // while another does, and off while a field on this screen needs changing.
-  const busy = applying ? view.apply.applying === "camilla" : view.exporting === "camilla_dsp";
-  const disabled = busy ? false : exportGroupBusy(view) || problem !== null;
-  return {
-    primary: applying
-      ? { id: "export.apply.camilla", label: t(level === "manage" ? "export.manage.camilla.run" : "export.apply.camilla.run"), onClick: actions.applyCamilla, busy, disabled }
-      : { id: "export.run.camilla_dsp", label: t("frame.step.export.primary"), onClick: () => actions.exportFiles("camilla_dsp"), busy, disabled },
-    status,
-  };
+  return { status };
 }
 
 /* ── The result ─────────────────────────────────────────────────────────── */
@@ -400,7 +455,7 @@ function Fact({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
-/* ── The files ──────────────────────────────────────────────────────────── */
+/* ── The destinations ───────────────────────────────────────────────────── */
 
 function FilesCard({
   view,
@@ -418,63 +473,122 @@ function FilesCard({
   initialRevertConfirm: boolean;
 }) {
   const t = useT();
+  const tab = view.tab;
   return (
     <Card title={t("export.files.title")} data-ui="export.files">
-      <FolderRow view={view} actions={actions} />
-      <div className="export-groups">
-        <ExportGroup title={t("export.group.filters")}>
-          {/* One name for every filter export, above their rows; the tutorial has no folder to name. */}
-          {!view.tutorial && <DesignNameField view={view} actions={actions} />}
-          <ExportItem kind="camilla_dsp" view={view} actions={actions} initialOpen={initialDevices} />
-          <ExportItem kind="filter_text" view={view} actions={actions} />
-          <ExportItem kind="equalizer_apo" view={view} actions={actions} initialRevertConfirm={initialRevertConfirm} />
-          <ExportItem kind="convolution" view={view} actions={actions} initialOpen={initialExtraRates} />
-        </ExportGroup>
-        <ExportGroup title={t("export.group.rew")}>
-          <ExportItem kind="before_after_mdat" view={view} actions={actions} />
-          <Advanced id="export.advanced" count={1} defaultOpen={initialAdvanced}>
-            <ExportItem kind="staged_mdat" view={view} actions={actions} />
-          </Advanced>
-        </ExportGroup>
+      <DestinationTabs view={view} actions={actions} />
+      {/* One panel, drawn anew per tab: a fold or a confirm left open in one tab does not carry into the next. */}
+      <div key={tab} className="export-panel" role="tabpanel" id={PANEL_ID} data-ui={PANEL_ID} data-tab={tab} aria-labelledby={`export.tab.${tab}`}>
+        {tab === "rew" ? (
+          <>
+            <ExportItem kind="before_after_mdat" main view={view} actions={actions} />
+            <Advanced id="export.advanced" count={1} defaultOpen={initialAdvanced}>
+              <ExportItem kind="staged_mdat" view={view} actions={actions} />
+            </Advanced>
+          </>
+        ) : (
+          <ExportItem kind={tab} main view={view} actions={actions} initialOpen={tab === "camilla_dsp" ? initialDevices : initialExtraRates} initialRevertConfirm={initialRevertConfirm} />
+        )}
       </div>
     </Card>
   );
 }
 
-/** One group of exports: its heading sits between the card's title (h2) and the rows' titles (h4). */
-function ExportGroup({ title, children }: { title: string; children: ReactNode }) {
-  const titleId = useId();
+/**
+ * The destinations as tabs, one tab stop: the arrows, Home and End move and
+ * choose. A tab reads its place's name, what that place is, and, once
+ * something happened there, the mark of it with its words for a screen
+ * reader. A place the result cannot go to says so where it said what it is.
+ */
+function DestinationTabs({ view, actions }: { view: ExportView; actions: ExportActions }) {
+  const t = useT();
+  const refs = useRef<Partial<Record<ExportTab, HTMLButtonElement | null>>>({});
+  const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    const index = EXPORT_TABS.indexOf(view.tab);
+    const last = EXPORT_TABS.length - 1;
+    const to =
+      event.key === "ArrowRight" ? (index === last ? 0 : index + 1) : event.key === "ArrowLeft" ? (index === 0 ? last : index - 1) : event.key === "Home" ? 0 : event.key === "End" ? last : null;
+    if (to === null) return;
+    event.preventDefault();
+    const tab = EXPORT_TABS[to]!;
+    actions.selectTab(tab);
+    refs.current[tab]?.focus();
+  };
   return (
-    <section className="export-group" aria-labelledby={titleId}>
-      <h3 className="export-group__title" id={titleId}>
-        {title}
-      </h3>
-      {children}
-    </section>
+    <div className="export-tabs" role="tablist" aria-label={t("export.files.title")} data-ui="export.tabs" onKeyDown={onKeyDown}>
+      {EXPORT_TABS.map((tab) => {
+        const selected = tab === view.tab;
+        const state = tabState(view, tab);
+        const text = TAB_TEXT[tab];
+        return (
+          <button
+            key={tab}
+            ref={(node) => {
+              refs.current[tab] = node;
+            }}
+            type="button"
+            role="tab"
+            id={`export.tab.${tab}`}
+            data-ui={`export.tab.${tab}`}
+            data-state={state}
+            aria-selected={selected}
+            aria-controls={selected ? PANEL_ID : undefined}
+            tabIndex={selected ? 0 : -1}
+            className="export-tab"
+            onClick={() => actions.selectTab(tab)}
+          >
+            <Icon name={text.icon} size={20} className="export-tab__icon" />
+            <span className="export-tab__title">
+              <span className="export-tab__name">{t(text.name)}</span>
+              {state !== "idle" && state !== "blocked" && <TabMark state={state} />}
+            </span>
+            <span className="export-tab__use">{t(state === "blocked" ? "export.tab.state.blocked" : text.use)}</span>
+          </button>
+        );
+      })}
+    </div>
   );
 }
 
+function TabMark({ state }: { state: TabMarkState }) {
+  const t = useT();
+  const mark = TAB_MARK[state];
+  return (
+    <span className={`export-tab__mark export-tab__mark--${state}`}>
+      {mark.icon ? <Icon name={mark.icon} size={16} weight="semibold" /> : <Spinner size={14} />}
+      <span className="visually-hidden">{t(mark.text)}</span>
+    </span>
+  );
+}
+
+/**
+ * The export folder on one line: its name, the path, then the two buttons
+ * right after the path. Where the folder comes from (the default beside the
+ * project, or the one chosen for this project) opens from the name's help.
+ */
 function FolderRow({ view, actions }: { view: ExportView; actions: ExportActions }) {
   const t = useT();
-  // The tutorial has no export folder; the outcome rows say nothing was saved.
-  if (view.tutorial) return null;
   const folder = view.folder;
   return (
     <div className="export-folder" data-ui="export.folder">
-      <div className="export-folder__text">
-        <p className="export-folder__label">{t("export.folder")}</p>
-        <p className="export-path" data-ui="export.folder.path">
-          {folder ? folder.folder : <span className="muted">{t("export.folder.loading")}</span>}
-        </p>
-        {folder && <p className="export-folder__hint">{t(folder.stored ? "export.folder.stored" : "export.folder.default")}</p>}
+      <div className="ui-heading-help export-folder__name">
+        <span className="export-folder__label" id="export.folder.label">
+          {t("export.folder")}
+        </span>
+        {folder && <HelpTip id="export.folder.help" labelledBy="export.folder.label" content={t(folder.stored ? "export.folder.stored" : "export.folder.default")} />}
       </div>
-      <div className="export-folder__actions">
-        <Button size="sm" data-ui="export.folder.change" disabled={view.exporting !== null} onClick={actions.changeFolder}>
-          {t("export.folder.change")}
-        </Button>
-        <Button size="sm" variant="quiet" icon="folder" data-ui="export.folder.open" disabled={!folder} onClick={() => folder && actions.openFolder(folder.folder)}>
-          {t("export.folder.open")}
-        </Button>
+      <div className="export-folder__value">
+        <span className="export-path" data-ui="export.folder.path">
+          {folder ? folder.folder : <span className="muted">{t("export.folder.loading")}</span>}
+        </span>
+        <span className="export-folder__actions">
+          <Button size="sm" data-ui="export.folder.change" disabled={view.exporting !== null} onClick={actions.changeFolder}>
+            {t("export.folder.change")}
+          </Button>
+          <Button size="sm" variant="quiet" icon="folder" data-ui="export.folder.open" disabled={!folder} onClick={() => folder && actions.openFolder(folder.folder)}>
+            {t("export.folder.open")}
+          </Button>
+        </span>
       </div>
     </div>
   );
@@ -543,17 +657,26 @@ function RateLine({ kind, view }: { kind: ExportKind; view: ExportView }) {
   );
 }
 
-/** The rows that choose 파일만 or 적용 (ADR 0018), and the target each applies to. */
+/** The exports that choose 파일만, 적용 or 관리 (ADR 0018), and the target each applies to. */
 const APPLY_TARGET: Partial<Record<ExportKind, ApplyTarget>> = { camilla_dsp: "camilla", equalizer_apo: "eqapo" };
 
+/**
+ * One export. A tab's main one (`main`) opens its panel: its filled action
+ * beside its title, right under them why it is off or how it last ended,
+ * then how it gets there (적용), what is written, the design name, and the
+ * folder with what lands in it. The staged mdat under 고급 is the one
+ * export that is not: a secondary button, no fields of its own.
+ */
 function ExportItem({
   kind,
+  main = false,
   view,
   actions,
   initialOpen = false,
   initialRevertConfirm = false,
 }: {
   kind: ExportKind;
+  main?: boolean;
   view: ExportView;
   actions: ExportActions;
   initialOpen?: boolean;
@@ -566,70 +689,55 @@ function ExportItem({
   // The tutorial writes nothing, so it applies nothing either.
   const target = view.tutorial ? undefined : APPLY_TARGET[kind];
   const level = target === undefined ? "files" : applyLevel(view, target);
-  const applying = level !== "files";
   const titleId = `export.kind.${kind}.title`;
   const block = exportBlock(view, kind);
   const blocked = block ? BLOCK_TEXT[kind]?.[block] : undefined;
   const blockedId = useId();
   const recalibrateId = useId();
   const scoped = kind === "before_after_mdat";
-  // A design name that cannot be a folder holds the filter buttons off; the field's message is the reason.
+  // A design name that cannot be a folder or an ASIO side without a driver holds the export off.
   const problem = inputProblem(view, kind);
-  const describedBy = blocked ? blockedId : problem?.field === "design_name" ? `${DESIGN_NAME_ID}-error` : undefined;
+  const off = !canExport(view, kind) || block !== null || problem !== null;
+  // Where the screen says why: the format's sentence, the name field's message, the header's pill, else what holds every action.
+  const exportReason = blocked ? blockedId : problem?.field === "design_name" ? `${DESIGN_NAME_ID}-error` : problem ? HEADER_STATUS_ID : off && !running ? heldReasonId(view, kind) : undefined;
+  // The export folder stands in a tab's main export; the tutorial has none, and the staged mdat goes straight into it.
+  const placed = main && !view.tutorial;
+  // How the last apply ended, while the target is set beyond 파일만.
+  const applied = target !== undefined && level !== "files" ? view.apply.runs[target] : undefined;
+  const Title = main ? "h3" : "h4";
   return (
     <section className={scoped ? "export-item export-item--scoped" : "export-item"} data-ui={`export.kind.${kind}`} aria-labelledby={titleId}>
-      <div className="export-item__text">
-        <div className="ui-heading-help">
-          <h4 className="export-item__title" id={titleId}>{t(text.title)}</h4>
-          <HelpTip id={`export.kind.${kind}.help`} labelledBy={titleId} content={t(text.body)} />
-        </div>
-        {scoped && <MdatScopeField view={view} actions={actions} />}
-        <p className="export-item__where">
-          <Icon name="folder" size={16} />
-          <span>{whereText(t, kind, view)}</span>
-        </p>
-        {scoped && (
-          // The file's own name: it says whether the file holds measurements, results or both.
-          <p className="export-item__where export-item__file" data-ui="export.mdat.file">
-            <Icon name="file" size={16} />
-            <span>{mdatFileName(mdatScopeFor(view.results.calibration, view.mdatScope), view.settings)}</span>
-          </p>
-        )}
-        <RateLine kind={kind} view={view} />
-        {kind === "camilla_dsp" && <CamillaDevicesDisclosure view={view} actions={actions} defaultOpen={initialOpen} />}
-        {kind === "convolution" && <ExtraRatesDisclosure view={view} actions={actions} defaultOpen={initialOpen} />}
-        {/* 파일만 or 적용, under the row's devices and folder: the setting before the results below. */}
-        {target !== undefined && <ApplyBlock target={target} view={view} actions={actions} initialConfirm={initialRevertConfirm} />}
+      <div className="ui-heading-help">
+        <Title className="export-item__title" id={titleId}>{t(text.title)}</Title>
+        <HelpTip id={`export.kind.${kind}.help`} labelledBy={titleId} content={t(text.body)} />
       </div>
       <div className="export-item__action">
-        {applying && target === "eqapo" && (
-          // The row's own primary: Equalizer APO's 적용 or 관리, off with the reason while it is not installed or the service cannot take it.
+        {target !== undefined && level !== "files" && (
+          // Beyond 파일만 the filled action applies, off with the reason while something on this screen holds it.
           <Button
-            data-ui="export.apply.eqapo"
-            busy={view.apply.applying === "eqapo"}
-            disabled={!canApply(view, "eqapo")}
-            aria-describedby={blocked ? blockedId : eqapoReason(view)}
-            onClick={actions.applyEqapo}
+            variant="primary"
+            data-ui={`export.apply.${target}`}
+            busy={view.apply.applying === target}
+            disabled={!canApply(view, target)}
+            aria-describedby={blocked ? blockedId : applyReasonId(view, target)}
+            onClick={target === "camilla" ? actions.applyCamilla : actions.applyEqapo}
           >
-            {t(level === "manage" ? "export.manage.eqapo.run" : "export.apply.eqapo.run")}
+            {t(APPLY_RUN[target][level])}
           </Button>
         )}
-        {text.run || applying ? (
-          // With 적용 the export stays: CamillaDSP's moves from the header to its row; Equalizer APO's goes quiet beside 적용.
-          <Button
-            variant={applying && target === "eqapo" ? "quiet" : "secondary"}
-            data-ui={`export.run.${kind}`}
-            busy={running}
-            disabled={!canExport(view, kind) || block !== null || problem !== null}
-            aria-describedby={describedBy}
-            onClick={() => actions.exportFiles(kind)}
-          >
-            {t(text.run ?? "export.kind.camilla_dsp.run")}
-          </Button>
-        ) : running ? (
-          <StatusPill tone="busy">{t("export.run.busy")}</StatusPill>
-        ) : null}
+        {/* The export: the panel's filled action, or beside 적용 a secondary one. CamillaDSP's keeps the name the tutorial calls it by. */}
+        <Button
+          variant={main && level === "files" ? "primary" : "secondary"}
+          data-ui={`export.run.${kind}`}
+          busy={running}
+          disabled={off}
+          aria-describedby={exportReason}
+          onClick={() => actions.exportFiles(kind)}
+        >
+          {t(kind === "camilla_dsp" && level === "files" ? "frame.step.export.primary" : text.run)}
+        </Button>
       </div>
+      {/* What the actions answer with stands right under them: why they are off, then how the last apply and the last export ended. */}
       {blocked && (
         // The format's scope, not a fault: the info icon and the muted text, never the warning hue.
         // A result restored from an older cache lifts with a new correction: the action follows its sentence.
@@ -639,7 +747,7 @@ function ExportItem({
             <span>{t(blocked)}</span>
           </p>
           {block === "stale_cache" && (
-            // Both mdat rows carry one: each is named for its format and described by its sentence.
+            // Both mdat exports carry one: each is named for its format and described by its sentence.
             // Off while an export runs, so the result does not change under it.
             <Button
               size="sm"
@@ -657,7 +765,32 @@ function ExportItem({
           )}
         </div>
       )}
+      {applied && <ApplyOutcome target={target!} run={applied} view={view} actions={actions} />}
       {run && <Outcome kind={kind} run={run} view={view} actions={actions} />}
+      {/* How it gets there comes first: 파일만, 적용 or 관리, with what 적용 reaches. */}
+      {target !== undefined && <ApplyBlock target={target} view={view} actions={actions} initialConfirm={initialRevertConfirm} />}
+      {/* Then what is written: the mdat's contents, CamillaDSP's devices, the convolution IR's extra rates. */}
+      {scoped && <MdatScopeField view={view} actions={actions} />}
+      {kind === "camilla_dsp" && <CamillaDevicesDisclosure view={view} actions={actions} defaultOpen={initialOpen} />}
+      {kind === "convolution" && <ExtraRatesDisclosure view={view} actions={actions} defaultOpen={initialOpen} />}
+      {/* One name for every filter export; the tutorial has no folder to name. */}
+      {main && isFilterKind(kind) && !view.tutorial && <DesignNameField view={view} actions={actions} />}
+      {/* Where the files go, read as one: the export folder, what lands in it, and at what rate. */}
+      <div className={placed ? "export-item__place" : "export-item__place export-item__place--bare"}>
+        {placed && <FolderRow view={view} actions={actions} />}
+        <p className="export-item__where">
+          <Icon name="folder" size={16} />
+          <span>{whereText(t, kind, view)}</span>
+        </p>
+        {scoped && (
+          // The file's own name: it says whether the file holds measurements, results or both.
+          <p className="export-item__where export-item__file" data-ui="export.mdat.file">
+            <Icon name="file" size={16} />
+            <span>{mdatFileName(mdatScopeFor(view.results.calibration, view.mdatScope), view.settings)}</span>
+          </p>
+        )}
+        <RateLine kind={kind} view={view} />
+      </div>
     </section>
   );
 }

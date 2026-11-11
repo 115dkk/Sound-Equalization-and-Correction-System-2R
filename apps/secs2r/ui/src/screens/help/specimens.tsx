@@ -56,7 +56,7 @@ function HelpSpecimen({ step, tab, search }: { step: StepId; tab?: HelpTabId; se
     />
   );
   return (
-    <FrameBox frame={helpFrame(step)} jobs={initialLedger} aside={panel} {...(step === "export" ? { header: exportHeader(exportReady, noopExportActions, t) } : {})}>
+    <FrameBox frame={helpFrame(step)} jobs={initialLedger} aside={panel} {...(step === "export" ? { header: exportHeader(exportReady, t) } : {})}>
       <Behind step={step} />
     </FrameBox>
   );

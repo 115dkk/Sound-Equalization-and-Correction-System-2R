@@ -45,6 +45,27 @@ export function isFilterKind(kind: ExportKind): kind is (typeof FILTER_KINDS)[nu
   return (FILTER_KINDS as readonly ExportKind[]).includes(kind);
 }
 
+/**
+ * The destinations the export card's tabs name, in screen order: the two
+ * programs 적용 reaches, the files a player or a DSP takes, then REW.
+ */
+export const EXPORT_TABS = ["camilla_dsp", "equalizer_apo", "convolution", "filter_text", "rew"] as const;
+export type ExportTab = (typeof EXPORT_TABS)[number];
+
+/** The kinds a tab holds, its main export first: the REW tab keeps the staged mdat under 고급. */
+export const TAB_KINDS = {
+  camilla_dsp: ["camilla_dsp"],
+  equalizer_apo: ["equalizer_apo"],
+  convolution: ["convolution"],
+  filter_text: ["filter_text"],
+  rew: ["before_after_mdat", "staged_mdat"],
+} as const satisfies Record<ExportTab, readonly ExportKind[]>;
+
+/** The tab that holds `kind`. */
+export function tabOf(kind: ExportKind): ExportTab {
+  return kind === "before_after_mdat" || kind === "staged_mdat" ? "rew" : kind;
+}
+
 /** CamillaDSP's WASAPI sample formats, in the order the choice shows them. F32 is the shared-mode format and the default. */
 export const WASAPI_FORMATS = ["S16", "S24", "S32", "F32"] as const satisfies readonly CamillaWasapiFormat[];
 
@@ -76,6 +97,8 @@ export type ExportRun =
   | { status: "tutorial" };
 
 export type ExportView = {
+  /** The destination tab on show (session host; `defaultExportTab` until the user picks one). */
+  tab: ExportTab;
   /** `results`: the latest correction and MIMO summaries. */
   results: ResultsSummary;
   /**
@@ -225,6 +248,18 @@ export function applyWanted(view: LevelInputs): boolean {
   return applyLevel(view, "camilla") !== "files" || applyLevel(view, "eqapo") !== "files";
 }
 
+/** The program a tab's 적용 reaches, for the two tabs that have one. */
+export const TAB_TARGET: Partial<Record<ExportTab, ApplyTarget>> = { camilla_dsp: "camilla", equalizer_apo: "eqapo" };
+
+/**
+ * The tab the screen opens on until the user picks one: Equalizer APO's
+ * when it alone is set beyond 파일만 (that is where this user applies),
+ * else CamillaDSP's.
+ */
+export function defaultExportTab(view: LevelInputs): ExportTab {
+  return applyLevel(view, "eqapo") !== "files" && applyLevel(view, "camilla") === "files" ? "equalizer_apo" : "camilla_dsp";
+}
+
 /** The CamillaDSP executable the field shows: the draft while there is one, else the stored path. */
 export function exeText(view: Pick<ExportView, "apply">): string {
   return view.apply.exeDraft ?? view.apply.settings.camilla.exe_path ?? "";
@@ -368,6 +403,8 @@ export function eqapoDesign(view: Pick<ExportView, "apply">): EqApoDesign {
 }
 
 export type ExportActions = {
+  /** Host: the destination tab on show. */
+  selectTab: (tab: ExportTab) => void;
   /**
    * `export { kind, folder: "" }` (job; the service picks the subfolder). The
    * REW mdat adds `mdat_scope: mdatScopeFor(results.calibration, mdatScope)`;
@@ -621,6 +658,27 @@ export function devicesFor(devices: readonly MeasureDevice[], side: DeviceSide, 
  */
 export function rateFallback(run: ExportRun | undefined): Notice | null {
   return run?.status === "done" ? run.notes.find((note) => note.code === "output_rate_fallback") ?? null : null;
+}
+
+/**
+ * What a tab says beside its name, for the current result: one of its jobs
+ * runs, its last export or apply failed, it ended well, or its format
+ * cannot carry the result (`exportBlock` of its main export). An apply in
+ * flight is busy whatever the level is turned to meanwhile (the job still
+ * runs); how an apply ended counts while the target is set beyond 파일만,
+ * as its outcome shows only then.
+ */
+export type TabState = "idle" | "busy" | "done" | "failed" | "blocked";
+
+export function tabState(view: ExportView, tab: ExportTab): TabState {
+  const kinds: readonly ExportKind[] = TAB_KINDS[tab];
+  const target = TAB_TARGET[tab];
+  const applying = target !== undefined && applyLevel(view, target) !== "files";
+  const apply = applying ? view.apply.runs[target] : undefined;
+  if ((view.exporting !== null && kinds.includes(view.exporting)) || (target !== undefined && view.apply.applying === target)) return "busy";
+  if (kinds.some((kind) => view.runs[kind]?.status === "failed") || apply?.status === "failed" || apply?.status === "rolled_back") return "failed";
+  if (kinds.some((kind) => view.runs[kind]?.status === "done") || apply?.status === "applied") return "done";
+  return exportBlock(view, kinds[0]!) !== null ? "blocked" : "idle";
 }
 
 /** The rail state of 내보내기: blocked while there is no result or one is being computed, done after an export or an apply of the result. */

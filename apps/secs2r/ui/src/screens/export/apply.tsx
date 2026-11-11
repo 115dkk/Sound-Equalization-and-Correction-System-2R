@@ -1,17 +1,17 @@
-// 내보내기의 적용 (ADR 0018): under the CamillaDSP row and the Equalizer APO
-// row, the choice between 파일만 (today's files) and 적용, and with 적용 what
-// it reaches. CamillaDSP: the websocket address, then the running
+// 내보내기의 적용 (ADR 0018): in the CamillaDSP panel and the Equalizer APO
+// panel, the choice between 파일만 (today's files) and 적용, and with 적용
+// what it reaches. CamillaDSP: the websocket address, then the running
 // CamillaDSP's version and state, the design it runs and its clipped
-// samples; the header's primary applies (ExportScreen). Equalizer APO: the
-// install and its config folder, SECS 2R's line in config.txt with the
-// quiet 빼기 (one confirm sentence), and the design in its SECS2R folder;
-// the row's own button applies. Each block ends with how the last apply
-// ended. The keys stand in the rows' name column and the values where the
-// buttons stand (the export grid's subgrid), like the design name above.
+// samples. Equalizer APO: the install and its config folder, SECS 2R's line
+// in config.txt with the quiet 빼기 (one confirm sentence), and the design
+// in its SECS2R folder. The panel's filled action applies (ExportScreen),
+// and how the last apply ended stands right under it. The keys stand in
+// the panel's name column and the values where the buttons stand (the
+// export grid's subgrid), like the design name below.
 // 관리 (Windows) applies the same way and hands the design to the SECS 2R
-// Host service: CamillaDSP's row adds the executable the service runs, and
-// both rows add the service block (installed or not, what it does with the
-// target now, and the quiet 관리 끄기 with its one confirm sentence).
+// Host service: CamillaDSP's panel adds the executable the service runs, and
+// both panels add the service block (installed or not, what it does with
+// the target now, and the quiet 관리 끄기 with its one confirm sentence).
 import { useState, type KeyboardEvent, type ReactNode } from "react";
 import { errorText } from "../../app/jobs/jobText";
 import { CAMILLA_TEXT, SERVICE_TEXT, camillaDetail, camillaManaged, clockText, serviceView, type HostState, type ServiceView } from "../../host/model";
@@ -151,8 +151,9 @@ function Unread({ target, view, actions }: { target: ApplyTarget; view: ExportVi
 
 /**
  * 파일만, 적용 or 관리 for one target; with 적용 what it reaches, with 관리
- * also what the service does, and how the last apply ended. Not drawn in
- * the tutorial, which writes nothing.
+ * also what the service does. How the last apply ended stands under the
+ * panel's actions (`ApplyOutcome`, ExportScreen). Not drawn in the tutorial,
+ * which writes nothing.
  */
 export function ApplyBlock({ target, view, actions, initialConfirm = false }: { target: ApplyTarget; view: ExportView; actions: ExportActions; initialConfirm?: boolean }) {
   const level = applyLevel(view, target);
@@ -164,7 +165,6 @@ export function ApplyBlock({ target, view, actions, initialConfirm = false }: { 
       {level !== "files" && target === "camilla" && <CamillaApply view={view} actions={actions} managed={managed} />}
       {level !== "files" && target === "eqapo" && <EqApoApply view={view} actions={actions} initialConfirm={initialConfirm} />}
       {managed && <ManageFacts target={target} view={view} actions={actions} />}
-      {level !== "files" && view.apply.runs[target] && <ApplyOutcome target={target} run={view.apply.runs[target]!} view={view} actions={actions} />}
     </div>
   );
 }
@@ -653,7 +653,7 @@ const APPLIED_TEXT: Record<ApplyTarget, MessageKey> = { camilla: "export.apply.c
 /** 관리 applied and handed over: what the service now does with the app closed. */
 const MANAGED_TEXT: Record<ApplyTarget, MessageKey> = { camilla: "export.manage.camilla.applied", eqapo: "export.manage.eqapo.applied" };
 
-function ApplyOutcome({ target, run, view, actions }: { target: ApplyTarget; run: ApplyRun; view: ExportView; actions: ExportActions }) {
+export function ApplyOutcome({ target, run, view, actions }: { target: ApplyTarget; run: ApplyRun; view: ExportView; actions: ExportActions }) {
   const t = useT();
   const id = `export.apply.${target}.outcome`;
   if (run.status === "applied") {

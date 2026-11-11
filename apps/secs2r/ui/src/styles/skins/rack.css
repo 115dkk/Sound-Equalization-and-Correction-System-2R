@@ -1787,10 +1787,84 @@
   color: var(--skin-segment-muted);
 }
 
-/* An export row is a 1U output module: its button beside its name, and past
-   the button (the third column the export grid leaves to the skins) the
-   faceplate carries a strip of punched vent slots held by two slotted
-   screws, as the bare stretch of a real panel would. */
+/* The destinations are the unit's output selector: a bank of machined caps
+   in a recessed bed, one per output. A cap reads its output's name as an
+   engraved legend over what that output is; the chosen cap latches down and
+   its legend lights amber, like the segment bank. A cap whose format cannot
+   carry the result is a powered-down unit under the dark film, its legend
+   unlit, and says so under the legend. What happened at an output is the
+   mark after its legend (a spinner, a check, a warning): a bezel LED there
+   said nothing without a legend of its own (2026-11-11 review). */
+[data-skin="rack"] .export-tabs {
+  gap: 3px;
+  padding: 3px;
+  border-bottom: 0;
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+  box-shadow: var(--skin-bed);
+}
+
+[data-skin="rack"] .export-tab {
+  margin-bottom: 0;
+  border-radius: var(--radius-xs);
+  background: var(--skin-cap);
+  box-shadow: var(--shadow-thumb);
+}
+
+[data-skin="rack"] .export-tab__name {
+  letter-spacing: 0.04em;
+  text-shadow: var(--skin-engrave);
+}
+
+[data-skin="rack"] .export-tab:hover:not([aria-selected="true"]) {
+  background: var(--skin-cap-lit);
+  box-shadow: 0 0 0 1px var(--skin-bronze), inset 0 1px 0 var(--skin-bevel-hi), inset 0 -1px 0 var(--skin-bevel-lo);
+}
+
+[data-skin="rack"] .export-tab[aria-selected="true"] {
+  background: var(--skin-lens-down);
+  box-shadow: var(--skin-sunk);
+}
+
+[data-skin="rack"] .export-tab[aria-selected="true"] > * {
+  translate: 0 1px;
+}
+
+[data-skin="rack"] .export-tab[aria-selected="true"] .export-tab__name {
+  color: var(--skin-legend);
+  text-shadow: 0 0 6px var(--skin-legend-glow);
+}
+
+[data-skin="rack"] .export-tab[aria-selected="true"] .export-tab__icon {
+  color: var(--skin-legend);
+}
+
+/* The latched cap is a dark lens in both finishes: what it is reads in the glass's print ink, not the panel's. */
+[data-skin="rack"] .export-tab[aria-selected="true"] .export-tab__use {
+  color: var(--skin-print-muted);
+}
+
+[data-skin="rack"] .export-tab[data-state="blocked"]:not([aria-selected="true"]) {
+  background: var(--skin-film-layer), var(--skin-cap);
+}
+
+/* On the latched cap's dark lens the marks light in the lamps' colours. */
+[data-skin="rack"] .export-tab[aria-selected="true"] .export-tab__mark--busy {
+  color: var(--skin-legend);
+}
+
+[data-skin="rack"] .export-tab[aria-selected="true"] .export-tab__mark--done {
+  color: var(--skin-lamp-green);
+}
+
+[data-skin="rack"] .export-tab[aria-selected="true"] .export-tab__mark--failed {
+  color: var(--skin-lamp-red);
+}
+
+/* The chosen output's panel is a 1U output module: its action beside its
+   name, and past the action (the third column the export grid leaves to the
+   skins) the faceplate carries a strip of punched vent slots held by two
+   slotted screws, as the bare stretch of a real panel would. */
 [data-skin="rack"] .export-item::after {
   --skin-screw: 9px;
   --skin-vent: calc(100% - 2 * var(--skin-screw) - 2 * var(--space-3));
@@ -1849,7 +1923,6 @@
 /* A divider between the parts of a panel is a milled groove: the cut in the
    groove ink and its lit lower lip, like the sections and the rail. */
 [data-skin="rack"] :is(
-  .export-item + .export-item,
   .export-facts__lines,
   .calibrate-ba,
   .measure-sample,
@@ -1865,22 +1938,6 @@
 
 [data-skin="rack"] :is(.connect-level__row, .help-table td, .help-tabs) {
   border-bottom-color: var(--skin-groove);
-}
-
-/* A group heading is engraved with a bracket: the cut runs from the words
-   to the panel's edge and turns down over the modules it names. */
-[data-skin="rack"] .export-group__title {
-  letter-spacing: 0.04em;
-  text-shadow: var(--skin-engrave);
-}
-
-[data-skin="rack"] .export-group__title::after {
-  align-self: center;
-  height: 8px;
-  margin-top: 8px;
-  border-top: 1px solid var(--skin-groove);
-  border-right: 1px solid var(--skin-groove);
-  box-shadow: inset 0 1px 0 var(--skin-bevel-hi), 1px 0 0 var(--skin-bevel-hi);
 }
 
 /* ── Tutorial: a service notice and an amber service edge ──────────────── */
