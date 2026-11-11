@@ -31,9 +31,13 @@ pub struct Limits {
 }
 
 impl Default for Limits {
+    /// A project stores every recording next to its impulse responses, so its
+    /// size grows with channels times positions: a 14-channel, 9-position
+    /// project is about 280 MB (the 256 MiB this limit used to be refused
+    /// it). 1 GiB leaves room for the largest layouts at 17 positions.
     fn default() -> Self {
         Self {
-            max_file_bytes: 256 * 1024 * 1024,
+            max_file_bytes: 1024 * 1024 * 1024,
             max_string_bytes: 1024 * 1024,
             max_channels: 64,
             max_positions: 64,

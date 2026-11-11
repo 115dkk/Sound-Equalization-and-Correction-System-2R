@@ -5,7 +5,7 @@ import json
 import math
 import struct
 from collections.abc import Iterable
-from pathlib import Path, PureWindowsPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import NamedTuple
 
 import numpy as np
@@ -115,11 +115,14 @@ def _inside(folder: Path, name: str, plain: bool = False) -> Path:
     """Resolve relative paths beneath folder, including symlink containment."""
     if not isinstance(name, str) or not name or "\x00" in name:
         raise ValueError("wav path")
-    relative = Path(name)
     windows = PureWindowsPath(name)
-    if relative.is_absolute() or windows.drive or windows.root:
-        raise ValueError("wav path")
     if plain and ("/" in name or "\\" in name or name in (".", "..")):
+        raise ValueError("wav path")
+    # art_gate.py's pack accepts either separator in case.json and stores the
+    # file under the "/" form, so a path written on Windows must be read the
+    # same way on Linux, where a backslash is an ordinary character.
+    relative = Path(*PurePosixPath(name.replace("\\", "/")).parts)
+    if relative.is_absolute() or windows.drive or windows.root:
         raise ValueError("wav path")
     try:
         root = folder.resolve()
