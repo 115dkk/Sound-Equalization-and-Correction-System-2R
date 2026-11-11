@@ -3,6 +3,7 @@
 // action that follows it, the CamillaDSP address, the status lines, the
 // revert confirm and the outcomes' texts.
 import { fireEvent, screen, within } from "@testing-library/react";
+import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { AppFrame } from "../../app/AppFrame";
 import { useT, type Translate } from "../../i18n/react";
@@ -29,11 +30,13 @@ import {
   applyEqapoOther,
   applyEqapoPresent,
   applyEqapoReverted,
+  exportDone,
   exportFrame,
   exportReady,
   exportTutorial,
 } from "./fixtures";
-import { EXPORT_KINDS, type ExportActions, type ExportView } from "./types";
+import { EXPORT_KINDS, tabOf, type ExportActions, type ExportTab, type ExportView } from "./types";
+import type { ExportKind } from "../../ipc/bindings/ExportKind";
 
 const STATES: Record<string, ExportView> = {
   applyCamillaApplied,
@@ -59,6 +62,7 @@ const STATES: Record<string, ExportView> = {
 
 function actions() {
   return {
+    selectTab: vi.fn<ExportActions["selectTab"]>(),
     exportFiles: vi.fn<ExportActions["exportFiles"]>(),
     setMdatScope: vi.fn<ExportActions["setMdatScope"]>(),
     setDesignName: vi.fn<ExportActions["setDesignName"]>(),
@@ -88,12 +92,15 @@ function actions() {
 /** The screen inside the frame with its header, as the app mounts it. */
 function Mounted({ view, act, confirm = false }: { view: ExportView; act: ExportActions; confirm?: boolean }) {
   const t = useT();
-  const header = exportHeader(view, act, t);
+  // The tabs work as in the app: the frame keeps the tab the session would.
+  const [tab, setTab] = useState(view.tab);
+  const shown = { ...view, tab };
+  const live = { ...act, selectTab: (next: ExportTab) => { act.selectTab(next); setTab(next); } };
+  const header = exportHeader(shown, t);
   return (
     <AppFrame
-      model={exportFrame(view)}
+      model={exportFrame(shown)}
       onNavigate={() => {}}
-      primary={header.primary}
       headerStatus={header.status}
       projectActions={{ onNew: () => {}, onOpen: () => {}, onSave: () => {}, onSaveAs: () => {} }}
       onHelp={() => {}}
@@ -101,12 +108,14 @@ function Mounted({ view, act, confirm = false }: { view: ExportView; act: Export
       tray={<div />}
       shortcuts={false}
     >
-      <ExportScreen view={view} actions={act} initialRevertConfirm={confirm} />
+      <ExportScreen view={shown} actions={live} initialRevertConfirm={confirm} />
     </AppFrame>
   );
 }
 
 const ui = (id: string) => document.querySelector<HTMLElement>(`[data-ui="${id}"]`);
+/** Opens the tab that holds `kind`, as a click on it does. */
+const show = (kind: ExportKind) => fireEvent.click(ui(`export.tab.${tabOf(kind)}`)!);
 const t: Translate = (key, params) => translate("ko", key, params);
 const button = (id: string) => ui(id) as HTMLButtonElement;
 const described = (el: HTMLElement) => document.getElementById(el.getAttribute("aria-describedby") ?? "")?.textContent;
@@ -116,33 +125,39 @@ describe("적용", () => {
     for (const locale of ["ko", "en"] as const) {
       for (const [name, view] of Object.entries(STATES)) {
         const { unmount } = renderWith(<Mounted view={view} act={actions()} />, { locale });
-        expect(ui("export.apply.camilla.panel"), name).not.toBeNull();
-        expect(ui("export.apply.eqapo.panel"), name).not.toBeNull();
-        expect(document.body.textContent, name).not.toMatch(/\{\w+\}/);
+        for (const [kind, target] of [["camilla_dsp", "camilla"], ["equalizer_apo", "eqapo"]] as const) {
+          show(kind);
+          expect(ui(`export.apply.${target}.panel`), name).not.toBeNull();
+          expect(document.body.textContent, name).not.toMatch(/\{\w+\}/);
+        }
         unmount();
       }
     }
   }, 15_000);
 
-  it("offers 파일만, 적용 and 관리 under the CamillaDSP and Equalizer APO rows and writes the choice", () => {
+  it("offers 파일만, 적용 and 관리 under the CamillaDSP and Equalizer APO panels and writes the choice", () => {
     const act = actions();
     const { unmount } = renderWith(<Mounted view={exportReady} act={act} />);
     for (const target of ["camilla", "eqapo"] as const) {
+      show(target === "camilla" ? "camilla_dsp" : "equalizer_apo");
       const row = ui(target === "camilla" ? "export.kind.camilla_dsp" : "export.kind.equalizer_apo")!;
       const group = within(row).getByRole("radiogroup", { name: "적용 방식" });
       expect(group).toBe(ui(`export.apply.${target}.level`));
       expect(within(group).getAllByRole("radio").map((radio) => radio.textContent)).toEqual(["파일만", "적용", "관리"]);
       // 파일만 is the default.
       expect(within(group).getByRole("radio", { checked: true }).textContent).toBe("파일만");
+      // 파일만 draws no address or status in either target's own panel.
+      if (target === "camilla") expect(ui("export.apply.camilla.address")).toBeNull();
+      expect(ui(`export.apply.${target}.state`)).toBeNull();
       fireEvent.click(within(group).getByRole("radio", { name: "적용" }));
       fireEvent.click(within(group).getByRole("radio", { name: "관리" }));
     }
     expect(act.setApplyLevel.mock.calls).toEqual([["camilla", "apply"], ["camilla", "manage"], ["eqapo", "apply"], ["eqapo", "manage"]]);
-    // 파일만 draws nothing else: no address, no status.
-    expect(ui("export.apply.camilla.address")).toBeNull();
-    expect(ui("export.apply.eqapo.state")).toBeNull();
     // The other filter rows have no choice.
-    for (const kind of ["filter_text", "convolution", "before_after_mdat"]) expect(ui(`export.kind.${kind}`)!.querySelector("[data-ui$='.level']"), kind).toBeNull();
+    for (const kind of ["filter_text", "convolution", "before_after_mdat"] as const) {
+      show(kind);
+      expect(ui(`export.kind.${kind}`)!.querySelector("[data-ui$='.level']"), kind).toBeNull();
+    }
     unmount();
     // 관리 stored by another client reads as 관리.
     renderWith(<Mounted view={{ ...applyCamillaThis, apply: { ...applyCamillaThis.apply, settings: { ...applyCamillaThis.apply.settings, camilla: { level: "manage", address: "127.0.0.1:1234" } } } }} act={actions()} />);
@@ -158,33 +173,42 @@ describe("적용", () => {
     expect(document.getElementById(`${group.id}-hint`)?.textContent).toBe("Equalizer APO 적용은 Windows에서만 지원합니다.");
     expect(group.getAttribute("aria-describedby")).toContain(`${group.id}-hint`);
     // CamillaDSP's websocket works anywhere.
+    show("camilla_dsp");
     expect((within(ui("export.apply.camilla.level")!).getByRole("radio", { name: "적용" }) as HTMLButtonElement).disabled).toBe(false);
     unmount();
     renderWith(<Mounted view={exportTutorial} act={actions()} />);
     expect(ui("export.apply.camilla.panel")).toBeNull();
+    show("equalizer_apo");
     expect(ui("export.apply.eqapo.panel")).toBeNull();
   });
 
-  it("turns the header's primary into CamillaDSP에 적용 and keeps the export in the row as a secondary action", () => {
-    // 파일만: the header exports, the row has no button of its own.
-    const files = exportHeader(exportReady, actions(), t);
-    expect(files.primary).toMatchObject({ id: "export.run.camilla_dsp", label: "CamillaDSP 설정 내보내기", busy: false, disabled: false });
+  it("fills the panel's export action for 파일만 and its apply action for 적용, leaving the header without a button", () => {
     const act = actions();
     const { unmount } = renderWith(<Mounted view={exportReady} act={act} />);
+    expect(exportHeader(exportReady, t)).not.toHaveProperty("primary");
     expect(ui("export.apply.camilla")).toBeNull();
-    expect(ui("export.kind.camilla_dsp")!.querySelector("[data-ui='export.run.camilla_dsp']")).toBeNull();
-    fireEvent.click(ui("export.run.camilla_dsp")!);
+    const files = button("export.run.camilla_dsp");
+    expect(files.textContent).toBe("CamillaDSP 설정 내보내기");
+    expect(files.disabled).toBe(false);
+    expect(files.getAttribute("aria-busy")).toBeNull();
+    expect(files.closest(".export-item__action")?.closest("[data-ui='export.kind.camilla_dsp']")).toBe(ui("export.kind.camilla_dsp"));
+    expect([...document.querySelectorAll(".ui-button--primary")]).toEqual([files]);
+    expect(document.querySelector(".step-header .ui-button")).toBeNull();
+    fireEvent.click(files);
     expect(act.exportFiles.mock.calls).toEqual([["camilla_dsp"]]);
     unmount();
-    // 적용: the header applies; 내보내기 stays in the row.
+    // 적용: the panel applies; the export stays beside it as secondary.
     const applying = actions();
     const { unmount: unmountApply } = renderWith(<Mounted view={applyCamillaThis} act={applying} />);
     const primary = button("export.apply.camilla");
     expect(primary.textContent).toBe("CamillaDSP에 적용");
-    expect(primary.classList.contains("ui-button--primary")).toBe(true);
-    expect(primary.closest(".step-header")).not.toBeNull();
+    expect(primary.disabled).toBe(false);
+    expect(primary.getAttribute("aria-busy")).toBeNull();
+    expect([...document.querySelectorAll(".ui-button--primary")]).toEqual([primary]);
+    expect(document.querySelector(".step-header .ui-button")).toBeNull();
     const save = button("export.run.camilla_dsp");
-    expect(save.closest("[data-ui='export.kind.camilla_dsp']")).not.toBeNull();
+    expect(primary.closest(".export-item__action")).toBe(save.closest(".export-item__action"));
+    expect(save.closest("[data-ui='export.kind.camilla_dsp']")).toBe(ui("export.kind.camilla_dsp"));
     expect(save.textContent).toBe("CamillaDSP 설정 저장");
     expect(save.classList.contains("ui-button--secondary")).toBe(true);
     fireEvent.click(primary);
@@ -192,35 +216,44 @@ describe("적용", () => {
     expect(applying.applyCamilla).toHaveBeenCalledTimes(1);
     expect(applying.exportFiles.mock.calls).toEqual([["camilla_dsp"]]);
     unmountApply();
-    // Running: the primary spins, every export is off, the pill names the job.
+    // Running: the filled action spins, every export is off, the pill names the job.
     renderWith(<Mounted view={applyCamillaApplying} act={actions()} />);
     expect(button("export.apply.camilla").getAttribute("aria-busy")).toBe("true");
-    // (The staged mdat sits under the closed 고급.)
-    for (const kind of EXPORT_KINDS.filter((kind) => kind !== "staged_mdat")) expect(button(`export.run.${kind}`).disabled, kind).toBe(true);
+    expect(button("export.apply.camilla").disabled).toBe(true);
+    expect([...document.querySelectorAll(".ui-button--primary")]).toEqual([ui("export.apply.camilla")]);
+    for (const kind of EXPORT_KINDS) {
+      show(kind);
+      if (kind === "staged_mdat") fireEvent.click(ui("export.advanced")!);
+      expect(button(`export.run.${kind}`).disabled, kind).toBe(true);
+    }
     expect(screen.getByText("CamillaDSP에 적용 중")).toBeTruthy();
   });
 
-  it("applies Equalizer APO from its row, the export quiet beside it, and holds it off with the reason when it is not installed", () => {
+  it("applies Equalizer APO from its panel, the export secondary beside it, and holds it off with the reason when it is not installed", () => {
     const act = actions();
     const { unmount } = renderWith(<Mounted view={applyEqapoAbsent} act={act} />);
     const row = ui("export.kind.equalizer_apo")!;
     const apply = within(row).getByRole("button", { name: "Equalizer APO에 적용" }) as HTMLButtonElement;
     expect(apply).toBe(ui("export.apply.eqapo"));
-    expect(apply.classList.contains("ui-button--secondary")).toBe(true);
+    expect(apply.classList.contains("ui-button--primary")).toBe(true);
+    expect([...document.querySelectorAll(".ui-button--primary")]).toEqual([apply]);
     const save = button("export.run.equalizer_apo");
-    expect(save.classList.contains("ui-button--quiet")).toBe(true);
+    expect(save.classList.contains("ui-button--secondary")).toBe(true);
+    expect(apply.closest(".export-item__action")).toBe(save.closest(".export-item__action"));
     expect(apply.compareDocumentPosition(save) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     fireEvent.click(apply);
     fireEvent.click(save);
     expect(act.applyEqapo).toHaveBeenCalledTimes(1);
     expect(act.exportFiles.mock.calls).toEqual([["equalizer_apo"]]);
-    // The header still exports CamillaDSP (its row is 파일만).
-    expect(ui("export.run.camilla_dsp")?.closest(".step-header")).not.toBeNull();
+    expect(document.querySelector(".step-header .ui-button")).toBeNull();
+    expect(ui("export.run.camilla_dsp")).toBeNull();
     unmount();
     const missing = actions();
     renderWith(<Mounted view={applyEqapoMissing} act={missing} />);
     const off = button("export.apply.eqapo");
     expect(off.disabled).toBe(true);
+    expect([...document.querySelectorAll(".ui-button--primary")]).toEqual([off]);
+    expect(document.querySelector(".step-header .ui-button")).toBeNull();
     expect(described(off)).toBe("Equalizer APO가 없어 적용할 수 없습니다. 설치한 뒤 '다시 확인'을 누르십시오.");
     // 적용 stays chosen.
     expect(within(ui("export.apply.eqapo.level")!).getByRole("radio", { checked: true }).textContent).toBe("적용");
@@ -244,7 +277,7 @@ describe("적용", () => {
     expect(act.setCamillaAddress.mock.calls).toEqual([["127.0.0.1:1235"]]);
     expect(act.saveCamillaAddress).toHaveBeenCalledTimes(2);
     unmount();
-    // An address without a port: the field says why and the header's primary is off with the reason.
+    // An address without a port: the field says why and the panel's filled action is off with the reason.
     const bad = actions();
     const { unmount: unmountBad } = renderWith(<Mounted view={applyCamillaBadAddress} act={bad} />);
     const field = ui("export.apply.camilla.address") as HTMLInputElement;
@@ -254,6 +287,8 @@ describe("적용", () => {
     expect(described(field)).toBe(ui("export.apply.camilla.address.problem")?.textContent);
     const primary = button("export.apply.camilla");
     expect(primary.disabled).toBe(true);
+    expect([...document.querySelectorAll(".ui-button--primary")]).toEqual([primary]);
+    expect(document.querySelector(".step-header .ui-button")).toBeNull();
     expect(ui("export.status.problem")?.textContent).toBe("CamillaDSP 주소 수정 필요");
     expect(described(primary)).toBe("CamillaDSP 주소 수정 필요");
     fireEvent.click(primary);
@@ -376,10 +411,36 @@ describe("적용", () => {
     expect(ui("export.apply.eqapo.outcome")?.textContent).toBe("config.txt의 SECS 2R 줄 제거 완료");
   });
 
-  it("writes each outcome in the row's words: applied, rolled back with CamillaDSP's error, no write access with the folder", () => {
+  it("puts apply then export outcomes before the apply choice and fields in each target's panel", () => {
+    for (const [base, kind, target] of [[applyCamillaApplied, "camilla_dsp", "camilla"], [applyEqapoPresent, "equalizer_apo", "eqapo"]] as const) {
+      const view: ExportView = {
+        ...base,
+        runs: { [kind]: exportDone.runs.camilla_dsp! },
+        apply: { ...base.apply, runs: { [target]: applyCamillaApplied.apply.runs.camilla! } },
+      };
+      const { unmount } = renderWith(<Mounted view={view} act={actions()} />);
+      const applied = ui(`export.apply.${target}.outcome`)!;
+      const exported = ui(`export.outcome.${kind}`)!;
+      expect(applied.closest(`[data-ui='export.apply.${target}.panel']`)).toBeNull();
+      expect(ui(`export.apply.${target}`)!.compareDocumentPosition(applied) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+      expect(applied.compareDocumentPosition(exported) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+      for (const id of [`export.apply.${target}.panel`, "export.design_name.field", "export.folder"]) {
+        expect(exported.compareDocumentPosition(ui(id)!) & Node.DOCUMENT_POSITION_FOLLOWING, id).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+      }
+      if (target === "camilla") expect(exported.compareDocumentPosition(ui("export.devices")!) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+      unmount();
+    }
+  });
+
+  it("writes each outcome in the panel's words: applied, rolled back with CamillaDSP's error, no write access with the folder", () => {
     const act = actions();
     const { unmount } = renderWith(<Mounted view={applyCamillaApplied} act={act} />);
-    expect(ui("export.apply.camilla.outcome")?.textContent).toContain("CamillaDSP 적용 완료");
+    const outcome = ui("export.apply.camilla.outcome")!;
+    expect(outcome.textContent).toContain("CamillaDSP 적용 완료");
+    expect(outcome.closest("[data-ui='export.apply.camilla.panel']")).toBeNull();
+    for (const id of ["export.apply.camilla.panel", "export.devices", "export.design_name.field", "export.folder"]) {
+      expect(outcome.compareDocumentPosition(ui(id)!) & Node.DOCUMENT_POSITION_FOLLOWING, id).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    }
     fireEvent.click(ui("export.apply.camilla.outcome.open")!);
     expect(act.openFolder.mock.calls).toEqual([["C:/Users/demo/AppData/Roaming/SECS2R/applied/camilladsp"]]);
     expect(ui("export.status.problem")).toBeNull();
@@ -388,6 +449,7 @@ describe("적용", () => {
     // Rolled back: CamillaDSP's own words stay in sight; the header says it failed.
     const { unmount: unmountRolled } = renderWith(<Mounted view={applyCamillaRolledBack} act={actions()} />);
     const rolled = ui("export.apply.camilla.outcome")!;
+    expect(rolled.compareDocumentPosition(ui("export.apply.camilla.panel")!) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
     expect(rolled.textContent).toContain("CamillaDSP가 새 설정을 읽지 못해 이전 설정으로 되돌렸습니다.");
     expect(ui("export.apply.camilla.outcome.camilla_error")?.textContent).toBe("Reload: Playback error: could not open device 'Speakers (Tesira)': the device is in use by another application");
     expect(rolled.textContent).toContain("오류에 표시된 장치나 설정을 고친 뒤 다시 적용하십시오.");
@@ -396,6 +458,7 @@ describe("적용", () => {
     // No write access: the folder, and that it needs write access; no elevation offered.
     const { unmount: unmountDenied } = renderWith(<Mounted view={applyEqapoDenied} act={actions()} />);
     const denied = ui("export.apply.eqapo.outcome")!;
+    expect(denied.compareDocumentPosition(ui("export.apply.eqapo.panel")!) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
     expect(denied.textContent).toContain("Equalizer APO 설정 폴더에 쓸 권한이 없습니다.");
     expect(ui("export.apply.eqapo.outcome.path")?.textContent).toBe("C:/Program Files/EqualizerAPO/config/SECS2R");
     expect(denied.textContent).toContain("현재 계정에 이 폴더의 쓰기 권한을 부여한 뒤 다시 적용하십시오.");

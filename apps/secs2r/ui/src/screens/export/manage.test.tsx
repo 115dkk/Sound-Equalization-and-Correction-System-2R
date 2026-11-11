@@ -3,6 +3,7 @@
 // executable field, the service block in each state, the primary that
 // applies and hands over, the 관리 끄기 confirm, and Windows only.
 import { fireEvent, screen, within } from "@testing-library/react";
+import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { AppFrame } from "../../app/AppFrame";
 import { HOST_NOW } from "../../host/fixtures";
@@ -28,7 +29,7 @@ import {
   manageEqapoRepaired,
   manageNotWindows,
 } from "./fixtures";
-import type { ExportActions, ExportView } from "./types";
+import type { ExportActions, ExportTab, ExportView } from "./types";
 
 const STATES: Record<string, ExportView> = {
   manageCamillaApplied,
@@ -48,7 +49,7 @@ const STATES: Record<string, ExportView> = {
 
 function actions() {
   const names = [
-    "exportFiles", "setMdatScope", "setDesignName", "setCamillaDevices", "refreshDevices", "changeFolder", "openFolder", "goToCalibrate", "recalibrate",
+    "selectTab", "exportFiles", "setMdatScope", "setDesignName", "setCamillaDevices", "refreshDevices", "changeFolder", "openFolder", "goToCalibrate", "recalibrate",
     "setApplyLevel", "setCamillaAddress", "saveCamillaAddress", "refreshApplyStatus", "applyCamilla", "applyEqapo", "revertEqapo",
     "setCamillaExe", "saveCamillaExe", "pickCamillaExe", "installHost", "stopManaging",
   ] as const satisfies readonly (keyof ExportActions)[];
@@ -57,12 +58,15 @@ function actions() {
 
 function Mounted({ view, act }: { view: ExportView; act: ExportActions }) {
   const t = useT();
-  const header = exportHeader(view, act, t);
+  // The tabs work as in the app: the frame keeps the tab the session would.
+  const [tab, setTab] = useState(view.tab);
+  const shown = { ...view, tab };
+  const live = { ...act, selectTab: (next: ExportTab) => { act.selectTab(next); setTab(next); } };
+  const header = exportHeader(shown, t);
   return (
     <AppFrame
-      model={exportFrame(view)}
+      model={exportFrame(shown)}
       onNavigate={() => {}}
-      primary={header.primary}
       headerStatus={header.status}
       projectActions={{ onNew: () => {}, onOpen: () => {}, onSave: () => {}, onSaveAs: () => {} }}
       onHelp={() => {}}
@@ -70,7 +74,7 @@ function Mounted({ view, act }: { view: ExportView; act: ExportActions }) {
       tray={<div />}
       shortcuts={false}
     >
-      <ExportScreen view={view} actions={act} />
+      <ExportScreen view={shown} actions={live} />
     </AppFrame>
   );
 }
@@ -85,8 +89,11 @@ describe("관리", () => {
     for (const locale of ["ko", "en"] as const) {
       for (const [name, view] of Object.entries(STATES)) {
         const { unmount } = renderWith(<Mounted view={view} act={actions()} />, { locale });
-        expect(ui("export.apply.camilla.panel"), name).not.toBeNull();
-        expect(document.body.textContent, name).not.toMatch(/\{\w+\}/);
+        for (const [tab, target] of [["camilla_dsp", "camilla"], ["equalizer_apo", "eqapo"]] as const) {
+          fireEvent.click(ui(`export.tab.${tab}`)!);
+          expect(ui(`export.apply.${target}.panel`), name).not.toBeNull();
+          expect(document.body.textContent, name).not.toMatch(/\{\w+\}/);
+        }
         unmount();
       }
     }
@@ -98,6 +105,8 @@ describe("관리", () => {
     const primary = button("export.apply.camilla");
     expect(primary.textContent).toBe("CamillaDSP 관리 시작");
     expect(primary.disabled).toBe(true);
+    expect([...document.querySelectorAll(".ui-button--primary")]).toEqual([primary]);
+    expect(document.querySelector(".step-header .ui-button")).toBeNull();
     expect(ui("export.status.problem")?.textContent).toBe("CamillaDSP 실행 파일 필요");
     expect(described(primary)).toBe("CamillaDSP 실행 파일 필요");
     const field = screen.getByLabelText("CamillaDSP 실행 파일") as HTMLInputElement;
@@ -125,7 +134,7 @@ describe("관리", () => {
     expect(act.setCamillaExe.mock.calls).toEqual([["C:/Program Files/CamillaDSP/camilladsp.exe"]]);
   });
 
-  it("says why the service is needed, installs it from the row, and says what to do when it is stopped", () => {
+  it("says why the service is needed, installs it from the panel, and says what to do when it is stopped", () => {
     const act = actions();
     const { unmount } = renderWith(<Mounted view={manageCamillaNotInstalled} act={act} />);
     expect(ui("export.manage.camilla.service")?.textContent).toBe("설치 안 됨");
@@ -151,7 +160,8 @@ describe("관리", () => {
     expect(failure.textContent).toContain("서비스를 설치하지 못했습니다.");
     expect(failure.textContent).toContain(t("host.install.failed.next"));
     expect(failure.querySelector("details pre")?.textContent).toBe("[apply_failed] elevated install: The operation was canceled by the user. (os error 1223)");
-    // Only in the row it came from.
+    // Only in the panel it came from; opening the other destination shows no failure.
+    fireEvent.click(ui("export.tab.equalizer_apo")!);
     expect(ui("export.manage.eqapo.failure")).toBeNull();
     unmountFailed();
     const stopped = actions();
@@ -177,6 +187,9 @@ describe("관리", () => {
     // 관리 시작 is on: it applies again and hands over again.
     const primary = button("export.apply.camilla");
     expect(primary.disabled).toBe(false);
+    expect([...document.querySelectorAll(".ui-button--primary")]).toEqual([primary]);
+    expect(document.querySelector(".step-header .ui-button")).toBeNull();
+    expect(button("export.run.camilla_dsp").classList.contains("ui-button--secondary")).toBe(true);
     fireEvent.click(primary);
     expect(running.applyCamilla).toHaveBeenCalledTimes(1);
     unmountRunning();
@@ -229,7 +242,7 @@ describe("관리", () => {
     expect(eqapo.stopManaging.mock.calls).toEqual([["eqapo"]]);
   });
 
-  it("starts Equalizer APO's 관리 from its row and reads its line repair and the last repair time", () => {
+  it("starts Equalizer APO's 관리 from its panel and reads its line repair and the last repair time", () => {
     const act = actions();
     const { unmount } = renderWith(<Mounted view={manageEqapoRepaired} act={act} />);
     const run = button("export.apply.eqapo");
@@ -243,8 +256,11 @@ describe("관리", () => {
     expect(ui("export.manage.eqapo.repair")?.querySelector("time")?.getAttribute("datetime")).toBe(repaired);
     // The 적용 facts stay: the install, the line and the design.
     expect(ui("export.apply.eqapo.line")?.textContent).toBe("SECS 2R 줄 있음");
-    // The header's primary still exports CamillaDSP (its row is 파일만).
-    expect(ui("export.run.camilla_dsp")?.closest(".step-header")).not.toBeNull();
+    expect([...document.querySelectorAll(".ui-button--primary")]).toEqual([run]);
+    expect(document.querySelector(".step-header .ui-button")).toBeNull();
+    expect(button("export.run.equalizer_apo").classList.contains("ui-button--secondary")).toBe(true);
+    expect(run.closest(".export-item__action")).toBe(button("export.run.equalizer_apo").closest(".export-item__action"));
+    expect(ui("export.run.camilla_dsp")).toBeNull();
     unmount();
     // The service not installed: the row's button is off and points at why.
     const missing: ExportView = { ...manageEqapoRepaired, apply: { ...manageEqapoRepaired.apply, host: manageCamillaNotInstalled.apply.host } };
@@ -254,13 +270,15 @@ describe("관리", () => {
     expect(described(off)).toBe(t("host.install.why"));
   });
 
-  it("keeps 관리 off with the reason off Windows, in both rows", () => {
+  it("keeps 관리 off with the reason off Windows, in both panels", () => {
     const { unmount } = renderWith(<Mounted view={manageNotWindows} act={actions()} />);
     for (const target of ["camilla", "eqapo"] as const) {
+      fireEvent.click(ui(`export.tab.${target === "camilla" ? "camilla_dsp" : "equalizer_apo"}`)!);
       const group = ui(`export.apply.${target}.level`)!;
       expect((within(group).getByRole("radio", { name: "관리" }) as HTMLButtonElement).disabled, target).toBe(true);
       expect(group.getAttribute("aria-describedby"), target).toContain(`${group.id}-hint`);
     }
+    fireEvent.click(ui("export.tab.camilla_dsp")!);
     expect(document.getElementById("export.apply.camilla.level-hint")?.textContent).toBe("관리는 Windows에서만 지원합니다.");
     // CamillaDSP's 적용 stays available, and no service block is drawn.
     expect((within(ui("export.apply.camilla.level")!).getByRole("radio", { name: "적용" }) as HTMLButtonElement).disabled).toBe(false);
@@ -274,6 +292,25 @@ describe("관리", () => {
     expect(ui("export.status.problem")?.textContent).toBe("Windows 전용");
     expect(ui("export.manage.camilla")).toBeNull();
     expect(ui("export.manage.camilla.exe")).toBeNull();
+  });
+
+  it("keeps each management panel's filled action busy and its file export disabled during its apply", () => {
+    for (const [base, kind, target] of [[manageCamillaRunning, "camilla_dsp", "camilla"], [manageEqapoRepaired, "equalizer_apo", "eqapo"]] as const) {
+      const act = actions();
+      const { unmount } = renderWith(<Mounted view={{ ...base, apply: { ...base.apply, applying: target } }} act={act} />);
+      const primary = button(`export.apply.${target}`);
+      expect([...document.querySelectorAll(".ui-button--primary")]).toEqual([primary]);
+      expect(document.querySelector(".step-header .ui-button")).toBeNull();
+      expect(primary.getAttribute("aria-busy")).toBe("true");
+      expect(primary.disabled).toBe(true);
+      expect(button(`export.run.${kind}`).disabled).toBe(true);
+      expect(button(`export.run.${kind}`).classList.contains("ui-button--secondary")).toBe(true);
+      expect(document.getElementById("frame.header.export.status")?.textContent).toBe(t(`export.status.managing.${target}`));
+      fireEvent.click(primary);
+      expect(act.applyCamilla).not.toHaveBeenCalled();
+      expect(act.applyEqapo).not.toHaveBeenCalled();
+      unmount();
+    }
   });
 
   it("says what the service now does once 관리 started, and what to do when camilladsp.exe was missing", () => {

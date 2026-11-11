@@ -490,6 +490,29 @@ describe("useExportScreen 적용", () => {
     expect(result.current.view?.apply.runs.eqapo).toMatchObject({ status: "failed", error: { code: "unsupported" } });
   });
 
+  it("opens on the tab the stored levels point at, keeps a picked tab for the session across projects, and reads nothing for it", async () => {
+    const { result } = renderHook(useExportScreen, { wrapper });
+    await perform(() => {});
+    // Both targets write files: CamillaDSP's tab.
+    expect(result.current.view?.tab).toBe("camilla_dsp");
+    // Equalizer APO alone beyond 파일만: that is where this user applies.
+    await perform(() => result.current.actions.setApplyLevel("eqapo", "apply"));
+    expect(result.current.view?.tab).toBe("equalizer_apo");
+    // With CamillaDSP beyond 파일만 too, CamillaDSP's again.
+    await perform(() => result.current.actions.setApplyLevel("camilla", "manage"));
+    expect(result.current.view?.tab).toBe("camilla_dsp");
+    // A picked tab wins over the levels, costs no request, and stays when another project opens.
+    mock.calls.length = 0;
+    await perform(() => result.current.actions.selectTab("rew"));
+    expect(result.current.view?.tab).toBe("rew");
+    expect(session.host.getSnapshot().exportTab).toBe("rew");
+    expect(mock.calls).toEqual([]);
+    await perform(() => result.current.actions.setApplyLevel("camilla", "files"));
+    expect(result.current.view?.tab).toBe("rew");
+    await perform(() => session.call({ method: "project_open", params: { path: "/projects/next.secs" } }));
+    expect(result.current.view?.tab).toBe("rew");
+  });
+
   it("clears the apply outcomes for a new result and a new project, and keeps the levels", async () => {
     await withResult();
     const { result } = renderHook(useExportScreen, { wrapper });

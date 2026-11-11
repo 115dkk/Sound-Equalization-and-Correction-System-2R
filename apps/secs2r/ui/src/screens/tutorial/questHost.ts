@@ -3,7 +3,7 @@ import type { SystemActions, SystemView } from "../system/types";
 import type { ConnectActions, ConnectState } from "../connect/types";
 import type { MeasureActions, MeasureView } from "../measure/types";
 import type { CalibrateActions, CalibrateView } from "../calibrate/types";
-import type { ExportView } from "../export/types";
+import type { ExportActions, ExportView } from "../export/types";
 
 /** Only screen data used by the quests; no service calls or DOM clicks. */
 export type TutorialView = {
@@ -20,6 +20,7 @@ export type TutorialHost = {
   connect: Pick<ConnectActions, "choosePath" | "skipLevels" | "next">;
   measure: Pick<MeasureActions, "loadSample" | "openCalibrate" | "setGraphHidden">;
   calibrate: Pick<CalibrateActions, "calibrate" | "calibrateSubs" | "selectTab" | "changeSetting">;
+  export: Pick<ExportActions, "selectTab">;
   goTo: (step: StepId) => void;
 };
 

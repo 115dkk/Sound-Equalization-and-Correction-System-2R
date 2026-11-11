@@ -838,6 +838,8 @@ class Scenario:
                    if device["name"].casefold() == VIRTUAL_OUTPUT.casefold()]
         require(len(devices) == 1, f"Expected one VB-CABLE render endpoint: {devices}")
         name = devices[0]["name"]
+        # The export screen draws one destination at a time: the devices stand in CamillaDSP's tab.
+        self.click("export.tab.camilla_dsp")
         disclosure = self.shown(ui("export.devices"))
         if self.driver.attribute(disclosure, "aria-expanded") != "true":
             self.click("export.devices")
@@ -1069,6 +1071,7 @@ class Scenario:
             config = self.args.eqapo_config / "config.txt"
             before = config.read_bytes()
             (self.artifacts / "config-before.txt").write_bytes(before)
+            self.click("export.tab.equalizer_apo")
             self.click("export.apply.eqapo.level.manage")
             self.gui_apply("eqapo")
             applied = config.read_bytes()

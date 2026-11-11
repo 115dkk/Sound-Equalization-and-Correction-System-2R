@@ -657,7 +657,7 @@ export const TOUR_SCENES: TourScene[] = [
       await inProgress(mock);
       await calibrated(mock);
     },
-    ops: [...choosePath("native", "export"), click(`.step-header ${ui("export.run.camilla_dsp")}`)],
+    ops: [...choosePath("native", "export"), click(ui("export.run.camilla_dsp"))],
   },
   {
     id: "export.done",
@@ -667,21 +667,21 @@ export const TOUR_SCENES: TourScene[] = [
       await inProgress(mock);
       await calibrated(mock);
     },
-    ops: [...choosePath("native", "export"), click(`.step-header ${ui("export.run.camilla_dsp")}`), drain],
+    ops: [...choosePath("native", "export"), click(ui("export.run.camilla_dsp")), drain],
   },
   {
     id: "export.filters",
     step: "export",
     title: { ko: "DSP에 넣을 필터", en: "Filters for the DSP" },
     note: {
-      ko: "서브가 있는 결과라 필터 값 텍스트는 꺼지고 그 이유가 줄 안에 보입니다.",
-      en: "The result has subs, so the filter text is off and its row says why.",
+      ko: "서브가 있는 결과라 필터 값 텍스트 탭은 꺼지고 그 이유가 단추 아래에 보입니다.",
+      en: "The result has subs, so the filter text tab is off and says why under its button.",
     },
     setup: async (mock) => {
       await inProgress(mock);
       await calibrated(mock);
     },
-    ops: [...choosePath("native", "export"), reveal(ui("export.files"))],
+    ops: [...choosePath("native", "export"), click(ui("export.tab.filter_text")), reveal(ui("export.files"))],
   },
   {
     id: "export.eqapo-done",
@@ -695,7 +695,7 @@ export const TOUR_SCENES: TourScene[] = [
       await inProgress(mock);
       await calibrated(mock);
     },
-    ops: [...choosePath("native", "export"), reveal(ui("export.kind.filter_text")), click(ui("export.run.equalizer_apo")), drain],
+    ops: [...choosePath("native", "export"), click(ui("export.tab.equalizer_apo")), reveal(ui("export.files")), click(ui("export.run.equalizer_apo")), drain],
   },
   {
     id: "export.mimo-blocked",
@@ -715,26 +715,27 @@ export const TOUR_SCENES: TourScene[] = [
       await calibrated(mock);
       await mimo(mock);
     },
-    ops: [...choosePath("native", "export"), reveal(ui("export.files"))],
+    ops: [...choosePath("native", "export"), click(ui("export.tab.filter_text")), reveal(ui("export.files"))],
   },
   {
     id: "export.stale-cache",
     step: "export",
     title: { ko: "구 버전 결과의 mdat", en: "mdat for a result from an earlier version" },
     note: {
-      ko: "보정한 뒤 설정을 바꾸고 저장한 프로젝트를 다시 열어, 두 mdat 줄이 막히고 문장 뒤에 '재보정'이 섭니다.",
-      en: "A project saved after a settings change and reopened: both mdat rows are blocked, with 'Recalibrate' after the sentence.",
+      ko: "보정한 뒤 설정을 바꾸고 저장한 프로젝트를 다시 열어, REW 탭의 두 mdat이 막히고 문장 뒤에 '재보정'이 섭니다.",
+      en: "A project saved after a settings change and reopened: both mdat exports in the REW tab are blocked, with 'Recalibrate' after the sentence.",
     },
     setup: staleCache,
-    ops: [go("export"), click(ui("export.advanced")), reveal(ui("export.kind.before_after_mdat"))],
+    ops: [go("export"), click(ui("export.tab.rew")), click(ui("export.advanced")), reveal(ui("export.kind.before_after_mdat"))],
   },
   {
     id: "export.recalibrating",
     step: "export",
-    title: { ko: "mdat 줄에서 시작한 재보정", en: "Recalibrating from an mdat row" },
+    title: { ko: "REW 탭에서 시작한 재보정", en: "Recalibrating from the REW tab" },
     setup: staleCache,
     ops: [
       go("export"),
+      click(ui("export.tab.rew")),
       click(ui("export.advanced")),
       reveal(ui("export.kind.before_after_mdat")),
       click(ui("export.kind.before_after_mdat.recalibrate")),
@@ -750,7 +751,7 @@ export const TOUR_SCENES: TourScene[] = [
       await calibrated(mock);
       mock.failJobs("export", "export_failed", "C:/Users/demo/Documents/SECS_export/camilladsp: access is denied (os error 5)");
     },
-    ops: [...choosePath("native", "export"), click(`.step-header ${ui("export.run.camilla_dsp")}`), drain],
+    ops: [...choosePath("native", "export"), click(ui("export.run.camilla_dsp")), drain],
   },
 
   // 앱 틀

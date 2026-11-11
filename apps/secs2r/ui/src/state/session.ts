@@ -122,7 +122,7 @@ export function createSession(ipc: Ipc) {
     current: "system", path: null, selected: null, graphHidden: false, plotRange: { x: null, y: null },
     mdat: null, warnings: [], tab: "spl", channel: null, xoGroup: null, previewHz: null, targetEdit: "idle", xoEdit: "idle",
     xoRecTurnedOffByEdit: false, xoRecommendation: null, runs: {}, mdatScope: "all", failure: null, rangeRejection: null,
-    designName: "", camillaDevices: { capture: { type: "file" }, playback: { type: "file" } }, extraRates: [],
+    designName: "", camillaDevices: { capture: { type: "file" }, playback: { type: "file" } }, extraRates: [], exportTab: null,
     applyRuns: {}, applyAddressDraft: null, applyChecking: false, applyReverting: false,
     applyExeDraft: null, hostInstalling: false, hostStopping: false, hostFailure: null,
     micCalBusy: null, micCalError: null, rewExecutableError: null,

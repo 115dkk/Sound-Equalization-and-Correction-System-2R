@@ -96,6 +96,7 @@ const applyIdle: ApplyView = {
 
 /** A current result with MIMO, nothing exported yet. */
 export const exportReady: ExportView = {
+  tab: "camilla_dsp",
   results: { calibration: calibrationSummary, mimo: exportMimo, mimo_export: "included" },
   settings: { mode: "mixed", ultra_ms: 200, mimo_on: true },
   positions: 9,
@@ -131,13 +132,14 @@ export const exportStale: ExportView = {
  */
 export const exportStaleCache: ExportView = {
   ...exportStale,
+  tab: "rew",
   results: { ...exportStale.results, calibration: { ...calibrationSummary, stale: true, cached: true } },
 };
 
 /** The same, with the correction 재보정 started running. */
 export const exportRecalibrating: ExportView = { ...exportStaleCache, computing: true, recalibrating: true };
 
-export const exportExporting: ExportView = { ...exportReady, exporting: "before_after_mdat" };
+export const exportExporting: ExportView = { ...exportReady, tab: "rew", exporting: "before_after_mdat" };
 
 export const exportDone: ExportView = {
   ...exportReady,
@@ -164,14 +166,15 @@ export const exportDone: ExportView = {
 };
 
 /** The REW mdat set to carry the original measurements alone. */
-export const exportMeasurementsOnly: ExportView = { ...exportReady, mdatScope: "measurements" };
+export const exportMeasurementsOnly: ExportView = { ...exportReady, tab: "rew", mdatScope: "measurements" };
 
 /** The REW mdat set to carry the correction results alone. */
-export const exportResultsOnly: ExportView = { ...exportReady, mdatScope: "results" };
+export const exportResultsOnly: ExportView = { ...exportReady, tab: "rew", mdatScope: "results" };
 
 /** No result yet: the REW mdat can carry the measurements, and says so. */
 export const exportMeasurementsDone: ExportView = {
   ...exportNoResult,
+  tab: "rew",
   runs: {
     before_after_mdat: {
       status: "done",
@@ -184,7 +187,7 @@ export const exportMeasurementsDone: ExportView = {
 };
 
 /** No result and nothing measured: nothing to save. */
-export const exportNothingMeasured: ExportView = { ...exportNoResult, positions: 0 };
+export const exportNothingMeasured: ExportView = { ...exportNoResult, tab: "rew", positions: 0 };
 
 /** The old cache blocks the results, not the original measurements. */
 export const exportStaleCacheMeasurements: ExportView = { ...exportStaleCache, mdatScope: "measurements" };
@@ -221,6 +224,7 @@ const EQAPO = "D:/Audio/거실 보정/SECS_eqapo_RC_BA_mixed_20261014-142233";
 /** Subs, no MIMO: the Equalizer APO configuration was saved (the files as the service lists them: config.txt first). */
 export const exportEqapoDone: ExportView = {
   ...exportReady,
+  tab: "equalizer_apo",
   results: { calibration: calibrationSummary, mimo: null, mimo_export: "off" },
   settings: { mode: "mixed", ultra_ms: 200, mimo_on: false },
   folder: { folder: "D:/Audio/거실 보정", stored: true },
@@ -245,6 +249,7 @@ const CONVOLUTION = "D:/Audio/거실 보정/SECS_convolution_RC_BA_MIMO_mixed_20
 /** The convolution IR saved: a WAV and a CSV per input→output pair (subs fed from LFE), the guide, routing.json and the design record. */
 export const exportConvolutionDone: ExportView = {
   ...exportReady,
+  tab: "convolution",
   folder: { folder: "D:/Audio/거실 보정", stored: true },
   runs: {
     convolution: {
@@ -265,6 +270,7 @@ export const exportConvolutionDone: ExportView = {
 /** The convolution IR could not be written. */
 export const exportConvolutionFailed: ExportView = {
   ...exportReady,
+  tab: "convolution",
   runs: {
     convolution: {
       status: "failed",
@@ -277,7 +283,7 @@ export const exportConvolutionFailed: ExportView = {
 export const exportRate96k: ExportView = { ...exportReady, outputRate: { fixed: 96000 } };
 
 /** The same, the convolution IR also written at 44.1 and 192 kHz for a convolver that follows the playing rate. */
-export const exportExtraRates: ExportView = { ...exportRate96k, extraRates: [44100, 192000] };
+export const exportExtraRates: ExportView = { ...exportRate96k, tab: "convolution", extraRates: [44100, 192000] };
 
 /**
  * 자동 on a PC whose default playback device runs at 32 kHz: the CamillaDSP
@@ -474,6 +480,7 @@ export const applyCamillaRemote: ExportView = camillaApply({
 /** Equalizer APO set to 적용 on an XT install; one apply view per state below. CamillaDSP stays 파일만. */
 const eqapoApply = (apply: Partial<ApplyView>): ExportView => ({
   ...exportReady,
+  tab: "equalizer_apo",
   apply: { ...applyIdle, settings: { ...DEFAULT_APPLY, eqapo: { level: "apply" } }, status: status(camillaUnreachable, eqapoXt), ...apply },
 });
 
@@ -511,7 +518,7 @@ export const applyEqapoDenied: ExportView = eqapoApply({
 export const applyEqapoReverted: ExportView = eqapoApply({ runs: { eqapo: { status: "reverted" } } });
 
 /** Not Windows: Equalizer APO's 적용 is off with the reason. */
-export const applyEqapoNotWindows: ExportView = { ...exportReady, nativeDevices: null, apply: { ...applyIdle, windows: false } };
+export const applyEqapoNotWindows: ExportView = { ...exportReady, tab: "equalizer_apo", nativeDevices: null, apply: { ...applyIdle, windows: false } };
 
 /* ── 관리 (ADR 0018) ────────────────────────────────────────────────────── */
 
@@ -578,6 +585,7 @@ export const manageCamillaHandedOver: ExportView = camillaManage(hostView("runni
 /** Equalizer APO set to 관리 on the XT install with this design; the service put SECS 2R's line back two minutes ago. */
 export const manageEqapoRepaired: ExportView = {
   ...exportReady,
+  tab: "equalizer_apo",
   apply: {
     ...applyIdle,
     settings: { ...DEFAULT_APPLY, eqapo: { level: "manage" } },

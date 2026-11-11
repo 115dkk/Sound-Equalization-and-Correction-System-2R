@@ -34,6 +34,14 @@ const PATHS = {
   axes: ["M4.5 4v15.5H20", "M8 15.5l3.5-4.5 3 2.5L19 8"],
   file: ["M7 3.5h6.5L18 8v11.5a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1v-15a1 1 0 0 1 1-1z", "M13.5 3.5V8H18"],
   dot: ["M12 12h.01"],
+  // Export destinations: a DSP engine, a system equalizer's faders, an impulse response, values written out as text.
+  chip: [
+    "M8.5 7h7A1.5 1.5 0 0 1 17 8.5v7a1.5 1.5 0 0 1-1.5 1.5h-7A1.5 1.5 0 0 1 7 15.5v-7A1.5 1.5 0 0 1 8.5 7z",
+    "M10 7V4.5", "M14 7V4.5", "M10 19.5V17", "M14 19.5V17", "M7 10H4.5", "M7 14H4.5", "M19.5 10H17", "M19.5 14H17",
+  ],
+  sliders: ["M7 4.5v15", "M12 4.5v15", "M17 4.5v15", "M5 9h4", "M10 15h4", "M15 7.5h4"],
+  impulse: ["M3.5 14.5h4.2l1.4-9.5 2 14 1.7-7.5 1.4 4.5 1.2-1.5h5.1"],
+  text: ["M7 3.5h6.5L18 8v11.5a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1v-15a1 1 0 0 1 1-1z", "M13.5 3.5V8H18", "M9.5 12.5h5", "M9.5 16h5"],
 } as const;
 
 export type IconName = keyof typeof PATHS;

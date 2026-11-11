@@ -26,7 +26,7 @@ const host: TutorialHost = {
   system: { setOutput: noop, renumberOutputs: noop, next: noop },
   connect: { choosePath: noop, skipLevels: noop, next: noop },
   measure: { loadSample: noop, openCalibrate: noop, setGraphHidden: noop },
-  calibrate: { calibrate: noop, calibrateSubs: noop, selectTab: noop, changeSetting: async () => true }, goTo: noop,
+  calibrate: { calibrate: noop, calibrateSubs: noop, selectTab: noop, changeSetting: async () => true }, export: { selectTab: noop }, goTo: noop,
 };
 function useQuestHost() {
   const state = useHost();
@@ -98,7 +98,7 @@ for (const route of ["action", "auto"] as const) it(`finishes every act through 
       }
       await act(async () => { session.host.set({ tab: "spl" }); });
       const h = hook.result.current;
-      const actions: TutorialHost = { system: h.system.actions, connect: h.connect.actions, measure: h.measure.actions, calibrate: h.calibrate.actions, goTo: session.navigate };
+      const actions: TutorialHost = { system: h.system.actions, connect: h.connect.actions, measure: h.measure.actions, calibrate: h.calibrate.actions, export: h.exporting.actions, goTo: session.navigate };
       const q = tutorialQuests(actions).find((q) => q.id === entry.id)!;
       const before = view();
       const base = q.base?.(before);

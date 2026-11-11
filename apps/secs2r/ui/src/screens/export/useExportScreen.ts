@@ -7,7 +7,7 @@ import { isActiveJob } from "../../state/jobRetention";
 import type { Patch } from "../../state/writers";
 import { startCalibration } from "../../state/calibration";
 import { DESIGN_RATE, countedRate, extraRatesFor } from "../system/outputRate";
-import { CAMILLA_EXE_FILE, DEFAULT_APPLY, addressProblem, applyWanted, designNameFor, isFilterKind, mdatScopeFor, withExePath, type ApplyTarget, type ExportActions, type ExportView, type HostFailure } from "./types";
+import { CAMILLA_EXE_FILE, DEFAULT_APPLY, addressProblem, applyWanted, defaultExportTab, designNameFor, isFilterKind, mdatScopeFor, withExePath, type ApplyTarget, type ExportActions, type ExportView, type HostFailure } from "./types";
 
 const DESIGN_NAME_REASONS = new Set(["design_name_length", "design_name_control", "design_name_character", "design_name_trailing", "design_name_reserved"]);
 
@@ -122,6 +122,7 @@ export function useExportScreen(): { view: ExportView | null; actions: ExportAct
       session.host.set({ applyRuns: { ...session.host.getSnapshot().applyRuns, [target]: { status: "failed", error: error.error } } });
     };
     return {
+      selectTab: (tab) => session.host.set({ exportTab: tab }),
       exportFiles: (kind) => {
         if (session.stores.project.getSnapshot()?.tutorial) {
           session.host.set({ runs: { ...session.host.getSnapshot().runs, [kind]: { status: "tutorial" } } });
@@ -227,6 +228,7 @@ export function useExportScreen(): { view: ExportView | null; actions: ExportAct
   const request = exporting?.request;
   const applyRequest = jobs.find((job) => job.kind === "apply")?.request;
   return { view: results && settings && project ? {
+    tab: host.exportTab ?? defaultExportTab({ tutorial, apply: { settings: applySettings, windows } }),
     results, settings: { mode: results.calibration?.mode ?? settings.mode, ultra_ms: results.calibration?.ultra_ms ?? settings.ultra_ms, mimo_on: settings.mimo_on },
     positions: project.positions.length, rc: lines?.rc ?? [], folder,
     computing: recalibrating, recalibrating,

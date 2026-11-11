@@ -174,8 +174,8 @@ function Shell({ tutorialStart }: { tutorialStart?: string | undefined }) {
     preparing.current = true;
     session.run(() => session.startTutorial(tutorialStart ? { quest: tutorialStart } : {}));
   }, [project?.tutorial, ready, system.view, connect.view, measure.view, calibrate.view, exporting.view, tutorialReady, tutorialStart, session]);
-  const quests = useMemo(() => tutorialQuests({ system: system.actions, connect: connect.actions, measure: measure.actions, calibrate: calibrate.actions, goTo: navigate }),
-    [system.actions, connect.actions, measure.actions, calibrate.actions, navigate]);
+  const quests = useMemo(() => tutorialQuests({ system: system.actions, connect: connect.actions, measure: measure.actions, calibrate: calibrate.actions, export: exporting.actions, goTo: navigate }),
+    [system.actions, connect.actions, measure.actions, calibrate.actions, exporting.actions, navigate]);
   const tutorialView: TutorialView | null = system.view && connect.view && measure.view && calibrate.view && exporting.view ? {
     step: host.current, system: system.view, connect: connect.view, measure: measure.view, calibrate: calibrate.view, export: exporting.view,
   } : null;
@@ -186,7 +186,7 @@ function Shell({ tutorialStart }: { tutorialStart?: string | undefined }) {
     case "connect": if (connect.view) { content = <LiveConnectScreen state={connect.view} actions={connect.actions} />; header = connectHeader(connect.view, connect.actions, t); } break;
     case "measure": if (measure.view) { content = <MeasureScreen view={measure.view} actions={measure.actions} />; header = measureHeader(measure.view, measure.actions, t); } break;
     case "calibrate": if (calibrate.view) { content = <CalibrateScreen view={calibrate.view} actions={calibrate.actions} initial={project?.tutorial ? { editSub: "SW3", baAdvanced: true } : undefined} blocked={model.steps.calibrate.status === "blocked"} />; header = calibrateHeader(calibrate.view, t); } break;
-    case "export": if (exporting.view) { content = <ExportScreen view={exporting.view} actions={exporting.actions} />; header = exportHeader(exporting.view, exporting.actions, t); } break;
+    case "export": if (exporting.view) { content = <ExportScreen view={exporting.view} actions={exporting.actions} />; header = exportHeader(exporting.view, t); } break;
   }
   const error = failure ? errorText(t, failure.error) : null;
   const body = <>

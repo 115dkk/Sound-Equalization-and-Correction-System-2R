@@ -1715,13 +1715,49 @@
 }
 
 /* ── Export: the result routed to its outputs ──────────────────────────── */
-/* Each format is an output of the router: a code cell before its name, its
-   action beside the name, and from the action a route out across the rest
-   of the row to the board's edge (the third column the export grid leaves
-   to the skins), with a lamp at its tail. The route is ruled while the
-   format can take the result, dashed (cancelled) when it cannot, cyan while
-   it runs and once it is routed (saved this session); the lamp lights green
-   on a save and red on a failure. */
+/* The destinations are the router's output buses: a train of sunken cells on
+   the rule that heads the panel, no rule of their own at rest (rule 9). The
+   chosen bus is engaged like the current step: the accent fill and the 3 px
+   band, here along the edge that meets its panel. A bus whose format cannot
+   carry the result is a cancelled departure: faint ink, its name struck, a
+   dashed rule under the cell; it stays on the board. What happened on a bus
+   shows in the square lamp beside its name (the kit's dot). */
+[data-skin="matrix"] .export-tabs {
+  gap: 1px;
+  border-bottom-color: var(--border-control);
+}
+
+[data-skin="matrix"] .export-tab {
+  border-radius: 0;
+  background: var(--surface-sunken);
+}
+
+[data-skin="matrix"] .export-tab:hover:not([aria-selected="true"]) {
+  background: var(--skin-prelight-layer), var(--surface-sunken);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+[data-skin="matrix"] .export-tab[aria-selected="true"] {
+  background: var(--accent-soft);
+  box-shadow: inset 0 -3px 0 var(--accent), inset 0 0 0 1px var(--accent);
+}
+
+[data-skin="matrix"] .export-tab[data-state="blocked"]:not([aria-selected="true"]) {
+  background: var(--skin-cancel-rule), var(--surface-sunken);
+  color: var(--text-faint);
+}
+
+[data-skin="matrix"] .export-tab[data-state="blocked"] .export-tab__name {
+  text-decoration: line-through;
+}
+
+/* The chosen bus's panel: a code cell before the export's name, its action
+   beside the name, and from the action a route out across the rest of the
+   line to the board's edge (the third column the export grid leaves to the
+   skins), with a lamp at its tail. The route is ruled while the format can
+   take the result, dashed (cancelled) when it cannot, cyan while it runs
+   and once it is routed (saved or applied this session); the lamp lights
+   green on a save or an apply and red on a failure. */
 [data-skin="matrix"] .export-item {
   --skin-route: var(--border-control);
   --skin-route-gap: var(--border-control);
@@ -1767,18 +1803,18 @@
   --skin-route-ring: var(--text-faint);
 }
 
-[data-skin="matrix"] .export-item:has(> .export-item__action :is([aria-busy="true"], .ui-pill--busy)),
-[data-skin="matrix"] .export-item:has(> .export-done) {
+[data-skin="matrix"] .export-item:has(> .export-item__action [aria-busy="true"]),
+[data-skin="matrix"] .export-item:has(> :is(.export-done, [data-outcome])) {
   --skin-route: var(--accent);
   --skin-route-gap: var(--accent);
 }
 
-[data-skin="matrix"] .export-item:has(> .export-done) {
+[data-skin="matrix"] .export-item:has(> :is(.export-done, [data-outcome])) {
   --skin-route-lamp: var(--success);
   --skin-route-ring: var(--success);
 }
 
-[data-skin="matrix"] .export-item:has(> .export-item__outcome .ui-error) {
+[data-skin="matrix"] .export-item:has(> :is(.export-item__outcome, .export-apply__full) .ui-error--danger) {
   --skin-route-lamp: var(--danger);
   --skin-route-ring: var(--danger);
 }

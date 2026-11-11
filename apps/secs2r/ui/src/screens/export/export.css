@@ -1,6 +1,6 @@
 /* 내보내기. Tokens only (styles/tokens.css). */
 
-/* Cards span the content width like every other step; long text keeps its own measure (.export-item__body). */
+/* Cards span the content width like every other step; long text keeps its own measure. */
 .export-screen {
   display: flex;
   flex-direction: column;
@@ -75,29 +75,30 @@
 }
 
 /*
- * The folder and the exports stand on one grid: a column of names, the
- * buttons right after the widest name, and the rest of the row's width for
- * the skins. The eye reads a name and finds its button beside it, not at
- * the card's far edge (EqualizerAPO-XT v2.42.0, from a 27-inch report: "the
- * content is on the left and the buttons on the right, so I keep moving my
- * eyes"). Each level passes the columns down as a subgrid, so every button
- * lines up (a subgrid with its own column gap would shift its columns, hence
- * `column-gap: normal`); a path, a note or an outcome runs under its name
- * across the row.
+ * The destination card stands on one grid: a column of names, the buttons
+ * right after the widest name, and the rest of the width for the skins. The
+ * eye reads a name and finds its button beside it, not at the card's far
+ * edge (EqualizerAPO-XT v2.42.0, from a 27-inch report: "the content is on
+ * the left and the buttons on the right, so I keep moving my eyes"). Each
+ * level passes the columns down as a subgrid, so every name and every
+ * control line up (a subgrid with its own column gap would shift its
+ * columns, hence `column-gap: normal`); a path, a note or an outcome runs
+ * under its name across the panel.
  */
 [data-ui="export.files"] > .ui-card__body {
+  container-type: inline-size;
   display: grid;
   grid-template-columns: max-content auto minmax(0, 1fr);
-  gap: var(--space-4) var(--space-5);
+  gap: var(--space-5) var(--space-5);
 }
 
-.export-folder,
-.export-groups,
-.export-group,
-.export-group > .ui-advanced,
-.export-group > .ui-advanced > .ui-advanced__panel,
-.export-name,
+.export-panel,
+.export-panel > .ui-advanced,
+.export-panel > .ui-advanced > .ui-advanced__panel,
 .export-item,
+.export-item__place,
+.export-folder,
+.export-name,
 .export-apply {
   display: grid;
   grid-column: 1 / -1;
@@ -107,93 +108,188 @@
   align-items: start;
 }
 
-/* The folder: its name and buttons on one line, the path and where it comes from under them. */
-.export-folder {
-  row-gap: var(--space-0-5);
+/*
+ * The destinations: five tabs across the card, each as wide as its words
+ * and sharing what is left. A tab is the place an export goes to (its sign
+ * and its name) over what that place is, so the row answers "where does
+ * this go" before anything is opened. The chosen tab carries the accent
+ * (its sign, a soft fill, the line that joins it to its panel); a tab whose
+ * format cannot carry the result goes quiet. Once something happened in a
+ * tab its dot says what, in the frame's status colours.
+ */
+.export-tabs {
+  display: flex;
+  grid-column: 1 / -1;
+  gap: var(--space-1);
+  border-bottom: var(--border-w) solid var(--border);
 }
 
-.export-folder__text {
-  display: contents;
+.export-tab {
+  display: grid;
+  flex: 1 1 auto;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-content: start;
+  gap: var(--space-0-5) var(--space-2);
+  min-width: 0;
+  min-height: var(--hit-min);
+  margin-bottom: calc(var(--border-w) * -1);
+  padding: var(--space-2-5) var(--space-3);
+  border: 0;
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
+  background: transparent;
+  color: var(--text);
+  font-size: var(--text-ui);
+  text-align: left;
+  transition-property: background-color, color, box-shadow;
+  transition-duration: var(--dur-fast);
+  transition-timing-function: var(--ease-out);
 }
 
-.export-folder__label {
+.export-tab:hover:not([aria-selected="true"]) {
+  background: var(--surface-hover);
+}
+
+.export-tab[aria-selected="true"] {
+  background: var(--accent-soft);
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+.export-tab:focus-visible {
+  outline-offset: -2px;
+}
+
+.export-tab__icon {
   grid-column: 1;
   grid-row: 1;
   align-self: center;
-  font-weight: var(--weight-semibold);
-}
-
-.export-path {
-  grid-column: 1 / -1;
-  overflow-wrap: anywhere;
-}
-
-.export-folder__hint {
-  grid-column: 1 / -1;
   color: var(--text-muted);
+  transition-property: color;
+  transition-duration: var(--dur-fast);
+  transition-timing-function: var(--ease-out);
 }
 
-.export-folder__actions {
+.export-tab[aria-selected="true"] .export-tab__icon {
+  color: var(--accent);
+}
+
+/* The name, and right after it the dot of what happened here: the dot belongs to this name, not to the next tab's edge. */
+.export-tab__title {
   display: flex;
   grid-column: 2;
   grid-row: 1;
+  align-items: center;
   gap: var(--space-2);
+  min-width: 0;
 }
 
-/* The exports, in two groups: the filters for the DSP, the responses for REW. */
-.export-groups {
-  row-gap: var(--space-6);
+/* A name wraps between its words when the card is narrow, never inside one. */
+.export-tab__name {
+  min-width: 0;
+  font-weight: var(--weight-semibold);
+  overflow-wrap: normal;
 }
 
-.export-group {
+.export-tab__mark {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+}
+
+.export-tab__use {
+  grid-column: 2;
+  grid-row: 2;
+  min-width: 0;
+  color: var(--text-muted);
+  overflow-wrap: normal;
+}
+
+/*
+ * The smallest window: the five names and what they are still stand on one
+ * line each once the signs step aside and the tabs draw in (DESIGN.md §4:
+ * words are not shrunk; room is made for them).
+ */
+@container (max-width: 780px) {
+  .export-tab {
+    grid-template-columns: minmax(0, 1fr);
+    padding-inline: var(--space-2);
+  }
+
+  .export-tab__icon {
+    display: none;
+  }
+
+  .export-tab__title,
+  .export-tab__use {
+    grid-column: 1;
+  }
+}
+
+.export-tab[data-state="blocked"]:not([aria-selected="true"]) .export-tab__name {
+  color: var(--text-muted);
+}
+
+.export-tab[data-state="blocked"] .export-tab__icon {
+  color: var(--text-faint);
+}
+
+/* The chosen destination: its export, and for REW the staged mdat folded under it. */
+.export-panel {
   row-gap: var(--space-4);
 }
 
-.export-group > .ui-advanced {
+.export-panel > .ui-advanced {
   row-gap: var(--space-3);
 }
 
-.export-group > .ui-advanced > .ui-advanced__toggle {
+.export-panel > .ui-advanced > .ui-advanced__toggle {
   grid-column: 1 / -1;
   justify-self: start;
 }
 
-.export-group > .ui-advanced > .ui-advanced__panel {
+.export-panel > .ui-advanced > .ui-advanced__panel {
   row-gap: var(--space-3);
 }
 
-/*
- * A small group heading, one step under the card title and one over the row
- * titles: quiet words on a structural rule that runs to the card's edge. The
- * rule takes the place of the first row's own line, and the heading sits
- * nearer its rows than the group above.
- */
-.export-group__title {
-  display: flex;
-  grid-column: 1 / -1;
-  align-items: center;
-  gap: var(--space-3);
-  margin-bottom: calc(var(--space-1) * -1);
+/* Where the files go: the folder (its name and buttons on one line, the path and where it comes from under them), then what lands in it. */
+.export-item__place {
+  row-gap: var(--space-1);
+}
+
+/* The folder's name in the names' column; the path where the buttons stand, its two buttons right after it. */
+.export-folder__name {
+  grid-column: 1;
+  align-self: center;
+}
+
+/* The panel's names (the folder, the design name, 적용's facts) share one voice: muted, regular. */
+.export-folder__label {
   color: var(--text-muted);
-  font-size: var(--text-ui);
-  font-weight: var(--weight-semibold);
 }
 
-.export-group__title::after {
-  content: "";
-  flex: 1;
-  border-top: var(--border-w) solid var(--border);
+.export-folder__value {
+  display: flex;
+  flex-wrap: wrap;
+  grid-column: 2 / -1;
+  align-items: center;
+  gap: var(--space-1) var(--space-3);
+  min-width: 0;
 }
 
-.export-group__title + .export-item {
-  padding-top: 0;
-  border-top: 0;
+.export-path {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.export-folder__actions {
+  display: inline-flex;
+  flex: none;
+  gap: var(--space-2);
 }
 
 /*
- * The design name, once above the filter rows: its label in the names'
- * column, the box where the buttons stand, and what the name does (or why it
- * cannot be a folder) under the box. The first row keeps its rule under it.
+ * The design name, in each filter panel: its label in the names' column,
+ * the box where the buttons stand, and what the name does (or why it cannot
+ * be a folder) under the box.
  */
 .export-name {
   row-gap: var(--space-1-5);
@@ -203,6 +299,8 @@
   grid-column: 1;
   grid-row: 1;
   align-self: center;
+  color: var(--text-muted);
+  font-weight: var(--weight-regular);
 }
 
 .export-name__control {
@@ -238,23 +336,17 @@
   min-width: 0;
 }
 
-/* An export: its name and button on one line, where its files go under them. */
+/* An export: its name and its action on one line, then its fields, where its files go and how it ended. */
 .export-item {
-  row-gap: var(--space-2);
-  padding-top: var(--space-4);
-  border-top: var(--border-w) solid var(--border-subtle);
+  row-gap: var(--space-3);
 }
 
 .ui-advanced .export-item {
+  row-gap: var(--space-2);
   padding-top: var(--space-1);
-  border-top: 0;
 }
 
-.export-item__text {
-  display: contents;
-}
-
-.export-item__text > .ui-heading-help {
+.export-item > .ui-heading-help {
   grid-column: 1;
   grid-row: 1;
   align-self: center;
@@ -270,10 +362,10 @@
   color: var(--text-muted);
 }
 
+/* What lands in the folder, under its path; without a folder line (the tutorial, the staged mdat) from the names' column. */
 .export-item__where {
   display: flex;
-  grid-column: 1 / -1;
-  grid-row: 2;
+  grid-column: 2 / -1;
   align-items: center;
   gap: var(--space-1-5);
   color: var(--text-muted);
@@ -284,11 +376,11 @@
   flex: none;
 }
 
-/* The rate a filter export writes, under its folder when it is not 48 kHz: one more fact about the files, in the folder line's voice. */
-.export-item__rate {
-  grid-row: auto;
-  margin-top: calc(var(--space-1) * -1);
+.export-item__place--bare .export-item__where {
+  grid-column: 1 / -1;
 }
+
+/* The rate a filter export writes, under its folder when it is not 48 kHz: one more fact about the files, in the folder line's voice. */
 
 .export-item__action {
   display: flex;
@@ -394,32 +486,31 @@
 }
 
 /*
- * The REW mdat chooses what it carries. The choice, the folder and the file's
- * name run under the row's name in that order (the folder line leaves its
- * fixed second row to follow the choice); the label sits beside the segments
- * and a reason, when the choice is held, under them.
+ * The REW mdat chooses what it carries, before the folder and the file's
+ * name that follow from it. Its label stands in the names' column like the
+ * design name's, the segments where the buttons stand, and a reason, when
+ * the choice is held, under them.
  */
-.export-item--scoped .export-item__where {
-  grid-row: auto;
-}
-
-.export-item__scope {
-  grid-column: 1 / -1;
-}
-
+.export-item__scope,
 .export-item__scope > .ui-segmented-field {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: center;
-  gap: var(--space-1-5) var(--space-3);
+  display: contents;
+}
+
+.export-item__scope .ui-field__label {
+  grid-column: 1;
+  align-self: center;
+  color: var(--text-muted);
+  font-weight: var(--weight-regular);
+}
+
+.export-item__scope .ui-control-help-row {
+  grid-column: 2 / -1;
+  justify-self: start;
 }
 
 .export-item__scope .ui-field__hint {
-  grid-column: 2;
-}
-
-.export-item--scoped .export-item__file {
-  margin-top: calc(var(--space-1) * -1);
+  grid-column: 2 / -1;
+  max-width: 72ch;
 }
 
 /*
@@ -574,16 +665,15 @@
 }
 
 /*
- * 적용 (ADR 0018), under the CamillaDSP and Equalizer APO rows. The block is
+ * 적용 (ADR 0018), in the CamillaDSP and Equalizer APO panels. The block is
  * one more level of the subgrid: each fact's name stands in the names'
- * column under the row's title, its value where the buttons stand, and a
+ * column under the panel's title, its value where the buttons stand, and a
  * note, a reason or an outcome runs under the value. The wrappers (the
  * choice, the address, the list of facts) step aside so their parts land in
  * those columns. Names sit level with the first line of their value.
  */
 .export-apply {
   row-gap: var(--space-2);
-  padding-top: var(--space-1);
 }
 
 .export-apply__level,

@@ -2,6 +2,7 @@
 // Source lines are kept beside each entry so rail reordering is auditable.
 import type { MessageKey } from "../../i18n";
 import type { ResultTab } from "../../ipc/bindings/ResultTab";
+import type { ExportTab } from "../export/types";
 import type { Quest } from "./types";
 import { infraState } from "../calibrate/settingsView";
 import type { TutorialHost, TutorialView } from "./questHost";
@@ -26,6 +27,8 @@ export function tutorialQuests(host: TutorialHost): Entry[] {
   // The engine has an entry/leave lifecycle through animate. Opening a tab
   // here uses the same host setter as the screen, never a simulated click.
   const onTab = (tab: ResultTab): Pick<Entry, "animate"> => ({ animate: { every: 3600, step: () => host.calibrate.selectTab(tab) } });
+  // 내보내기 draws one destination at a time: the quest opens the tab its target stands in.
+  const onDestination = (tab: ExportTab): Pick<Entry, "animate"> => ({ animate: { every: 3600, step: () => host.export.selectTab(tab) } });
   const ba = { when: twoSubs, ...onTab("ba") };
   const unavailable = (v: TutorialView) => computing(v) || v.calibrate.positions.length === 0;
   return [
@@ -92,7 +95,7 @@ export function tutorialQuests(host: TutorialHost): Entry[] {
       () => host.calibrate.calibrateSubs(), unavailable, { ...ba, base: (v) => v.calibrate.lines.ba, why: key("calibrate.subs", "why"), busy: { when: computing, text: key("calibrate.subs", "busy") }, ok: key("calibrate.subs", "ok"), keep: ["jobs.tray"] }),
     look("calibrate.ba_after", 442, ["calibrate.graph"], ba),
     act("calibrate.next", 449, ["frame.rail.export"], (v) => v.step !== "calibrate", () => host.goTo("export"), (v) => computing(v) || !v.calibrate.results.calibration, { gate: true }),
-    look("export.mdat", 451, ["export.run.before_after_mdat"], { terms: ["mdat", "mimo"] }),
-    look("export.camilla", 453, ["export.run.camilla_dsp"], { terms: ["dsp", "fir"] }),
+    look("export.mdat", 451, ["export.run.before_after_mdat"], { ...onDestination("rew"), terms: ["mdat", "mimo"] }),
+    look("export.camilla", 453, ["export.run.camilla_dsp"], { ...onDestination("camilla_dsp"), terms: ["dsp", "fir"] }),
   ];
 }
