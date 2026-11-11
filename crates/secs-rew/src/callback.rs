@@ -420,12 +420,30 @@ mod tests {
         stream
             .set_read_timeout(Some(Duration::from_secs(2)))
             .unwrap();
-        write!(
-            stream,
-            "GET {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n"
-        )
-        .unwrap();
-        stream.flush().unwrap();
+        // One write, so a server that drops the connection on accept cannot
+        // reset it between the parts of the request. It may still drop it
+        // before these bytes leave: the write then fails (a broken pipe on
+        // macOS, a reset elsewhere), and that failure is the drop itself, so
+        // it is an empty response and not a fault of the test (PR #201's
+        // macOS run failed here, 2026-11-11).
+        let head = format!("GET {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n");
+        match stream
+            .write_all(head.as_bytes())
+            .and_then(|()| stream.flush())
+        {
+            Ok(()) => {}
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    ErrorKind::BrokenPipe
+                        | ErrorKind::ConnectionReset
+                        | ErrorKind::ConnectionAborted
+                ) =>
+            {
+                return (stream, Vec::new());
+            }
+            Err(error) => panic!("send request: {error}"),
+        }
         let mut response = Vec::new();
         match stream.read_to_end(&mut response) {
             Ok(_) => {}
