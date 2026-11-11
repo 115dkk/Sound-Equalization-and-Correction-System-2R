@@ -827,15 +827,15 @@ describe("mock extra correction bands (ADR 0024)", () => {
 
 
 describe("mock export progress", () => {
-  const cases: { request: Extract<Request, { method: "export" | "apply_camilla" | "apply_eqapo" }>; stage: string; contents: number; bytes: number }[] = [
-    { request: { method: "export", params: { kind: "camilla_dsp", folder: "" } }, stage: "export.prepare", contents: 11, bytes: 8 * 1024 ** 2 },
-    { request: { method: "export", params: { kind: "equalizer_apo", folder: "" } }, stage: "export.prepare", contents: 11, bytes: 8 * 1024 ** 2 },
-    { request: { method: "export", params: { kind: "filter_text", folder: "" } }, stage: "export.prepare", contents: 11, bytes: 8 * 1024 ** 2 },
-    { request: { method: "export", params: { kind: "convolution", folder: "" } }, stage: "filters.convolution", contents: 338, bytes: 64 * 1024 ** 2 },
+  const cases: { request: Extract<Request, { method: "export" | "apply_camilla" | "apply_eqapo" }>; stage: string; contents: number; bytes: number; files?: number }[] = [
+    { request: { method: "export", params: { kind: "camilla_dsp", folder: "" } }, stage: "export.prepare", contents: 11, bytes: 8 * 1024 ** 2, files: 14 },
+    { request: { method: "export", params: { kind: "equalizer_apo", folder: "" } }, stage: "export.prepare", contents: 11, bytes: 8 * 1024 ** 2, files: 14 },
+    { request: { method: "export", params: { kind: "filter_text", folder: "" } }, stage: "export.prepare", contents: 11, bytes: 8 * 1024 ** 2, files: 14 },
+    { request: { method: "export", params: { kind: "convolution", folder: "" } }, stage: "filters.convolution", contents: 338, bytes: 64 * 1024 ** 2, files: 341 },
     { request: { method: "export", params: { kind: "before_after_mdat", folder: "" } }, stage: "export.prepare", contents: 234, bytes: 32 * 1024 ** 2 },
     { request: { method: "export", params: { kind: "staged_mdat", folder: "" } }, stage: "export.prepare", contents: 585, bytes: 80 * 1024 ** 2 },
-    { request: { method: "apply_camilla", params: {} }, stage: "export.prepare", contents: 11, bytes: 8 * 1024 ** 2 },
-    { request: { method: "apply_eqapo" }, stage: "export.prepare", contents: 11, bytes: 8 * 1024 ** 2 },
+    { request: { method: "apply_camilla", params: {} }, stage: "export.prepare", contents: 11, bytes: 8 * 1024 ** 2, files: 14 },
+    { request: { method: "apply_eqapo" }, stage: "export.prepare", contents: 11, bytes: 8 * 1024 ** 2, files: 14 },
   ];
 
   async function setup() {
@@ -850,7 +850,7 @@ describe("mock export progress", () => {
     return mock;
   }
 
-  it.each(cases)("plays counted contents then byte writes for $request", async ({ request, stage, contents, bytes }) => {
+  it.each(cases)("plays counted contents, byte writes and, for a bundle, the files moved into place for $request", async ({ request, stage, contents, bytes, files }) => {
     const mock = await setup();
     const events: JobEvent[] = [];
     const unsubscribe = mock.events.subscribe((event) => events.push(event));
@@ -861,8 +861,8 @@ describe("mock export progress", () => {
       const progress = events.filter((event) => event.event === "progress");
       expect(progress.every((event) => event.job === started.job)).toBe(true);
       expect(progress.map((event) => event.stage).filter((name, index, stages) => index === 0 || name !== stages[index - 1]))
-        .toEqual([stage, "export.write"]);
-      for (const [name, total] of [[stage, contents], ["export.write", bytes]] as const) {
+        .toEqual(files === undefined ? [stage, "export.write"] : [stage, "export.write", "export.install"]);
+      for (const [name, total] of [[stage, contents], ["export.write", bytes], ...(files === undefined ? [] : [["export.install", files] as const])] as const) {
         const reports = progress.filter((event) => event.stage === name);
         expect(reports[0]).toMatchObject({ done: 0, total });
         expect(reports.at(-1)).toMatchObject({ done: total, total });
@@ -873,13 +873,17 @@ describe("mock export progress", () => {
         .toEqual([0, Math.floor(contents / 3), Math.floor(contents * 2 / 3), contents]);
       expect(progress.filter((event) => event.stage === "export.write").map((event) => event.done))
         .toEqual([0, bytes / 2, bytes]);
-      expect(events.at(-2)).toMatchObject({ event: "progress", stage: "export.write", done: bytes, total: bytes });
+      expect(progress.filter((event) => event.stage === "export.install").map((event) => event.done))
+        .toEqual(files === undefined ? [] : [0, Math.floor(files / 2), files]);
+      expect(events.at(-2)).toMatchObject(files === undefined
+        ? { event: "progress", stage: "export.write", done: bytes, total: bytes }
+        : { event: "progress", stage: "export.install", done: files, total: files });
       expect(events.at(-1)).toMatchObject({ event: "finished", job: started.job, status: "succeeded", error: null });
       expect(await mock.request({ method: "jobs" })).toEqual([]);
     } finally { unsubscribe(); mock.dispose(); }
   });
 
-  it.each(["export.prepare", "export.write"])("still cancels an export or apply during %s", async (stage) => {
+  it.each(["export.prepare", "export.write", "export.install"])("still cancels an export or apply during %s", async (stage) => {
     for (const request of [cases[0]!.request, cases[6]!.request]) {
       const mock = await setup();
       const events: JobEvent[] = [];

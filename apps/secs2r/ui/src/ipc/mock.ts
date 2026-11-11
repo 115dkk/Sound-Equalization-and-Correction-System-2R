@@ -428,6 +428,8 @@ export function createMockService(options: MockOptions = {}): MockService {
         // Fixed specimen work: FIR files, rendered/encoded pairs, or serialized measurements.
         const contents = exportKind === "convolution" ? 2 * 13 * 13
           : exportKind === "before_after_mdat" ? 234 : exportKind === "staged_mdat" ? 585 : 11;
+        const mdat = exportKind === "before_after_mdat" || exportKind === "staged_mdat";
+        const files = exportKind === "convolution" ? 341 : 14;
         const bytes = (exportKind === "convolution" ? 64
           : exportKind === "before_after_mdat" ? 32 : exportKind === "staged_mdat" ? 80 : 8) * 1024 ** 2;
         return { stages: [
@@ -435,6 +437,8 @@ export function createMockService(options: MockOptions = {}): MockService {
           { stage: exportKind === "convolution" ? "filters.convolution" : "export.prepare", total: contents,
             reports: [0, Math.floor(contents / 3), Math.floor(contents * 2 / 3), contents] },
           { stage: "export.write", total: bytes, reports: [0, bytes / 2, bytes] },
+          // A bundle's files are then moved into the export folder one by one; an mdat is one file and one rename.
+          ...(mdat ? [] : [{ stage: "export.install", total: files, reports: [0, Math.floor(files / 2), files] }]),
         ], logs: [] };
       }
       case "sample_load": return { stages: [{ stage: null, total: 0, ticks: 3 }], logs: [] };
