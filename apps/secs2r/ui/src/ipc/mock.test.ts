@@ -4,10 +4,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { IpcFailure } from "./client";
 import type { JobEvent } from "./bindings/JobEvent";
 import { createMockService } from "./mock";
-import { gpuComputeStatus, projectInfo, resultsSummary } from "./fixtures";
+import { applyStatus, eqapoXt, gpuComputeStatus, projectInfo, resultsSummary } from "./fixtures";
 import { recordedRefusal } from "./recorded";
 import type { ExportKind } from "./bindings/ExportKind";
 import type { ExportParams } from "./bindings/ExportParams";
+import type { Request } from "./bindings/Request";
 import { umikFile } from "../screens/connect/fixtures";
 
 describe("mock MIMO early interval", () => {
@@ -821,5 +822,81 @@ describe("mock extra correction bands (ADR 0024)", () => {
       expect((await curves("gd")).rc_bands_hz).toEqual([[300, 800], [15000, 20000]]);
       expect((await curves("xo")).rc_bands_hz).toEqual([]);
     } finally { mock.dispose(); }
+  });
+});
+
+
+describe("mock export progress", () => {
+  const cases: { request: Extract<Request, { method: "export" | "apply_camilla" | "apply_eqapo" }>; stage: string; contents: number; bytes: number }[] = [
+    { request: { method: "export", params: { kind: "camilla_dsp", folder: "" } }, stage: "export.prepare", contents: 11, bytes: 8 * 1024 ** 2 },
+    { request: { method: "export", params: { kind: "equalizer_apo", folder: "" } }, stage: "export.prepare", contents: 11, bytes: 8 * 1024 ** 2 },
+    { request: { method: "export", params: { kind: "filter_text", folder: "" } }, stage: "export.prepare", contents: 11, bytes: 8 * 1024 ** 2 },
+    { request: { method: "export", params: { kind: "convolution", folder: "" } }, stage: "filters.convolution", contents: 338, bytes: 64 * 1024 ** 2 },
+    { request: { method: "export", params: { kind: "before_after_mdat", folder: "" } }, stage: "export.prepare", contents: 234, bytes: 32 * 1024 ** 2 },
+    { request: { method: "export", params: { kind: "staged_mdat", folder: "" } }, stage: "export.prepare", contents: 585, bytes: 80 * 1024 ** 2 },
+    { request: { method: "apply_camilla", params: {} }, stage: "export.prepare", contents: 11, bytes: 8 * 1024 ** 2 },
+    { request: { method: "apply_eqapo" }, stage: "export.prepare", contents: 11, bytes: 8 * 1024 ** 2 },
+  ];
+
+  async function setup() {
+    const mock = createMockService({ tickMs: 0, results: {
+      ...resultsSummary, calibration: { ...resultsSummary.calibration!, sub_roles: [] },
+    } });
+    const app = await mock.request({ method: "app_settings_get" });
+    await mock.request({ method: "apply_settings_set", params: {
+      ...app.apply, camilla: { ...app.apply.camilla, level: "apply" }, eqapo: { level: "apply" },
+    } });
+    mock.setApplyStatus({ ...applyStatus, eqapo: eqapoXt });
+    return mock;
+  }
+
+  it.each(cases)("plays counted contents then byte writes for $request", async ({ request, stage, contents, bytes }) => {
+    const mock = await setup();
+    const events: JobEvent[] = [];
+    const unsubscribe = mock.events.subscribe((event) => events.push(event));
+    try {
+      const started = await mock.request(request);
+      expect(events).toEqual([{ event: "started", ...started }]);
+      mock.drain();
+      const progress = events.filter((event) => event.event === "progress");
+      expect(progress.every((event) => event.job === started.job)).toBe(true);
+      expect(progress.map((event) => event.stage).filter((name, index, stages) => index === 0 || name !== stages[index - 1]))
+        .toEqual([stage, "export.write"]);
+      for (const [name, total] of [[stage, contents], ["export.write", bytes]] as const) {
+        const reports = progress.filter((event) => event.stage === name);
+        expect(reports[0]).toMatchObject({ done: 0, total });
+        expect(reports.at(-1)).toMatchObject({ done: total, total });
+        expect(reports.every((event, index) => event.total === total && total > 0
+          && event.done >= 0 && event.done <= total && (index === 0 || event.done >= reports[index - 1]!.done))).toBe(true);
+      }
+      expect(progress.filter((event) => event.stage === stage).map((event) => event.done))
+        .toEqual([0, Math.floor(contents / 3), Math.floor(contents * 2 / 3), contents]);
+      expect(progress.filter((event) => event.stage === "export.write").map((event) => event.done))
+        .toEqual([0, bytes / 2, bytes]);
+      expect(events.at(-2)).toMatchObject({ event: "progress", stage: "export.write", done: bytes, total: bytes });
+      expect(events.at(-1)).toMatchObject({ event: "finished", job: started.job, status: "succeeded", error: null });
+      expect(await mock.request({ method: "jobs" })).toEqual([]);
+    } finally { unsubscribe(); mock.dispose(); }
+  });
+
+  it.each(["export.prepare", "export.write"])("still cancels an export or apply during %s", async (stage) => {
+    for (const request of [cases[0]!.request, cases[6]!.request]) {
+      const mock = await setup();
+      const events: JobEvent[] = [];
+      const unsubscribe = mock.events.subscribe((event) => events.push(event));
+      try {
+        const started = await mock.request(request);
+        for (let ticks = 0; ticks < 20; ticks++) {
+          mock.tick();
+          if (events.some((event) => event.event === "progress" && event.stage === stage)) break;
+        }
+        expect(events.at(-1)).toMatchObject({ event: "progress", stage, done: 0 });
+        const reports = events.filter((event) => event.event === "progress").length;
+        await mock.request({ method: "job_cancel", params: { job: started.job } });
+        mock.drain();
+        expect(events.filter((event) => event.event === "progress")).toHaveLength(reports);
+        expect(events.at(-1)).toMatchObject({ event: "finished", job: started.job, status: "cancelled", result: null });
+      } finally { unsubscribe(); mock.dispose(); }
+    }
   });
 });

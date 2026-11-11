@@ -142,6 +142,29 @@ export function stageText(t: Translate, kind: JobKind, stage: string | null): st
   return null;
 }
 
+/** The stages the service counts in bytes (secs-service `export.rs`: the files an export writes). */
+const BYTE_STAGES: ReadonlySet<string> = new Set(["export.write"]);
+
+const KIB = 1024;
+const SIZE_UNITS = [
+  { unit: "GB", bytes: KIB ** 3, digits: 2 },
+  { unit: "MB", bytes: KIB ** 2, digits: 1 },
+  { unit: "KB", bytes: KIB, digits: 0 },
+] as const;
+
+/** Bytes written out of the bytes to write, both in the unit the total calls for ('12.4 / 40.1 MB'), as a file manager sizes files. */
+export function sizeProgressText(done: number, total: number): string {
+  const scale = SIZE_UNITS.find(({ bytes }) => total >= bytes);
+  if (!scale) return `${done} / ${total} B`;
+  const size = (value: number) => (value / scale.bytes).toFixed(scale.digits);
+  return `${size(done)} / ${size(total)} ${scale.unit}`;
+}
+
+/** How much of a stage is done, in the stage's own units: a count of items, or the bytes written as sizes. */
+export function progressText(t: Translate, stage: string | null, done: number, total: number): string {
+  return stage !== null && BYTE_STAGES.has(stage) ? sizeProgressText(done, total) : t("jobs.progress", { done, total });
+}
+
 /** Diagnostic settings belong in the app log, not the user-facing job history. */
 export const isVisibleLog = (code: string): boolean => code !== "calibration_settings";
 

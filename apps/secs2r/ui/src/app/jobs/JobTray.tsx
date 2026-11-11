@@ -1,7 +1,10 @@
 // The job tray (U8): one place for every running job and for what jobs
-// reported. Each running job shows its name, stage, progress (done/total or
-// indeterminate), elapsed time and, once the rate is known, the time left,
-// with a cancel that really stops it. The history keeps Log notices and
+// reported. Each running job shows its name, stage, elapsed time and, once
+// the rate is known, the time left, with a cancel that really stops it. Its
+// bar is drawn only from what the service measured (a count of items, or the
+// bytes written): a job that reports nothing has no bar, since a bar moved by
+// the clock would say nothing true (2026-11-11 review); the spinner and the
+// elapsed time say it is running. The history keeps Log notices and
 // results; errors carry the cause and the next step, the raw text behind 자세히.
 import { useId, useState } from "react";
 import { isActiveJob } from "../../state/jobRetention";
@@ -12,7 +15,7 @@ import { Icon, Spinner } from "../../ui/Icon";
 import { ProgressBar } from "../../ui/meters";
 import { ErrorNotice } from "../../ui/states";
 import { elapsedMs, errorCount, remainingMs, type HistoryEntry } from "../../state/jobLedger";
-import { JOB_NAME, WARNING_LOGS, errorText, logText, stageText } from "./jobText";
+import { JOB_NAME, WARNING_LOGS, errorText, logText, progressText, stageText } from "./jobText";
 import { useJobs, type JobsApi, type JobView } from "./useJobs";
 
 export function JobTray({ api, defaultOpen = false }: { api: JobsApi; defaultOpen?: boolean | undefined }) {
@@ -78,6 +81,7 @@ function JobRow({ job, now, onCancel }: { job: JobView; now: number; onCancel: (
   const stage = stageText(t, job.kind, job.stage);
   const left = remainingMs(job, now);
   const known = job.total > 0;
+  const count = known ? progressText(t, job.stage, job.done, job.total) : null;
   const cancelling = job.status === "cancel_requested";
   return (
     <div className="job-row" data-ui={`jobs.job.${job.kind}`}>
@@ -86,15 +90,14 @@ function JobRow({ job, now, onCancel }: { job: JobView; now: number; onCancel: (
         <span className="job-row__name">{name}</span>
         {stage && <span className="job-row__stage">{stage}</span>}
       </div>
+      {/* The cell stays so the row keeps its columns; it is empty until the service reports. */}
       <div className="job-row__progress">
-        <ProgressBar
-          label={name}
-          done={job.done}
-          total={job.total}
-          indeterminate={!known}
-          valueText={known ? t("jobs.progress", { done: job.done, total: job.total }) : t("jobs.status.running")}
-        />
-        {known && <span className="job-row__count tabular">{t("jobs.progress", { done: job.done, total: job.total })}</span>}
+        {count !== null && (
+          <>
+            <ProgressBar label={name} done={job.done} total={job.total} valueText={count} />
+            <span className="job-row__count tabular">{count}</span>
+          </>
+        )}
       </div>
       <span className="job-row__time tabular">
         {t("jobs.elapsed", { time: formatDuration(elapsedMs(job, now)) })}

@@ -46,6 +46,7 @@ import {
   exportDone,
   exportEqapoDone,
   exportExporting,
+  exportConvolutionExporting,
   exportExtraRates,
   exportRate96k,
   exportRateFallback,
@@ -106,6 +107,20 @@ export const noopExportActions: ExportActions = {
 const NAME_PROBLEMS = Object.keys(DESIGN_NAME_SAMPLES) as DesignNameProblem[];
 
 const exportJob = replay([{ type: "event", at: T0, event: { event: "started", job: 12, kind: "export" } }]);
+
+/** The export job as the service reports it: items computed, then bytes written. */
+const exportJobPrepare = replay([
+  { type: "event", at: T0, event: { event: "started", job: 12, kind: "export" } },
+  { type: "event", at: T0 + 4000, event: { event: "progress", job: 12, stage: "export.prepare", done: 41, total: 117 } },
+]);
+const exportJobWrite = replay([
+  { type: "event", at: T0, event: { event: "started", job: 12, kind: "export" } },
+  { type: "event", at: T0 + 9000, event: { event: "progress", job: 12, stage: "export.write", done: 52_428_800, total: 131_596_288 } },
+]);
+const exportJobConvolution = replay([
+  { type: "event", at: T0, event: { event: "started", job: 12, kind: "export" } },
+  { type: "event", at: T0 + 21000, event: { event: "progress", job: 12, stage: "filters.convolution", done: 388, total: 1014 } },
+]);
 
 const calibrateJob = replay([
   { type: "event", at: T0, event: { event: "started", job: 11, kind: "calibrate" } },
@@ -307,7 +322,16 @@ export const exportSpecimens: SpecimenDef[] = [
   frame("screen.export.rate.fallback", "Export · 자동 fell back to 48 kHz (the device runs at 32 kHz): the CamillaDSP outcome warns and leads to 시스템", () => (
     <ExportSpecimen view={exportRateFallback} jobs={exportHistory} />
   )),
-  frame("screen.export.exporting", "Export · REW mdat being saved", () => <ExportSpecimen view={exportExporting} jobs={exportJob} />),
+  frame("screen.export.exporting", "Export · REW mdat being saved, nothing reported yet: the tray shows the job with no bar", () => <ExportSpecimen view={exportExporting} jobs={exportJob} />),
+  frame("screen.export.exporting.prepare", "Export · REW mdat: the tray's bar at 41 of 117 measurements serialized", () => (
+    <ExportSpecimen view={exportExporting} jobs={exportJobPrepare} />
+  )),
+  frame("screen.export.exporting.write", "Export · REW mdat: the file going to disk, the tray's bar at 50.0 of 125.5 MB", () => (
+    <ExportSpecimen view={exportExporting} jobs={exportJobWrite} />
+  )),
+  frame("screen.export.exporting.convolution", "Export · convolution IR at three rates: the tray's bar at 388 of 1014 pairs rendered and encoded", () => (
+    <ExportSpecimen view={exportConvolutionExporting} jobs={exportJobConvolution} />
+  )),
   frame("screen.export.done", "Export · done, files written: the CamillaDSP tab, the REW tab checked too", () => <ExportSpecimen view={exportDone} jobs={exportHistory} fileName="거실 7.1.4.secs" />),
   frame("screen.export.failed", "Export · CamillaDSP export failed: the tab's warning sign and the panel say so", () => <ExportSpecimen view={exportFailed} />),
   frame("screen.export.advanced", "Export · the REW tab, 고급 open (staged mdat, U3), MIMO left out", () => <ExportSpecimen view={exportNoMimo} tab="rew" initialAdvanced />),
