@@ -340,7 +340,7 @@ fn limits_are_enforced() {
     assert_eq!(
         defaults,
         Limits {
-            max_file_bytes: 256 * 1024 * 1024,
+            max_file_bytes: 1024 * 1024 * 1024,
             max_string_bytes: 1024 * 1024,
             max_channels: 64,
             max_positions: 64,

@@ -301,3 +301,18 @@ groups = ["arrival", "gd_excess", "pre"]
 "lf_align+mode_decay" = ["--lf-align", "on", "--mode-decay", "on"]
 "mimo_early_20" = ["--mimo-early", "20"]
 "lf_align+mode_decay+mimo_early_20" = ["--lf-align", "on", "--mode-decay", "on", "--mimo-early", "20"]
+
+[[case]]
+name = "input-b-6.4.4"
+file = "input-b-6.4.4.art"
+sha256 = "1a15b7d7cea140e90132f1d493a19a76c3d1c7a602e96a61d9806712e257d86c"
+kind = "input"
+groups = ["arrival", "gd_excess", "pre"]
+
+[case.variants]
+"base" = []
+"lf_align" = ["--lf-align", "on"]
+"mode_decay" = ["--mode-decay", "on"]
+"lf_align+mode_decay" = ["--lf-align", "on", "--mode-decay", "on"]
+"mimo_early_20" = ["--mimo-early", "20"]
+"lf_align+mode_decay+mimo_early_20" = ["--lf-align", "on", "--mode-decay", "on", "--mimo-early", "20"]
