@@ -1512,6 +1512,7 @@ fn write_bundle_observed_reported(
     entry: &Path,
     after_stage_write: &dyn Fn(usize, &Path) -> std::io::Result<()>,
     written: &dyn Fn(u64, u64),
+    installed: &dyn Fn(u64, u64),
 ) -> Result<secs_graph::files::BundleInstall, std::io::Error> {
     let total = files.iter().fold(0_u64, |total, (_, bytes)| {
         total
@@ -1522,7 +1523,9 @@ fn write_bundle_observed_reported(
         written(0, total);
     }
     let done = std::cell::Cell::new(0_u64);
-    write_bundle_observed(
+    let install_total =
+        u64::try_from(files.len()).expect("the resident bundle file count fits in u64");
+    let installation = write_bundle_observed(
         root,
         files,
         entry,
@@ -1540,8 +1543,20 @@ fn write_bundle_observed_reported(
             }
             Ok(())
         },
-        &|_, _| Ok(()),
-    )
+        &|index, _| {
+            if install_total != 0 {
+                installed(
+                    u64::try_from(index).expect("the installed file count fits in u64"),
+                    install_total,
+                );
+            }
+            Ok(())
+        },
+    )?;
+    if install_total != 0 {
+        installed(install_total, install_total);
+    }
+    Ok(installation)
 }
 
 /// Write a filter-value text file and its FIR WAV files.
@@ -1566,6 +1581,7 @@ pub fn write_text(
         &|_, _| {},
         &|_, _| {},
         &|_, _| Ok(()),
+        &|_, _| {},
     )?
     .files)
 }
@@ -1592,6 +1608,7 @@ pub fn write_text_observed(
         &|_, _| {},
         &|_, _| {},
         after_stage_write,
+        &|_, _| {},
     )
 }
 
@@ -1607,6 +1624,7 @@ fn write_text_observed_at(
     made: &dyn Fn(u64, u64),
     written: &dyn Fn(u64, u64),
     after_stage_write: &dyn Fn(usize, &Path) -> std::io::Result<()>,
+    installed: &dyn Fn(u64, u64),
 ) -> Result<Installed, FiltersError> {
     if file_name.contains(['/', '\\', '\0']) || matches!(file_name, "." | "..") {
         return Err(FiltersError::Invalid(format!(
@@ -1623,8 +1641,14 @@ fn write_text_observed_at(
         .map(|(name, bytes)| (PathBuf::from(name), bytes.clone()))
         .collect::<Vec<_>>();
     bundle.push((entry.clone(), text));
-    let installed =
-        write_bundle_observed_reported(out, &bundle, &entry, after_stage_write, written)?;
+    let installed = write_bundle_observed_reported(
+        out,
+        &bundle,
+        &entry,
+        after_stage_write,
+        written,
+        installed,
+    )?;
     let path = out.join(file_name);
     let mut written = vec![path];
     written.extend(wavs.into_iter().map(|(name, _)| out.join(name)));
@@ -1657,6 +1681,7 @@ pub fn write_eqapo(
         &|_, _| {},
         &|_, _| {},
         &|_, _| Ok(()),
+        &|_, _| {},
     )?
     .files)
 }
@@ -1684,6 +1709,7 @@ pub fn write_eqapo_observed(
         &|_, _| {},
         &|_, _| {},
         after_stage_write,
+        &|_, _| {},
     )
 }
 
@@ -1700,6 +1726,7 @@ fn write_eqapo_observed_at(
     made: &dyn Fn(u64, u64),
     written: &dyn Fn(u64, u64),
     after_stage_write: &dyn Fn(usize, &Path) -> std::io::Result<()>,
+    installed: &dyn Fn(u64, u64),
 ) -> Result<Installed, FiltersError> {
     let safe = ensure_safe_component(name)?;
     validate_plan_delays(plan)?;
@@ -1754,8 +1781,14 @@ fn write_eqapo_observed_at(
         (guide_relative.clone(), guide),
         (config_relative.clone(), config),
     ]);
-    let installed =
-        write_bundle_observed_reported(out, &bundle, &config_relative, after_stage_write, written)?;
+    let installed = write_bundle_observed_reported(
+        out,
+        &bundle,
+        &config_relative,
+        after_stage_write,
+        written,
+        installed,
+    )?;
     let config_path = out.join(&config_relative);
     let body_path = out.join(&body_relative);
     let guide_path = out.join(&guide_relative);
@@ -1792,16 +1825,18 @@ pub fn export_filter_text_observed_with_options(
     folder: &Path,
     options: &Options,
 ) -> Result<Installed, FiltersError> {
-    export_filter_text_reported(run, folder, options, &|_, _| {}, &|_, _| {})
+    export_filter_text_reported(run, folder, options, &|_, _| {}, &|_, _| {}, &|_, _| {})
 }
 
-/// Exports filter values while reporting FIR files made and staged bytes written.
+/// Exports filter values while reporting FIR files made, staged bytes written,
+/// and files moved into place.
 pub fn export_filter_text_reported(
     run: &FilterRun<'_>,
     folder: &Path,
     options: &Options,
     made: &dyn Fn(u64, u64),
     written: &dyn Fn(u64, u64),
+    installed: &dyn Fn(u64, u64),
 ) -> Result<Installed, FiltersError> {
     validate_options(options, false)?;
     if let Some(block) = filter_export_block(
@@ -1837,6 +1872,7 @@ pub fn export_filter_text_reported(
         made,
         written,
         &|_, _| Ok(()),
+        installed,
     )
 }
 
@@ -1875,10 +1911,19 @@ pub fn export_eqapo_observed_with_channels(
     options: &Options,
     outputs: Option<&[(String, usize)]>,
 ) -> Result<Installed, FiltersError> {
-    export_eqapo_reported(run, folder, options, outputs, &|_, _| {}, &|_, _| {})
+    export_eqapo_reported(
+        run,
+        folder,
+        options,
+        outputs,
+        &|_, _| {},
+        &|_, _| {},
+        &|_, _| {},
+    )
 }
 
-/// Exports Equalizer APO files while reporting FIR files made and staged bytes written.
+/// Exports Equalizer APO files while reporting FIR files made, staged bytes
+/// written, and files moved into place.
 pub fn export_eqapo_reported(
     run: &FilterRun<'_>,
     folder: &Path,
@@ -1886,6 +1931,7 @@ pub fn export_eqapo_reported(
     outputs: Option<&[(String, usize)]>,
     made: &dyn Fn(u64, u64),
     written: &dyn Fn(u64, u64),
+    installed: &dyn Fn(u64, u64),
 ) -> Result<Installed, FiltersError> {
     validate_options(options, false)?;
     if let Some(block) = filter_export_block(
@@ -1914,6 +1960,7 @@ pub fn export_eqapo_reported(
         made,
         written,
         &|_, _| Ok(()),
+        installed,
     )
 }
 
@@ -2167,17 +2214,19 @@ impl PreparedConvolution {
 
     /// Install every prepared file and report an undeletable backup.
     pub fn install_observed(self, folder: &Path) -> Result<Installed, FiltersError> {
-        self.install_reported(folder, &|_, _| {})
+        self.install_reported(folder, &|_, _| {}, &|_, _| {})
     }
 
-    /// Installs every prepared file, reporting staged and synced bytes.
+    /// Installs every prepared file, reporting staged and synced bytes and files
+    /// moved into place.
     pub fn install_reported(
         self,
         folder: &Path,
         written: &dyn Fn(u64, u64),
+        installed: &dyn Fn(u64, u64),
     ) -> Result<Installed, FiltersError> {
         let entry = PathBuf::from("routing.json");
-        let installed = write_bundle_reported(folder, &self.files, &entry, written)?;
+        let installed = write_bundle_reported(folder, &self.files, &entry, written, installed)?;
         Ok(Installed {
             files: self
                 .files

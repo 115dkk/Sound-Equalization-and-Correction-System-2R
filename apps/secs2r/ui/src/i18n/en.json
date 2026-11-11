@@ -227,6 +227,7 @@
   "jobs.stage.export.write": "Writing files",
   "jobs.stage.export.responses": "Computing corrected responses",
   "jobs.stage.export.install": "Moving into the export folder",
+  "jobs.stage.export.manifest": "Recording file checksums",
   "jobs.stage.filters.convolution": "Rendering convolution responses",
   "jobs.finished.succeeded": "{job} done",
   "jobs.finished.cancelled": "{job} canceled",

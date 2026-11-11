@@ -266,9 +266,23 @@ where
     Ok(())
 }
 
+#[cfg(test)]
 pub(crate) fn write_manifest(
     folder: &Path,
     metadata: &DesignMetadata,
+) -> Result<(PathBuf, String), DesignExportError> {
+    write_manifest_reported(folder, metadata, &|_, _| {})
+}
+
+/// Writes the design manifest, calling `hashed(done, total)` in files:
+/// `(0, total)` before the first exported file is read and after each one
+/// has been read and hashed. Reading every file back is where this step's
+/// time goes (a bundle of hundreds of files takes seconds), so that is what
+/// the export job counts.
+pub(crate) fn write_manifest_reported(
+    folder: &Path,
+    metadata: &DesignMetadata,
+    hashed: &dyn Fn(u64, u64),
 ) -> Result<(PathBuf, String), DesignExportError> {
     let graph = ExportGraph::build(&metadata.chain, metadata.mimo.as_ref(), LfeChoice::DOLBY)?;
     let design_id =
@@ -303,7 +317,7 @@ pub(crate) fn write_manifest(
             .any(|main| main.xo_hz.is_some_and(|hz| hz != 0.0)),
         mimo,
     };
-    let mut files = collect_files(folder)?;
+    let mut files = collect_files(folder, hashed)?;
     files.sort_by(|left, right| left.path.cmp(&right.path));
     let source = crate::upstream();
     let manifest = Manifest {
@@ -340,32 +354,45 @@ pub(crate) fn write_manifest(
     Ok((path, design_id))
 }
 
-fn collect_files(folder: &Path) -> Result<Vec<FileRecord>, DesignExportError> {
-    fn visit(root: &Path, at: &Path, out: &mut Vec<FileRecord>) -> Result<(), DesignExportError> {
+fn collect_files(
+    folder: &Path,
+    hashed: &dyn Fn(u64, u64),
+) -> Result<Vec<FileRecord>, DesignExportError> {
+    // The names first, so the count is known before the first file is read.
+    fn visit(at: &Path, out: &mut Vec<PathBuf>) -> Result<(), DesignExportError> {
         for entry in fs::read_dir(at)? {
             let path = entry?.path();
             if path.is_dir() {
-                visit(root, &path, out)?;
+                visit(&path, out)?;
             } else if path.file_name().and_then(|value| value.to_str()) != Some(MANIFEST_NAME) {
-                let bytes = fs::read(&path)?;
-                out.push(FileRecord {
-                    path: path
-                        .strip_prefix(root)
-                        .expect("descendant")
-                        .to_string_lossy()
-                        .replace('\\', "/"),
-                    bytes: bytes.len() as u64,
-                    sha256: Sha256::digest(&bytes)
-                        .iter()
-                        .map(|byte| format!("{byte:02x}"))
-                        .collect(),
-                });
+                out.push(path);
             }
         }
         Ok(())
     }
-    let mut out = Vec::new();
-    visit(folder, folder, &mut out)?;
+    let mut paths = Vec::new();
+    visit(folder, &mut paths)?;
+    let total = paths.len() as u64;
+    if total != 0 {
+        hashed(0, total);
+    }
+    let mut out = Vec::with_capacity(paths.len());
+    for (index, path) in paths.iter().enumerate() {
+        let bytes = fs::read(path)?;
+        out.push(FileRecord {
+            path: path
+                .strip_prefix(folder)
+                .expect("descendant")
+                .to_string_lossy()
+                .replace('\\', "/"),
+            bytes: bytes.len() as u64,
+            sha256: Sha256::digest(&bytes)
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect(),
+        });
+        hashed(index as u64 + 1, total);
+    }
     Ok(out)
 }
 

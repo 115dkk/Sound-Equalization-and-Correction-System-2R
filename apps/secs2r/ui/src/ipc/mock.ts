@@ -438,7 +438,11 @@ export function createMockService(options: MockOptions = {}): MockService {
             reports: [0, Math.floor(contents / 3), Math.floor(contents * 2 / 3), contents] },
           { stage: "export.write", total: bytes, reports: [0, bytes / 2, bytes] },
           // A bundle's files are then moved into the export folder one by one; an mdat is one file and one rename.
-          ...(mdat ? [] : [{ stage: "export.install", total: files, reports: [0, Math.floor(files / 2), files] }]),
+          ...(mdat ? [] : [
+            { stage: "export.install", total: files, reports: [0, Math.floor(files / 2), files] },
+            // The design manifest reads every installed file back to record its checksum.
+            { stage: "export.manifest", total: files, reports: [0, Math.floor(files / 2), files] },
+          ]),
         ], logs: [] };
       }
       case "sample_load": return { stages: [{ stage: null, total: 0, ticks: 3 }], logs: [] };

@@ -611,6 +611,28 @@ fn progress_reports(events: &Events, job: JobId) -> Vec<(String, u64, u64)> {
         .collect()
 }
 
+fn bundle_file_count(root: &Path) -> u64 {
+    let mut folders = vec![root.to_owned()];
+    let mut count = 0_u64;
+    while let Some(folder) = folders.pop() {
+        for entry in fs::read_dir(folder).unwrap() {
+            let entry = entry.unwrap();
+            let file_type = entry.file_type().unwrap();
+            if file_type.is_dir() {
+                folders.push(entry.path());
+            } else if file_type.is_file()
+                && !matches!(
+                    entry.file_name().to_str(),
+                    Some("secs-design.json") | Some("compute-provenance.json")
+                )
+            {
+                count = count.checked_add(1).unwrap();
+            }
+        }
+    }
+    count
+}
+
 fn assert_progress_contract(
     kind: ExportKind,
     reports: &[(String, u64, u64)],
@@ -620,7 +642,7 @@ fn assert_progress_contract(
     assert!(
         reports
             .iter()
-            .all(|(stage, _, _)| stage != "export.camilla.prepare"),
+            .all(|(stage, _, _)| stage != "export.camilla.prepare" && stage != "design"),
         "{kind:?}: {reports:?}"
     );
     let mut starts = vec![0];
@@ -637,6 +659,12 @@ fn assert_progress_contract(
     assert_eq!(stages, expected_stages, "{kind:?}: {reports:?}");
     for range in starts.windows(2) {
         let stage = &reports[range[0]..range[1]];
+        if stage[0].0 == "export.responses" {
+            assert_eq!(stage.len(), 1, "{kind:?}: {stage:?}");
+            assert_eq!((stage[0].1, stage[0].2), (0, 0), "{kind:?}");
+            continue;
+        }
+
         let total = stage[0].2;
         assert!(total > 0, "{kind:?}: {stage:?}");
         assert_eq!((stage[0].1, stage[0].2), (0, total), "{kind:?}");
@@ -705,10 +733,16 @@ fn export_jobs_report_real_prepare_and_write_progress() {
         } else {
             "export.prepare"
         };
-        assert_progress_contract(kind, &reports, &[prepare, "export.write"]);
+        let expected_stages =
+            if matches!(kind, ExportKind::BeforeAfterMdat | ExportKind::StagedMdat) {
+                vec!["export.responses", prepare, "export.write"]
+            } else {
+                vec![prepare, "export.write", "export.install", "export.manifest"]
+            };
+        assert_progress_contract(kind, &reports, &expected_stages);
 
         let mut summary = Vec::new();
-        for stage in [prepare, "export.write"] {
+        for stage in &expected_stages {
             let matching = reports
                 .iter()
                 .filter(|(reported, _, _)| reported == stage)
@@ -725,6 +759,33 @@ fn export_jobs_report_real_prepare_and_write_progress() {
             ));
         }
         println!("{kind:?}: {}", summary.join("; "));
+
+        if matches!(
+            kind,
+            ExportKind::CamillaDsp
+                | ExportKind::EqualizerApo
+                | ExportKind::Convolution
+                | ExportKind::FilterText
+        ) {
+            let expected_total = bundle_file_count(Path::new(&result.folder));
+            let install = reports
+                .iter()
+                .filter(|(stage, _, _)| stage == "export.install")
+                .collect::<Vec<_>>();
+            assert_eq!(
+                install.first().map(|(_, done, total)| (*done, *total)),
+                Some((0, expected_total))
+            );
+            assert_eq!(
+                install.last().map(|(_, done, total)| (*done, *total)),
+                Some((expected_total, expected_total))
+            );
+            assert_eq!(
+                install.len(),
+                usize::try_from(expected_total).unwrap() + 1,
+                "{kind:?}"
+            );
+        }
 
         if matches!(kind, ExportKind::BeforeAfterMdat | ExportKind::StagedMdat) {
             let mdat = result
@@ -776,15 +837,33 @@ fn iir_only_export_skips_prepare_progress_but_reports_write() {
     ) else {
         panic!("filter text export must start")
     };
-    finished_result(events.wait(started.job, Duration::from_secs(180)));
+    let JobResult::Export(result) =
+        finished_result(events.wait(started.job, Duration::from_secs(180)))
+    else {
+        panic!("filter text export must return files")
+    };
 
     let reports = progress_reports(&events, started.job);
-    assert_progress_contract(ExportKind::FilterText, &reports, &["export.write"]);
+    assert_progress_contract(
+        ExportKind::FilterText,
+        &reports,
+        &["export.write", "export.install", "export.manifest"],
+    );
     assert!(
         reports
             .iter()
             .all(|(stage, _, _)| stage != "export.prepare")
     );
+    let expected_total = bundle_file_count(Path::new(&result.folder));
+    let install = reports
+        .iter()
+        .filter(|(stage, _, _)| stage == "export.install")
+        .collect::<Vec<_>>();
+    assert_eq!(
+        install.last().map(|(_, done, total)| (*done, *total)),
+        Some((expected_total, expected_total))
+    );
+    assert_eq!(install.len(), usize::try_from(expected_total).unwrap() + 1);
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -813,13 +892,17 @@ fn measurement_mdat_exports_every_position_without_a_result() {
         }),
         Arc::new(NoEvents),
     );
+    let export_events = Arc::new(Events::default());
     let result = export_scope_and_wait(
         &service,
         ExportKind::BeforeAfterMdat,
         Path::new(""),
         Some(MdatScope::Measurements),
-        Arc::new(Events::default()),
+        export_events.clone(),
     );
+    assert!(!lock(&export_events.values).iter().any(
+        |event| matches!(event, JobEvent::Progress { stage, .. } if stage == "export.responses")
+    ));
     assert!(!result.stale);
     assert_eq!(result.output_rate, 48_000);
     assert!(result.notes.is_empty());

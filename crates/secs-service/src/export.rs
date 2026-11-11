@@ -115,9 +115,11 @@ impl ConvolutionWriter {
             .prepared
             .take()
             .expect("convolution writer was prepared")
-            .install_reported(folder, &|done, total| {
-                job.report_progress("export.write", done, total);
-            })
+            .install_reported(
+                folder,
+                &|done, total| job.report_progress("export.write", done, total),
+                &|done, total| job.report_progress("export.install", done, total),
+            )
             .map_err(filter_error)?;
         log_leftover_backup(log, installed.leftover_backup);
         Ok(installed.files)
@@ -149,6 +151,7 @@ impl EqapoWriter {
             outputs,
             &|done, total| job.report_progress("export.prepare", done, total),
             &|done, total| job.report_progress("export.write", done, total),
+            &|done, total| job.report_progress("export.install", done, total),
         )
         .map_err(filter_error)?;
         let relative_files = installed
@@ -198,6 +201,7 @@ impl FilterTextWriter {
             options,
             &|done, total| job.report_progress("export.prepare", done, total),
             &|done, total| job.report_progress("export.write", done, total),
+            &|done, total| job.report_progress("export.install", done, total),
         )
         .map_err(filter_error)?;
         let relative_files = installed
@@ -243,6 +247,9 @@ impl BeforeAfterMdatWriter {
         uuid: &crate::UuidSource,
         job: &crate::jobs::JobContext,
     ) -> Result<Self, IpcError> {
+        if run.is_some() {
+            job.report_progress("export.responses", 0, 0);
+        }
         let items = secs_export::rew_mdat_items(run, scope, originals, mimo, sources)
             .map_err(rew_export_error)?;
         let label = run.map(|run| run.settings.label()).unwrap_or_default();
@@ -292,6 +299,7 @@ impl StagedMdatWriter {
         job: &crate::jobs::JobContext,
     ) -> Result<Self, IpcError> {
         let label = run.settings.label();
+        job.report_progress("export.responses", 0, 0);
         let items = match mimo {
             Some(mimo) => secs_export::stage_items_mimo(run, mimo, Some(&label)),
             None => secs_export::stage_items(run, Some(&label)),
@@ -423,6 +431,7 @@ impl CamillaWriter<'_> {
             self.folder,
             self.prepared.expect("CamillaDSP writer was prepared"),
             &|done, total| job.report_progress("export.write", done, total),
+            &|done, total| job.report_progress("export.install", done, total),
         )
         .map_err(export_error)?;
         log_leftover_backup(log, installed.leftover_backup);
@@ -1217,13 +1226,11 @@ impl Service {
                     let (design, settings) = if let Some(values) = live_values.take() {
                         values
                     } else {
-                        job.report_progress("design", 0, 1);
                         let loaded = replay_snapshot
                             .ok_or_else(|| {
                                 IpcError::new(ErrorCode::Internal, "replay snapshot disappeared")
                             })?
                             .load_measurements(&job, ctx.budget())?;
-                        job.report_progress("read_measurements", 1, 1);
                         job.cancel()
                             .check()
                             .map_err(|_| IpcError::new(ErrorCode::Cancelled, "cancelled"))?;
@@ -1273,7 +1280,6 @@ impl Service {
                         .map_err(super::calibration::engine_error)?;
                         let design = calibration.design;
                         drop(loaded);
-                        job.report_progress("design", 1, 1);
                         if let Some(paths) = cached_mimo_paths.as_ref() {
                             mimo = Some(
                                 description.mimo_responses(
@@ -1347,8 +1353,12 @@ impl Service {
                     bypass_config: (kind == ExportKind::CamillaDsp)
                         .then(|| format!("configs/secs_{}_bypass.yml", description.camilla().mode)),
                 };
-                let (manifest_path, id) = crate::design_export::write_manifest(folder, &metadata)
-                    .map_err(export_error)?;
+                let (manifest_path, id) = crate::design_export::write_manifest_reported(
+                    folder,
+                    &metadata,
+                    &|done, total| job.report_progress("export.manifest", done, total),
+                )
+                .map_err(export_error)?;
                 paths.push(manifest_path);
                 written_design_id = Some(id);
             }

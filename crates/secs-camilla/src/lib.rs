@@ -1702,18 +1702,20 @@ pub fn install_prepared(
     ))
 }
 
-/// Installs a configuration returned by [`prepare_config`], reporting staged bytes.
+/// Installs a configuration returned by [`prepare_config`], reporting staged
+/// bytes and files moved into place.
 pub fn install_prepared_reported(
     out: &Path,
     prepared: PreparedConfig,
     written: &dyn Fn(u64, u64),
+    installed: &dyn Fn(u64, u64),
 ) -> Result<Installed, CamillaError> {
     let PreparedConfig {
         bundle,
         entry,
         write_input,
     } = prepared;
-    let installed = write_bundle_reported(out, &bundle, &entry, written)?;
+    let installed = write_bundle_reported(out, &bundle, &entry, written, installed)?;
     Ok(finish_install(
         out,
         bundle,

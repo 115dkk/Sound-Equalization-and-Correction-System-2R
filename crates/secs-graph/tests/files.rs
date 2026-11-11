@@ -78,12 +78,28 @@ fn reported_bundle_counts_synced_bytes_after_each_file() {
     ];
     let reports = std::cell::RefCell::new(Vec::new());
 
-    write_bundle_reported(&root, &files, Path::new("config.txt"), &|done, total| {
-        reports.borrow_mut().push((done, total));
-    })
+    write_bundle_reported(
+        &root,
+        &files,
+        Path::new("config.txt"),
+        &|done, total| reports.borrow_mut().push(("written", done, total)),
+        &|done, total| reports.borrow_mut().push(("installed", done, total)),
+    )
     .unwrap();
 
-    assert_eq!(reports.into_inner(), [(0, 18), (2, 18), (7, 18), (18, 18)]);
+    assert_eq!(
+        reports.into_inner(),
+        [
+            ("written", 0, 18),
+            ("written", 2, 18),
+            ("written", 7, 18),
+            ("written", 18, 18),
+            ("installed", 0, 3),
+            ("installed", 1, 3),
+            ("installed", 2, 3),
+            ("installed", 3, 3),
+        ]
+    );
     for (relative, bytes) in files {
         assert_eq!(fs::read(root.join(relative)).unwrap(), bytes);
     }
@@ -91,21 +107,27 @@ fn reported_bundle_counts_synced_bytes_after_each_file() {
 }
 
 #[test]
-fn reported_bundle_with_only_empty_files_reports_nothing() {
+fn reported_bundle_with_only_empty_files_reports_install_only() {
     let parent = temp_dir("reported-empty-bundle");
     let root = parent.join("bundle");
     let files = vec![
         (PathBuf::from("empty.bin"), Vec::new()),
         (PathBuf::from("config.txt"), Vec::new()),
     ];
-    let reports = std::cell::RefCell::new(Vec::new());
+    let written = std::cell::RefCell::new(Vec::new());
+    let installed = std::cell::RefCell::new(Vec::new());
 
-    write_bundle_reported(&root, &files, Path::new("config.txt"), &|done, total| {
-        reports.borrow_mut().push((done, total));
-    })
+    write_bundle_reported(
+        &root,
+        &files,
+        Path::new("config.txt"),
+        &|done, total| written.borrow_mut().push((done, total)),
+        &|done, total| installed.borrow_mut().push((done, total)),
+    )
     .unwrap();
 
-    assert!(reports.into_inner().is_empty());
+    assert!(written.into_inner().is_empty());
+    assert_eq!(installed.into_inner(), [(0, 2), (1, 2), (2, 2)]);
     assert_eq!(fs::read(root.join("empty.bin")).unwrap(), b"");
     assert_eq!(fs::read(root.join("config.txt")).unwrap(), b"");
     fs::remove_dir_all(parent).unwrap();

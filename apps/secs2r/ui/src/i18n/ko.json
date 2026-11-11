@@ -227,6 +227,7 @@
   "jobs.stage.export.write": "파일 저장",
   "jobs.stage.export.responses": "보정 응답 계산",
   "jobs.stage.export.install": "내보낼 폴더로 옮기기",
+  "jobs.stage.export.manifest": "파일 체크섬 기록",
   "jobs.stage.filters.convolution": "컨볼루션 응답 계산",
   "jobs.finished.succeeded": "{job} 완료",
   "jobs.finished.cancelled": "{job} 취소됨",

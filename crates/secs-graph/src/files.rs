@@ -322,42 +322,57 @@ pub fn write_bundle_observed(
 }
 
 /// Stages and installs a bundle like [`write_bundle_observed`], calling
-/// `written(done, total)` in bytes: `(0, total)` before the first file and
-/// after each staged file has been written and synced.
+/// `written(done, total)` in bytes while staging and `installed(done, total)`
+/// in files while moving the staged files into place.
 pub fn write_bundle_reported(
     root: &Path,
     files: &[(PathBuf, Vec<u8>)],
     entry: &Path,
     written: &dyn Fn(u64, u64),
+    installed: &dyn Fn(u64, u64),
 ) -> Result<BundleInstall, std::io::Error> {
     let total = files.iter().fold(0_u64, |total, (_, bytes)| {
         total
             .checked_add(u64::try_from(bytes.len()).expect("one file length fits in u64"))
             .expect("resident bundle bytes fit in u64")
     });
-    if total == 0 {
-        return write_bundle_observed(root, files, entry, &|_, _| Ok(()), &|_, _| Ok(()));
+    if total != 0 {
+        written(0, total);
     }
-
-    written(0, total);
     let done = Cell::new(0_u64);
-    write_bundle_observed(
+    let install_total =
+        u64::try_from(files.len()).expect("the resident bundle file count fits in u64");
+    let installation = write_bundle_observed(
         root,
         files,
         entry,
         &|index, _| {
-            let next = done
-                .get()
-                .checked_add(
-                    u64::try_from(files[index].1.len()).expect("one file length fits in u64"),
-                )
-                .expect("staged bundle bytes do not exceed the total");
-            done.set(next);
-            written(next, total);
+            if total != 0 {
+                let next = done
+                    .get()
+                    .checked_add(
+                        u64::try_from(files[index].1.len()).expect("one file length fits in u64"),
+                    )
+                    .expect("staged bundle bytes do not exceed the total");
+                done.set(next);
+                written(next, total);
+            }
             Ok(())
         },
-        &|_, _| Ok(()),
-    )
+        &|index, _| {
+            if install_total != 0 {
+                installed(
+                    u64::try_from(index).expect("the installed file count fits in u64"),
+                    install_total,
+                );
+            }
+            Ok(())
+        },
+    )?;
+    if install_total != 0 {
+        installed(install_total, install_total);
+    }
+    Ok(installation)
 }
 
 #[cfg(test)]
