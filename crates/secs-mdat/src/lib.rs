@@ -15,7 +15,7 @@ mod models;
 pub mod source_info;
 
 pub use budget::AllocationBudget;
-pub use builder::{MeasurementInput, build};
+pub use builder::{MeasurementInput, build, build_reported};
 pub use ir::{LoadedMdatProject, MdatIRProvider, MeasurementInfo, extract_ir, load_mdat_project};
 pub use models::*;
 pub use source_info::{Boxed, CalFile, CalInfo, SourceDate, SourceInfo, from_rew_measurement};

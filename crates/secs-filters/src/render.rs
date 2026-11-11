@@ -440,6 +440,16 @@ pub fn render_paths_at_cancellable(
     rate: u32,
     ctx: &Context,
 ) -> Result<RenderedPaths, FiltersError> {
+    render_paths_at_cancellable_reported(plan, max_len_48k, rate, ctx, &|| {})
+}
+
+pub(crate) fn render_paths_at_cancellable_reported(
+    plan: &FilterPlan,
+    max_len_48k: usize,
+    rate: u32,
+    ctx: &Context,
+    pair_rendered: &dyn Fn(),
+) -> Result<RenderedPaths, FiltersError> {
     plan.check_structure()?;
     if !is_output_rate(rate) {
         return Err(FiltersError::Invalid(
@@ -454,7 +464,15 @@ pub fn render_paths_at_cancellable(
             "max_len {max_len} is below the minimum {MIN_LENGTH}"
         )));
     }
+    let pair_count = plan
+        .inputs
+        .len()
+        .checked_mul(plan.outputs.len())
+        .expect("the resident input/output pair count fits in usize");
     let pairs = collect_routes(plan, max_len, rate, ctx)?;
+    let missing_pairs = pair_count
+        .checked_sub(pairs.len())
+        .expect("reachable pairs are a subset of all input/output pairs");
     let finite_end = pairs
         .iter()
         .flat_map(|pair| &pair.routes)
@@ -462,6 +480,7 @@ pub fn render_paths_at_cancellable(
         .max()
         .unwrap_or(1);
     let mut candidate = min_length.max(finite_end.next_power_of_two()).min(max_len);
+    let mut first_pass = true;
 
     loop {
         let mut rendered = Vec::with_capacity(pairs.len());
@@ -484,7 +503,16 @@ pub fn render_paths_at_cancellable(
                 peak = peak.max(pair_peak);
                 rendered.push((pair_index, response));
             }
+            if first_pass {
+                pair_rendered();
+            }
         }
+        if first_pass {
+            for _ in 0..missing_pairs {
+                pair_rendered();
+            }
+        }
+        first_pass = false;
         if peak == 0.0 {
             return Ok(RenderedPaths {
                 rate,

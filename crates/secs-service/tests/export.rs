@@ -586,6 +586,208 @@ fn changing_only_output_rate_keeps_calibration_fresh_for_export() {
     fs::remove_dir_all(root).unwrap();
 }
 
+fn remove_subs(path: &Path) {
+    let mut store = MeasurementStore::open(path).unwrap();
+    store
+        .project_mut()
+        .config
+        .speakers
+        .retain(|speaker| speaker.size != "sub");
+    store.save().unwrap();
+}
+
+fn progress_reports(events: &Events, job: JobId) -> Vec<(String, u64, u64)> {
+    lock(&events.values)
+        .iter()
+        .filter_map(|event| match event {
+            JobEvent::Progress {
+                job: event_job,
+                stage,
+                done,
+                total,
+            } if *event_job == job => Some((stage.clone(), *done, *total)),
+            _ => None,
+        })
+        .collect()
+}
+
+fn assert_progress_contract(
+    kind: ExportKind,
+    reports: &[(String, u64, u64)],
+    expected_stages: &[&str],
+) {
+    assert!(!reports.is_empty(), "{kind:?} emitted no progress");
+    assert!(
+        reports
+            .iter()
+            .all(|(stage, _, _)| stage != "export.camilla.prepare"),
+        "{kind:?}: {reports:?}"
+    );
+    let mut starts = vec![0];
+    for index in 1..reports.len() {
+        if reports[index - 1].0 != reports[index].0 {
+            starts.push(index);
+        }
+    }
+    starts.push(reports.len());
+    let stages = starts
+        .windows(2)
+        .map(|range| reports[range[0]].0.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(stages, expected_stages, "{kind:?}: {reports:?}");
+    for range in starts.windows(2) {
+        let stage = &reports[range[0]..range[1]];
+        let total = stage[0].2;
+        assert!(total > 0, "{kind:?}: {stage:?}");
+        assert_eq!((stage[0].1, stage[0].2), (0, total), "{kind:?}");
+        assert_eq!(
+            (stage.last().unwrap().1, stage.last().unwrap().2),
+            (total, total),
+            "{kind:?}"
+        );
+        assert!(
+            stage
+                .iter()
+                .all(|(_, done, item_total)| *item_total == total && done <= item_total),
+            "{kind:?}: {stage:?}"
+        );
+        assert!(
+            stage.windows(2).all(|pair| pair[0].1 <= pair[1].1),
+            "{kind:?}: {stage:?}"
+        );
+    }
+}
+
+#[test]
+fn export_jobs_report_real_prepare_and_write_progress() {
+    let root = temp_root("export-progress");
+    fs::create_dir_all(&root).unwrap();
+    let (path, settings) = write_case(&root, "room");
+    remove_subs(&path);
+    let service = deterministic_service();
+    open(&service, &path);
+    let calibration_events = Arc::new(Events::default());
+    let calibration = start_calibration(&service, calibration_events.clone(), settings);
+    finished_result(calibration_events.wait(calibration, Duration::from_secs(120)));
+
+    for kind in [
+        ExportKind::CamillaDsp,
+        ExportKind::EqualizerApo,
+        ExportKind::Convolution,
+        ExportKind::FilterText,
+        ExportKind::BeforeAfterMdat,
+        ExportKind::StagedMdat,
+    ] {
+        let folder = root.join(format!("progress-{kind:?}"));
+        let events = Arc::new(Events::default());
+        let Response::Export(started) = call_ok(
+            &service,
+            Request::Export(ExportParams {
+                kind,
+                folder: folder.to_string_lossy().into_owned(),
+                mdat_scope: (kind == ExportKind::BeforeAfterMdat).then_some(MdatScope::Results),
+                design_name: None,
+                camilla_devices: None,
+                extra_rates: Vec::new(),
+            }),
+            events.clone(),
+        ) else {
+            panic!("{kind:?} export must start")
+        };
+        let JobResult::Export(result) =
+            finished_result(events.wait(started.job, Duration::from_secs(180)))
+        else {
+            panic!("{kind:?} export must return files")
+        };
+        let reports = progress_reports(&events, started.job);
+        let prepare = if kind == ExportKind::Convolution {
+            "filters.convolution"
+        } else {
+            "export.prepare"
+        };
+        assert_progress_contract(kind, &reports, &[prepare, "export.write"]);
+
+        let mut summary = Vec::new();
+        for stage in [prepare, "export.write"] {
+            let matching = reports
+                .iter()
+                .filter(|(reported, _, _)| reported == stage)
+                .collect::<Vec<_>>();
+            let first = matching.first().unwrap();
+            let last = matching.last().unwrap();
+            summary.push(format!(
+                "{stage} ({},{}) -> ({},{}), {} reports",
+                first.1,
+                first.2,
+                last.1,
+                last.2,
+                matching.len()
+            ));
+        }
+        println!("{kind:?}: {}", summary.join("; "));
+
+        if matches!(kind, ExportKind::BeforeAfterMdat | ExportKind::StagedMdat) {
+            let mdat = result
+                .files
+                .iter()
+                .find(|path| {
+                    Path::new(path)
+                        .extension()
+                        .is_some_and(|value| value == "mdat")
+                })
+                .expect("mdat export returns its mdat file");
+            let file_len = fs::metadata(mdat).unwrap().len();
+            let write_total = reports
+                .iter()
+                .find(|(stage, _, _)| stage == "export.write")
+                .unwrap()
+                .2;
+            assert_eq!(write_total, file_len, "{kind:?}");
+        }
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn iir_only_export_skips_prepare_progress_but_reports_write() {
+    let root = temp_root("iir-export-progress");
+    fs::create_dir_all(&root).unwrap();
+    let (path, mut settings) = write_case(&root, "room");
+    remove_subs(&path);
+    settings.mode = secs_types::calibration::Mode::Zero;
+    let service = deterministic_service();
+    open(&service, &path);
+    let calibration_events = Arc::new(Events::default());
+    let calibration = start_calibration(&service, calibration_events.clone(), settings);
+    finished_result(calibration_events.wait(calibration, Duration::from_secs(120)));
+    let events = Arc::new(Events::default());
+    let folder = root.join("filter-text");
+    let Response::Export(started) = call_ok(
+        &service,
+        Request::Export(ExportParams {
+            kind: ExportKind::FilterText,
+            folder: folder.to_string_lossy().into_owned(),
+            mdat_scope: None,
+            design_name: None,
+            camilla_devices: None,
+            extra_rates: Vec::new(),
+        }),
+        events.clone(),
+    ) else {
+        panic!("filter text export must start")
+    };
+    finished_result(events.wait(started.job, Duration::from_secs(180)));
+
+    let reports = progress_reports(&events, started.job);
+    assert_progress_contract(ExportKind::FilterText, &reports, &["export.write"]);
+    assert!(
+        reports
+            .iter()
+            .all(|(stage, _, _)| stage != "export.prepare")
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
 #[test]
 fn measurement_mdat_exports_every_position_without_a_result() {
     let root = temp_root("measurement-mdat");

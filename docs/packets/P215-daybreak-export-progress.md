@@ -252,3 +252,11 @@ instead of bending either.
 - The output tail of every check above, and anything you could not do.
 - A list of what the screen can now rely on, if it differs from the
   contract above in any detail.
+
+## After review (main session, 2026-11-11)
+
+The two mdat writers do not sync after every 1 MiB chunk, as the first
+implementation did after reading 'written and synced' in the contract
+literally. `secs_types::fs::write_atomic` syncs once after the last chunk and
+renames, as it did before; `export.write` counts the bytes handed to the
+file. A sync per chunk would only make a large mdat slower to save.

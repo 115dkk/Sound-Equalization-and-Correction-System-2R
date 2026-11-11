@@ -5,7 +5,7 @@
 //! junction on a machine without the symlink privilege spawns `mklink`, and
 //! the subprocess policy (`secs-policy` gates) scans only `src/`.
 
-use secs_graph::files::write_bundle_observed;
+use secs_graph::files::{write_bundle_observed, write_bundle_reported};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -65,6 +65,50 @@ fn unlink_directory(link: &Path) {
     } else {
         fs::remove_file(link).unwrap();
     }
+}
+
+#[test]
+fn reported_bundle_counts_synced_bytes_after_each_file() {
+    let parent = temp_dir("reported-bundle");
+    let root = parent.join("bundle");
+    let files = vec![
+        (PathBuf::from("a.bin"), vec![1; 2]),
+        (PathBuf::from("nested/b.bin"), vec![2; 5]),
+        (PathBuf::from("config.txt"), vec![3; 11]),
+    ];
+    let reports = std::cell::RefCell::new(Vec::new());
+
+    write_bundle_reported(&root, &files, Path::new("config.txt"), &|done, total| {
+        reports.borrow_mut().push((done, total));
+    })
+    .unwrap();
+
+    assert_eq!(reports.into_inner(), [(0, 18), (2, 18), (7, 18), (18, 18)]);
+    for (relative, bytes) in files {
+        assert_eq!(fs::read(root.join(relative)).unwrap(), bytes);
+    }
+    fs::remove_dir_all(parent).unwrap();
+}
+
+#[test]
+fn reported_bundle_with_only_empty_files_reports_nothing() {
+    let parent = temp_dir("reported-empty-bundle");
+    let root = parent.join("bundle");
+    let files = vec![
+        (PathBuf::from("empty.bin"), Vec::new()),
+        (PathBuf::from("config.txt"), Vec::new()),
+    ];
+    let reports = std::cell::RefCell::new(Vec::new());
+
+    write_bundle_reported(&root, &files, Path::new("config.txt"), &|done, total| {
+        reports.borrow_mut().push((done, total));
+    })
+    .unwrap();
+
+    assert!(reports.into_inner().is_empty());
+    assert_eq!(fs::read(root.join("empty.bin")).unwrap(), b"");
+    assert_eq!(fs::read(root.join("config.txt")).unwrap(), b"");
+    fs::remove_dir_all(parent).unwrap();
 }
 
 /// TD-270: a bundle whose parent folder is a link is refused before any file

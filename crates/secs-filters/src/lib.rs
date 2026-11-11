@@ -20,7 +20,7 @@ use secs_dsp::Complex64;
 use secs_graph::emit::guard::find_ops;
 use secs_graph::emit::pyfmt::{format_fixed, round_ndigits};
 use secs_graph::emit::{grouped, guard};
-use secs_graph::files::{wav_bytes, write_bundle_observed};
+use secs_graph::files::{wav_bytes, write_bundle_observed, write_bundle_reported};
 use secs_graph::{
     ExportGraph, GraphError, LFE_GAIN_DB, LFE_LP_HZ, LfeChoice, SAMPLE_RATE, is_negative_delay,
 };
@@ -1480,12 +1480,13 @@ fn filter_text_at(
 type FirNames = Vec<(String, String)>;
 type ExportFiles = Vec<(String, Vec<u8>)>;
 
-fn fir_files(
+fn fir_files_reported(
     plan: &FilterPlan,
     prefix: &str,
     output_rate: u32,
+    made: &dyn Fn(u64, u64),
 ) -> Result<(FirNames, ExportFiles), FiltersError> {
-    let files = secs_graph::emit::fir_files(plan, prefix, output_rate)
+    let files = secs_graph::emit::fir_files_reported(plan, prefix, output_rate, made)
         .map_err(|error| FiltersError::Invalid(error.to_string()))?;
     let names = plan
         .firs()
@@ -1503,6 +1504,44 @@ fn utf8_bom(text: &str) -> Vec<u8> {
 }
 fn ensure_safe_component(name: &str) -> Result<String, FiltersError> {
     guard::safe_component(name).map_err(|error| FiltersError::Invalid(error.to_string()))
+}
+
+fn write_bundle_observed_reported(
+    root: &Path,
+    files: &[(PathBuf, Vec<u8>)],
+    entry: &Path,
+    after_stage_write: &dyn Fn(usize, &Path) -> std::io::Result<()>,
+    written: &dyn Fn(u64, u64),
+) -> Result<secs_graph::files::BundleInstall, std::io::Error> {
+    let total = files.iter().fold(0_u64, |total, (_, bytes)| {
+        total
+            .checked_add(u64::try_from(bytes.len()).expect("one file length fits in u64"))
+            .expect("resident bundle bytes fit in u64")
+    });
+    if total != 0 {
+        written(0, total);
+    }
+    let done = std::cell::Cell::new(0_u64);
+    write_bundle_observed(
+        root,
+        files,
+        entry,
+        &|index, path| {
+            after_stage_write(index, path)?;
+            if total != 0 {
+                let next = done
+                    .get()
+                    .checked_add(
+                        u64::try_from(files[index].1.len()).expect("one file length fits in u64"),
+                    )
+                    .expect("staged bundle bytes do not exceed the total");
+                done.set(next);
+                written(next, total);
+            }
+            Ok(())
+        },
+        &|_, _| Ok(()),
+    )
 }
 
 /// Write a filter-value text file and its FIR WAV files.
@@ -1524,6 +1563,8 @@ pub fn write_text(
         title,
         info,
         SAMPLE_RATE,
+        &|_, _| {},
+        &|_, _| {},
         &|_, _| Ok(()),
     )?
     .files)
@@ -1548,6 +1589,8 @@ pub fn write_text_observed(
         title,
         info,
         SAMPLE_RATE,
+        &|_, _| {},
+        &|_, _| {},
         after_stage_write,
     )
 }
@@ -1561,6 +1604,8 @@ fn write_text_observed_at(
     title: &str,
     info: &[String],
     output_rate: u32,
+    made: &dyn Fn(u64, u64),
+    written: &dyn Fn(u64, u64),
     after_stage_write: &dyn Fn(usize, &Path) -> std::io::Result<()>,
 ) -> Result<Installed, FiltersError> {
     if file_name.contains(['/', '\\', '\0']) || matches!(file_name, "." | "..") {
@@ -1570,7 +1615,7 @@ fn write_text_observed_at(
     }
     let prefix = format!("{}_", ensure_safe_component(wav_prefix)?);
     validate_plan_delays(plan)?;
-    let (firs, wavs) = fir_files(plan, &prefix, output_rate)?;
+    let (firs, wavs) = fir_files_reported(plan, &prefix, output_rate, made)?;
     let text = utf8_bom(&filter_text_at(plan, &firs, title, info, output_rate)?);
     let entry = PathBuf::from(file_name);
     let mut bundle = wavs
@@ -1578,7 +1623,8 @@ fn write_text_observed_at(
         .map(|(name, bytes)| (PathBuf::from(name), bytes.clone()))
         .collect::<Vec<_>>();
     bundle.push((entry.clone(), text));
-    let installed = write_bundle_observed(out, &bundle, &entry, after_stage_write, &|_, _| Ok(()))?;
+    let installed =
+        write_bundle_observed_reported(out, &bundle, &entry, after_stage_write, written)?;
     let path = out.join(file_name);
     let mut written = vec![path];
     written.extend(wavs.into_iter().map(|(name, _)| out.join(name)));
@@ -1608,6 +1654,8 @@ pub fn write_eqapo(
         latency_ms,
         SAMPLE_RATE,
         None,
+        &|_, _| {},
+        &|_, _| {},
         &|_, _| Ok(()),
     )?
     .files)
@@ -1633,6 +1681,8 @@ pub fn write_eqapo_observed(
         latency_ms,
         SAMPLE_RATE,
         None,
+        &|_, _| {},
+        &|_, _| {},
         after_stage_write,
     )
 }
@@ -1647,12 +1697,14 @@ fn write_eqapo_observed_at(
     latency_ms: Option<f64>,
     output_rate: u32,
     device: Option<&DeviceChannels>,
+    made: &dyn Fn(u64, u64),
+    written: &dyn Fn(u64, u64),
     after_stage_write: &dyn Fn(usize, &Path) -> std::io::Result<()>,
 ) -> Result<Installed, FiltersError> {
     let safe = ensure_safe_component(name)?;
     validate_plan_delays(plan)?;
     let sub = out.join(&safe);
-    let (firs, wavs) = fir_files(plan, &format!("{safe}_"), output_rate)?;
+    let (firs, wavs) = fir_files_reported(plan, &format!("{safe}_"), output_rate, made)?;
     let body = eqapo_filters(plan, &firs, note)?.into_bytes();
     let fallback = device
         .is_none()
@@ -1702,13 +1754,8 @@ fn write_eqapo_observed_at(
         (guide_relative.clone(), guide),
         (config_relative.clone(), config),
     ]);
-    let installed = write_bundle_observed(
-        out,
-        &bundle,
-        &config_relative,
-        after_stage_write,
-        &|_, _| Ok(()),
-    )?;
+    let installed =
+        write_bundle_observed_reported(out, &bundle, &config_relative, after_stage_write, written)?;
     let config_path = out.join(&config_relative);
     let body_path = out.join(&body_relative);
     let guide_path = out.join(&guide_relative);
@@ -1745,6 +1792,17 @@ pub fn export_filter_text_observed_with_options(
     folder: &Path,
     options: &Options,
 ) -> Result<Installed, FiltersError> {
+    export_filter_text_reported(run, folder, options, &|_, _| {}, &|_, _| {})
+}
+
+/// Exports filter values while reporting FIR files made and staged bytes written.
+pub fn export_filter_text_reported(
+    run: &FilterRun<'_>,
+    folder: &Path,
+    options: &Options,
+    made: &dyn Fn(u64, u64),
+    written: &dyn Fn(u64, u64),
+) -> Result<Installed, FiltersError> {
     validate_options(options, false)?;
     if let Some(block) = filter_export_block(
         ExportKind::FilterText,
@@ -1776,6 +1834,8 @@ pub fn export_filter_text_observed_with_options(
         &format!("SECS 2 보정 필터 — {}", run.label),
         &info,
         options.output_rate,
+        made,
+        written,
         &|_, _| Ok(()),
     )
 }
@@ -1815,6 +1875,18 @@ pub fn export_eqapo_observed_with_channels(
     options: &Options,
     outputs: Option<&[(String, usize)]>,
 ) -> Result<Installed, FiltersError> {
+    export_eqapo_reported(run, folder, options, outputs, &|_, _| {}, &|_, _| {})
+}
+
+/// Exports Equalizer APO files while reporting FIR files made and staged bytes written.
+pub fn export_eqapo_reported(
+    run: &FilterRun<'_>,
+    folder: &Path,
+    options: &Options,
+    outputs: Option<&[(String, usize)]>,
+    made: &dyn Fn(u64, u64),
+    written: &dyn Fn(u64, u64),
+) -> Result<Installed, FiltersError> {
     validate_options(options, false)?;
     if let Some(block) = filter_export_block(
         ExportKind::EqualizerApo,
@@ -1839,6 +1911,8 @@ pub fn export_eqapo_observed_with_channels(
         Some(run.latency_ms),
         options.output_rate,
         device.as_ref(),
+        made,
+        written,
         &|_, _| Ok(()),
     )
 }
@@ -2093,9 +2167,17 @@ impl PreparedConvolution {
 
     /// Install every prepared file and report an undeletable backup.
     pub fn install_observed(self, folder: &Path) -> Result<Installed, FiltersError> {
+        self.install_reported(folder, &|_, _| {})
+    }
+
+    /// Installs every prepared file, reporting staged and synced bytes.
+    pub fn install_reported(
+        self,
+        folder: &Path,
+        written: &dyn Fn(u64, u64),
+    ) -> Result<Installed, FiltersError> {
         let entry = PathBuf::from("routing.json");
-        let installed =
-            write_bundle_observed(folder, &self.files, &entry, &|_, _| Ok(()), &|_, _| Ok(()))?;
+        let installed = write_bundle_reported(folder, &self.files, &entry, written)?;
         Ok(Installed {
             files: self
                 .files
@@ -2127,20 +2209,38 @@ pub fn prepare_convolution_named_with_options(
     let plan = graph.plan();
     let headroom_db = secs_graph::headroom_db_half_db(plan)?;
     let attenuation = 10_f64.powf(-headroom_db / 20.0);
-    let total = 1 + options.extra_rates.len() as u64;
-    let progress = ctx.stage("filters.convolution", total);
+    let rates = u64::try_from(1 + options.extra_rates.len())
+        .expect("the resident output-rate list length fits in u64");
+    let pairs = u64::try_from(plan.inputs.len())
+        .expect("the resident input list length fits in u64")
+        .checked_mul(
+            u64::try_from(plan.outputs.len()).expect("the resident output list length fits in u64"),
+        )
+        .ok_or_else(|| FiltersError::Invalid("convolution pair count overflow".into()))?;
+    let total = rates
+        .checked_mul(2)
+        .and_then(|count| count.checked_mul(pairs))
+        .ok_or_else(|| FiltersError::Invalid("convolution progress count overflow".into()))?;
+    let progress = (total != 0).then(|| ctx.stage("filters.convolution", total));
     ctx.cancel().check()?;
     let mut files = Vec::new();
-    for (rate_index, (rate, prefix)) in std::iter::once((options.output_rate, PathBuf::new()))
-        .chain(
-            options
-                .extra_rates
-                .iter()
-                .map(|&rate| (rate, PathBuf::from(format!("{rate}Hz")))),
-        )
-        .enumerate()
-    {
-        let rendered = render_paths_at_cancellable(plan, CONVOLUTION_MAX_LEN, rate, ctx)?;
+    for (rate, prefix) in std::iter::once((options.output_rate, PathBuf::new())).chain(
+        options
+            .extra_rates
+            .iter()
+            .map(|&rate| (rate, PathBuf::from(format!("{rate}Hz")))),
+    ) {
+        let rendered = render::render_paths_at_cancellable_reported(
+            plan,
+            CONVOLUTION_MAX_LEN,
+            rate,
+            ctx,
+            &|| {
+                if let Some(progress) = &progress {
+                    progress.advance(1);
+                }
+            },
+        )?;
         let frequencies = convolution_grid(rate);
         let mut routes = Vec::with_capacity(rendered.paths.len());
         for path in &rendered.paths {
@@ -2174,6 +2274,14 @@ pub fn prepare_convolution_named_with_options(
                 peak_gain_db,
                 delay_ms: path.delay_ms,
             });
+            if let Some(progress) = &progress {
+                progress.advance(1);
+            }
+        }
+        if let Some(progress) = &progress {
+            let encoded = u64::try_from(rendered.paths.len())
+                .expect("the resident rendered-path list length fits in u64");
+            progress.advance(pairs.saturating_sub(encoded));
         }
         if prefix.as_os_str().is_empty() {
             let guide = convolution_guide(
@@ -2204,7 +2312,6 @@ pub fn prepare_convolution_named_with_options(
             .map_err(|error| FiltersError::Invalid(format!("routing.json: {error}")))?;
         routing_bytes.push(b'\n');
         files.push((entry, routing_bytes));
-        progress.set(rate_index as u64 + 1);
     }
     Ok(PreparedConvolution { files })
 }

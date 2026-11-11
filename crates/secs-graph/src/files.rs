@@ -5,6 +5,7 @@
 //! from the CamillaDSP writer (#92 C11).
 
 use crate::GraphError;
+use std::cell::Cell;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -318,6 +319,45 @@ pub fn write_bundle_observed(
         Err(error) => Some((backup, error.to_string())),
     };
     Ok(BundleInstall { leftover_backup })
+}
+
+/// Stages and installs a bundle like [`write_bundle_observed`], calling
+/// `written(done, total)` in bytes: `(0, total)` before the first file and
+/// after each staged file has been written and synced.
+pub fn write_bundle_reported(
+    root: &Path,
+    files: &[(PathBuf, Vec<u8>)],
+    entry: &Path,
+    written: &dyn Fn(u64, u64),
+) -> Result<BundleInstall, std::io::Error> {
+    let total = files.iter().fold(0_u64, |total, (_, bytes)| {
+        total
+            .checked_add(u64::try_from(bytes.len()).expect("one file length fits in u64"))
+            .expect("resident bundle bytes fit in u64")
+    });
+    if total == 0 {
+        return write_bundle_observed(root, files, entry, &|_, _| Ok(()), &|_, _| Ok(()));
+    }
+
+    written(0, total);
+    let done = Cell::new(0_u64);
+    write_bundle_observed(
+        root,
+        files,
+        entry,
+        &|index, _| {
+            let next = done
+                .get()
+                .checked_add(
+                    u64::try_from(files[index].1.len()).expect("one file length fits in u64"),
+                )
+                .expect("staged bundle bytes do not exceed the total");
+            done.set(next);
+            written(next, total);
+            Ok(())
+        },
+        &|_, _| Ok(()),
+    )
 }
 
 #[cfg(test)]

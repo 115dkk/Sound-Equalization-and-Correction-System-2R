@@ -16,6 +16,7 @@ pub mod pyfmt;
 
 use pyfmt::{format_fixed, format_g, format_i3, format_s30, repr_f64, round_ndigits};
 use secs_graph::emit::guard;
+use secs_graph::files::write_bundle_reported;
 use secs_graph::{ExportGraph, FilterPlan, GraphError, LfeChoice, Op};
 use secs_types::chain::{
     BandFamily, BandType, MimoFilter, MimoPath, MimoPaths, SignalChain, SubChannel,
@@ -977,7 +978,16 @@ pub fn make_config(
     options: &Options,
     mimo: Option<&MimoPaths>,
 ) -> Result<Config, CamillaError> {
-    make_config_observed(chain, out, config_dir, fir_prefix, options, mimo, &|_| {})
+    make_config_observed_reported(
+        chain,
+        out,
+        config_dir,
+        fir_prefix,
+        options,
+        mimo,
+        &|_| {},
+        &|_, _| {},
+    )
 }
 
 /// Audit-only stage boundaries; callbacks run after construction and serialization.
@@ -991,6 +1001,29 @@ pub fn make_config_observed(
     mimo: Option<&MimoPaths>,
     boundary: &dyn Fn(&str),
 ) -> Result<Config, CamillaError> {
+    make_config_observed_reported(
+        chain,
+        out,
+        config_dir,
+        fir_prefix,
+        options,
+        mimo,
+        boundary,
+        &|_, _| {},
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn make_config_observed_reported(
+    chain: &SignalChain,
+    out: &Path,
+    config_dir: &Path,
+    fir_prefix: &str,
+    options: &Options,
+    mimo: Option<&MimoPaths>,
+    boundary: &dyn Fn(&str),
+    made: &dyn Fn(u64, u64),
+) -> Result<Config, CamillaError> {
     validate_options(options)?;
     let lfe_choice = options
         .lfe_gain_db
@@ -1003,11 +1036,12 @@ pub fn make_config_observed(
         guard::identifier("coefficient filename prefix", fir_prefix, b"_-")?;
     }
     let coeff_dir = out.join(COEFF_DIR);
-    let coeffs = secs_graph::emit::fir_files(graph.plan(), fir_prefix, options.output_rate)
-        .map_err(|error| fir_error(error, graph.plan()))?
-        .into_iter()
-        .map(|(name, bytes)| (coeff_dir.join(name), bytes))
-        .collect::<Vec<_>>();
+    let coeffs =
+        secs_graph::emit::fir_files_reported(graph.plan(), fir_prefix, options.output_rate, made)
+            .map_err(|error| fir_error(error, graph.plan()))?
+            .into_iter()
+            .map(|(name, bytes)| (coeff_dir.join(name), bytes))
+            .collect::<Vec<_>>();
     let chain = graph.chain();
     let mimo = graph.mimo();
     let mains = &chain.mains;
@@ -1565,9 +1599,30 @@ pub fn prepare_config(
     options: &Options,
     mimo: Option<&MimoPaths>,
 ) -> Result<PreparedConfig, CamillaError> {
+    prepare_config_reported(chain, out, name, options, mimo, &|_, _| {})
+}
+
+/// [`prepare_config`], reporting each FIR coefficient file after it is materialized.
+pub fn prepare_config_reported(
+    chain: &SignalChain,
+    out: &Path,
+    name: &str,
+    options: &Options,
+    mimo: Option<&MimoPaths>,
+    made: &dyn Fn(u64, u64),
+) -> Result<PreparedConfig, CamillaError> {
     let safe = guard::safe_component(name)?;
     let config_dir = out.join(CONFIG_DIR);
-    let config = make_config(chain, out, &config_dir, &format!("{safe}_"), options, mimo)?;
+    let config = make_config_observed_reported(
+        chain,
+        out,
+        &config_dir,
+        &format!("{safe}_"),
+        options,
+        mimo,
+        &|_| {},
+        made,
+    )?;
     let bypass = if options.bypass {
         let bypass_chain = without_correction(chain);
         let mut bypass_options = options.clone();
@@ -1637,13 +1692,49 @@ pub fn install_prepared(
         entry,
         write_input,
     } = prepared;
+    let installed = write_bundle_observed(out, &bundle, &entry, after_stage_write, before_install)?;
+    Ok(finish_install(
+        out,
+        bundle,
+        entry,
+        write_input,
+        installed.leftover_backup,
+    ))
+}
+
+/// Installs a configuration returned by [`prepare_config`], reporting staged bytes.
+pub fn install_prepared_reported(
+    out: &Path,
+    prepared: PreparedConfig,
+    written: &dyn Fn(u64, u64),
+) -> Result<Installed, CamillaError> {
+    let PreparedConfig {
+        bundle,
+        entry,
+        write_input,
+    } = prepared;
+    let installed = write_bundle_reported(out, &bundle, &entry, written)?;
+    Ok(finish_install(
+        out,
+        bundle,
+        entry,
+        write_input,
+        installed.leftover_backup,
+    ))
+}
+
+fn finish_install(
+    out: &Path,
+    bundle: Vec<(PathBuf, Vec<u8>)>,
+    entry: PathBuf,
+    write_input: bool,
+    leftover_backup: Option<(PathBuf, String)>,
+) -> Installed {
     let bypass = bundle
         .iter()
         .map(|(path, _)| path)
         .find(|path| **path != entry && path.extension().is_some_and(|value| value == "yml"))
         .cloned();
-    let installed = write_bundle_observed(out, &bundle, &entry, after_stage_write, before_install)?;
-
     let mut written = vec![out.join(&entry)];
     if let Some(bypass) = &bypass {
         written.push(out.join(bypass));
@@ -1660,10 +1751,10 @@ pub fn install_prepared(
         .collect::<Vec<_>>();
     coefficient_paths.sort();
     written.extend(coefficient_paths);
-    Ok(Installed {
+    Installed {
         files: written,
-        leftover_backup: installed.leftover_backup,
-    })
+        leftover_backup,
+    }
 }
 
 /// Write `configs/<name>.yml`, coefficient WAVs, and a placeholder `in.raw` when needed.

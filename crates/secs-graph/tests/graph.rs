@@ -64,6 +64,41 @@ fn chain() -> SignalChain {
     }
 }
 
+#[test]
+fn reported_fir_files_count_each_materialized_file() {
+    let graph = ExportGraph::build(&chain(), None, LfeChoice::Omit).unwrap();
+    let expected = secs_graph::emit::fir_files(graph.plan(), "test_", 48_000).unwrap();
+    let reports = std::cell::RefCell::new(Vec::new());
+
+    let actual =
+        secs_graph::emit::fir_files_reported(graph.plan(), "test_", 48_000, &|done, total| {
+            reports.borrow_mut().push((done, total))
+        })
+        .unwrap();
+
+    assert_eq!(actual, expected);
+    assert_eq!(reports.into_inner(), [(0, 2), (1, 2), (2, 2)]);
+}
+
+#[test]
+fn reported_fir_files_skip_progress_when_the_plan_has_no_firs() {
+    let mut without_fir = chain();
+    for main in &mut without_fir.mains {
+        main.fir = vec![1.0];
+    }
+    let graph = ExportGraph::build(&without_fir, None, LfeChoice::Omit).unwrap();
+    let reports = std::cell::RefCell::new(Vec::new());
+
+    let files =
+        secs_graph::emit::fir_files_reported(graph.plan(), "test_", 48_000, &|done, total| {
+            reports.borrow_mut().push((done, total))
+        })
+        .unwrap();
+
+    assert!(files.is_empty());
+    assert!(reports.into_inner().is_empty());
+}
+
 /// Path 0 is IIR, path 1 a 48 kHz FIR, path 2 a low-rate FIR.
 fn mimo() -> MimoPaths {
     MimoPaths {
