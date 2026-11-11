@@ -1463,13 +1463,28 @@ pub(crate) fn phase_score(input: &RcInput<'_>, out: &RcOutput) -> f64 {
 /// Sequential replay clients must account for the shared preparation call.
 /// Returns `Err(Cancelled)` when the context token is cancelled; the PEQ fitter is
 /// expected to watch the same token.
+#[cfg(test)]
 pub fn channel(
     input: &RcInput<'_>,
     fitter: &mut Fitter<'_>,
     ctx: &secs_compute::Context,
 ) -> Result<ChannelRc, EngineError> {
+    channel_progress(input, fitter, ctx, &|| {})
+}
+
+/// Preparation, each requested phase realization, and final protection/cuts.
+pub(crate) fn channel_steps(config: &EngineConfig) -> u64 {
+    3 + u64::from(config.phase_frac > 6.0)
+}
+
+pub(crate) fn channel_progress(
+    input: &RcInput<'_>,
+    fitter: &mut Fitter<'_>,
+    ctx: &secs_compute::Context,
+    advance: &dyn Fn(),
+) -> Result<ChannelRc, EngineError> {
     let bands = band_set(input.setup.rc_lo, input.setup.rc_hi, &input.setup.rc_bands);
-    channel_with_cuts(
+    channel_with_cuts_progress(
         input,
         fitter,
         &mut |h, lo, hi| {
@@ -1480,18 +1495,31 @@ pub fn channel(
             }
         },
         ctx,
+        advance,
     )
 }
 type GdFitter<'a> = dyn FnMut(&[C], f64, f64) -> Vec<Peq> + 'a;
 
+#[cfg(test)]
 pub(crate) fn channel_with_cuts(
     input: &RcInput<'_>,
     fitter: &mut Fitter<'_>,
     cuts: &mut GdFitter<'_>,
     ctx: &secs_compute::Context,
 ) -> Result<ChannelRc, EngineError> {
+    channel_with_cuts_progress(input, fitter, cuts, ctx, &|| {})
+}
+
+fn channel_with_cuts_progress(
+    input: &RcInput<'_>,
+    fitter: &mut Fitter<'_>,
+    cuts: &mut GdFitter<'_>,
+    ctx: &secs_compute::Context,
+    advance: &dyn Fn(),
+) -> Result<ChannelRc, EngineError> {
     let requested = input.config.phase_frac;
     let prepared = prepare_correction(input, fitter, &mut Trace::default(), ctx)?;
+    advance();
     let mut out = finish_correction(
         input,
         requested,
@@ -1500,9 +1528,11 @@ pub(crate) fn channel_with_cuts(
         &mut Trace::default(),
         ctx,
     )?;
+    advance();
     let mut used = None;
     if requested > 6.0 {
         let other = finish_correction(input, 6.0, &prepared, fitter, &mut Trace::default(), ctx)?;
+        advance();
         let mut notes = out.notes.clone();
         notes.extend(other.notes.clone());
         if phase_score(input, &other) < phase_score(input, &out) {
@@ -1618,6 +1648,7 @@ pub(crate) fn channel_with_cuts(
             &response::peq_response(design_freqs(), &gd_cuts),
         )
     };
+    advance();
     Ok(ChannelRc {
         out,
         phase_frac_used: used,

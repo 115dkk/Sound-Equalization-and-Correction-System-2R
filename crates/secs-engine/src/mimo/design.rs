@@ -31,7 +31,7 @@ use super::solve::solve;
 use crate::{EngineConfig, MeasurementSet};
 #[cfg(test)]
 use secs_compute::MapError;
-use secs_compute::{Context, MemoryError};
+use secs_compute::{Context, MemoryError, StageProgress};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct MimoRequest {
@@ -336,6 +336,7 @@ pub(crate) fn normal_equations(
 /// [`normal_equations`] with the block pairs as a map over `ctx`. Each block
 /// keeps the position order of its sums, and placement adds nothing, so the
 /// result has the same bits for any thread count.
+#[cfg(test)]
 pub(crate) fn normal_equations_mapped(
     xs: &[Vec<f64>],
     paths: &[Vec<Vec<f64>>],
@@ -343,6 +344,19 @@ pub(crate) fn normal_equations_mapped(
     early_weight: f64,
     early_samples: usize,
     ctx: &Context,
+) -> Result<(Vec<f64>, Vec<f64>), EngineError> {
+    normal_equations_progress(xs, paths, taps, early_weight, early_samples, ctx, None)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn normal_equations_progress(
+    xs: &[Vec<f64>],
+    paths: &[Vec<Vec<f64>>],
+    taps: usize,
+    early_weight: f64,
+    early_samples: usize,
+    ctx: &Context,
+    progress: Option<&StageProgress<'_>>,
 ) -> Result<(Vec<f64>, Vec<f64>), EngineError> {
     check(ctx)?;
     let candidates = paths[0].len();
@@ -360,6 +374,9 @@ pub(crate) fn normal_equations_mapped(
             })
             .map_err(|_| EngineError::Cancelled)?;
         place(blocks, &mut ata, &mut atb, taps);
+        if let Some(progress) = progress {
+            progress.advance(pairs.len() as u64);
+        }
     }
     Ok((ata, atb))
 }
@@ -1039,7 +1056,9 @@ pub(crate) fn design_input_observed(
     ctx: &Context,
     observe: &dyn Fn(&str, std::time::Duration),
 ) -> Result<InputResult, EngineError> {
-    design_input_accelerated(xs, raw_paths, direct, candidates, req, ctx, observe, None)
+    design_input_accelerated(
+        xs, raw_paths, direct, candidates, req, ctx, observe, None, None,
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1052,6 +1071,7 @@ fn design_input_accelerated(
     ctx: &Context,
     observe: &dyn Fn(&str, std::time::Duration),
     acceleration: Option<&super::acceleration::RunAcceleration<'_>>,
+    progress: Option<&StageProgress<'_>>,
 ) -> Result<InputResult, EngineError> {
     let started = std::time::Instant::now();
     let taps = req.taps_low;
@@ -1117,6 +1137,7 @@ fn design_input_accelerated(
         ctx,
         observe,
         acceleration,
+        progress,
     )
 }
 
@@ -1132,13 +1153,21 @@ fn design_selected(
     ctx: &Context,
     observe: &dyn Fn(&str, std::time::Duration),
     acceleration: Option<&super::acceleration::RunAcceleration<'_>>,
+    progress: Option<&StageProgress<'_>>,
 ) -> Result<InputResult, EngineError> {
     let taps = req.taps_low;
     let lp = lowpass_fir(req.fsiso, 31)?;
     let n = xs[0].len();
     let started = std::time::Instant::now();
-    let (ata, atb) =
-        normal_equations_mapped(xs, paths, taps, 10.0, early_samples(req.mimo_early_ms), ctx)?;
+    let (ata, atb) = normal_equations_progress(
+        xs,
+        paths,
+        taps,
+        10.0,
+        early_samples(req.mimo_early_ms),
+        ctx,
+        progress,
+    )?;
     observe("normal_equations", started.elapsed());
     let started = std::time::Instant::now();
     let dim = atb.len();
@@ -1149,7 +1178,7 @@ fn design_selected(
     let normalization = pairwise_sum(&diagonal) / dim as f64;
     let target = 10f64.powf(req.level_db / 10.0);
     let direct_energy = decay::energy(direct).max(1e-30);
-    let result = super::acceleration::run_sweep(
+    let result = super::acceleration::run_sweep_progress(
         super::acceleration::RidgeProblem {
             ata: &ata,
             atb: &atb,
@@ -1161,6 +1190,11 @@ fn design_selected(
         },
         ctx.cancel(),
         acceleration,
+        &|| {
+            if let Some(progress) = progress {
+                progress.advance(1);
+            }
+        },
     )?;
     let (u, ratio, hi, trajectory) = (result.u, result.ratio, result.log_lambda, result.trajectory);
     observe("sweep", started.elapsed());
@@ -1432,6 +1466,8 @@ pub(crate) fn design_mimo_prepared_accelerated(
         .budget()
         .acquire(shared_bytes, ctx.cancel())
         .map_err(memory_error)?;
+    let paths_progress =
+        (!pairs.is_empty()).then(|| ctx.stage("engine.mimo_paths", pairs.len() as u64));
     let low_paths = crate::memory::try_map(
         ctx,
         pairs.clone(),
@@ -1439,11 +1475,27 @@ pub(crate) fn design_mimo_prepared_accelerated(
         |_| scratch_bytes,
         |(p, r)| {
             let h = support_path(&out, r, spectra, p, &prepared.align_delay_ms)?;
-            Ok::<_, EngineError>(secs_dsp::lowrate::to_low(&h, design_freqs(), 720)?)
+            let low = secs_dsp::lowrate::to_low(&h, design_freqs(), 720)?;
+            if let Some(progress) = &paths_progress {
+                progress.advance(1);
+            }
+            Ok::<_, EngineError>(low)
         },
     )?;
     observe("shared_paths", started.elapsed());
     let started = std::time::Instant::now();
+    let total = mains
+        .iter()
+        .map(|main| {
+            let count = usable.iter().filter(|r| **r != main.role).count();
+            let selected = req
+                .max_supports
+                .filter(|cap| *cap > 0)
+                .map_or(count, |cap| cap.min(count));
+            positions.len() + selected * (selected + 1) / 2 + 19 + 1
+        })
+        .sum::<usize>();
+    let progress = (total > 0).then(|| ctx.stage("engine.mimo", total as u64));
     let results = crate::memory::try_map(
         ctx,
         mains,
@@ -1483,6 +1535,9 @@ pub(crate) fn design_mimo_prepared_accelerated(
                         })
                         .collect(),
                 );
+                if let Some(progress) = &progress {
+                    progress.advance(1);
+                }
             }
             let direct = secs_dsp::lowrate::to_low(&main.response, design_freqs(), 720)?;
             observe("input_preparation", started.elapsed());
@@ -1495,7 +1550,11 @@ pub(crate) fn design_mimo_prepared_accelerated(
                 ctx,
                 observe,
                 acceleration,
+                progress.as_ref(),
             )?;
+            if let Some(progress) = &progress {
+                progress.advance(1);
+            }
             Ok((main.role.clone(), result))
         },
     )?;

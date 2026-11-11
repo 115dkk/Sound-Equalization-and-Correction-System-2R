@@ -115,6 +115,12 @@ impl Design {
         self.rc_hi
     }
 
+    /// Late-energy rows with cooperative cancellation and measured progress.
+    /// The free `late_energy` entry point remains the silent compatibility API.
+    pub fn late_energy_until(&self, ctx: &Context) -> Result<Vec<RoleLateEnergy>, EngineError> {
+        late_energy_until(self, ctx)
+    }
+
     pub fn export_view(&self) -> Result<crate::ExportView, EngineError> {
         self.replay.export_view(self)
     }
@@ -256,10 +262,29 @@ pub struct RoleLateEnergy {
 /// not used; their late tail differs from those items by up to about 1 dB.
 /// Rows are position major, with main roles in chain order.
 pub fn late_energy(design: &Design) -> Result<Vec<RoleLateEnergy>, EngineError> {
-    let view = design.replay.export_view(design)?;
+    late_energy_until(design, &Context::serial())
+}
+
+struct ProgressItem<'a>(Option<&'a StageProgress<'a>>);
+impl Drop for ProgressItem<'_> {
+    fn drop(&mut self) {
+        if let Some(progress) = self.0 {
+            progress.advance(1);
+        }
+    }
+}
+
+fn late_energy_until(design: &Design, ctx: &Context) -> Result<Vec<RoleLateEnergy>, EngineError> {
+    let view = design.replay.export_view_until(design, ctx)?;
+    let total = design.spectra.positions.len() * design.chain.mains.len();
+    let progress = (total > 0).then(|| ctx.stage("engine.late_energy", total as u64));
     let mut rows = Vec::new();
     for &position in &design.spectra.positions {
         for channel in &design.chain.mains {
+            ctx.cancel().check()?;
+            // Count each requested role/position, including an absent response.
+            // This guard advances only after that item's work has returned.
+            let _item = ProgressItem(progress.as_ref());
             let (before_db, after_db) = if position == design.spectra.main_position
                 && design.chain.input_hp_hz.is_none()
             {
@@ -567,6 +592,7 @@ pub(crate) fn design_observed(
             channel: bytes.channel,
         },
         schroeder,
+        None,
     )
 }
 
@@ -604,6 +630,7 @@ pub(crate) fn design_prepared(
             channel: bytes.channel,
         },
         schroeder,
+        None,
     )
 }
 
@@ -617,6 +644,7 @@ pub(crate) fn design_prepared_for_xo(
     fitters: &FitterFactory<'_>,
     prepared: &measurement::Prepared,
     schroeder: levels::Schroeder,
+    progress: &StageProgress<'_>,
 ) -> Result<Design, EngineError> {
     design_prepared_scored(
         req,
@@ -627,6 +655,7 @@ pub(crate) fn design_prepared_for_xo(
         false,
         ChannelBytes::RESERVED,
         schroeder,
+        Some(progress),
     )
 }
 
@@ -656,6 +685,7 @@ fn design_prepared_scored(
     include_scores: bool,
     reserve: ChannelBytes,
     schroeder: levels::Schroeder,
+    progress: Option<&StageProgress<'_>>,
 ) -> Result<Design, EngineError> {
     if req.config.rc_range.1.is_none() && req.config.rc_hi_basis == RcHiBasis::Agreement {
         let count = agreement_positions(req.measurements, req.config);
@@ -674,6 +704,7 @@ fn design_prepared_scored(
             reserve,
             schroeder,
             pass: RcPass::Probe,
+            progress,
         })?;
         let limit = levels::median(limits).clamp(100.0, 2000.0);
         drop(probe);
@@ -688,6 +719,7 @@ fn design_prepared_scored(
             reserve,
             schroeder,
             pass: RcPass::Final(limit),
+            progress,
         })
         .map(|(design, _)| design);
     }
@@ -701,6 +733,7 @@ fn design_prepared_scored(
         reserve,
         schroeder,
         pass: RcPass::Normal,
+        progress,
     })
     .map(|(design, _)| design)
 }
@@ -733,6 +766,7 @@ struct PassContext<'a, 'req, 'fit> {
     reserve: ChannelBytes,
     schroeder: levels::Schroeder,
     pass: RcPass,
+    progress: Option<&'a StageProgress<'a>>,
 }
 
 struct LevelStage {
@@ -929,11 +963,59 @@ fn levels_stage(
     })
 }
 
+/// The same eligibility check as the top-PEQ loop, without fitting anything.
+fn top_work(config: &EngineConfig, tuning: &Tuning) -> u64 {
+    if config.subs.is_empty() || !tuning.xo_stage || !config.xo_peq_on {
+        return 0;
+    }
+    config
+        .groups
+        .iter()
+        .filter(|(group, _)| group != "sub")
+        .map(|(group, roles)| {
+            let Some(xo) = RoleMap::get_from(&config.xo, group)
+                .copied()
+                .filter(|xo| *xo != 0.0)
+            else {
+                return 0;
+            };
+            let lo = if config.xo_peq_lo_hz == 0.0 {
+                xo / 2.0
+            } else {
+                config.xo_peq_lo_hz
+            };
+            let hi = if config.xo_peq_hi_hz == 0.0 {
+                xo * 4.0
+            } else {
+                config.xo_peq_hi_hz
+            };
+            if hi > lo { roles.len() as u64 } else { 0 }
+        })
+        .sum()
+}
+
+pub(crate) fn recommendation_work(
+    config: &EngineConfig,
+    tuning: &Tuning,
+    prepared: &measurement::Prepared,
+) -> u64 {
+    let passes = if config.rc_range.1.is_none() && config.rc_hi_basis == RcHiBasis::Agreement {
+        2
+    } else {
+        1
+    };
+    let mains = config
+        .mains
+        .iter()
+        .filter(|role| prepared.h0.get(config.main_position, role).is_some())
+        .count() as u64;
+    passes * (top_work(config, tuning) + mains * rc::channel_steps(config)) + 1
+}
+
 fn ba_stage(
     pass: &PassContext<'_, '_, '_>,
     setup: &Setup,
     level: &LevelStage,
-    progress: &StageProgress<'_>,
     notes: &mut Vec<Note>,
 ) -> Result<BaStage, EngineError> {
     let config = pass.req.config;
@@ -947,6 +1029,21 @@ fn ba_stage(
         ref_level: level.ref_level,
         cancel: pass.ctx.cancel(),
     };
+    // The alignment's optimizer stops when it converges, so how much work it
+    // is cannot be known before it runs, and counting it would mean running
+    // it twice. The stage is announced with no total instead: the screen
+    // names what is being computed and draws no bar. Inside an XO
+    // recommendation the candidate reports through that job's one stage.
+    let _announced = (pass.progress.is_none() && !config.subs.is_empty()).then(|| {
+        pass.ctx.stage(
+            if matches!(pass.pass, RcPass::Probe) {
+                "engine.ba_probe"
+            } else {
+                "engine.ba"
+            },
+            0,
+        )
+    });
     let ba_started = std::time::Instant::now();
     let mut ba_fitter = (pass.fitters)(FitStage::Ba);
     let alignment = ba::align(&input, &mut *ba_fitter)?;
@@ -954,7 +1051,6 @@ fn ba_stage(
     #[cfg(test)]
     let ba_timing = ba_started.elapsed();
     notes.extend(alignment.notes.clone());
-    progress.advance(1);
     let ba_elapsed = ba_started.elapsed();
     let mut used = pass.prepared.h.clone();
     for (position, role, response) in &alignment.h_subs {
@@ -963,6 +1059,18 @@ fn ba_stage(
     let top_started = std::time::Instant::now();
     let mut top_peq = Vec::new();
     let mut top_responses = Vec::new();
+    let total = top_work(config, pass.req.tuning);
+    let owned = (pass.progress.is_none() && total > 0).then(|| {
+        pass.ctx.stage(
+            if matches!(pass.pass, RcPass::Probe) {
+                "engine.top_probe"
+            } else {
+                "engine.top"
+            },
+            total,
+        )
+    });
+    let progress = pass.progress.or(owned.as_ref());
     if !config.subs.is_empty() && pass.req.tuning.xo_stage {
         for (role, xo) in &level.xo_of {
             pass.ctx.cancel().check()?;
@@ -1031,6 +1139,9 @@ fn ba_stage(
             }
             top_responses.push((role.clone(), response));
             top_peq.push((role.clone(), peq));
+            if let Some(progress) = progress {
+                progress.advance(1);
+            }
         }
     }
     #[cfg(test)]
@@ -1121,15 +1232,30 @@ fn rc_stage(
     setup: &Setup,
     level: &LevelStage,
     ba: &BaStage,
-    progress: &StageProgress<'_>,
     notes: &mut Vec<Note>,
 ) -> Result<RcStage, EngineError> {
     let config = pass.req.config;
     let roles = if pass.req.subs_only && !matches!(pass.pass, RcPass::Probe) {
         vec![]
     } else {
-        config.mains.iter().collect()
+        config
+            .mains
+            .iter()
+            .filter(|role| pass.prepared.h0.get(config.main_position, role).is_some())
+            .collect()
     };
+    let total = roles.len() as u64 * rc::channel_steps(config);
+    let owned = (pass.progress.is_none() && total > 0).then(|| {
+        pass.ctx.stage(
+            if matches!(pass.pass, RcPass::Probe) {
+                "engine.design_probe"
+            } else {
+                "engine.design"
+            },
+            total,
+        )
+    });
+    let progress = pass.progress.or(owned.as_ref());
     let rc_all_started = std::time::Instant::now();
     // Batches of channels reserve on this thread before entering the pool,
     // never inside a pool task (TD-23); outputs keep the channel order.
@@ -1141,7 +1267,6 @@ fn rc_stage(
         |role| {
             pass.ctx.cancel().check()?;
             let Some(before) = pass.prepared.h0.get(config.main_position, role) else {
-                progress.advance(1);
                 return Ok(None);
             };
             let rc_started = std::time::Instant::now();
@@ -1193,7 +1318,11 @@ fn rc_stage(
                     None
                 },
             };
-            let result = rc::channel(&rc_input, &mut *fitter, pass.ctx)?;
+            let result = rc::channel_progress(&rc_input, &mut *fitter, pass.ctx, &|| {
+                if let Some(progress) = progress {
+                    progress.advance(1);
+                }
+            })?;
             pass.ctx.cancel().check()?;
             let agreement = matches!(pass.pass, RcPass::Probe)
                 .then(|| rc::agreement_limit(&rc_input, &result.response));
@@ -1237,7 +1366,6 @@ fn rc_stage(
                 after,
             };
             (pass.observed)(&format!("rc:{role}"), rc_started.elapsed());
-            progress.advance(1);
             #[cfg(test)]
             let elapsed = rc_started.elapsed();
             #[cfg(not(test))]
@@ -1540,18 +1668,17 @@ fn design_pass(stage: PassContext<'_, '_, '_>) -> Result<(Design, Vec<f64>), Eng
         setup.hf_phase = false;
     }
     let positions = prepared.h.positions().to_vec();
-    let progress = ctx.stage("engine.design", 1 + config.mains.len() as u64);
     let mut notes = Vec::new();
     let run_final_checks = !req.subs_only && !matches!(pass, RcPass::Probe);
     polarity_stage(&stage, &setup, run_final_checks, &mut notes);
     let level = levels_stage(&stage, &mut setup, positions, &mut notes)?;
-    let ba = ba_stage(&stage, &setup, &level, &progress, &mut notes)?;
+    let ba = ba_stage(&stage, &setup, &level, &mut notes)?;
     #[cfg(test)]
     let mut timings = vec![
         ("BA".into(), ba.ba_elapsed),
         ("top PEQ".into(), ba.top_elapsed),
     ];
-    let rc = rc_stage(&stage, &setup, &level, &ba, &progress, &mut notes)?;
+    let rc = rc_stage(&stage, &setup, &level, &ba, &mut notes)?;
     #[cfg(test)]
     timings.extend(rc.timings.iter().cloned());
     let sub = sub_stage(&stage, &setup, &level, ba, &mut notes);

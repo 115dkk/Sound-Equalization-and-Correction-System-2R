@@ -85,7 +85,7 @@ impl Service {
             .map_err(engine_error)?;
             let design = Arc::new(calibration.design);
             // The 2 s export view is built outside the session lock.
-            let late_energy = secs_engine::late_energy(&design).map_err(engine_error)?;
+            let late_energy = design.late_energy_until(&ctx).map_err(engine_error)?;
             let ticket = prepared.ticket;
             let calibration_key = ProjectKeys {
                 config: prepared.config_key.clone(),
@@ -662,6 +662,15 @@ pub(crate) fn load_measurements_with_notices(
     sources: &BTreeMap<u32, BTreeMap<String, Arc<secs_mdat::SourceInfo>>>,
     cancel: &secs_compute::CancelToken,
 ) -> Result<LoadedMeasurements, IpcError> {
+    load_measurements_progress(store, sources, cancel, None)
+}
+
+pub(crate) fn load_measurements_progress(
+    store: &mut secs_project::MeasurementStore,
+    sources: &BTreeMap<u32, BTreeMap<String, Arc<secs_mdat::SourceInfo>>>,
+    cancel: &secs_compute::CancelToken,
+    progress: Option<&secs_compute::StageProgress<'_>>,
+) -> Result<LoadedMeasurements, IpcError> {
     let mut positions = Vec::new();
     let mut notices = Vec::new();
     for record in store.records() {
@@ -704,6 +713,9 @@ pub(crate) fn load_measurements_with_notices(
                     t0: record.t0.get(role).copied().unwrap_or(0.0),
                 },
             ));
+            if let Some(progress) = progress {
+                progress.advance(1);
+            }
         }
         if !roles.is_empty() {
             positions.push((record.pos as u32, roles));

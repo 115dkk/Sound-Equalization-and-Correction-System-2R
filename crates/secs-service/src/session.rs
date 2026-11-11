@@ -895,7 +895,34 @@ impl ProjectSnapshot {
         job: &JobContext,
         budget: &secs_compute::MemoryBudget,
     ) -> Result<LoadedMeasurements, IpcError> {
-        self.load_measurements_with(job.cancel(), budget)
+        let permit = reserve_measurements(&self.path, &self.project, job.cancel(), budget)?;
+        let mut store = MeasurementStore::new(&self.path, self.project.clone());
+        let total = store
+            .records()
+            .iter()
+            .filter(|record| record.pos >= 0)
+            .map(|record| record.ir.len())
+            .sum::<usize>();
+        // Reading is serial and uses the caller's existing memory reservation.
+        let ctx = secs_compute::Context::new(
+            1,
+            secs_compute::MemoryBudget::new(0),
+            job.progress_sink(),
+            job.cancel().clone(),
+        );
+        let progress = (total > 0).then(|| ctx.stage("read_measurements", total as u64));
+        let loaded = super::calibration::load_measurements_progress(
+            &mut store,
+            &self.sources,
+            job.cancel(),
+            progress.as_ref(),
+        )?;
+        drop(permit);
+        Ok(LoadedMeasurements {
+            project: self.project.clone(),
+            values: loaded.measurements,
+            notices: loaded.notices,
+        })
     }
 
     pub(crate) fn load_measurements_with(
