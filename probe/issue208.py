@@ -138,8 +138,8 @@ def main() -> None:
         )
         if attempt == 0:
             print("\n".join(subs))
-            (work / "result").mkdir(exist_ok=True)
-            shutil.copy(yml, work / "result" / "secs_mixed.yml")
+            shutil.rmtree(work / "result", ignore_errors=True)
+            shutil.copytree(run / "out", work / "result", ignore=shutil.ignore_patterns("*.raw"))
     print(f"distinct results over {runs} runs: {len(hashes)}")
     if len(hashes) != 1:
         raise SystemExit("results differ between runs on the same platform")
