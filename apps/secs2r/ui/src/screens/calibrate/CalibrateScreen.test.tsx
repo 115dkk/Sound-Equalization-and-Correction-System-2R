@@ -642,6 +642,38 @@ describe("보정 screen", () => {
     }
   });
 
+  it("shows the FIR taps the design takes on the DSP: channel FIRs plus current FIR supports, against the budget", () => {
+    // miniDSP at 96 kHz: each measured main's 2,048-tap FIR becomes 4,096, the supports' 3,072 become 6,144.
+    setup(fx.minidspView);
+    const mains = fx.minidspView.measuredRoles.filter((role) => !role.startsWith("SW")).length;
+    const line = must("calibrate.mode.fir_total");
+    expect(line.closest("[data-ui='calibrate.settings.mode']")).not.toBeNull();
+    const total = (mains * 4096 + 6144).toLocaleString("en-US");
+    expect(line.textContent).toBe([
+      translate("ko", "calibrate.mode.fir_total.supports", { total, count: mains, taps: "4,096", supports: "6,144" }),
+      translate("ko", "calibrate.mode.fir_total.rate", { rate: "96 kHz" }),
+      translate("ko", "calibrate.mode.fir_total.budget_over", { budget: "4,096" }),
+    ].join(" · "));
+    expect(line.className).toContain("calibrate-hint--warning");
+    cleanupAll();
+    // Stale supports are not counted, 48 kHz names no rate, and an unknown budget adds no verdict.
+    setup({ ...fx.minidspView, outputRate: 48000, firBudget: 0, results: { ...fx.minidspView.results, mimo: { ...fx.minidspView.results.mimo!, stale: true } } });
+    expect(must("calibrate.mode.fir_total").textContent).toBe(
+      translate("ko", "calibrate.mode.fir_total", { total: (mains * 2048).toLocaleString("en-US"), count: mains, taps: "2,048", supports: "0" }),
+    );
+    expect(must("calibrate.mode.fir_total").className).not.toContain("calibrate-hint--warning");
+    cleanupAll();
+    // A mode without FIR counts only the supports; with neither there is no line.
+    setup({ ...fx.minidspView, outputRate: 48000, firBudget: 65536, modeSpec: { ...fx.minidspView.modeSpec, fir_taps: 0 } });
+    expect(must("calibrate.mode.fir_total").textContent).toBe([
+      translate("ko", "calibrate.mode.fir_total.supports_only", { total: "3,072", count: 0, taps: "0", supports: "3,072" }),
+      translate("ko", "calibrate.mode.fir_total.budget", { budget: "65,536" }),
+    ].join(" · "));
+    cleanupAll();
+    setup({ ...fx.minidspView, modeSpec: { ...fx.minidspView.modeSpec, fir_taps: 0 }, results: { ...fx.minidspView.results, mimo: null } });
+    expect(ui("calibrate.mode.fir_total")).toBeNull();
+  });
+
   it("counts the FIR taps at the DSP's output rate before comparing them, and names a rate that is not 48 kHz (ADR 0017)", () => {
     // miniDSP at 96 kHz: supports of 3,072 taps at 48 kHz become 6,144, past the 4,096 budget.
     setup(fx.minidspView);

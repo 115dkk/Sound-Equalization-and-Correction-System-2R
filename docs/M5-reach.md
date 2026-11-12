@@ -155,6 +155,7 @@
 | 초고지연(`ultra`, 사양 줄 다섯 번 누르기로 열림)과 지연 한도 30–200 ms, 10 단위 | `calibrate.mode.ultra` (모드 목록에 항상 표시), `calibrate.mode.ultra_ms` | U9 | P31b, P58 |
 | 사양 줄(`cal.mode_spec`) | `calibrate.mode.spec` | 없음 | P31b |
 | 출력 레이트로 환산한 채널 FIR의 한도 초과와 FIR 없는 모드 안내 | `calibrate.mode.fir_over` | ADR 0017 | P116, P117 |
+| 채널 FIR과 FIR 서포트를 합친 예상 FIR 탭 사용량, DSP의 FIR 예산과의 비교 | `calibrate.mode.fir_total` | ADR 0017 | 스피커 갤러리 584453 |
 | [계산](첫 계산에서 XO 추천이 없으면 추천부터, 서비스가 정함) | `calibrate.compute` | 없음 | P31b |
 | [취소](결과를 버림)와 XO·MIMO 카드의 취소 | `jobs.cancel.calibrate`, `jobs.cancel.recommend_xo`, `jobs.cancel.mimo` | U8 | P31b |
 | 상태 줄: 계산 중, XO 추천 중, 실패, 취소, 대기, 측정 없음, 측정 바뀜, 설정 바뀜, 완료 | `calibrate.running`, `calibrate.verdict.failed`, `calibrate.verdict.stale`, `calibrate.stale`, `calibrate.verdict.plan`, `jobs.history` | U8 | P31b |

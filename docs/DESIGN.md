@@ -295,6 +295,7 @@ WCAG 대비는 추정하지 않고 계산합니다. `styles/contrast.test.ts`가
 | 컨볼루션 IR의 추가 레이트(P116) | `export.extra_rates`, `export.extra_rates.summary`, `export.extra_rates.list`, `export.extra_rates.<rate>` |
 | 내보낸 출력 레이트와 자동 선택 실패(P116) | `export.outcome.<kind>.rate`, `export.outcome.<kind>.rate_fallback`, `export.outcome.<kind>.go_system` |
 | 채널 FIR 한도 초과(P116) | `calibrate.mode.fir_over` |
+| 예상 FIR 탭 사용량과 FIR 예산 | `calibrate.mode.fir_total` |
 | 업데이트 표시(ADR 0020) | `update.badge`(`data-state`, `data-version`), `update.badge.download`, `update.restart`, `update.restart.confirm`, `update.restart.confirm.cancel`, `update.restart.confirm.confirm`, `update.portable`, `update.badge.retry` |
 | 업데이트 알림 | `update.notice`, `update.notice.notes`, `update.notice.release`, `update.notice.dismiss` |
 | 업데이트 설정 | `settings.updates`(정책 묶음), `settings.updates.auto`, `settings.updates.notify`, `settings.updates.off`, `settings.updates.help`, `settings.updates.state`(`data-state`), `update.check`, `update.download`, `settings.updates.release`, `settings.updates.reason`, `settings.updates.meta` |
