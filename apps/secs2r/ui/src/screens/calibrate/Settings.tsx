@@ -126,6 +126,10 @@ function ModeSection({ view, actions }: Props) {
         </div>
       )}
       <ChannelFirOver view={view} />
+      {/* Left on, it stays in view: the section opens with it (ADR 0061). */}
+      <Advanced id="calibrate.mode.advanced" count={1} defaultOpen={s.main_delay_off}>
+        <SettingRow id="calibrate.mode.main_delay_off" view={view} change={actions.changeSetting} />
+      </Advanced>
     </SettingsCard>
   );
 }

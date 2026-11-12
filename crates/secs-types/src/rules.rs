@@ -144,6 +144,7 @@ pub const ENGINE_KEY_FIELDS: &[&str] = &[
     "dip_limit",
     "input_hp_hz",
     "peq_analytic_derivatives",
+    "main_delay_off",
 ];
 
 /// Calibration fields read by `manual_key`.

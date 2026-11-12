@@ -194,6 +194,7 @@ describe("P33 mock wiring", () => {
       mimo_early: { kind: "mimo_early", ms: 20 },
       mimo_seat_guard: { kind: "mimo_seat_guard", on: true },
       dip_limit: { kind: "dip_limit", on: true },
+      main_delay_off: { kind: "main_delay_off", on: true },
       input_hp: { kind: "input_hp", hz: 27 },
       analytic_derivatives: { kind: "analytic_derivatives", peq: true, mimo_iir: true },
     } satisfies { [K in SettingEdit["kind"]]: Extract<SettingEdit, { kind: K }> };
@@ -202,7 +203,7 @@ describe("P33 mock wiring", () => {
     await expect(mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "input_hp", hz: 60 } } })).rejects.toMatchObject({ error: { code: "invalid_request", params: { field: "input_hp", reason: "input_hp_range", min: "10", max: "50" } } });
     // The service takes only the transition factors 1, 2 and 4 (ADR 0021).
     await expect(mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "rc_hi_transition", factor: 3 } } })).rejects.toMatchObject({ error: { code: "invalid_request", params: { field: "rc_hi_transition" } } });
-    expect(await mock.request({ method: "calibration_settings_get" })).toMatchObject({ mode: "ultra", sample_rate_policy: "resample", low_protect: true, lf_align: true, mode_decay: true, hf_phase: true, dip_limit: true, input_hp_hz: 27, ultra_ms: CALIBRATION_LIMITS.ultra_ms[1], rc_hi: 500, rc_hi_basis: "lenient", rc_hi_transition: 4, rc_bands: [{ lo_hz: 2000, hi_hz: 4000 }, { lo_hz: 15000, hi_hz: 20000 }], room_volume_m3: 60, room_dims_m: [5, 4, 3], mimo_on: true, mimo_fir: true, mimo_early_ms: 20, mimo_seat_guard: true, peq_analytic_derivatives: true, mimo_iir_analytic_derivatives: true, subs_manual: { SW1: { mode: "bundle", gain_db: -4, hp_hz: 0 } } });
+    expect(await mock.request({ method: "calibration_settings_get" })).toMatchObject({ mode: "ultra", sample_rate_policy: "resample", low_protect: true, lf_align: true, mode_decay: true, hf_phase: true, dip_limit: true, main_delay_off: true, input_hp_hz: 27, ultra_ms: CALIBRATION_LIMITS.ultra_ms[1], rc_hi: 500, rc_hi_basis: "lenient", rc_hi_transition: 4, rc_bands: [{ lo_hz: 2000, hi_hz: 4000 }, { lo_hz: 15000, hi_hz: 20000 }], room_volume_m3: 60, room_dims_m: [5, 4, 3], mimo_on: true, mimo_fir: true, mimo_early_ms: 20, mimo_seat_guard: true, peq_analytic_derivatives: true, mimo_iir_analytic_derivatives: true, subs_manual: { SW1: { mode: "bundle", gain_db: -4, hp_hz: 0 } } });
   });
 
   it("answers every generated Request variant with its tagged typed response", async () => {

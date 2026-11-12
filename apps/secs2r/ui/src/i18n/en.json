@@ -1102,6 +1102,8 @@
   "calibrate.mode.linear.effect": "Corrects phase changes from the subwoofer roll-off and the room.",
   "calibrate.mode.ultra.effect": "Uses long FIR filters to correct phase.",
   "calibrate.mode.ultra_ms.label": "Latency limit",
+  "calibrate.mode.main_delay_off": "No delay on the mains",
+  "calibrate.mode.main_delay_off.help": "Adds no delay to match arrival times between the mains, so differences in speaker distance remain and the sound image shifts toward the nearer speaker. The subs are still aligned to the main that arrives last. Use this when your player or amplifier already compensates for distance, or when you do not want delay between the mains.",
   "calibrate.mode.latency.zero": "Added-delay limit for automatic correction: 0 ms",
   "calibrate.mode.latency.max": "Added-delay limit for automatic correction: {ms} ms",
   "calibrate.mode.fir_over": "This mode's channel FIR uses {taps} taps, exceeding the export DSP's limit of {limit} taps per channel. Choose {mode}, which uses no FIR.",

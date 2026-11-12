@@ -123,6 +123,7 @@ export function recordKey(s: CalibrationSettings): string {
   for (const flag of ["low_protect", "lf_align", "mode_decay", "hf_phase", "dip_limit"] as const) if (s[flag]) key += `|${flag}`;
   if (s.input_hp_hz !== null) key += `|input_hp=${number(s.input_hp_hz)}`;
   if (s.peq_analytic_derivatives) key += "|peq_analytic_derivatives";
+  if (s.main_delay_off) key += "|main_delay_off";
   return key;
 }
 

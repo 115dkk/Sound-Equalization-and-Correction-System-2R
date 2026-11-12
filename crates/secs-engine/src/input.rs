@@ -241,6 +241,8 @@ pub struct EngineConfig {
     pub hf_phase: bool,
     /// Limit how much one main fills a narrow response dip (ADR 0034).
     pub dip_limit: bool,
+    /// Leave the mains without alignment delay between them (ADR 0061).
+    pub main_delay_off: bool,
     /// Room volume in m³, for the Schroeder frequency.
     pub room_volume_m3: Option<f64>,
     /// Automatic upper-limit evidence; ignored for a manual RC range.

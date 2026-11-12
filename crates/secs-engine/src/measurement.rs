@@ -343,9 +343,23 @@ pub fn prepare_until(
         .iter()
         .map(|(_, a)| *a)
         .fold(f64::INFINITY, f64::min);
+    let latest_main = config.main_delay_off.then(|| {
+        arrival_s
+            .iter()
+            .filter(|(r, _)| config.mains.contains(r))
+            .map(|(_, a)| *a)
+            .fold(f64::NEG_INFINITY, f64::max)
+    });
     let align_delay_ms = arrival_s
         .iter()
-        .map(|(r, a)| (r.clone(), 1000.0 * (latest - a)))
+        .map(|(r, a)| {
+            let a = if config.mains.contains(r) {
+                latest_main.as_ref().unwrap_or(a)
+            } else {
+                a
+            };
+            (r.clone(), 1000.0 * (latest - a))
+        })
         .collect();
     let h = build_spectra(set, base_s, &setup.sub_filters, 24000, 0.2, ctx)?;
     // Upstream copies the dictionaries *after* applying fixed sub filters.

@@ -2263,6 +2263,21 @@ tests = [
 ]
 
 [[feature]]
+id = "calibrate.main_delay_off"
+kind = "workflow"
+milestone = "M5"
+status = "implemented"
+upstream = "new; ADR 0061, leave mains without alignment delay between them"
+tests = [
+  "secs-types::main_delay_off_defaults_off_and_extends_the_key_only_when_on",
+  "secs-project::main_delay_off_round_trip_and_legacy_default",
+  "secs-engine::main_delay_off_keeps_sub_delays_and_equalizes_main_delays",
+  "secs-engine::main_delay_off_full_design_has_equal_main_delays",
+  "secs-service::main_delay_off_edits_persist_and_mark_results_stale",
+  "secs2r-cli::project_set_persists_main_delay_off_switch",
+]
+
+[[feature]]
 id = "calibration.dip_limit"
 kind = "workflow"
 milestone = "M5"

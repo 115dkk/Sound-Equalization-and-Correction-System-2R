@@ -30,7 +30,7 @@ export const RECENT_PROJECTS_MAX = 10;
 export const CONFIG_GROUPS = [["프론트", "front"], ["센터", "center"], ["서브", "sub"], ["서라운드", "surround"], ["백", "back"], ["와이드", "wide"], ["탑", "top"], ["하이트", "height"], ["기타", "other"]] as const;
 export const ARRANGEMENT_COUNTS = [1, 9, 13, 17] as const;
 export const JOB_HISTORY_MAX = 32;
-export const ENGINE_KEY_FIELDS = ["mode", "rc_lo", "rc_hi", "room_volume_m3", "xo", "ultra_ms", "infra_boost_max_db", "xo_peq_on", "xo_peq_lo", "xo_peq_hi", "boost_max_db", "rc_hi_basis", "rc_hi_transition", "rc_bands", "sample_rate_policy", "low_protect", "lf_align", "mode_decay", "hf_phase", "dip_limit", "input_hp_hz", "peq_analytic_derivatives"] as const;
+export const ENGINE_KEY_FIELDS = ["mode", "rc_lo", "rc_hi", "room_volume_m3", "xo", "ultra_ms", "infra_boost_max_db", "xo_peq_on", "xo_peq_lo", "xo_peq_hi", "boost_max_db", "rc_hi_basis", "rc_hi_transition", "rc_bands", "sample_rate_policy", "low_protect", "lf_align", "mode_decay", "hf_phase", "dip_limit", "input_hp_hz", "peq_analytic_derivatives", "main_delay_off"] as const;
 export const MANUAL_KEY_FIELDS = ["subs_manual", "bundle_layouts", "sub_main_delay_ms"] as const;
 export const MIMO_KEY_FIELDS = ["fsiso", "mimo_low", "subs_manual", "mimo_max_supports", "mimo_fir", "mimo_iir_analytic_derivatives", "mimo_seat_guard", "mimo_early_ms"] as const;
 export const JOB_GROUPS = [["device", ["measure", "sample_load", "mdat_import", "level_monitor"]], ["compute", ["calibrate", "recommend_xo", "mimo"]], ["export", ["export", "apply"]], ["status_watch", ["status_watch"]]] as const;
@@ -72,6 +72,11 @@ export const SCALAR_EDITS = [{
 }, {
   kind: "dip_limit",
   field: "dip_limit",
+  limit: "-",
+  policy: "-",
+}, {
+  kind: "main_delay_off",
+  field: "main_delay_off",
   limit: "-",
   policy: "-",
 }, {
@@ -170,7 +175,7 @@ export const SCALAR_EDITS = [{
   limit: "-",
   policy: "-",
 }] as const;
-export const KNOWN_KEYS = ["mode", "rc_lo", "rc_hi", "room_volume_m3", "room_dims_m", "mimo_on", "fsiso", "mimo_low", "mimo_max_supports", "mimo_fir", "xo", "xo_rec", "ultra_ms", "subs_manual", "sub_main_delay_ms", "bundle_layouts", "infra_boost_max_db", "xo_peq_on", "boost_max_db", "xo_peq_lo", "xo_peq_hi", "rc_bands", "low_protect", "lf_align", "mode_decay", "hf_phase", "dip_limit", "input_hp_hz", "rc_hi_basis", "rc_hi_transition", "sample_rate_policy", "peq_analytic_derivatives", "mimo_iir_analytic_derivatives", "mimo_seat_guard", "mimo_early_ms", "xo_rec_key", "xo_rec_include"] as const;
+export const KNOWN_KEYS = ["mode", "rc_lo", "rc_hi", "room_volume_m3", "room_dims_m", "mimo_on", "fsiso", "mimo_low", "mimo_max_supports", "mimo_fir", "xo", "xo_rec", "ultra_ms", "subs_manual", "sub_main_delay_ms", "bundle_layouts", "infra_boost_max_db", "xo_peq_on", "boost_max_db", "xo_peq_lo", "xo_peq_hi", "rc_bands", "low_protect", "lf_align", "mode_decay", "hf_phase", "dip_limit", "main_delay_off", "input_hp_hz", "rc_hi_basis", "rc_hi_transition", "sample_rate_policy", "peq_analytic_derivatives", "mimo_iir_analytic_derivatives", "mimo_seat_guard", "mimo_early_ms", "xo_rec_key", "xo_rec_include"] as const;
 export const EXPORT_FOLDER_TAGS = [["camilla_dsp", "camilla"], ["before_after_mdat", "mdat"], ["staged_mdat", "mdat"], ["filter_text", "text"], ["equalizer_apo", "eqapo"], ["convolution", "convolution"]] as const;
 export const MIMO_MIN_POSITIONS = 3;
 export const DESIGN_RATE = 48000;

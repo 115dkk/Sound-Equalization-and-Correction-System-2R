@@ -24,6 +24,10 @@ hf_phase: boolean,
  */
 dip_limit: boolean, 
 /**
+ * Leave the mains without alignment delay between them (ADR 0061).
+ */
+main_delay_off: boolean, 
+/**
  * Common 8th-order Butterworth high-pass on every input before the MIMO
  * fork, in Hz; `None` is off (ADR 0031).
  */

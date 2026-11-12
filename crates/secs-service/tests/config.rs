@@ -844,6 +844,7 @@ fn service_config_oracle_replays_values_and_saved_project_bytes() {
                 assert_eq!(object.remove("mode_decay"), Some(false.into()));
                 assert_eq!(object.remove("hf_phase"), Some(false.into()));
                 assert_eq!(object.remove("dip_limit"), Some(false.into()));
+                assert_eq!(object.remove("main_delay_off"), Some(false.into()));
                 assert_eq!(object.remove("input_hp_hz"), Some(serde_json::Value::Null));
                 assert_eq!(
                     object.remove("peq_analytic_derivatives"),

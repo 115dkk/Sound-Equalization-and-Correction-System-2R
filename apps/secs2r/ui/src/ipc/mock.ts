@@ -576,6 +576,7 @@ export function createMockService(options: MockOptions = {}): MockService {
       case "mode_decay": settings.mode_decay = edit.on; break;
       case "hf_phase": settings.hf_phase = edit.on; break;
       case "dip_limit": settings.dip_limit = edit.on; break;
+      case "main_delay_off": settings.main_delay_off = edit.on; break;
       // The scalar edits of one field each: the field and the number from SCALAR_EDITS.
       case "input_hp": case "ultra_ms": case "rc_lo": case "rc_hi": case "boost_max": case "infra_boost":
       case "main_delay": case "fsiso": case "mimo_low": case "mimo_early":

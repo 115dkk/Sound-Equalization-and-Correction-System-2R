@@ -28,6 +28,7 @@ pub(crate) static CALIBRATION_SHAPE: Shape = Shape::Record {
         "mode_decay",
         "hf_phase",
         "dip_limit",
+        "main_delay_off",
         "input_hp_hz",
         "rc_hi_basis",
         "rc_hi_transition",
