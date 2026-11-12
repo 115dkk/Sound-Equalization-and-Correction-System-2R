@@ -90,6 +90,73 @@ fn validate_frame_aligned(len: usize, channels: u16) -> Result<(), AudioError> {
     Ok(())
 }
 
+/// Serialize caller frames into the device layout without speaker remixing.
+/// Both slices describe the same number of complete frames; unused channels
+/// are zeroed, including when the buffer held a previous packet.
+fn widen_float32(
+    samples: &[f32],
+    bytes: &mut [u8],
+    caller_channels: u16,
+    device_channels: u16,
+) -> Result<(), AudioError> {
+    validate_frame_aligned(samples.len(), caller_channels)?;
+    validate_shared_channels(caller_channels, device_channels)?;
+    let caller_width = usize::from(caller_channels);
+    let device_width = usize::from(device_channels) * size_of::<f32>();
+    if device_width == 0
+        || !bytes.len().is_multiple_of(device_width)
+        || bytes.len() / device_width != samples.len() / caller_width
+    {
+        return Err(AudioError::UnsupportedFormat(
+            "render channel buffers must contain the same complete frames".into(),
+        ));
+    }
+    for (source, target) in samples
+        .chunks_exact(caller_width)
+        .zip(bytes.chunks_exact_mut(device_width))
+    {
+        for (sample, slot) in source.iter().zip(target.as_chunks_mut::<4>().0) {
+            slot.copy_from_slice(&sample.to_le_bytes());
+        }
+        target[caller_width * size_of::<f32>()..].fill(0);
+    }
+    Ok(())
+}
+
+/// Copy the first caller channels of each device frame, preserving sample bits.
+/// The destination is reserved at open; packet processing never allocates.
+fn narrow_float32(
+    source: &[u8],
+    target: &mut [u8],
+    device_channels: u16,
+    caller_channels: u16,
+) -> Result<(), AudioError> {
+    validate_shared_channels(caller_channels, device_channels)?;
+    let device_width = usize::from(device_channels) * size_of::<f32>();
+    let caller_width = usize::from(caller_channels) * size_of::<f32>();
+    if device_width == 0
+        || caller_width == 0
+        || !source.len().is_multiple_of(device_width)
+        || !target.len().is_multiple_of(caller_width)
+        || source.len() / device_width != target.len() / caller_width
+    {
+        return Err(AudioError::UnsupportedFormat(
+            "capture channel buffers must contain the same complete frames".into(),
+        ));
+    }
+    if device_channels == caller_channels {
+        target.copy_from_slice(source);
+    } else {
+        for (source, target) in source
+            .chunks_exact(device_width)
+            .zip(target.chunks_exact_mut(caller_width))
+        {
+            target.copy_from_slice(&source[..caller_width]);
+        }
+    }
+    Ok(())
+}
+
 fn endpoint_from_format(
     id: String,
     name: String,
@@ -1197,6 +1264,25 @@ mod windows_backend {
         )
     }
 
+    /// Keep the layout returned by the safe GetMixFormat wrapper, changing
+    /// only the rate and sample representation. A narrower speaker mask would
+    /// ask the shared engine to remix channels rather than copy them.
+    fn shared_requested_format(
+        spec: StreamSpec,
+        mix: &WaveFormat,
+    ) -> Result<WaveFormat, AudioError> {
+        validate_spec(spec)?;
+        validate_shared_channels(spec.channels, mix.get_nchannels())?;
+        Ok(WaveFormat::new(
+            32,
+            32,
+            &SampleType::Float,
+            spec.sample_rate as usize,
+            usize::from(mix.get_nchannels()),
+            Some(mix.get_dwchannelmask()),
+        ))
+    }
+
     fn validate_device_direction(
         device: Device,
         endpoint: &Endpoint,
@@ -1408,6 +1494,47 @@ mod windows_backend {
         use super::*;
 
         #[test]
+        fn shared_format_keeps_mix_channels_and_mask_at_requested_rate() {
+            for (channels, mask) in [(1, 4), (2, 3), (6, 0x60f), (8, 0x63f), (8, 0)] {
+                let mix = WaveFormat::new(16, 16, &SampleType::Int, 44_100, channels, Some(mask));
+                for caller_channels in 1..=channels as u16 {
+                    let spec = StreamSpec {
+                        sample_rate: 48_000,
+                        channels: caller_channels,
+                    };
+                    let format = shared_requested_format(spec, &mix).unwrap();
+                    assert_eq!(format.get_nchannels(), channels as u16);
+                    assert_eq!(format.get_dwchannelmask(), mask);
+                    assert_eq!(format.get_samplespersec(), spec.sample_rate);
+                    assert_eq!(format.get_bitspersample(), 32);
+                    assert_eq!(format.get_validbitspersample(), 32);
+                    assert_eq!(format.get_blockalign(), channels as u32 * 4);
+                    assert_eq!(
+                        format.get_avgbytespersec(),
+                        spec.sample_rate * channels as u32 * 4
+                    );
+                    assert!(carries_spec_as_float32(
+                        &format,
+                        StreamSpec {
+                            channels: channels as u16,
+                            ..spec
+                        },
+                    ));
+                }
+                assert!(
+                    shared_requested_format(
+                        StreamSpec {
+                            sample_rate: 48_000,
+                            channels: channels as u16 + 1
+                        },
+                        &mix,
+                    )
+                    .is_err()
+                );
+            }
+        }
+
+        #[test]
         fn waveformatex_fallback_still_carries_float32() {
             // accepted_format retries one and two channels as a plain WAVEFORMATEX.
             // wasapi 0.24 zeroed SubFormat in that copy, so get_subformat failed and
@@ -1461,20 +1588,24 @@ mod windows_backend {
                 .get_iaudioclient()
                 .map_err(|err| backend_error("failed to create WASAPI audio client", err))
         })?;
-        if mode == ShareMode::SharedAutoConvert {
-            trace_stage(trace, "mixformat_validation", || {
+        let requested = match mode {
+            ShareMode::SharedAutoConvert => trace_stage(trace, "mixformat_validation", || {
                 let mix = client
                     .get_mixformat()
                     .map_err(|err| backend_error("failed to read endpoint mix format", err))?;
-                validate_shared_channels(spec.channels, mix.get_nchannels())
-            })?;
-        }
-        let requested = requested_format(spec);
+                shared_requested_format(spec, &mix)
+            })?,
+            ShareMode::Exclusive => requested_format(spec),
+        };
+        let transport_spec = StreamSpec {
+            channels: requested.get_nchannels(),
+            ..spec
+        };
         let accepted = accepted_format(&client, &requested, mode)?;
-        if !carries_spec_as_float32(&accepted, spec) {
+        if !carries_spec_as_float32(&accepted, transport_spec) {
             return Err(AudioError::UnsupportedFormat(format!(
                 "device did not accept requested {} Hz, {} channel, float32 transport verbatim",
-                spec.sample_rate, spec.channels
+                transport_spec.sample_rate, transport_spec.channels
             )));
         }
         let stream_mode = stream_mode(&client, &accepted, mode, trace)?;
@@ -1498,8 +1629,8 @@ mod windows_backend {
                 event: "negotiated_buffer",
                 buffer_size: Some(frames as usize),
                 detail: format!(
-                    "direction={direction:?} rate={} channels={} format=float32 mode={mode:?}",
-                    spec.sample_rate, spec.channels
+                    "direction={direction:?} rate={} channels={} caller_channels={} format=float32 mode={mode:?}",
+                    transport_spec.sample_rate, transport_spec.channels, spec.channels
                 ),
                 ..TraceRecord::default()
             });
@@ -1591,7 +1722,10 @@ mod windows_backend {
             let client = device
                 .get_iaudioclient()
                 .map_err(|err| backend_error("failed to create WASAPI audio client", err))?;
-            let format = requested_format(spec);
+            let format = match mode {
+                ShareMode::SharedAutoConvert => shared_requested_format(spec, &mix)?,
+                ShareMode::Exclusive => requested_format(spec),
+            };
             let (supported, detail) = match mode {
                 // A query that fails for a reason other than the format (the
                 // device vanished mid-probe) surfaces as the probe's error, as
@@ -1660,6 +1794,16 @@ mod windows_backend {
                     }
                 }
             };
+            let detail = if mode == ShareMode::SharedAutoConvert {
+                format!(
+                    "{} Hz/{} channels float32, channel mask {:#x}; {detail}",
+                    format.get_samplespersec(),
+                    format.get_nchannels(),
+                    format.get_dwchannelmask(),
+                )
+            } else {
+                detail
+            };
             Ok(probe_result_from_format(
                 mode,
                 native_rate,
@@ -1703,8 +1847,9 @@ mod windows_backend {
             let com = ComGuard::initialize(trace.as_ref())?;
             let enumerator = EnumeratorLease::acquire(trace.as_ref())?;
             let device = enumerator.get_device(endpoint, Direction::Output, trace.as_ref())?;
-            let (client, _) =
+            let (client, format) =
                 initialize_audio_client(&device, Direction::Output, spec, mode, trace.as_ref())?;
+            let device_channels = format.get_nchannels();
             trace_stage(trace.as_ref(), "device_release", || {
                 drop(device);
                 Ok(())
@@ -1729,11 +1874,11 @@ mod windows_backend {
             } else {
                 None
             };
-            let scratch = trace_stage(trace.as_ref(), "allocation", || {
-                Ok(Vec::with_capacity(
-                    buffer_frames * usize::from(spec.channels) * 4,
-                ))
-            })?;
+            let scratch_len = buffer_frames
+                .checked_mul(usize::from(device_channels))
+                .and_then(|samples| samples.checked_mul(size_of::<f32>()))
+                .ok_or_else(|| AudioError::Backend("render buffer size overflow".into()))?;
+            let scratch = trace_stage(trace.as_ref(), "allocation", || Ok(vec![0; scratch_len]))?;
             let realtime = RealtimeGuard::acquire(buffer_frames, spec.sample_rate, trace.as_ref())?;
             Ok(WasapiOutputSession {
                 event,
@@ -1742,6 +1887,7 @@ mod windows_backend {
                 client: TracedDrop::new(client, "audio_client_release", trace.as_ref()),
                 buffer_frames,
                 spec,
+                device_channels,
                 mode,
                 trace,
                 _enumerator: enumerator,
@@ -1765,8 +1911,9 @@ mod windows_backend {
             let com = ComGuard::initialize(trace.as_ref())?;
             let enumerator = EnumeratorLease::acquire(trace.as_ref())?;
             let device = enumerator.get_device(endpoint, Direction::Input, trace.as_ref())?;
-            let (client, _) =
+            let (client, format) =
                 initialize_audio_client(&device, Direction::Input, spec, mode, trace.as_ref())?;
+            let device_channels = format.get_nchannels();
             trace_stage(trace.as_ref(), "device_release", || {
                 drop(device);
                 Ok(())
@@ -1782,6 +1929,10 @@ mod windows_backend {
                     .map(|frames| frames as usize)
                     .map_err(|err| backend_error("failed to get WASAPI capture buffer size", err))
             })?;
+            let device_scratch_len = buffer_frames
+                .checked_mul(usize::from(device_channels))
+                .and_then(|samples| samples.checked_mul(size_of::<f32>()))
+                .ok_or_else(|| AudioError::Backend("capture buffer size overflow".into()))?;
             let scratch_len = buffer_frames
                 .checked_mul(usize::from(spec.channels))
                 .and_then(|samples| samples.checked_mul(size_of::<f32>()))
@@ -1795,18 +1946,22 @@ mod windows_backend {
             } else {
                 None
             };
-            let (scratch, queue) = trace_stage(trace.as_ref(), "allocation", || {
-                Ok((
-                    vec![0; scratch_len],
-                    CaptureQueue::for_endpoint_buffer(scratch_len / size_of::<f32>())?,
-                ))
-            })?;
+            let (device_scratch, scratch, queue) =
+                trace_stage(trace.as_ref(), "allocation", || {
+                    Ok((
+                        vec![0; device_scratch_len],
+                        vec![0; scratch_len],
+                        CaptureQueue::for_endpoint_buffer(scratch_len / size_of::<f32>())?,
+                    ))
+                })?;
             let realtime = RealtimeGuard::acquire(buffer_frames, spec.sample_rate, trace.as_ref())?;
             Ok(WasapiInputSession {
                 event,
                 capture: TracedDrop::new(capture, "capture_service_release", trace.as_ref()),
                 client: TracedDrop::new(client, "audio_client_release", trace.as_ref()),
                 spec,
+                device_channels,
+                device_scratch,
                 scratch,
                 queue,
                 started: false,
@@ -1832,6 +1987,7 @@ mod windows_backend {
         client: TracedDrop<AudioClient>,
         buffer_frames: usize,
         spec: StreamSpec,
+        device_channels: u16,
         mode: ShareMode,
         trace: Option<TraceHandle>,
         _enumerator: EnumeratorLease,
@@ -1842,11 +1998,12 @@ mod windows_backend {
 
     struct WasapiSink<'a> {
         event: Option<&'a wasapi::Handle>,
-        scratch: &'a mut Vec<u8>,
+        scratch: &'a mut [u8],
         render: &'a AudioRenderClient,
         client: &'a AudioClient,
         buffer_frames: usize,
-        channels: usize,
+        channels: u16,
+        device_channels: u16,
         submitted_frames: u64,
         write_ordinal: u64,
         trace: Option<&'a TraceHandle>,
@@ -1904,7 +2061,8 @@ mod windows_backend {
             samples: &[f32],
             (free, padding): (usize, usize),
         ) -> Result<(), AudioError> {
-            let frames = samples.len() / self.channels;
+            validate_frame_aligned(samples.len(), self.channels)?;
+            let frames = samples.len() / usize::from(self.channels);
             let verified_free = self.buffer_frames.checked_sub(padding).ok_or_else(|| {
                 AudioError::Backend(format!(
                     "render padding {padding} exceeds buffer {}",
@@ -1921,20 +2079,20 @@ mod windows_backend {
                     "render write {frames} exceeds free space {free}"
                 )));
             }
-            self.scratch.clear();
-            self.scratch
-                .extend(samples.iter().flat_map(|s| s.to_le_bytes()));
+            let byte_count = frames * usize::from(self.device_channels) * size_of::<f32>();
+            let scratch = &mut self.scratch[..byte_count];
+            widen_float32(samples, scratch, self.channels, self.device_channels)?;
             // Fingerprint the exact scratch slice, not the source or a reconstructed
             // payload. The safe wrapper copies and releases all requested frames on
             // Ok; on Err it does not expose which COM call failed or an actual count.
             let checksum = self.trace.map(|_| {
-                self.scratch.iter().fold(14695981039346656037_u64, |h, b| {
+                scratch.iter().fold(14695981039346656037_u64, |h, b| {
                     (h ^ u64::from(*b)).wrapping_mul(1099511628211)
                 })
             });
             let epoch = self.trace.map(|trace| trace.0.borrow().started);
             let before_us = epoch.map(|start| start.elapsed().as_micros());
-            let result = self.render.write_to_device(frames, self.scratch, None);
+            let result = self.render.write_to_device(frames, scratch, None);
             let after_us = epoch.map(|start| start.elapsed().as_micros());
             let after_cursor =
                 self.submitted_frames + if result.is_ok() { frames as u64 } else { 0 };
@@ -1954,7 +2112,7 @@ mod windows_backend {
                         "before_us={} after_us={} requested={} written={} cursor_before={} cursor_after={} payload_fnv1a={:016x} bytes={} outcome={}",
                         before_us.unwrap(), after_us.unwrap(), frames,
                         if result.is_ok() { frames.to_string() } else { "unknown".into() },
-                        self.submitted_frames, after_cursor, checksum.unwrap(), self.scratch.len(),
+                        self.submitted_frames, after_cursor, checksum.unwrap(), scratch.len(),
                         match &result {
                             Ok(()) => "release_ok_not_hardware_consumption".into(),
                             Err(error) => format!("error:{error}"),
@@ -2005,7 +2163,8 @@ mod windows_backend {
                 render: &self.render,
                 client: &self.client,
                 buffer_frames: self.buffer_frames,
-                channels: usize::from(self.spec.channels),
+                channels: self.spec.channels,
+                device_channels: self.device_channels,
                 submitted_frames: 0,
                 write_ordinal: 0,
                 trace: self.trace.as_ref(),
@@ -2026,6 +2185,9 @@ mod windows_backend {
         capture: &'a AudioCaptureClient,
         client: &'a AudioClient,
         event: Option<&'a wasapi::Handle>,
+        device_scratch: &'a mut [u8],
+        device_channels: u16,
+        caller_channels: u16,
     }
 
     impl CaptureEndpoint for WasapiCaptureEndpoint<'_> {
@@ -2058,8 +2220,25 @@ mod windows_backend {
         fn read_packet(&mut self, scratch: &mut [u8]) -> Result<PacketHeader, AudioError> {
             let (frames, info) = self
                 .capture
-                .read_from_device(scratch)
+                .read_from_device(self.device_scratch)
                 .map_err(|err| backend_error("failed to read WASAPI capture packet", err))?;
+            let device_bytes = (frames as usize)
+                .checked_mul(usize::from(self.device_channels) * size_of::<f32>())
+                .ok_or_else(|| AudioError::Backend("capture packet size overflow".into()))?;
+            let caller_bytes = (frames as usize)
+                .checked_mul(usize::from(self.caller_channels) * size_of::<f32>())
+                .ok_or_else(|| AudioError::Backend("capture packet size overflow".into()))?;
+            let source = self.device_scratch.get(..device_bytes).ok_or_else(|| {
+                AudioError::Backend("capture packet exceeds device buffer".into())
+            })?;
+            let target = scratch.get_mut(..caller_bytes).ok_or_else(|| {
+                AudioError::Backend("capture packet exceeds caller buffer".into())
+            })?;
+            // SILENT has no sample payload to copy. append_packet fills the
+            // caller-width queue with zeros and keeps the original flags.
+            if !info.flags.silent {
+                narrow_float32(source, target, self.device_channels, self.caller_channels)?;
+            }
             Ok(PacketHeader {
                 frames: frames as usize,
                 flags: PacketFlags {
@@ -2078,6 +2257,9 @@ mod windows_backend {
         capture: TracedDrop<AudioCaptureClient>,
         client: TracedDrop<AudioClient>,
         spec: StreamSpec,
+        device_channels: u16,
+        device_scratch: Vec<u8>,
+        // Packet handling and queue accounting stay in caller samples.
         scratch: Vec<u8>,
         queue: CaptureQueue,
         started: bool,
@@ -2128,6 +2310,9 @@ mod windows_backend {
                 capture: &self.capture,
                 client: &self.client,
                 event: self.event.as_ref(),
+                device_scratch: &mut self.device_scratch,
+                device_channels: self.device_channels,
+                caller_channels: self.spec.channels,
             };
             // Started per call: time the caller spends between reads is not
             // the device's.
@@ -2329,6 +2514,70 @@ mod tests {
             probe_result_from_format(ShareMode::SharedAutoConvert, 96_000, 16, true, "ok".into());
         assert_eq!(probe.native_sample_rate, 96_000);
         assert_eq!(probe.native_channels, 16);
+    }
+
+    #[test]
+    fn widening_preserves_frame_order_and_zeroes_unused_channels() {
+        let samples = [0.25, -0.5, 0.75, -1.0];
+        let mut bytes = [0xff; 32];
+        widen_float32(&samples, &mut bytes, 2, 4).unwrap();
+        assert_eq!(
+            bytes_to_f32(&bytes).unwrap(),
+            [0.25, -0.5, 0.0, 0.0, 0.75, -1.0, 0.0, 0.0]
+        );
+        // Reusing the same allocation for a mono packet clears the old right channel.
+        widen_float32(&[0.5, -0.25], &mut bytes, 1, 4).unwrap();
+        assert_eq!(
+            bytes_to_f32(&bytes).unwrap(),
+            [0.5, 0.0, 0.0, 0.0, -0.25, 0.0, 0.0, 0.0]
+        );
+    }
+
+    #[test]
+    fn narrowing_selects_first_channels_without_mixing_frames() {
+        let source = f32_to_bytes(&[0.25, -0.5, 1.0, 0.75, -1.0, 0.5]);
+        let mut target = [0xff; 16];
+        narrow_float32(&source, &mut target, 3, 2).unwrap();
+        assert_eq!(bytes_to_f32(&target).unwrap(), [0.25, -0.5, 0.75, -1.0]);
+        let source = f32_to_bytes(&[0.0, 0.5, 0.0, -0.5]);
+        let mut mono = [0xff; 8];
+        narrow_float32(&source, &mut mono, 2, 1).unwrap();
+        assert_eq!(bytes_to_f32(&mono).unwrap(), [0.0, 0.0]);
+    }
+
+    #[test]
+    fn equal_channel_counts_copy_transport_bits() {
+        let samples = [
+            -0.0,
+            f32::from_bits(0x7fc01234),
+            f32::MIN_POSITIVE,
+            f32::INFINITY,
+        ];
+        let expected = f32_to_bytes(&samples);
+        let mut widened = [0xff; 16];
+        widen_float32(&samples, &mut widened, 2, 2).unwrap();
+        assert_eq!(widened.as_slice(), expected);
+        let mut narrowed = [0xff; 16];
+        narrow_float32(&expected, &mut narrowed, 2, 2).unwrap();
+        assert_eq!(narrowed.as_slice(), expected);
+    }
+
+    #[test]
+    fn channel_copy_rejects_partial_frames_and_mismatched_lengths() {
+        assert!(widen_float32(&[0.5; 3], &mut [0; 32], 2, 4).is_err());
+        assert!(widen_float32(&[0.5; 4], &mut [0; 31], 2, 4).is_err());
+        assert!(widen_float32(&[0.5; 4], &mut [0; 16], 2, 4).is_err());
+        assert!(narrow_float32(&[0; 31], &mut [0; 16], 4, 2).is_err());
+        assert!(narrow_float32(&[0; 32], &mut [0; 15], 4, 2).is_err());
+        assert!(narrow_float32(&[0; 32], &mut [0; 8], 4, 2).is_err());
+        assert!(widen_float32(&[0.5; 4], &mut [0; 8], 4, 2).is_err());
+        assert!(narrow_float32(&[0; 8], &mut [0; 16], 2, 4).is_err());
+        for (caller, device) in [(0, 0), (0, 2), (2, 0)] {
+            assert!(widen_float32(&[], &mut [], caller, device).is_err());
+            assert!(narrow_float32(&[], &mut [], device, caller).is_err());
+        }
+        assert!(widen_float32(&[], &mut [], 1, 2).is_ok());
+        assert!(narrow_float32(&[], &mut [], 2, 1).is_ok());
     }
 
     #[test]

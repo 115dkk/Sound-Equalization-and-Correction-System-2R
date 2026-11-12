@@ -161,10 +161,15 @@ local function convolver(track, file)
   assert(math.abs(reaper.TrackFX_GetParamNormalized(track, fx, wet) - 1) < 1e-7)
   reaper.TrackFX_SetEnabled(track, fx, true)
   -- Only channel 1 enters and leaves this mono path; no stereo summing gain.
-  for pin = 0, 1 do
-    local mask = pin == 0 and 1 or 0
-    assert(reaper.TrackFX_SetPinMappings(track, fx, 0, pin, mask, 0))
-    assert(reaper.TrackFX_SetPinMappings(track, fx, 1, pin, mask, 0))
+  -- Clear every pin the plug-in reports, not only the first pair: a pin left
+  -- at its default would carry track channels 3 and up once the user widens
+  -- the path track.
+  local _, input_pins, output_pins = reaper.TrackFX_GetIOSize(track, fx)
+  assert(input_pins and output_pins and input_pins >= 1 and output_pins >= 1, "ReaVerb pin count")
+  for direction, pins in ipairs({input_pins, output_pins}) do
+    for pin = 0, pins - 1 do
+      assert(reaper.TrackFX_SetPinMappings(track, fx, direction - 1, pin, pin == 0 and 1 or 0, 0))
+    end
   end
 end
 

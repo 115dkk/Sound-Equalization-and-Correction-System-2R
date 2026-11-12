@@ -35,6 +35,7 @@ pub struct SessionRequest {
     pub input: Endpoint,
     pub playback: PlaybackBuffer,
     pub input_channels: u16,
+    pub meter_channel: Option<u16>,
     pub tail_seconds: f64,
     pub share: SharePreference,
 }
@@ -51,6 +52,7 @@ impl SessionRequest {
             input,
             playback,
             input_channels,
+            meter_channel: None,
             tail_seconds: 0.0,
             share: SharePreference::Auto,
         }
@@ -66,6 +68,9 @@ impl SessionRequest {
             || self.input_channels == 0
             || p.channels > self.output.max_output_channels
             || self.input_channels > self.input.max_input_channels
+            || self
+                .meter_channel
+                .is_some_and(|channel| channel == 0 || channel > self.input_channels)
             || !p.interleaved.len().is_multiple_of(usize::from(p.channels))
             || !p.interleaved.iter().all(|x| x.is_finite())
             || !self.tail_seconds.is_finite()
@@ -103,6 +108,11 @@ pub enum SessionEvent {
         frames_played: u64,
         frames_total: u64,
     },
+    /// One 0.1-second window of the metered input channel, in capture order.
+    /// Windows that contain a discontinuity are not sent.
+    InputWindow {
+        samples: Vec<f32>,
+    },
     OutputDrained(PlaybackReport),
     InputStopped {
         frames: usize,
@@ -126,9 +136,69 @@ struct Captured {
     mode: ShareMode,
 }
 
+struct MeterWindow {
+    channel: usize,
+    frames: usize,
+    samples: Vec<f32>,
+    discard: bool,
+}
+
+impl MeterWindow {
+    fn new(channel: u16, sample_rate: u32) -> Result<Self, AudioError> {
+        let frames = usize::try_from(sample_rate / 10)
+            .map_err(|_| AudioError::UnsupportedFormat("meter window exceeds usize".into()))?
+            .max(1);
+        let mut samples = Vec::new();
+        samples
+            .try_reserve_exact(frames)
+            .map_err(|error| AudioError::Backend(format!("meter allocation: {error}")))?;
+        Ok(Self {
+            channel: usize::from(channel - 1),
+            frames,
+            samples,
+            discard: false,
+        })
+    }
+
+    fn copy_read(
+        &mut self,
+        interleaved: &[f32],
+        channels: usize,
+        discontinuity: bool,
+        tx: &mpsc::Sender<Message>,
+    ) -> Result<(), AudioError> {
+        if interleaved.is_empty() {
+            self.discard |= discontinuity;
+            return Ok(());
+        }
+        for frame in interleaved.chunks_exact(channels) {
+            let sample = frame[self.channel];
+            self.discard |= discontinuity || !sample.is_finite();
+            self.samples.push(sample);
+            if self.samples.len() == self.frames {
+                if self.discard {
+                    self.samples.clear();
+                } else {
+                    let samples = std::mem::take(&mut self.samples);
+                    tx.send(Message::InputWindow(samples))
+                        .map_err(|_| AudioError::Cancelled)?;
+                    self.samples
+                        .try_reserve_exact(self.frames)
+                        .map_err(|error| {
+                            AudioError::Backend(format!("meter allocation: {error}"))
+                        })?;
+                }
+                self.discard = false;
+            }
+        }
+        Ok(())
+    }
+}
+
 enum Message {
     Ready(ShareMode),
     Started(ShareMode),
+    InputWindow(Vec<f32>),
     Output(Result<PlaybackReport, AudioError>),
     Input(Result<Captured, AudioError>),
 }
@@ -174,6 +244,10 @@ pub fn play_and_record(
         .try_reserve_exact(sample_count)
         .map_err(|e| AudioError::Backend(format!("capture allocation: {e}")))?;
     samples.resize(sample_count, 0.0);
+    let mut meter = request
+        .meter_channel
+        .map(|channel| MeterWindow::new(channel, request.playback.sample_rate))
+        .transpose()?;
     let peer = CancelToken::new();
     let frames_total =
         (request.playback.interleaved.len() / usize::from(request.playback.channels)) as u64;
@@ -223,6 +297,15 @@ pub fn play_and_record(
                             return Err(AudioError::Backend(
                                 "capture backend returned too many frames".into(),
                             ));
+                        }
+                        let read_end = offset + read.frames * channels;
+                        if let Some(meter) = &mut meter {
+                            meter.copy_read(
+                                &samples[offset..read_end],
+                                channels,
+                                read.discontinuity,
+                                &input_tx,
+                            )?;
                         }
                         report.frames += read.frames;
                         report.discontinuity |= read.discontinuity;
@@ -329,6 +412,9 @@ pub fn play_and_record(
                     on_event(SessionEvent::OutputStarted { mode });
                     started = Some(Instant::now());
                     last_progress = Instant::now();
+                }
+                Ok(Message::InputWindow(samples)) => {
+                    on_event(SessionEvent::InputWindow { samples });
                 }
                 Ok(Message::Output(result)) => {
                     output_done = true;

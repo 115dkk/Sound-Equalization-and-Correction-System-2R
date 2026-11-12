@@ -932,6 +932,14 @@ jobs:
       - name: Start Windows Audio and install pinned VB-CABLE
         run: python -I .github/scripts/virtual_audio.py --dest "$env:RUNNER_TEMP\manage-vbcable"
 
+      # A shared-mode stream narrower than the endpoint used to be remixed by
+      # Windows (a 1-channel capture of a stereo endpoint read (L+R)/2). The
+      # cable is the only real endpoint pair a runner has.
+      - name: Shared-mode streams carry device channels unchanged (VB-CABLE)
+        run: |
+          cargo run -p secs-sys --example channel_check --locked -- "CABLE Input" "CABLE Output"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Require an interactive console and report the environment
         run: python -I .github/scripts/manage_e2e.py env --artifacts "$env:RUNNER_TEMP\manage-e2e" --report "$env:RUNNER_TEMP\manage-env.md"
 

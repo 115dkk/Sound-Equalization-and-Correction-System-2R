@@ -64,10 +64,14 @@ local function dump(label)
         log(key .. " found=" .. tostring(found) .. " " .. value)
         if key == "pdc" and found then assert(tonumber(value) == 0, "ReaVerb reports added latency") end
       end
-      for direction = 0, 1 do
-        for pin = 0, 1 do
-          local low, high = reaper.TrackFX_GetPinMappings(track, fx, direction, pin)
-          log(string.format("PIN %d %d %d %d", direction, pin, low, high))
+      local _, input_pins, output_pins = reaper.TrackFX_GetIOSize(track, fx)
+      log(string.format("IOSIZE %d %d", input_pins, output_pins))
+      for direction, pins in ipairs({input_pins, output_pins}) do
+        for pin = 0, pins - 1 do
+          local low, high = reaper.TrackFX_GetPinMappings(track, fx, direction - 1, pin)
+          log(string.format("PIN %d %d %d %d", direction - 1, pin, low, high))
+          -- The real plug-in: only channel 1 on the first pin, nothing elsewhere.
+          assert(high == 0 and low == (pin == 0 and 1 or 0), "ReaVerb pin mapping")
         end
       end
     end
