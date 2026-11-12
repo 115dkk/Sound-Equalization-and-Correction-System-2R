@@ -547,6 +547,9 @@ calibration_settings! {
     /// Limits how much one main fills a narrow response dip (ADR 0034).
     #[serde(default)]
     dip_limit: bool = false; identity(); flag; project(boolean, true_only);
+    /// Leave the mains without alignment delay between them (ADR 0061).
+    #[serde(default)]
+    main_delay_off: bool = false; identity(); flag; project(boolean, true_only);
     /// Common 8th-order Butterworth high-pass on every input before the MIMO
     /// fork, in Hz; `None` is off (ADR 0031).
     #[serde(default)]
@@ -633,6 +636,9 @@ calibration_settings! {
     DipLimit {
         on: bool,
         } ["dip_limit", dip_limit] => |s| { s.dip_limit = Self::dip_limit(*on)?; Ok(Applied::Applied) };
+    MainDelayOff {
+        on: bool,
+        } ["main_delay_off", main_delay_off] => |s| { s.main_delay_off = Self::main_delay_off(*on)?; Ok(Applied::Applied) };
     /// The common input high-pass in Hz, `None` to turn it off (ADR 0031).
     InputHp {
         hz: Option<f64>,
@@ -751,7 +757,7 @@ calibration_settings! {
         }  => |s| { if let Some(v) = peq { s.peq_analytic_derivatives = *v; }
             if let Some(v) = mimo_iir { s.mimo_iir_analytic_derivatives = *v; } Ok(Applied::Applied) };
     }
-    project_order { "mode", "rc_lo", "rc_hi", "room_volume_m3", "room_dims_m", "mimo_on", "fsiso", "mimo_low", "mimo_max_supports", "mimo_fir", "xo", "xo_rec", "ultra_ms", "subs_manual", "sub_main_delay_ms", "bundle_layouts", "infra_boost_max_db", "xo_peq_on", "boost_max_db", "xo_peq_lo", "xo_peq_hi", "rc_bands", "low_protect", "lf_align", "mode_decay", "hf_phase", "dip_limit", "input_hp_hz", "rc_hi_basis", "rc_hi_transition", "sample_rate_policy", "peq_analytic_derivatives", "mimo_iir_analytic_derivatives", "mimo_seat_guard", "mimo_early_ms", "xo_rec_key", "xo_rec_include" }
+    project_order { "mode", "rc_lo", "rc_hi", "room_volume_m3", "room_dims_m", "mimo_on", "fsiso", "mimo_low", "mimo_max_supports", "mimo_fir", "xo", "xo_rec", "ultra_ms", "subs_manual", "sub_main_delay_ms", "bundle_layouts", "infra_boost_max_db", "xo_peq_on", "boost_max_db", "xo_peq_lo", "xo_peq_hi", "rc_bands", "low_protect", "lf_align", "mode_decay", "hf_phase", "dip_limit", "main_delay_off", "input_hp_hz", "rc_hi_basis", "rc_hi_transition", "sample_rate_policy", "peq_analytic_derivatives", "mimo_iir_analytic_derivatives", "mimo_seat_guard", "mimo_early_ms", "xo_rec_key", "xo_rec_include" }
 }
 
 /// Whether an edit belongs to the scalar declaration.
@@ -958,6 +964,7 @@ impl CalibrationSettings {
         // ADR 0031: the chain is a calibration output, so the cut joins this key.
         out.push_str(&self.scalar_engine_key("input_hp_hz"));
         out.push_str(&self.scalar_engine_key("peq_analytic_derivatives"));
+        out.push_str(&self.scalar_engine_key("main_delay_off"));
         out
     }
 
@@ -1615,6 +1622,40 @@ mod tests {
             edit,
             crate::settings_edit::SettingEdit::HfPhase { on: true }
         );
+    }
+
+    #[test]
+    fn main_delay_off_defaults_off_and_extends_the_key_only_when_on() {
+        let baseline = CalibrationSettings::default();
+        assert!(!baseline.main_delay_off);
+        let key = baseline.engine_key();
+        assert!(!key.contains("main_delay_off"));
+        let mut json = serde_json::to_value(&baseline).unwrap();
+        json.as_object_mut().unwrap().remove("main_delay_off");
+        let mut legacy: CalibrationSettings = serde_json::from_value(json).unwrap();
+        assert_eq!(legacy, baseline);
+        legacy.main_delay_off = true;
+        assert_eq!(legacy.engine_key(), format!("{key}|main_delay_off"));
+        legacy.dip_limit = true;
+        legacy.peq_analytic_derivatives = true;
+        assert_eq!(
+            legacy.engine_key(),
+            format!("{key}|dip_limit|peq_analytic_derivatives|main_delay_off")
+        );
+        legacy.main_delay_off = false;
+        assert_eq!(
+            legacy.engine_key(),
+            format!("{key}|dip_limit|peq_analytic_derivatives")
+        );
+        let edit: crate::settings_edit::SettingEdit =
+            serde_json::from_value(serde_json::json!({"kind": "main_delay_off", "on": true}))
+                .unwrap();
+        assert_eq!(
+            edit,
+            crate::settings_edit::SettingEdit::MainDelayOff { on: true }
+        );
+        legacy.apply_scalar(&edit).unwrap();
+        assert!(legacy.main_delay_off);
     }
 
     #[test]

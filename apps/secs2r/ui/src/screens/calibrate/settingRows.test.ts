@@ -51,20 +51,33 @@ describe("settingRows", () => {
     }
   });
 
+  it.each(["zero", "mixed", "linear", "ultra"] as const)("sends main_delay_off edits in %s mode without disabling the switch", (mode) => {
+    const change = vi.fn(async () => true);
+    for (const view of Object.values(fx.mainDelayOffViews)) {
+      renderWith(createElement(SettingRow, { id: "calibrate.mode.main_delay_off", view: { ...view, settings: { ...view.settings, mode } }, change }));
+      const toggle = document.querySelector<HTMLButtonElement>('[data-ui="calibrate.mode.main_delay_off"]')!;
+      expect(toggle.disabled).toBe(false);
+      expect(toggle.getAttribute("aria-checked")).toBe(String(view.settings.main_delay_off));
+      fireEvent.click(toggle);
+      expect(change).toHaveBeenLastCalledWith({ kind: "main_delay_off", on: !view.settings.main_delay_off });
+      cleanup();
+    }
+  });
+
   it("names every control once", () => {
     const ids = SETTING_ROWS.map((row) => row.id);
     expect(new Set(ids).size).toBe(ids.length);
   });
 
-  it("is drawn once per row by Settings.tsx, which keeps the rest of its 54 controls by hand", () => {
+  it("is drawn once per row by Settings.tsx, which keeps the rest of its controls by hand", () => {
     const drawn = [...source.matchAll(/<SettingRow id="([^"]+)"/g)].map((match) => match[1]);
     expect([...drawn].sort()).toEqual(SETTING_ROWS.map((row) => row.id).sort());
     const rows = (control: string) => SETTING_ROWS.filter((row) => row.control === control).length;
     const table = { toggle: rows("toggle"), number: rows("number"), segmented: rows("segmented"), select: rows("select") };
     const byHand = { toggle: count(/<Toggle\b/g), number: count(/<NumberField\b/g), segmented: count(/<Segmented\b/g), select: count(/<Select\b/g) };
-    expect(table).toEqual({ toggle: 10, number: 12, segmented: 3, select: 0 });
-    // The controls Settings.tsx drew before the table (ADR 0055: Toggle 13, NumberField 27, Segmented 8, Select 6).
+    expect(table).toEqual({ toggle: 11, number: 12, segmented: 3, select: 0 });
+    // The controls Settings.tsx drew before the table (ADR 0055: Toggle 13, NumberField 27, Segmented 8, Select 6), and the toggle of ADR 0061.
     expect({ toggle: table.toggle + byHand.toggle, number: table.number + byHand.number, segmented: table.segmented + byHand.segmented, select: table.select + byHand.select })
-      .toEqual({ toggle: 13, number: 27, segmented: 8, select: 6 });
+      .toEqual({ toggle: 14, number: 27, segmented: 8, select: 6 });
   });
 });

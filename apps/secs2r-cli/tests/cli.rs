@@ -154,6 +154,12 @@ fn every_scalar_flag_makes_its_edit() {
             vec![("on", Value::Bool(true)), ("off", Value::Bool(false))],
         ),
         (
+            "main-delay-off",
+            "main_delay_off",
+            "main_delay_off",
+            vec![("on", Value::Bool(true)), ("off", Value::Bool(false))],
+        ),
+        (
             "input-hp",
             "input_hp",
             "input_hp_hz",
@@ -247,6 +253,31 @@ fn project_set_persists_lf_align_and_mode_decay_switches() {
         );
         assert_eq!(
             saved["calibration"].get("mode_decay"),
+            expected.then_some(&Value::Bool(true))
+        );
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn project_set_persists_main_delay_off_switch() {
+    let root = root("main-delay-off");
+    let project = root.join("room.secs");
+    let path = project.to_string_lossy();
+    assert_success(&run(&["project", "new", &path, "--preset", "2.1"]).0);
+    for (value, expected) in [("on", true), ("off", false)] {
+        let result = assert_success(&run(&["project", "set", &path, "--main-delay-off", value]).0);
+        let settings = result
+            .iter()
+            .find(|v| v["reply"]["data"]["method"] == "calibration_settings_get")
+            .unwrap();
+        assert_eq!(
+            settings["reply"]["data"]["data"]["main_delay_off"],
+            expected
+        );
+        let saved: Value = serde_json::from_slice(&fs::read(&project).unwrap()).unwrap();
+        assert_eq!(
+            saved["calibration"].get("main_delay_off"),
             expected.then_some(&Value::Bool(true))
         );
     }

@@ -1790,6 +1790,8 @@ describe("reach table", () => {
     add(idsOf(screenOf({ ...fx.emptyView, settings: { ...fx.emptyView.settings, mimo_on: true } })));
     // Extra correction bands (ADR 0024): their rows and the graph's labels.
     add(idsOf(screenOf(fx.extraBandViews.two)));
+    // The mains without alignment delay (ADR 0061): the mode card's 고급 opens with it.
+    add(idsOf(screenOf(fx.mainDelayOffViews.on)));
     // The input cut on (ADR 0031): its frequency row.
     add(idsOf(screenOf(fx.inputHpViews.on)));
     // The header's pills, and the job tray's cancels and history (U8).

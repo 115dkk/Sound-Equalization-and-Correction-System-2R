@@ -232,6 +232,127 @@ fn preparation_and_levels_match_oracle() {
 }
 
 #[test]
+fn main_delay_off_keeps_sub_delays_and_equalizes_main_delays() {
+    let mut case = cases::load(&crate::tests::Oracle, "room");
+    assert!(case.config.mains.len() >= 2);
+    assert!(!case.config.subs.is_empty());
+    // Exercise both a main and a sub arriving last, with unequal main arrivals.
+    for sub_arrival in [0.002, 0.012] {
+        for (_, roles) in &mut case.measurements.positions {
+            for (role, measurement) in roles {
+                let arrival = case
+                    .config
+                    .mains
+                    .iter()
+                    .position(|r| r == role)
+                    .map_or(sub_arrival, |index| 0.004 + index as f64 * 0.002);
+                measurement.t0 = arrival - onset_index(&measurement.samples) as f64 / SR_F;
+            }
+        }
+        case.config.main_delay_off = false;
+        let off = prepare(&case.measurements, &case.config, &Setup::new(&case.config)).unwrap();
+        let latest = off
+            .arrival_s
+            .iter()
+            .filter(|(r, _)| case.config.mains.contains(r) || case.config.subs.contains(r))
+            .map(|(_, a)| *a)
+            .fold(f64::NEG_INFINITY, f64::max);
+        let latest_main = off
+            .arrival_s
+            .iter()
+            .filter(|(r, _)| case.config.mains.contains(r))
+            .map(|(_, a)| *a)
+            .fold(f64::NEG_INFINITY, f64::max);
+        for ((role, delay), (arrival_role, arrival)) in
+            off.align_delay_ms.iter().zip(&off.arrival_s)
+        {
+            assert_eq!(role, arrival_role);
+            assert_eq!(delay.to_bits(), (1000.0 * (latest - arrival)).to_bits());
+        }
+        let main_delays: Vec<_> = off
+            .align_delay_ms
+            .iter()
+            .filter(|(role, _)| case.config.mains.contains(role))
+            .map(|(_, delay)| *delay)
+            .collect();
+        assert!(main_delays.windows(2).any(|pair| pair[0] != pair[1]));
+        case.config.main_delay_off = true;
+        let on = prepare(&case.measurements, &case.config, &Setup::new(&case.config)).unwrap();
+        assert_eq!(on.arrival_s, off.arrival_s);
+        assert_eq!(on.base_s.to_bits(), off.base_s.to_bits());
+        for ((role, delay), (off_role, off_delay)) in
+            on.align_delay_ms.iter().zip(&off.align_delay_ms)
+        {
+            assert_eq!(role, off_role);
+            let expected = if case.config.mains.contains(role) {
+                1000.0 * (latest - latest_main)
+            } else {
+                *off_delay
+            };
+            assert_eq!(delay.to_bits(), expected.to_bits(), "{role}");
+        }
+        for &position in on.h.positions() {
+            for role in on.h.roles_at(position) {
+                assert_eq!(on.h.get(position, role), off.h.get(position, role));
+            }
+        }
+    }
+}
+
+#[test]
+fn main_delay_off_full_design_has_equal_main_delays() {
+    use crate::design::{self, DesignRequest};
+    use secs_compute::Context;
+
+    let mut case = cases::load(&crate::tests::Oracle, "room");
+    assert!(case.config.mains.len() >= 2);
+    assert!(!case.config.subs.is_empty());
+    case.config.main_delay_off = true;
+    for (_, roles) in &mut case.measurements.positions {
+        for (role, measurement) in roles {
+            let arrival = case
+                .config
+                .mains
+                .iter()
+                .position(|r| r == role)
+                .map_or(0.012, |index| 0.004 + index as f64 * 0.002);
+            measurement.t0 = arrival - onset_index(&measurement.samples) as f64 / SR_F;
+        }
+    }
+    let prepared = prepare(&case.measurements, &case.config, &Setup::new(&case.config)).unwrap();
+    let alignment = prepared
+        .align_delay_ms
+        .iter()
+        .find(|(role, _)| case.config.mains.contains(role))
+        .unwrap()
+        .1;
+    let context = Context::serial();
+    let result = design::design(
+        &DesignRequest {
+            measurements: &case.measurements,
+            config: &case.config,
+            tuning: &case.tuning,
+            subs_only: false,
+            adapter_notes: &[],
+        },
+        &context,
+        &*design::production_fitters(&context),
+    )
+    .unwrap();
+    assert_eq!(result.chain.mains.len(), case.config.mains.len());
+    let expected = alignment + result.chain.main_extra_ms;
+    for main in &result.chain.mains {
+        assert_eq!(
+            main.align_delay_ms.to_bits(),
+            alignment.to_bits(),
+            "{}",
+            main.role
+        );
+        assert_eq!(main.delay_ms.to_bits(), expected.to_bits(), "{}", main.role);
+    }
+}
+
+#[test]
 fn rejects_invalid_measurements_at_every_position_d2() {
     let case = cases::load(&crate::tests::Oracle, "room");
     let setup = Setup::new(&case.config);
@@ -473,4 +594,25 @@ fn delay_matches_numpy_bit_for_bit() {
             assert!(abs <= 1e-12, "delay {ms}: {abs:e}");
         }
     }
+}
+
+/// Issue #203: a log sweep puts each harmonic's response ahead of the linear
+/// one (548 ms for the second harmonic of the default 256k sweep at 48 kHz).
+#[test]
+fn onset_ignores_a_response_separated_from_the_peak_by_a_quiet_gap() {
+    let harmonic = 1_000;
+    let linear = harmonic + 26_304;
+    let mut ir = vec![0.0; linear + 4_800];
+    for (i, v) in ir[harmonic..harmonic + 480].iter_mut().enumerate() {
+        *v = 0.4 * (-(i as f64) / 120.0).exp();
+    }
+    ir[linear - 3] = 0.12;
+    ir[linear] = 1.0;
+    assert_eq!(onset_index(&Samples::F64(ir.clone().into())), linear - 3);
+
+    // Upstream's rule is unchanged while the stretches below the threshold
+    // are shorter than the gap: the first crossing before the peak.
+    ir[linear - 2_000] = 0.2;
+    ir[linear - 4_300] = -0.2;
+    assert_eq!(onset_index(&Samples::F64(ir.into())), linear - 4_300);
 }

@@ -1102,6 +1102,8 @@
   "calibrate.mode.linear.effect": "서브의 저역 롤오프와 방에 따른 위상 변화를 보정합니다.",
   "calibrate.mode.ultra.effect": "긴 FIR 필터를 사용해 위상을 보정합니다.",
   "calibrate.mode.ultra_ms.label": "지연 한도",
+  "calibrate.mode.main_delay_off": "메인 딜레이 넣지 않기",
+  "calibrate.mode.main_delay_off.help": "메인끼리 도착 시각을 맞추는 딜레이를 넣지 않으므로, 스피커 거리 차이가 그대로 남아 음상이 가까운 스피커 쪽으로 치우칩니다. 서브는 가장 늦게 도착하는 메인에 계속 맞춥니다. 재생 장치나 앰프에서 이미 거리를 보정하거나 메인 사이의 딜레이를 원하지 않을 때 사용하십시오.",
   "calibrate.mode.latency.zero": "자동 보정의 추가 지연 한도: 0 ms",
   "calibrate.mode.latency.max": "자동 보정의 추가 지연 한도: {ms} ms",
   "calibrate.mode.fir_over": "이 모드의 채널 FIR은 {taps}탭으로, 내보낼 DSP의 채널당 한도 {limit}탭을 넘습니다. FIR이 없는 {mode} 모드를 고르십시오.",

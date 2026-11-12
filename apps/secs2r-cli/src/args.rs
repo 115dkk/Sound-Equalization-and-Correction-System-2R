@@ -203,6 +203,9 @@ pub(crate) enum ProjectAction {
         /// Limit how much one main fills a narrow response dip.
         #[arg(long, value_enum)]
         dip_limit: Option<Switch>,
+        /// Leave the mains without alignment delay between them.
+        #[arg(long, value_enum)]
+        main_delay_off: Option<Switch>,
         /// Low-end protection, manual: one high-pass on every input (ADR 0031), in Hz, or off.
         #[arg(long, value_name = "Hz|off")]
         input_hp: Option<InputHpArg>,

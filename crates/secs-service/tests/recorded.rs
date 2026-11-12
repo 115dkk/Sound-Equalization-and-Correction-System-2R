@@ -284,6 +284,7 @@ fn valid_edits() -> Vec<SettingEdit> {
         SettingEdit::ModeDecay { on: true },
         SettingEdit::HfPhase { on: true },
         SettingEdit::DipLimit { on: true },
+        SettingEdit::MainDelayOff { on: true },
         SettingEdit::InputHp { hz: Some(25.0) },
         SettingEdit::RcLo { hz: 30.0 },
         SettingEdit::RcHi { hz: Some(500.0) },

@@ -47,6 +47,7 @@ pub(crate) fn run(action: Action, runner: &mut Runner) {
                 mode_decay,
                 hf_phase,
                 dip_limit,
+                main_delay_off,
                 input_hp,
                 peq_derivatives,
                 mimo_iir_derivatives,
@@ -66,6 +67,7 @@ pub(crate) fn run(action: Action, runner: &mut Runner) {
                     mode_decay.map(|value| ScalarValue::Bool(matches!(value, Switch::On))),
                     hf_phase.map(|value| ScalarValue::Bool(matches!(value, Switch::On))),
                     dip_limit.map(|value| ScalarValue::Bool(matches!(value, Switch::On))),
+                    main_delay_off.map(|value| ScalarValue::Bool(matches!(value, Switch::On))),
                     input_hp.map(|InputHpArg(hz)| ScalarValue::OptionalNumber(hz)),
                 ];
                 let mut scalar_edits =

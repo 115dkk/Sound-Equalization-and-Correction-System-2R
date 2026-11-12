@@ -335,6 +335,12 @@ export const emptyView: CalibrateView = {
   resultMode: null,
 };
 
+/** Main alignment delay off before calculation; no unrecorded result is invented. */
+export const mainDelayOffViews = {
+  off: emptyView,
+  on: { ...emptyView, settings: { ...emptyView.settings, main_delay_off: true } },
+} satisfies Record<string, CalibrateView>;
+
 /** Pre-calculation branches: no measurements, singular/plural subs and each mode. */
 export const planViews: Record<"unmeasured" | "oneSub" | "threeSubs" | "noSubs", CalibrateView> = {
   unmeasured: { ...emptyView, positions: [], measuredRoles: [], channel: null, curves: { ...previewResult(), curves: previewResult().curves.filter((c) => c.kind === "target") }, settings: { ...emptyView.settings, mode: "zero" }, modeSpec: modeSpecs.zero },

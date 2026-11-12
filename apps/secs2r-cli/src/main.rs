@@ -27,6 +27,7 @@ pub(crate) const SCALAR_FLAGS: &[(&str, &str)] = &[
     ("mode-decay", "mode_decay"),
     ("hf-phase", "hf_phase"),
     ("dip-limit", "dip_limit"),
+    ("main-delay-off", "main_delay_off"),
     ("input-hp", "input_hp"),
 ];
 

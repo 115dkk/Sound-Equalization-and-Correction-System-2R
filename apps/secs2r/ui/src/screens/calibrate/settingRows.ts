@@ -97,6 +97,11 @@ export const SETTING_ROWS = [
     shownWhen: (s) => s.mode === "ultra",
   },
 
+  {
+    id: "calibrate.mode.main_delay_off", control: "toggle", field: "main_delay_off", kind: "main_delay_off", param: "on",
+    label: "calibrate.mode.main_delay_off", help: "calibrate.mode.main_delay_off.help",
+  },
+
   /* ── 보정 범위 ────────────────────────────────────────────────────────── */
   {
     id: "calibrate.range.lower", control: "number", field: "rc_lo", kind: "rc_lo", param: "hz",

@@ -257,6 +257,7 @@ pub fn engine_inputs(
             mode_decay: settings.mode_decay,
             hf_phase: settings.hf_phase,
             dip_limit: settings.dip_limit,
+            main_delay_off: settings.main_delay_off,
             room_volume_m3: settings.room_volume_m3,
             rc_hi_basis: settings.rc_hi_basis,
             rc_hi_transition: settings.rc_hi_transition,
