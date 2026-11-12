@@ -483,8 +483,8 @@ function LowEnd({ view, actions }: Props) {
 
 /**
  * The FIR taps this design takes on the DSP, at the DSP's output rate (ADR
- * 0017): one channel FIR for each measured main and, once FIR supports are
- * computed and current, the supports. The DSP's FIR budget covers both
+ * 0017): one channel FIR for each measured main and the FIR supports the
+ * export includes (`results.mimo_export`). The DSP's FIR budget covers both
  * (`DspProfile::auto_taps` divides it among channels and supports), so the
  * line compares their sum with it.
  */
@@ -495,7 +495,7 @@ function FirTapEstimate({ view }: { view: CalibrateView }) {
   const subs = subRoles(view.config);
   const count = each > 0 ? view.measuredRoles.filter((role) => !subs.includes(role)).length : 0;
   const mimo = view.results.mimo;
-  const supports = mimo && !mimo.stale && mimo.kind === "fir" ? tapsAt(mimo.fir_taps_total, view.outputRate) : 0;
+  const supports = mimo && view.results.mimo_export === "included" && mimo.kind === "fir" ? tapsAt(mimo.fir_taps_total, view.outputRate) : 0;
   const total = count * each + supports;
   if (total === 0) return null;
   const params = { total: number(total), count, taps: number(each), supports: number(supports) };

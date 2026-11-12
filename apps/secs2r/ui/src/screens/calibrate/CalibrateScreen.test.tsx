@@ -656,8 +656,12 @@ describe("보정 screen", () => {
     ].join(" · "));
     expect(line.className).toContain("calibrate-hint--warning");
     cleanupAll();
+    // Supports the export leaves out are not counted: the budget verdict follows what is exported.
+    setup({ ...fx.minidspView, results: { ...fx.minidspView.results, mimo_export: "off" } });
+    expect(must("calibrate.mode.fir_total").textContent).toContain(translate("ko", "calibrate.mode.fir_total", { total: (mains * 4096).toLocaleString("en-US"), count: mains, taps: "4,096", supports: "0" }));
+    cleanupAll();
     // Stale supports are not counted, 48 kHz names no rate, and an unknown budget adds no verdict.
-    setup({ ...fx.minidspView, outputRate: 48000, firBudget: 0, results: { ...fx.minidspView.results, mimo: { ...fx.minidspView.results.mimo!, stale: true } } });
+    setup({ ...fx.minidspView, outputRate: 48000, firBudget: 0, results: { ...fx.minidspView.results, mimo: { ...fx.minidspView.results.mimo!, stale: true }, mimo_export: "stale" } });
     expect(must("calibrate.mode.fir_total").textContent).toBe(
       translate("ko", "calibrate.mode.fir_total", { total: (mains * 2048).toLocaleString("en-US"), count: mains, taps: "2,048", supports: "0" }),
     );
