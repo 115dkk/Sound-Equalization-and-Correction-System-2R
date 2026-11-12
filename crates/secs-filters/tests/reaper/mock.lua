@@ -102,6 +102,8 @@ end
 function reaper.TrackFX_GetParamNormalized(t, _, index) return t.params[names[index + 1]] end
 function reaper.TrackFX_GetParamFromIdent(_, _, name) assert(name == ":wet"); return 8 end
 function reaper.TrackFX_SetEnabled(t, _, enabled) t.enabled = enabled end
+-- More pins than the stereo pair, so that the script must ask for the count.
+function reaper.TrackFX_GetIOSize() return 2, 4, 4 end
 function reaper.TrackFX_SetPinMappings(t, _, output, pin, low, high)
   assert(high == 0 and low == (pin == 0 and 1 or 0))
   t["pin" .. output .. pin] = low; return true
@@ -141,6 +143,10 @@ local function verify()
     assert(input.I_SENDMODE == 3 and output.I_SENDMODE == 3)
     assert(input.D_VOL == 1 and output.D_VOL == 1)
     assert(t.B_MAINSEND == 0 and t.enabled)
+    -- Every reported pin was set: channel 1 on the first, nothing on the rest.
+    for direction = 0, 1 do
+      for pin = 0, 3 do assert(t["pin" .. direction .. pin] == (pin == 0 and 1 or 0)) end
+    end
     assert(t.params.Wet == 0.5 and t.params.Dry == 0 and t.params["ZL mode"] == 1)
     assert(t.params["Pre-verb"] == 0 and t.params.Width == 1 and t.params.Pan == 0.5)
     assert(t.params[":wet"] == 1 and t.config.DONE == "" and not t.config.ITEM1)

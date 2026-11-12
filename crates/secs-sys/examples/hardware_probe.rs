@@ -272,7 +272,7 @@ fn run_measurement(
                     drained = report.frames_drained;
                 }
                 SessionEvent::InputStopped { frames } => captured = frames,
-                SessionEvent::Progress { .. } => {}
+                SessionEvent::Progress { .. } | SessionEvent::InputWindow { .. } => {}
             },
         )
         .map_err(|error| error.to_string())?;

@@ -4,7 +4,7 @@ use crate::calibration::{MicCalibration, SplReference};
 use crate::invalid;
 use crate::measurement::power;
 use crate::policy::open_input_with_preference;
-use crate::session::{PlaybackBuffer, SessionRequest, play_and_record};
+use crate::session::{PlaybackBuffer, SessionEvent, SessionRequest, play_and_record};
 use crate::sim_room::Noise;
 use secs_dsp::fft;
 use std::f64::consts::PI;
@@ -310,11 +310,30 @@ pub fn level_check_streaming(
         input.channel,
     );
     request.share = output.share;
+    request.meter_channel = Some(input.channel);
     // Include a latency margin, then select the loudest burst-sized window;
     // leading capture/output skew must not dilute the RMS of a short burst.
     request.tail_seconds = 1.0;
     let input_channel = usize::from(input.channel);
-    let recording = play_and_record(backend, request, cancel, &mut |_| {})?;
+    let mut level_error = None;
+    let recording = play_and_record(backend, request, cancel, &mut |event| {
+        if level_error.is_some() {
+            return;
+        }
+        let SessionEvent::InputWindow { samples } = event else {
+            return;
+        };
+        let samples = samples.into_iter().map(f64::from).collect::<Vec<_>>();
+        match analyse_level(
+            &samples,
+            output.sample_rate,
+            input.calibration.as_ref(),
+            input.spl_reference,
+        ) {
+            Ok(report) => on_level(report),
+            Err(error) => level_error = Some(error),
+        }
+    })?;
     if recording.capture.discontinuity {
         return Err(AudioError::Recording {
             issue: RecordingIssue::Gap,
@@ -336,6 +355,9 @@ pub fn level_check_streaming(
             detail: "capture contained non-finite samples".into(),
         });
     }
+    if let Some(error) = level_error {
+        return Err(error);
+    }
     let samples: Vec<_> = recording
         .interleaved
         .chunks_exact(input_channel)
@@ -351,19 +373,6 @@ pub fn level_check_streaming(
         }
     }
     let settled = &samples[best.1..best.1 + n];
-    let window = usize::try_from(output.sample_rate / 10)
-        .map_err(|_| invalid("level window exceeds usize"))?
-        .max(1);
-    for samples in settled.chunks(window) {
-        if samples.len() == window {
-            on_level(analyse_level(
-                samples,
-                output.sample_rate,
-                input.calibration.as_ref(),
-                input.spl_reference,
-            )?);
-        }
-    }
     analyse_level(
         settled,
         output.sample_rate,

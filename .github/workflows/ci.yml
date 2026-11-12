@@ -932,6 +932,24 @@ jobs:
       - name: Start Windows Audio and install pinned VB-CABLE
         run: python -I .github/scripts/virtual_audio.py --dest "$env:RUNNER_TEMP\manage-vbcable"
 
+      # A shared-mode stream narrower than the endpoint used to be remixed by
+      # Windows (a 1-channel capture of a stereo endpoint read (L+R)/2). The
+      # cable is the only real endpoint pair a runner has. The runner denies
+      # desktop apps the CABLE Output recording device (0x80070005) until the
+      # microphone consent of this disposable machine is set to Allow.
+      - name: Shared-mode streams carry device channels unchanged (VB-CABLE)
+        run: |
+          $consent = 'SOFTWARE\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone'
+          foreach ($key in "HKLM:\$consent", "HKCU:\$consent", "HKCU:\$consent\NonPackaged") {
+            try {
+              if (-not (Test-Path $key)) { New-Item -Path $key -Force -ErrorAction Stop | Out-Null }
+              Set-ItemProperty -Path $key -Name Value -Value Allow -Type String -ErrorAction Stop
+            } catch { Write-Host "consent ${key}: $($_.Exception.Message)" }
+            Write-Host "$key = $((Get-ItemProperty -Path $key -Name Value -ErrorAction SilentlyContinue).Value)"
+          }
+          cargo run -p secs-sys --example channel_check --locked -- "CABLE Input" "CABLE Output"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Require an interactive console and report the environment
         run: python -I .github/scripts/manage_e2e.py env --artifacts "$env:RUNNER_TEMP\manage-e2e" --report "$env:RUNNER_TEMP\manage-env.md"
 

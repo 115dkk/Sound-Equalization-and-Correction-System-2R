@@ -47,10 +47,12 @@ local function dump(label)
         local found, value = reaper.TrackFX_GetNamedConfigParm(track, fx, key)
         log(key .. " found=" .. tostring(found) .. " " .. value)
       end
-      for direction = 0, 1 do
-        for pin = 0, 1 do
-          local low, high = reaper.TrackFX_GetPinMappings(track, fx, direction, pin)
-          log(string.format("PIN %d %d %d %d", direction, pin, low, high))
+      local _, input_pins, output_pins = reaper.TrackFX_GetIOSize(track, fx)
+      log(string.format("IOSIZE %d %d", input_pins, output_pins))
+      for direction, pins in ipairs({input_pins, output_pins}) do
+        for pin = 0, pins - 1 do
+          local low, high = reaper.TrackFX_GetPinMappings(track, fx, direction - 1, pin)
+          log(string.format("PIN %d %d %d %d", direction - 1, pin, low, high))
         end
       end
     end

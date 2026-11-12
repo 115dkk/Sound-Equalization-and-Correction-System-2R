@@ -9,7 +9,9 @@ use std::thread::{self, ThreadId};
 use std::time::{Duration, Instant};
 
 use secs_audio::audio::*;
-use secs_audio::level::{LevelInput, LevelOutput, LevelSignal, level_check_streaming};
+use secs_audio::level::{
+    LevelInput, LevelOutput, LevelSignal, analyse_level, level_check_streaming,
+};
 use secs_audio::measurement::{MeasurementPlan, RoleOutput, measure_position};
 use secs_audio::policy::{
     open_input_with_policy, open_output_with_policy, open_output_with_preference,
@@ -43,6 +45,8 @@ struct State {
     attempts: Vec<(Direction, ShareMode)>,
     submitted: Vec<f32>,
     owners: Vec<ThreadId>,
+    output_active: bool,
+    live_reports: usize,
 }
 
 #[derive(Default)]
@@ -50,6 +54,7 @@ struct Fake {
     state: Arc<Mutex<State>>,
     fault: Fault,
     duration: Duration,
+    wait_for_live_reports: usize,
     open_hook: Option<Arc<dyn Fn(Direction) + Send + Sync + std::panic::RefUnwindSafe>>,
 }
 
@@ -138,6 +143,7 @@ impl AudioBackend for Fake {
             spec,
             mode,
             duration: self.duration,
+            wait_for_live_reports: self.wait_for_live_reports,
             affinity: Affinity::new(),
         }))
     }
@@ -153,6 +159,7 @@ impl AudioBackend for Fake {
             fault: self.fault,
             spec,
             cursor: 0,
+            wait_for_output: self.wait_for_live_reports > 0,
             affinity: Affinity::new(),
         }))
     }
@@ -164,6 +171,7 @@ struct Output {
     spec: StreamSpec,
     mode: ShareMode,
     duration: Duration,
+    wait_for_live_reports: usize,
     affinity: Affinity,
 }
 impl Drop for Output {
@@ -187,15 +195,25 @@ impl OutputSession for Output {
         if self.fault == Fault::Play {
             return Err(AudioError::Backend("play".into()));
         }
+        self.state.lock().unwrap().output_active = true;
         let start = Instant::now();
         while start.elapsed() < self.duration {
             if cancel.is_cancelled() {
-                self.state.lock().unwrap().history.push("output cancelled");
+                let mut state = self.state.lock().unwrap();
+                state.output_active = false;
+                state.history.push("output cancelled");
                 return Err(AudioError::Cancelled);
+            }
+            if self.wait_for_live_reports > 0
+                && self.state.lock().unwrap().live_reports >= self.wait_for_live_reports
+            {
+                break;
             }
             thread::sleep(Duration::from_millis(1));
         }
-        self.state.lock().unwrap().history.push("output drained");
+        let mut state = self.state.lock().unwrap();
+        state.output_active = false;
+        state.history.push("output drained");
         let frames = (data.len() / usize::from(self.spec.channels)) as u64;
         Ok(PlaybackReport {
             frames_submitted: frames,
@@ -216,6 +234,7 @@ struct Input {
     fault: Fault,
     spec: StreamSpec,
     cursor: usize,
+    wait_for_output: bool,
     affinity: Affinity,
 }
 impl Drop for Input {
@@ -254,6 +273,15 @@ impl InputSession for Input {
         }
         if cancel.is_cancelled() {
             return Err(AudioError::Cancelled);
+        }
+        if self.wait_for_output {
+            while !self.state.lock().unwrap().output_active {
+                if cancel.is_cancelled() {
+                    return Err(AudioError::Cancelled);
+                }
+                thread::sleep(Duration::from_millis(1));
+            }
+            self.wait_for_output = false;
         }
         // Partial chunks, with a known three-frame delay and per-channel signal.
         let channels = usize::from(self.spec.channels);
@@ -524,6 +552,7 @@ impl AudioBackend for NoGapFake {
             fault: self.0.fault,
             spec,
             cursor: 0,
+            wait_for_output: self.0.wait_for_live_reports > 0,
             affinity: Affinity::new(),
         })))
     }
@@ -592,6 +621,66 @@ fn level_check_rejects_each_recording_issue() {
 }
 
 #[test]
+fn level_check_reports_while_output_is_active_and_preserves_the_report() {
+    let (output, input) = level_io();
+    let seconds: f64 = 0.2;
+    let required = (seconds * 10.0).floor() as usize;
+    let fake = NoGapFake(Fake {
+        duration: Duration::from_secs(2),
+        wait_for_live_reports: required,
+        ..Fake::default()
+    });
+    let mut reports = Vec::new();
+    let measured = level_check_streaming(
+        &fake,
+        &output,
+        &input,
+        -20.0,
+        seconds,
+        &CancelToken::new(),
+        &mut |report| {
+            let mut state = fake.0.state.lock().unwrap();
+            if state.output_active {
+                state.live_reports += 1;
+            }
+            reports.push(report);
+        },
+    )
+    .unwrap();
+
+    assert!(reports.len() >= required);
+    assert!(fake.0.state.lock().unwrap().live_reports >= required);
+    let burst_frames = (seconds * f64::from(output.sample_rate)).round() as usize;
+    let capture_frames = burst_frames + output.sample_rate as usize;
+    let expected_samples = (capture_frames - burst_frames..capture_frames)
+        .map(|frame| if frame < 3 { 0.0 } else { (frame - 3) as f64 })
+        .collect::<Vec<_>>();
+    let expected = analyse_level(&expected_samples, output.sample_rate, None, None).unwrap();
+    assert_eq!(measured, expected);
+}
+
+#[test]
+fn level_check_returns_an_input_window_analysis_error() {
+    let (output, mut input) = level_io();
+    input.spl_reference = Some(secs_audio::SplReference {
+        offset_db: f64::NAN,
+    });
+    let error = level_check_streaming(
+        &NoGapFake(Fake::default()),
+        &output,
+        &input,
+        -20.0,
+        0.1,
+        &CancelToken::new(),
+        &mut |_| panic!("an invalid window must not be reported"),
+    )
+    .unwrap_err();
+    assert!(
+        matches!(error, AudioError::UnsupportedFormat(reason) if reason == "invalid SPL offset")
+    );
+}
+
+#[test]
 fn session_starts_input_before_output() {
     let fake = Fake::default();
     let request = request();
@@ -636,6 +725,72 @@ fn session_reports_events_in_order() {
     for pair in progress.windows(2) {
         assert!(pair[1].0.duration_since(pair[0].0) >= Duration::from_millis(100));
     }
+}
+
+#[test]
+fn session_without_a_meter_sends_no_input_windows() {
+    let mut req = request();
+    assert_eq!(req.meter_channel, None);
+    req.tail_seconds = 0.3;
+    let mut events = Vec::new();
+    play_and_record(&Fake::default(), req, &CancelToken::new(), &mut |event| {
+        events.push(event)
+    })
+    .unwrap();
+    assert!(
+        events
+            .iter()
+            .all(|event| !matches!(event, SessionEvent::InputWindow { .. }))
+    );
+}
+
+#[test]
+fn session_meter_sends_selected_channel_and_drops_bad_windows() {
+    let mut req = request();
+    req.tail_seconds = 0.28;
+    req.meter_channel = Some(2);
+    let mut events = Vec::new();
+    play_and_record(&Fake::default(), req, &CancelToken::new(), &mut |event| {
+        events.push(event)
+    })
+    .unwrap();
+
+    let windows = events
+        .iter()
+        .filter_map(|event| match event {
+            SessionEvent::InputWindow { samples } => Some(samples),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(windows.len(), 2);
+    assert!(windows.iter().all(|window| window.len() == 100));
+    assert_eq!(windows[0][0], 97.1_f32);
+    assert_eq!(windows[1][0], 197.1_f32);
+    let stopped = events
+        .iter()
+        .position(|event| matches!(event, SessionEvent::InputStopped { .. }))
+        .unwrap();
+    assert!(
+        events[..stopped]
+            .iter()
+            .any(|event| matches!(event, SessionEvent::InputWindow { .. }))
+    );
+
+    let mut req = request();
+    req.tail_seconds = 0.28;
+    req.meter_channel = Some(1);
+    let mut windows = 0;
+    play_and_record(
+        &Fake {
+            fault: Fault::NonFinite,
+            ..Fake::default()
+        },
+        req,
+        &CancelToken::new(),
+        &mut |event| windows += usize::from(matches!(event, SessionEvent::InputWindow { .. })),
+    )
+    .unwrap();
+    assert_eq!(windows, 0);
 }
 
 #[test]
@@ -830,6 +985,12 @@ fn session_validation_precedes_device_open() {
     invalids.push(req);
     let mut req = request();
     req.input_channels = 3;
+    invalids.push(req);
+    let mut req = request();
+    req.meter_channel = Some(0);
+    invalids.push(req);
+    let mut req = request();
+    req.meter_channel = Some(3);
     invalids.push(req);
     let mut req = request();
     req.playback.channels = 3;
