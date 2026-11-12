@@ -1,0 +1,56 @@
+# One-off experiment for issue #208: does the reporter's calibration give the
+# same result on every platform and on every run? Runs only on this branch,
+# which is never merged.
+name: Probe issue 208
+
+on:
+  push:
+    branches: [probe/issue-208]
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    name: calibration (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+
+      - name: Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev libsoup-3.0-dev libasound2-dev patchelf
+
+      - name: Install the pinned toolchain (rust-toolchain.toml)
+        run: |
+          rustup toolchain install
+          rustup show active-toolchain
+
+      - name: Build the command-line program
+        run: cargo build --release --locked -p secs2r-cli
+
+      - name: Repeat the reporter's calibration
+        shell: bash
+        run: |
+          exe=target/release/secs2r-cli
+          if [ "$RUNNER_OS" = Windows ]; then exe=target/release/secs2r-cli.exe; fi
+          python -I -u probe/issue208.py "$exe" "$RUNNER_TEMP/probe208" 3
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: probe-208-${{ matrix.os }}
+          path: ${{ runner.temp }}/probe208/result/
+          if-no-files-found: warn
+          retention-days: 7
