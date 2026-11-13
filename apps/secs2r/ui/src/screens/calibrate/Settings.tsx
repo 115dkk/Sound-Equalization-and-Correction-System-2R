@@ -126,6 +126,7 @@ function ModeSection({ view, actions }: Props) {
         </div>
       )}
       <ChannelFirOver view={view} />
+      <FirTapEstimate view={view} />
       {/* Left on, it stays in view: the section opens with it (ADR 0061). */}
       <Advanced id="calibrate.mode.advanced" count={1} defaultOpen={s.main_delay_off}>
         <SettingRow id="calibrate.mode.main_delay_off" view={view} change={actions.changeSetting} />
@@ -477,6 +478,35 @@ function LowEnd({ view, actions }: Props) {
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * The FIR taps this design takes on the DSP, at the DSP's output rate (ADR
+ * 0017): one channel FIR for each measured main and the FIR supports the
+ * export includes (`results.mimo_export`). The DSP's FIR budget covers both
+ * (`DspProfile::auto_taps` divides it among channels and supports), so the
+ * line compares their sum with it.
+ */
+function FirTapEstimate({ view }: { view: CalibrateView }) {
+  const t = useT();
+  const number = useNumber();
+  const each = tapsAt(view.modeSpec.fir_taps, view.outputRate);
+  const subs = subRoles(view.config);
+  const count = each > 0 ? view.measuredRoles.filter((role) => !subs.includes(role)).length : 0;
+  const mimo = view.results.mimo;
+  const supports = mimo && view.results.mimo_export === "included" && mimo.kind === "fir" ? tapsAt(mimo.fir_taps_total, view.outputRate) : 0;
+  const total = count * each + supports;
+  if (total === 0) return null;
+  const params = { total: number(total), count, taps: number(each), supports: number(supports) };
+  const parts = [t(count === 0 ? "calibrate.mode.fir_total.supports_only" : supports > 0 ? "calibrate.mode.fir_total.supports" : "calibrate.mode.fir_total", params)];
+  if (view.outputRate !== DESIGN_RATE) parts.push(t("calibrate.mode.fir_total.rate", { rate: rateText(number, view.outputRate) }));
+  const over = view.firBudget > 0 && total > view.firBudget;
+  if (view.firBudget > 0) parts.push(t(over ? "calibrate.mode.fir_total.budget_over" : "calibrate.mode.fir_total.budget", { budget: number(view.firBudget) }));
+  return (
+    <p className={over ? "calibrate-hint calibrate-hint--warning tabular" : "calibrate-line tabular"} data-ui="calibrate.mode.fir_total">
+      {parts.join(" · ")}
+    </p>
   );
 }
 
