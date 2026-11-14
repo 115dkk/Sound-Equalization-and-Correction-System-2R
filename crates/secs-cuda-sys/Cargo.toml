@@ -19,6 +19,10 @@ multiple_unsafe_ops_per_block = "deny"
 missing_safety_doc = "deny"
 dbg_macro = "deny"
 
+[lints.cargo]
+unused_dependencies = "deny"
+unknown_lints = "deny"
+
 [dependencies]
 libloading = "=0.9.0"
 thiserror.workspace = true

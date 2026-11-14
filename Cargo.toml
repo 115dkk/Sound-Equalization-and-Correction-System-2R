@@ -5,6 +5,9 @@ members = ["crates/*", "apps/*", "bindings/python", "bindings/dotnet/native"]
 [workspace.package]
 version = "0.60.0"
 edition = "2024"
+# The oldest Rust that builds the crates.io crates and the sdist, not the
+# toolchain this repository builds with (rust-toolchain.toml). The Python
+# sdist job in ci.yml builds with the runner's own stable Rust.
 rust-version = "1.99"
 license = "GPL-3.0-only"
 repository = "https://github.com/115dkk/Sound-Equalization-and-Correction-System-2R"
@@ -24,6 +27,16 @@ undocumented_unsafe_blocks = "deny"
 multiple_unsafe_ops_per_block = "deny"
 missing_safety_doc = "deny"
 dbg_macro = "deny"
+
+# Cargo's own manifest lints (stable since Cargo 1.100). They warn by default;
+# `cargo clippy -- -D warnings` only reaches rustc, so they are denied here.
+# An older Cargo skips this table with a warning.
+[workspace.lints.cargo]
+unused_dependencies = "deny"
+unused_workspace_dependencies = "deny"
+unused_workspace_package_fields = "deny"
+redundant_homepage = "deny"
+unknown_lints = "deny"
 
 [workspace.dependencies]
 secs-types = { path = "crates/secs-types", version = "=0.25.1" }
