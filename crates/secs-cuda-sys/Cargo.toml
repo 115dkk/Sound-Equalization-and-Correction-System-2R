@@ -24,5 +24,9 @@ unused_dependencies = "deny"
 unknown_lints = "deny"
 
 [dependencies]
-libloading = "=0.9.0"
 thiserror.workspace = true
+
+# The loader exists only where CUDA does; elsewhere every call reports that
+# the backend is unavailable.
+[target.'cfg(any(target_os = "windows", target_os = "linux"))'.dependencies]
+libloading = "=0.9.0"
