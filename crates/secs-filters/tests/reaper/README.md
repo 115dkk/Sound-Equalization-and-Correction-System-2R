@@ -33,8 +33,8 @@ SECS_REAPER_ARTIFACTS="$RUNNER_TEMP/reaper-artifacts" \
   cargo test -p secs-filters --test reaper_playback --locked -- --ignored --nocapture
 ```
 
-`reaper_playback.rs` exports the `computed_dolby` (subwoofers) and `mimo_iir`
-(MIMO supports) oracle plans. Each input gets one unit impulse, separated by the
+`reaper_playback.rs` exports the `computed_dolby` (subwoofers), `mimo_iir`
+(IIR MIMO supports) and `mimo_fir` (FIR MIMO supports) oracle plans. Each input gets one unit impulse, separated by the
 IR length plus 4096 silent frames, in a multichannel 48 kHz float source WAV.
 `playback.lua` checks its disposable resource directory and project, applies the
 bundle and dumps routing, ReaVerb state and every track's parent-channel settings.
@@ -42,7 +42,7 @@ Only in this guarded scratch project, it raises the master's channel count to
 match the bus and renders the master mix as a multichannel 32-bit float WAV.
 This tests path tracks → output bus → folder → master. Separate `stem_bus.wav`
 and `stem_path.wav` renders are diagnostics only; the latter is `C → C` for
-`computed_dolby`, or `L → L` for `mimo_iir` (which has no C channel). Each render
+`computed_dolby`, or `L → L` for `mimo_iir` and `mimo_fir` (which have no C channel). Each render
 dumps its settings before and after the action. The sample assertion always
 uses the master mix, `render.wav`. It reapplies the bundle, checks replacement by
 track count and a changed folder GUID, then discards the scratch project and
