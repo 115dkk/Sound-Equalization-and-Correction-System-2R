@@ -3,7 +3,7 @@
 
 use secs_filters::{FilterRun, export_convolution_named};
 use secs_oracle::Fixture;
-use secs_types::chain::{MimoPaths, SignalChain};
+use secs_types::chain::{MimoFilter, MimoPaths, SignalChain};
 use serde::Deserialize;
 use serde_json::Value;
 use std::fs;
@@ -18,6 +18,9 @@ const GUARD: usize = 4096;
 const REL: f64 = 2e-6;
 const ABS: f64 = 1e-7;
 static TEMP_ID: AtomicU64 = AtomicU64::new(0);
+/// Oracle plans played through the engine: subwoofers without MIMO, then an
+/// IIR and an FIR MIMO support.
+const CASES: [&str; 3] = ["computed_dolby", "mimo_iir", "mimo_fir"];
 
 struct TempDir(PathBuf);
 impl TempDir {
@@ -183,8 +186,16 @@ fn prepare(root: &Path, name: &str) -> Routing {
     fs::create_dir_all(root).unwrap();
     let (chain, mimo) = oracle(name);
     assert!(!chain.subs.is_empty());
-    if name == "mimo_iir" {
-        assert!(mimo.as_ref().is_some_and(|mimo| !mimo.paths.is_empty()));
+    // Each MIMO case must really carry the kind of support its name promises.
+    let supports = |wanted: fn(&MimoFilter) -> bool| {
+        mimo.as_ref().is_some_and(|mimo| {
+            !mimo.paths.is_empty() && mimo.paths.iter().all(|path| wanted(&path.filter))
+        })
+    };
+    match name {
+        "mimo_iir" => assert!(supports(|filter| matches!(filter, MimoFilter::Iir { .. }))),
+        "mimo_fir" => assert!(supports(|filter| matches!(filter, MimoFilter::Fir { .. }))),
+        _ => {}
     }
     let run = FilterRun {
         chain: &chain,
@@ -381,7 +392,7 @@ fn run_engine(root: &Path, routing: &Routing, executable: &Path) -> Result<(), S
 fn run_cases(mut run: impl FnMut(&str) -> Result<String, String>) -> Result<String, String> {
     let mut report = String::new();
     let mut failed = false;
-    for name in ["computed_dolby", "mimo_iir"] {
+    for name in CASES {
         // Keep the next case running even if fixture preparation or artifact I/O
         // panics, as well as when the engine or sample comparison returns Err.
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run(name)))
@@ -543,7 +554,7 @@ fn reaper_playback_reports_all_cases_after_errors_and_panics() {
         Err(format!("bad render for {name}"))
     })
     .unwrap_err();
-    assert_eq!(visited, ["computed_dolby", "mimo_iir"]);
+    assert_eq!(visited, CASES);
     for name in &visited {
         assert!(error.contains(&format!("{name}: FAIL bad render for {name}")));
     }
@@ -556,14 +567,17 @@ fn reaper_playback_reports_all_cases_after_errors_and_panics() {
     .unwrap_err();
     assert!(error.contains("computed_dolby: FAIL panic: fixture failure"));
     assert!(error.contains("mimo_iir: PASS comparison passed"));
+    assert!(error.contains("mimo_fir: PASS comparison passed"));
     let report = run_cases(|_| Ok("comparison passed".into())).unwrap();
-    assert!(report.contains("computed_dolby: PASS") && report.contains("mimo_iir: PASS"));
+    for name in CASES {
+        assert!(report.contains(&format!("{name}: PASS")));
+    }
 }
 
 #[test]
 fn reaper_playback_prepares_oracle_impulses_and_silent_routes_without_engine() {
     let temporary = TempDir::new();
-    for name in ["computed_dolby", "mimo_iir"] {
+    for name in CASES {
         let root = temporary.0.join(name);
         let routing = prepare(&root, name);
         let source = read_wav(&fs::read(root.join("source.wav")).unwrap()).unwrap();

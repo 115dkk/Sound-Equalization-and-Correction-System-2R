@@ -173,7 +173,7 @@ local ok, detail = xpcall(function()
     if name == "C → C" then center = track end
     if name == "L → L" then left = track end
   end
-  -- mimo_iir has only L and SW1 outputs, so it has no C -> C path.
+  -- mimo_iir and mimo_fir have only L and SW1 outputs, so they have no C -> C path.
   local diagnostic_path = assert(center or left, "diagnostic direct path is missing")
   local _, diagnostic_name = reaper.GetTrackName(diagnostic_path)
   log("DIAGNOSTIC_PATH " .. diagnostic_name)
