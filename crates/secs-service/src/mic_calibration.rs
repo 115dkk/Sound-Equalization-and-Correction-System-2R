@@ -169,7 +169,7 @@ fn decode_text(bytes: &[u8]) -> Result<String, String> {
             .collect::<Vec<_>>();
         String::from_utf16(&units).map_err(|error| error.to_string())?
     } else {
-        let bytes = bytes.trim_prefix(&[0xef, 0xbb, 0xbf]);
+        let bytes = bytes.strip_prefix(&[0xef, 0xbb, 0xbf]).unwrap_or(bytes);
         if bytes.contains(&0) {
             return Err("calibration contains a NUL byte".into());
         }
