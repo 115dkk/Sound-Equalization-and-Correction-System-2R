@@ -14,7 +14,7 @@
 
 ```text
 Cargo.toml                워크스페이스 루트 (lint, 공용 의존성)
-rust-toolchain.toml       1.99.0 고정
+rust-toolchain.toml       1.100.0 고정
 features.toml             기능 등록부
 unsafe-budget.toml        크레이트별 unsafe 허용량 (secs-sys = 3, ADR 0011; secs-cuda-sys = 80; secs-dotnet-sys = 32, ADR 0032)
 deny.toml                 GPL 호환 라이선스, 권고, 출처

@@ -593,7 +593,7 @@ fn mark_generation_uncertain(path: &Path, generation: &str, log: &LogSink) {
 
 fn marker_generation(root: &Path, marker: &Path) -> Option<String> {
     let value = fs::read_to_string(marker).ok()?;
-    let name = value.trim().strip_prefix('?').unwrap_or(value.trim());
+    let name = value.trim().trim_prefix('?');
     if !valid_generation_name(name) {
         return None;
     }

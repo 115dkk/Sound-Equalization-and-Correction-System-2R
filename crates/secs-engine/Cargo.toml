@@ -6,7 +6,6 @@ edition.workspace = true
 rust-version.workspace = true
 license = "AGPL-3.0-only"
 repository.workspace = true
-homepage = "https://github.com/115dkk/Sound-Equalization-and-Correction-System-2R"
 readme = "README.md"
 keywords = ["audio", "equalization", "correction", "mimo", "dsp"]
 categories = ["multimedia::audio", "science"]
