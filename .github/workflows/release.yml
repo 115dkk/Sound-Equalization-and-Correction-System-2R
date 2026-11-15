@@ -693,10 +693,16 @@ jobs:
       - name: Install the pinned toolchain (rust-toolchain.toml)
         run: rustup toolchain install
 
+      # Cargo keeps a crate's rlib under build/<package>/<hash>/out/, so the
+      # public crate's long name is in the path twice. Under this checkout
+      # and a --target folder that path passes the 260 characters link.exe
+      # can open (LNK1104); the intermediate files go to a short folder and
+      # the libraries still land in target/.
       - name: Build the native libraries
         shell: bash
         env:
           TARGETS: ${{ matrix.targets }}
+          CARGO_BUILD_BUILD_DIR: ${{ runner.temp }}/cargo-build
         run: |
           set -euo pipefail
           for target in $TARGETS; do
