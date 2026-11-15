@@ -493,6 +493,19 @@ jobs:
           rustup target add x86_64-apple-darwin
           cargo build --release --locked -p secs-dotnet-sys --target x86_64-apple-darwin
 
+      # release.yml builds the Windows library with --target, which makes the
+      # paths link.exe opens longer than the build above does; the same build
+      # here keeps LNK1104 from showing up first on release day.
+      - name: Build the Windows library as release.yml does
+        if: matrix.name == 'windows'
+        shell: bash
+        env:
+          CARGO_BUILD_BUILD_DIR: ${{ runner.temp }}/cargo-build
+        run: |
+          rustup target add x86_64-pc-windows-msvc
+          cargo build --release --locked -p secs-dotnet-sys --target x86_64-pc-windows-msvc
+          ls target/x86_64-pc-windows-msvc/release/secs2r_native.dll
+
       # build.rs regenerates the declarations from src/ffi.rs on every build.
       - name: The generated C# declarations match the committed copy
         shell: bash
