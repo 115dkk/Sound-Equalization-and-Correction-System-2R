@@ -16,6 +16,11 @@ Decision policy:
                                                       main, release it
 * tagged, nothing shipped changed                  -> do nothing
   (``--force`` from a manual dispatch bumps anyway)
+* tagged, nothing shipped changed, but the crates   -> release the tagged
+  of that release have no ``api-v`` tag                version again as is; a
+                                                      publishing that stopped
+                                                      half way and needed a
+                                                      fix on main finishes
 * the triggering commit is no longer main's head    -> do nothing; the run of
                                                       the newer push releases
                                                       everything shipped since
@@ -191,6 +196,15 @@ def decide(version: str, tags, shipped: list, messages, force: bool):
     while f"v{candidate}" in tags:
         candidate = bumped(candidate, "patch")
     return "bump", candidate
+
+
+def resumes_api(action: str, version: str, tags, api_version: str, api_tags) -> bool:
+    """Whether a push that releases nothing must still finish the tagged
+    release: its crates never got their ``api-v`` tag, so their publishing
+    stopped half way. ``action`` is ``none`` here only when nothing shipped
+    changed since the tag, so the installers built again are the same."""
+    return (action == "none" and f"v{version}" in tags
+            and f"api-v{api_version}" not in api_tags)
 
 
 def is_stale(head: str, main_head: str) -> bool:
@@ -498,7 +512,8 @@ def main(argv=None) -> int:
             messages = [m for m in log.split("\x00") if m.strip()]
 
     action, new_version = decide(version, tags, shipped, messages, args.force)
-    if is_stale(head, main_head):
+    stale = is_stale(head, main_head)
+    if stale:
         print(f"main is at {main_head[:12]}, past this trigger; its run releases instead")
         action, new_version = "none", version
     print(f"head={head[:12]} version={version} tagged={current_tag in tags} "
@@ -529,8 +544,14 @@ def main(argv=None) -> int:
                 )
             version_manifests[package_field(binding_manifest, "name")] = binding
             package_dirs.append(package_dir)
+        api_tags = set(_git("tag", "-l", "api-v*").splitlines())
+        if not stale and resumes_api(action, version, tags, api_version, api_tags):
+            # The update check and the notes compare with the release before
+            # this one, as the run that tagged it did.
+            action, previous = "release", latest_tag(tags - {current_tag})
+            print(f"api-v{api_version} is not tagged; releasing v{version} again "
+                  f"to finish its publishing (previous={previous})")
         if action != "none":
-            api_tags = set(_git("tag", "-l", "api-v*").splitlines())
             api_changed, api_messages = [], []
             if f"api-v{api_version}" in api_tags:
                 api_changed = api_files(_git("diff", "--no-renames", "--name-only",

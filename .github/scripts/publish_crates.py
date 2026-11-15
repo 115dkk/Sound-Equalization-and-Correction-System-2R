@@ -18,12 +18,18 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import urllib.error
 import urllib.request
 
 USER_AGENT = "secs2r-release (https://github.com/115dkk/Sound-Equalization-and-Correction-System-2R)"
+
+# `cargo publish` verifies each crate against the registry, where the crates
+# this script published a moment ago are younger than the minimum publish age
+# of .cargo/config.toml. `--locked` keeps every other dependency at Cargo.lock.
+PUBLISH_ENV = {**os.environ, "CARGO_RESOLVER_INCOMPATIBLE_PUBLISH_AGE": "allow"}
 
 
 def publishable(metadata: dict) -> dict[str, dict]:
@@ -112,7 +118,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"{name} {args.version}: would publish")
             continue
         print(f"{name} {args.version}: publishing", flush=True)
-        subprocess.run(["cargo", "publish", "-p", name, "--locked"], check=True)
+        subprocess.run(["cargo", "publish", "-p", name, "--locked"], check=True, env=PUBLISH_ENV)
     return 0
 
 
