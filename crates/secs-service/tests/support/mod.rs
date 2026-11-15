@@ -693,7 +693,17 @@ impl Fifo {
 
     pub(crate) fn release(&self) -> std::thread::JoinHandle<()> {
         let (path, bytes) = (self.path.clone(), self.bytes.clone());
-        std::thread::spawn(move || fs::write(path, bytes).unwrap())
+        std::thread::spawn(move || {
+            // Opens the pipe and never creates a file. A test whose job was
+            // cancelled before it read the pipe removes its folder while
+            // this thread may still be starting; `fs::write` would then put
+            // a regular file where the pipe was, under the folder being
+            // removed.
+            let Ok(mut pipe) = fs::OpenOptions::new().write(true).open(path) else {
+                return;
+            };
+            std::io::Write::write_all(&mut pipe, &bytes).unwrap()
+        })
     }
 }
 
