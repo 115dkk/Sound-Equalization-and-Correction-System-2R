@@ -1442,6 +1442,19 @@ fn calibration_reads_measurements_inside_its_job_outside_the_session_lock() {
     fs::remove_dir_all(root).unwrap();
 }
 
+// The writer of the test above can start after the folder is on its way out.
+#[cfg(unix)]
+#[test]
+fn a_released_pipe_that_is_gone_is_not_written_as_a_file() {
+    let root = temp_root("fifo-gone");
+    fs::create_dir_all(&root).unwrap();
+    let fifo = Fifo::create(&root.join("gone.wav"), vec![1, 2, 3]);
+    fs::remove_file(&fifo.path).unwrap();
+    fifo.release().join().unwrap();
+    assert!(!fifo.path.exists());
+    fs::remove_dir_all(root).unwrap();
+}
+
 #[test]
 fn rc_agreement_calibration_fails_with_typed_position_reason() {
     let root = temp_root("rc-agreement");
