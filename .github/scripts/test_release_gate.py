@@ -334,6 +334,18 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(g.api_decide("0.1.0", {"api-v0.1.0", "api-v0.1.1"},
                                       ["crates/x/src/a.rs"], ["fix: a"]), ("bump", "0.1.2"))
 
+    def test_untagged_crates_of_a_tagged_release_release_it_again(self):
+        tags = {"v0.1.0", "v0.2.0"}
+        self.assertTrue(g.resumes_api("none", "0.2.0", tags, "0.1.1", {"api-v0.1.0"}))
+        # The release before the one released again is the one below it.
+        self.assertEqual(g.latest_tag(tags - {"v0.2.0"}), "v0.1.0")
+        # Published crates, a release already under way and an untagged
+        # version are left to the other rules.
+        self.assertFalse(g.resumes_api("none", "0.2.0", tags, "0.1.1", {"api-v0.1.1"}))
+        self.assertFalse(g.resumes_api("bump", "0.2.0", tags, "0.1.1", {"api-v0.1.0"}))
+        self.assertFalse(g.resumes_api("release", "0.3.0", tags, "0.1.1", {"api-v0.1.0"}))
+        self.assertFalse(g.resumes_api("none", "0.3.0", tags, "0.1.1", {"api-v0.1.0"}))
+
     def test_lock_entries_of_the_crates_move_together(self):
         lock = (
             '[[package]]\nname = "secs-types"\nversion = "0.1.0"\ndependencies = []\n\n'

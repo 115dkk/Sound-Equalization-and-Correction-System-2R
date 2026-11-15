@@ -57,6 +57,9 @@ name: Release
 # Full releases run on push only. The pypi_only and nuget_only dispatches
 # rebuild main's current API version from its published api-v tag, not another
 # branch's code, and skip the gate. Retry a failed full release by re-running it.
+# A re-run builds release_sha again; when the crates failed for a reason fixed
+# on main since, the push of that fix releases the tagged version again and
+# publishes the crates still missing (release_gate.py, resumes_api).
 on:
   push:
     branches: [main]

@@ -64,6 +64,12 @@ class OrderTest(unittest.TestCase):
             p.publish_order(packages)
 
 
+class EnvironmentTest(unittest.TestCase):
+    def test_publishing_lets_the_resolver_take_the_crates_just_published(self):
+        self.assertEqual(p.PUBLISH_ENV["CARGO_RESOLVER_INCOMPATIBLE_PUBLISH_AGE"], "allow")
+        self.assertIn("PATH", {name.upper() for name in p.PUBLISH_ENV})
+
+
 class VersionTest(unittest.TestCase):
     def test_every_crate_carries_the_release_version(self):
         packages = p.publishable(metadata(package("a"), package("b", version="0.1.1")))
