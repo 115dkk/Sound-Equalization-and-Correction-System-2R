@@ -17,7 +17,8 @@ name: CI
 #   frontend  typecheck, unit tests and build of the screen, and the IPC
 #             bindings regenerated from secs-types must match the committed copy
 #   python-wheels  when the Python package or its Rust dependencies change,
-#             build and test its wheel on Linux, Windows and macOS
+#             build and test its wheel on Linux (x86_64 and arm64), Windows
+#             and macOS
 #   dotnet-package  when the NuGet package or its Rust dependencies change,
 #             build its native library on Linux, Windows and macOS (macOS also
 #             for Intel), check the generated C# declarations, pack it, and
@@ -334,6 +335,11 @@ jobs:
             target: x86_64-unknown-linux-gnu
             manylinux: "2_17"
             python: "3.9"
+          - name: linux-arm64
+            os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            manylinux: "2_17"
+            python: "3.13"
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
