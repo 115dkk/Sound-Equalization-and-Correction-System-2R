@@ -2,7 +2,13 @@
 
 SECS 2R의 변경 기록입니다. 번호는 major.minor.patch이고, 0.x는 모두 사전 출시판이며 정식 출시는 1.0.0부터입니다(docs/adr/0006). 각 절의 내용이 그 버전의 릴리스 본문이 됩니다. 업스트림 SECS 2의 변경 기록은 [`docs/upstream/CHANGELOG.md`](docs/upstream/CHANGELOG.md)에 있습니다.
 
-## 0.60.1 - 미정
+## 0.60.2 - 미정
+
+### 바뀐 것
+
+- PyPI 패키지 `secs2r`를 Linux arm64(aarch64, manylinux 2_17) 휠로도 냅니다. 라즈베리 파이 같은 arm64 Linux에서도 Rust 툴체인 없이 설치됩니다. 지금까지는 sdist만 있어 소스에서 빌드해야 했고, 휠만 받는 설치 환경(예: Music Assistant의 커뮤니티 프로바이더)에서는 설치되지 않았습니다. 0.25.2에도 이 휠을 추가했습니다.
+
+## 0.60.1 - 2026-11-15
 
 Rust 1.100.0으로 빌드하는 판입니다. 보정 계산과 내보내는 파일, 화면은 0.60.0과 같습니다.
 
@@ -11,7 +17,6 @@ Rust 1.100.0으로 빌드하는 판입니다. 보정 계산과 내보내는 파�
 - 빌드 툴체인을 Rust 1.99.0에서 1.100.0으로 올렸습니다. 1.99.1의 수정 세 가지(x86_64에서 FFI 함수가 돌려주는 bool의 오컴파일 등)도 함께 들어옵니다. crates.io 크레이트와 sdist가 요구하는 최소 버전(`rust-version`)은 1.99 그대로입니다.
 - crates.io 크레이트의 매니페스트에서 `repository`와 같은 값이던 `homepage`를 뺐습니다.
 - `secs-engine`은 `test-support` 기능을 켤 때만 `secs-graph`에 의존합니다. 지금까지는 테스트 지원 코드만 쓰는데도 늘 함께 빌드했습니다.
-- PyPI 패키지 `secs2r`를 Linux arm64(aarch64, manylinux 2_17) 휠로도 냅니다. 라즈베리 파이 같은 arm64 Linux에서도 Rust 툴체인 없이 설치됩니다. 지금까지는 sdist만 있어 소스에서 빌드해야 했고, 휠만 받는 설치 환경(예: Music Assistant의 커뮤니티 프로바이더)에서는 설치되지 않았습니다.
 
 ## 0.60.0 - 2026-11-13
 
