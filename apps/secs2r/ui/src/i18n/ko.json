@@ -1180,7 +1180,7 @@
   "calibrate.xo.recommend": "XO 추천 계산",
   "calibrate.xo.rec.caption": "XO 후보 점수",
   "calibrate.xo.rec.caption.values": "XO 추천값",
-  "calibrate.xo.rec.hint": "점수가 높을수록 좋습니다. 칸을 누르면 그 그룹의 XO가 그 값으로 바뀝니다.",
+  "calibrate.xo.rec.hint": "점수가 높을수록 좋습니다. 그룹마다 원하는 XO를 눌러 고르십시오.",
   "calibrate.xo.rec.hz": "{hz} Hz",
   "calibrate.xo.rec.best": "추천",
   "calibrate.xo.rec.current": "현재",

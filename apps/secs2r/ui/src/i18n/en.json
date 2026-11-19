@@ -1180,7 +1180,7 @@
   "calibrate.xo.recommend": "Recommend XO",
   "calibrate.xo.rec.caption": "Crossover candidate scores",
   "calibrate.xo.rec.caption.values": "Recommended crossovers",
-  "calibrate.xo.rec.hint": "Higher scores are better. Select a cell to set that group's crossover to it.",
+  "calibrate.xo.rec.hint": "Higher scores are better. Click the crossover you want for each group.",
   "calibrate.xo.rec.hz": "{hz} Hz",
   "calibrate.xo.rec.best": "Best",
   "calibrate.xo.rec.current": "Current",
