@@ -22,24 +22,24 @@ clap.workspace = true
 # its arguments and refuses.
 [target.'cfg(windows)'.dependencies]
 secs-apply.workspace = true
+secs-service.workspace = true
 secs-sys = { path = "../../crates/secs-sys" }
 secs-types.workspace = true
 base64.workspace = true
 minisign-verify = "=0.3.0"
 semver = "1"
 sha2.workspace = true
-chrono.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 
 # The rules, files and transitions modules are tested on every OS.
 [dev-dependencies]
 secs-apply.workspace = true
+secs-service.workspace = true
 secs-types.workspace = true
 base64.workspace = true
 minisign-verify = "=0.3.0"
 semver = "1"
 sha2.workspace = true
-chrono.workspace = true
 serde.workspace = true
 serde_json.workspace = true

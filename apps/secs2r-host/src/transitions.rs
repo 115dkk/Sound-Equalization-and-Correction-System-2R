@@ -1,5 +1,5 @@
 use std::collections::{BTreeMap, VecDeque};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use secs_types::ipc::{
     HostLogLine, HostManaged, IpcError, ManagedCamilla, ManagedEqApo, ManagedProcessState,
@@ -248,7 +248,7 @@ fn schedule_takeover(
 
 fn event_line(event: &str, fields: impl IntoIterator<Item = (String, String)>) -> HostLogLine {
     HostLogLine {
-        timestamp: chrono::Utc::now().to_rfc3339(),
+        timestamp: secs_service::utc_rfc3339(SystemTime::now()),
         event: event.into(),
         fields: fields.into_iter().collect(),
     }
@@ -258,9 +258,11 @@ fn schedule_restart(state: &mut State, effects: &mut Vec<Effect>, now: Instant) 
     match state.restart.on_exit(now) {
         RestartDecision::RestartAfter(delay) => {
             state.restart_due = Some(now + delay);
-            let until = (chrono::Utc::now()
-                + chrono::Duration::from_std(delay).unwrap_or_default())
-            .to_rfc3339();
+            let until = secs_service::utc_rfc3339(
+                SystemTime::now()
+                    .checked_add(delay)
+                    .unwrap_or_else(SystemTime::now),
+            );
             effects.push(Effect::SetCamillaState(ManagedProcessState::BackingOff {
                 until,
             }));
@@ -350,7 +352,7 @@ pub fn decide(state: &State, input: Input) -> (State, Vec<Effect>) {
             owner_matches,
         } => {
             effects.push(Effect::Log(HostLogLine {
-                timestamp: chrono::Utc::now().to_rfc3339(),
+                timestamp: secs_service::utc_rfc3339(SystemTime::now()),
                 event: match event {
                     SessionEvent::Logon => "session_logon",
                     SessionEvent::Logoff => "session_logoff",
@@ -538,7 +540,7 @@ pub fn decide(state: &State, input: Input) -> (State, Vec<Effect>) {
         Input::WatcherFailed { detail } => {
             next.eqapo_error = Some(detail.clone());
             effects.push(Effect::Log(HostLogLine {
-                timestamp: chrono::Utc::now().to_rfc3339(),
+                timestamp: secs_service::utc_rfc3339(SystemTime::now()),
                 event: "watcher_failed".into(),
                 fields: BTreeMap::from([("detail".into(), detail)]),
             }));
@@ -563,7 +565,7 @@ pub fn decide(state: &State, input: Input) -> (State, Vec<Effect>) {
 
 fn repair_failed_line(error: &IpcError, attempt: u8) -> HostLogLine {
     HostLogLine {
-        timestamp: chrono::Utc::now().to_rfc3339(),
+        timestamp: secs_service::utc_rfc3339(SystemTime::now()),
         event: "repair_failed".into(),
         fields: BTreeMap::from([
             ("attempt".into(), attempt.to_string()),

@@ -2,7 +2,6 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use chrono::{SecondsFormat, TimeZone, Utc};
 use secs_graph::{ExportGraph, LfeChoice};
 use secs_types::chain::{MimoFilter, MimoPaths, SignalChain};
 use secs_types::ipc::ExportKind;
@@ -166,10 +165,7 @@ pub(crate) fn validate_design_name(value: Option<&str>) -> Result<Option<String>
 }
 
 pub(crate) fn created_utc(unix_ms: i64) -> Result<String, DesignExportError> {
-    Utc.timestamp_millis_opt(unix_ms)
-        .single()
-        .map(|value| value.to_rfc3339_opts(SecondsFormat::Millis, true))
-        .ok_or(DesignExportError::Timestamp)
+    crate::clock::utc_rfc3339_millis(unix_ms).ok_or(DesignExportError::Timestamp)
 }
 
 pub(crate) fn kind_name(kind: ExportKind) -> &'static str {

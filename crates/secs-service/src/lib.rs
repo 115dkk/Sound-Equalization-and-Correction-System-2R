@@ -56,7 +56,7 @@ use secs_types::ipc::{
     UpstreamBase,
 };
 
-pub use clock::LocalTime;
+pub use clock::{LocalTime, utc_rfc3339};
 use jobs::JobRegistry;
 use session::Session;
 

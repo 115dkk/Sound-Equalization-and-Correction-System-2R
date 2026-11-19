@@ -4,6 +4,66 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
+/// `time` in UTC as chrono's `DateTime::<Utc>::to_rfc3339()` wrote it:
+/// `2026-11-19T01:02:03.123456700+00:00`. The fraction is omitted when the
+/// nanoseconds are zero, and otherwise has 3, 6 or 9 digits, the fewest that
+/// lose nothing.
+pub fn utc_rfc3339(time: SystemTime) -> String {
+    let (seconds, nanoseconds) = match time.duration_since(UNIX_EPOCH) {
+        Ok(after) => (i128::from(after.as_secs()), after.subsec_nanos()),
+        Err(before) => {
+            let before = before.duration();
+            let seconds = -i128::from(before.as_secs());
+            if before.subsec_nanos() == 0 {
+                (seconds, 0)
+            } else {
+                (seconds - 1, 1_000_000_000 - before.subsec_nanos())
+            }
+        }
+    };
+    format_utc(seconds, nanoseconds, false, false)
+}
+
+/// `unix_ms` in UTC as `2026-11-19T01:02:03.123Z`; `None` outside years
+/// 0000..=9999, which RFC 3339 cannot write.
+pub(crate) fn utc_rfc3339_millis(unix_ms: i64) -> Option<String> {
+    let seconds = unix_ms.div_euclid(1_000);
+    let nanoseconds = (unix_ms.rem_euclid(1_000) * 1_000_000) as u32;
+    let text = format_utc(i128::from(seconds), nanoseconds, true, true);
+    let days = seconds.div_euclid(86_400);
+    let (year, _, _) = civil_from_days(days);
+    (0..=9999).contains(&year).then_some(text)
+}
+
+fn format_utc(seconds: i128, nanoseconds: u32, use_z: bool, fixed_millis: bool) -> String {
+    // `seconds` comes from a `SystemTime` duration (u64 seconds at most) or
+    // an i64 millisecond count, so its day count always fits i64.
+    let days = seconds.div_euclid(86_400) as i64;
+    let (year, month, day) = civil_from_days(days);
+    let of_day = seconds.rem_euclid(86_400);
+    let hour = of_day / 3_600;
+    let minute = of_day % 3_600 / 60;
+    let second = of_day % 60;
+    let year = if (0..=9999).contains(&year) {
+        format!("{year:04}")
+    } else {
+        format!("{year:+05}")
+    };
+    let fraction = if fixed_millis {
+        format!(".{:03}", nanoseconds / 1_000_000)
+    } else if nanoseconds == 0 {
+        String::new()
+    } else if nanoseconds.is_multiple_of(1_000_000) {
+        format!(".{:03}", nanoseconds / 1_000_000)
+    } else if nanoseconds.is_multiple_of(1_000) {
+        format!(".{:06}", nanoseconds / 1_000)
+    } else {
+        format!(".{nanoseconds:09}")
+    };
+    let offset = if use_z { "Z" } else { "+00:00" };
+    format!("{year}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}{fraction}{offset}")
+}
+
 /// A wall-clock reading in the user's time zone, as upstream's
 /// `datetime.now()` gives it for export folder names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -159,5 +219,71 @@ mod tests {
         assert_eq!(at(4_107_542_400, 0).date(), "2100-03-01");
         let before = UNIX_EPOCH - Duration::from_millis(1500);
         assert_eq!(LocalTime::from_system(before, 0).stamp(), "19691231-235958");
+    }
+
+    fn assert_utc(time: SystemTime, expected: &str) {
+        assert_eq!(utc_rfc3339(time), expected);
+    }
+
+    fn assert_utc_parts(seconds: i64, nanoseconds: u32, expected: &str) {
+        assert_eq!(
+            format_utc(i128::from(seconds), nanoseconds, false, false),
+            expected
+        );
+    }
+
+    #[test]
+    fn utc_rfc3339_matches_chrono_fraction_precision() {
+        assert_utc(UNIX_EPOCH, "1970-01-01T00:00:00+00:00");
+        assert_utc(
+            UNIX_EPOCH + Duration::from_nanos(123_000_000),
+            "1970-01-01T00:00:00.123+00:00",
+        );
+        assert_utc(
+            UNIX_EPOCH + Duration::from_nanos(123_456_000),
+            "1970-01-01T00:00:00.123456+00:00",
+        );
+        assert_utc(
+            UNIX_EPOCH + Duration::from_nanos(100),
+            "1970-01-01T00:00:00.000000100+00:00",
+        );
+        // Windows SystemTime has 100 ns resolution, so exercise the shared
+        // formatter directly for the 1 ns case.
+        assert_utc_parts(0, 1, "1970-01-01T00:00:00.000000001+00:00");
+    }
+
+    #[test]
+    fn utc_rfc3339_handles_before_epoch_leap_day_and_year_boundary() {
+        assert_utc(
+            UNIX_EPOCH - Duration::from_millis(500),
+            "1969-12-31T23:59:59.500+00:00",
+        );
+        let leap_day = days_from_civil(2024, 2, 29) * 86_400 + 3_723;
+        assert_utc(
+            UNIX_EPOCH + Duration::new(leap_day as u64, 123_456_700),
+            "2024-02-29T01:02:03.123456700+00:00",
+        );
+        let year_boundary = days_from_civil(2025, 1, 1) * 86_400;
+        assert_utc_parts(
+            year_boundary - 1,
+            999_999_999,
+            "2024-12-31T23:59:59.999999999+00:00",
+        );
+    }
+
+    #[test]
+    fn utc_rfc3339_millis_accepts_only_rfc3339_years() {
+        let expected = |unix_ms, text: Option<&str>| {
+            assert_eq!(utc_rfc3339_millis(unix_ms).as_deref(), text);
+        };
+        expected(0, Some("1970-01-01T00:00:00.000Z"));
+        expected(-1, Some("1969-12-31T23:59:59.999Z"));
+
+        let first_ms_10000 = days_from_civil(10_000, 1, 1) * 86_400_000;
+        expected(first_ms_10000 - 1, Some("9999-12-31T23:59:59.999Z"));
+        assert_eq!(utc_rfc3339_millis(first_ms_10000), None);
+
+        let first_ms_year_minus_one = days_from_civil(-1, 1, 1) * 86_400_000;
+        assert_eq!(utc_rfc3339_millis(first_ms_year_minus_one), None);
     }
 }

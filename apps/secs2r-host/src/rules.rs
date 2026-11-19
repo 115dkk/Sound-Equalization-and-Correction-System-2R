@@ -402,7 +402,7 @@ pub fn after_exit_decision(still_answering: bool) -> TakeoverDecision {
 
 pub fn log_line(event: &str, fields: impl IntoIterator<Item = (String, String)>) -> HostLogLine {
     HostLogLine {
-        timestamp: chrono::Utc::now().to_rfc3339(),
+        timestamp: secs_service::utc_rfc3339(std::time::SystemTime::now()),
         event: event.to_owned(),
         fields: fields.into_iter().collect::<BTreeMap<_, _>>(),
     }

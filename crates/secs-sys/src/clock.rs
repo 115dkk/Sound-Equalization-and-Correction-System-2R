@@ -1,15 +1,20 @@
 //! The user's time zone, which only the operating system knows.
 
-use std::time::SystemTime;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use secs_service::LocalTime;
 
 /// Seconds east of UTC in the user's time zone at `time` (daylight saving
 /// included), for `secs_service::LocalTime::from_system`.
 pub fn utc_offset_seconds(time: SystemTime) -> i32 {
-    chrono::DateTime::<chrono::Local>::from(time)
-        .offset()
-        .local_minus_utc()
+    let timestamp = jiff::Timestamp::try_from(time).unwrap_or_else(|_| {
+        if time.duration_since(UNIX_EPOCH).is_ok() {
+            jiff::Timestamp::MAX
+        } else {
+            jiff::Timestamp::MIN
+        }
+    });
+    jiff::tz::TimeZone::system().to_offset(timestamp).seconds()
 }
 
 /// Reads the user's current local wall clock.
