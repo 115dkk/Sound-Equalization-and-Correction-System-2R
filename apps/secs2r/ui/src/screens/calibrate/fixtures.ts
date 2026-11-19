@@ -507,6 +507,18 @@ export const xoRecManualOffView: CalibrateView = {
   xoRecTurnedOffByEdit: true,
 };
 
+/** Another candidate chosen in the grid (front 100 Hz, the recommendation 80 Hz): its cell pressed, 추천값 적용 offered. */
+export const xoRecOtherCandidateView: CalibrateView = {
+  ...xoRecManualOffView,
+  settings: { ...xoRecManualOffView.settings, xo: { ...XO, 프론트: 100 } },
+};
+
+/**
+ * The project reopened after the manual edit: the comparison is gone (it
+ * lives only in the job's result), the stored best values are left.
+ */
+export const xoRecReopenedView: CalibrateView = { ...xoRecManualOffView, xoRecommendation: null };
+
 /** Before the first run with two positions after a manual XO edit: both switches give their reason, each under its own switch. */
 export const readyReasonsView: CalibrateView = {
   ...readyMimoTwoView,

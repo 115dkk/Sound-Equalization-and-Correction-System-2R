@@ -11,7 +11,8 @@ use secs_types::calibration::CalibrationSettings;
 use secs_types::ipc::{
     CalibrateParams, CalibrationSummary, ChannelScore, ErrorCode, IpcError, JobKind, JobResult,
     JobStarted, LateEnergy, MetricsSummary, MimoChannelScore, MimoLateEnergy, MimoParams,
-    MimoSummary, Notice, ResultsSummary, VerdictSummary, XoRecommendation,
+    MimoSummary, Notice, ResultsSummary, VerdictSummary, XoCandidateScore, XoGroupScores,
+    XoRecommendation,
 };
 
 use crate::jobs::JobContext;
@@ -185,6 +186,23 @@ impl Service {
             let recommendation = XoRecommendation {
                 best: result.best,
                 candidates: result.candidates,
+                table: result
+                    .table
+                    .into_iter()
+                    .map(|(group, rows)| XoGroupScores {
+                        group,
+                        rows: rows
+                            .into_iter()
+                            .map(|row| XoCandidateScore {
+                                hz: row.fc,
+                                flat_pct: row.scores.flat,
+                                gd_ms: row.scores.gd,
+                                late_db: row.scores.late,
+                                score: row.score,
+                            })
+                            .collect(),
+                    })
+                    .collect(),
             };
             session::commit(
                 &session,

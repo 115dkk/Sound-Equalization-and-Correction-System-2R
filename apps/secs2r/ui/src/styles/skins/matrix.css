@@ -571,6 +571,12 @@
   border-bottom: 1px solid var(--border-subtle);
 }
 
+/* The grid's own bottom rule already separates the rows. */
+[data-skin="matrix"] .status-row + .status-row {
+  padding-top: 0;
+  border-top: 0;
+}
+
 [data-skin="matrix"] .status-row dt {
   display: flex;
   align-items: center;
@@ -587,12 +593,16 @@
 }
 
 [data-skin="matrix"] .status-row__value {
-  align-items: center;
+  justify-content: center;
   padding: var(--space-1) var(--space-2);
 }
 
-[data-skin="matrix"] .status-row__value > .status-dot,
-[data-skin="matrix"] .status-row__value > .status-dot--busy {
+[data-skin="matrix"] .status-line {
+  align-items: center;
+}
+
+[data-skin="matrix"] .status-line > .status-dot,
+[data-skin="matrix"] .status-line > .status-dot--busy {
   margin-top: 0;
 }
 

@@ -260,16 +260,38 @@ export const mimoSummary: MimoSummary = {
 export const resultsSummary: ResultsSummary = { calibration: calibrationSummary, mimo: mimoSummary, mimo_export: "off" };
 export const noResults: ResultsSummary = { calibration: null, mimo: null, mimo_export: "off" };
 
-export const xoRecommendation: XoRecommendation = {
-  best: [
-    ["프론트", 80],
-    ["센터", 100],
-    ["서라운드", 80],
-    ["백", 80],
-    ["탑", 100],
-  ],
-  candidates: [60, 80, 100, 120],
-};
+/**
+ * A plausible comparison behind `best`: each group's score peaks at its best
+ * candidate and falls off on both sides, unevenly, so `best` is the row's
+ * maximum; the metrics move the way the score does (flatter, shorter group
+ * delay, less late energy at the best). `score` is `flat_pct` less a
+ * group-delay and a late-energy penalty, the shape the service computes.
+ */
+export function xoScoreTable(best: readonly (readonly [string, number])[], candidates: readonly number[]): XoRecommendation["table"] {
+  return best.map(([group, top], g) => ({
+    group,
+    rows: candidates.map((hz) => {
+      const off = (hz - top) / 20;
+      const away = Math.abs(off);
+      const gd_ms = round1(6.4 + g * 0.7 + away * (off < 0 ? 2.6 : 1.4));
+      const late_db = round1(-13.5 + g * 0.6 + away * (off < 0 ? 0.9 : 1.6));
+      const flat_pct = round1(91.2 - g * 1.8 - away * (off < 0 ? 4.1 : 6.3) - away * away * 0.8);
+      const score = round1(flat_pct - 0.5 * (gd_ms - 6) - 0.4 * (late_db + 14));
+      return { hz, flat_pct, gd_ms, late_db, score };
+    }),
+  }));
+}
+
+const XO_BEST: [string, number][] = [
+  ["프론트", 80],
+  ["센터", 100],
+  ["서라운드", 80],
+  ["백", 80],
+  ["탑", 100],
+];
+const XO_CANDIDATES = [60, 80, 100, 120];
+
+export const xoRecommendation: XoRecommendation = { best: XO_BEST, candidates: XO_CANDIDATES, table: xoScoreTable(XO_BEST, XO_CANDIDATES) };
 
 /** Presentation group id → upstream group name (`ConfigGroup.key`), in the service's order. */
 export const GROUP_KEYS: Readonly<Record<string, string>> = Object.fromEntries(CONFIG_GROUPS.map(([key, id]) => [id, key]));

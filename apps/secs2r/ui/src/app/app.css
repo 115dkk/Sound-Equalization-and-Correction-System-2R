@@ -321,49 +321,78 @@
 .project-status {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
+  gap: var(--space-3);
   margin: 0;
 }
 
+/* A hairline and the same space on both sides of it set each row apart
+   from the next, so the lines of one row read as one group. */
+.status-row + .status-row {
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border-subtle);
+}
+
+/* Each row: the label, then its value as lines. Every line opens with the
+   dot's column (empty when the line is not a state), and the label is set
+   in by the same amount, so all labels and words share one left edge and
+   the dots stand in a column of their own. */
 .status-row {
+  --status-gutter: calc(8px + var(--space-1-5));
   display: flex;
   flex-direction: column;
   gap: 1px;
 }
 
 .status-row dt {
+  padding-left: var(--status-gutter);
   color: var(--text-muted);
   font-size: var(--text-caption);
 }
 
 .status-row__value {
   display: flex;
-  align-items: flex-start;
-  gap: var(--space-1-5);
+  flex-direction: column;
   margin: 0;
-  font-weight: var(--weight-medium);
 }
 
-.status-row__value > .status-dot {
+.status-line {
+  display: grid;
+  grid-template-columns: 8px minmax(0, 1fr);
+  column-gap: var(--space-1-5);
+}
+
+.status-line > .status-dot {
+  grid-column: 1;
   margin-top: 6px;
 }
 
-.status-row__value > .status-dot--busy {
+.status-line > .status-dot--busy {
+  width: 12px;
   margin-top: 4px;
+  margin-left: -2px;
 }
 
-.status-row__text {
-  display: inline-flex;
-  flex: 1;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 0 var(--space-1-5);
+.status-line__text {
+  grid-column: 2;
   min-width: 0;
+  overflow-wrap: anywhere;
 }
 
-.status-row__note {
+/* The value itself carries the row's weight. */
+.status-line--value {
+  font-weight: var(--weight-medium);
+}
+
+/* Facts about the value: quieter, side by side with space between them. */
+.status-line--fact .status-line__text {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 var(--space-3);
   color: var(--text-muted);
-  font-size: var(--text-caption);
+}
+
+/* A state after the value: its dot and word, in the text's colour. */
+.status-line--state {
   font-weight: var(--weight-regular);
 }
 

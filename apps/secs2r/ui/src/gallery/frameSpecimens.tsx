@@ -2,6 +2,7 @@
 // blocked and the tutorial accent; plus the frame's menus and the job tray.
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { AppFrame } from "../app/AppFrame";
+import { ProjectStatus } from "../app/ProjectStatus";
 import { JobTray } from "../app/jobs/JobTray";
 import { isActiveJob } from "../state/jobRetention";
 import { initialLedger, ledgerReducer, type LedgerAction, type LedgerState } from "../state/jobLedger";
@@ -391,7 +392,53 @@ export const frameSpecimens: SpecimenDef[] = [
     height: 800,
     render: () => <LiveFrame />,
   },
+  ...railStatusSpecimens(),
 ];
+
+/** The rail's status section alone, at the rail's width (the frame's own wrappers, so the paddings match). */
+function RailStatus({ project }: { project: ProjectSummary }) {
+  const t = useT();
+  return (
+    <div className="app-rail gal-rail-status">
+      <div className="app-rail__middle">
+        <section className="app-rail__status" aria-label={t("frame.status")}>
+          <h2 className="app-rail__heading">{t("frame.status")}</h2>
+          <ProjectStatus project={project} />
+        </section>
+      </div>
+    </div>
+  );
+}
+
+function railStatusSpecimens(): SpecimenDef[] {
+  const rows: [string, string, ProjectSummary][] = [
+    [
+      "frame.status.native",
+      "Rail status · 7.1.4 with 3 subs and 14 outputs, built-in measurement with a device, connected",
+      { ...filledProject, subCount: 3, outputs: 14, path: { kind: "native", state: "ok", device: "UMIK-1" }, dirty: false },
+    ],
+    [
+      "frame.status.custom-rew",
+      "Rail status · edited setup, REW with a long device name, needs checking",
+      {
+        ...filledProject,
+        preset: "custom",
+        subCount: 4,
+        outputs: 24,
+        positionsDone: 9,
+        calibration: "stale",
+        path: { kind: "rew", state: "warning", device: "Focusrite Scarlett 18i20 USB (3rd Gen) Analogue 1+2" },
+      },
+    ],
+    ["frame.status.empty", "Rail status · nothing chosen yet", emptyProject],
+    [
+      "frame.status.mock",
+      "Rail status · simulated measurement, not connected",
+      { ...filledProject, positionsDone: 9, calibration: "done", path: { kind: "mock", state: "error" }, fileName: "튜토리얼.secs", dirty: false },
+    ],
+  ];
+  return rows.map(([id, title, project]) => ({ id, title, width: 252, render: () => <RailStatus project={project} /> }));
+}
 
 function BusyFrame() {
   const t = useT();

@@ -42,6 +42,7 @@ import {
   upperEdits,
   usesSchroeder,
   xoRecInclude,
+  xoRecOffByEdit,
   type RejectionPlace,
   type UpperChoice,
 } from "./settingsView";
@@ -49,6 +50,7 @@ import { FAILED_TEXT, MODE_EFFECT, MODE_NAME, bandTypeText, filterSpec, groupNam
 import { DESIGN_RATE, rateText, tapsAt } from "../system/outputRate";
 import type { BandTypeChoice, CalibrateActions, CalibrateJob, CalibrateView, SettingEdit, SubLayout, SubModeChoice } from "./types";
 import { SettingRow } from "./controls";
+import { XoRecommendation } from "./XoRecommendation";
 import { rowShown } from "./settingRows";
 
 type Props = { view: CalibrateView; actions: CalibrateActions };
@@ -208,6 +210,18 @@ function analyticScope(s: CalibrationSettings): AnalyticScope {
   return s.mimo_iir_analytic_derivatives ? "mimo" : "off";
 }
 
+/**
+ * The one cause, when the chosen scope includes MIMO IIR, that keeps it from
+ * applying now: MIMO is off, or its supports are calculated as FIR. When the
+ * MIMO IIR part applies there is nothing to say (the rule is in the help).
+ */
+function analyticMimoHint(t: ReturnType<typeof useT>, scope: AnalyticScope, mimoOn: boolean, mimoFir: boolean): string | undefined {
+  if (scope !== "mimo" && scope !== "both") return undefined;
+  if (!mimoOn) return t("calibrate.analytic.mimo_off");
+  if (mimoFir) return t("calibrate.analytic.mimo_fir");
+  return undefined;
+}
+
 const UPPER_NAME = {
   strict: "calibrate.range.basis.strict",
   lenient: "calibrate.range.basis.lenient",
@@ -345,7 +359,8 @@ function ExtraBands({ settings, primaryHi, rejection, change }: { settings: Cali
 }
 
 /** `advancedOpen`: gallery and tests start with 고급 open. */
-function RangeSection({ view, actions, advancedOpen = false }: Props & { advancedOpen?: boolean | undefined }) {
+/** The range card (exported for the gallery's card specimens). */
+export function RangeSection({ view, actions, advancedOpen = false }: Props & { advancedOpen?: boolean | undefined }) {
   const t = useT();
   const number = useNumber();
   const s = view.settings;
@@ -443,7 +458,7 @@ function RangeSection({ view, actions, advancedOpen = false }: Props & { advance
           id="calibrate.analytic"
           label={t("calibrate.analytic.title")}
           help={t("calibrate.analytic.help")}
-          hint={analytic !== "off" && analytic !== "peq" && (!s.mimo_on || s.mimo_fir) ? t("calibrate.analytic.mimo_unused") : undefined}
+          hint={analyticMimoHint(t, analytic, s.mimo_on, s.mimo_fir)}
           value={analytic}
           options={ANALYTIC_SCOPES.map((scope) => ({ value: scope, label: t(`calibrate.analytic.${scope}`) }))}
           onChange={(scope) =>
@@ -512,7 +527,8 @@ function FirTapEstimate({ view }: { view: CalibrateView }) {
 
 /* ── 크로스오버 ─────────────────────────────────────────────────────────── */
 
-function XoSection({ view, actions, onSampleRateSettings }: FailureProps) {
+/** The crossover card (exported for the gallery's card specimens). */
+export function XoSection({ view, actions, onSampleRateSettings }: FailureProps) {
   const t = useT();
   const number = useNumber();
   const s = view.settings;
@@ -529,7 +545,7 @@ function XoSection({ view, actions, onSampleRateSettings }: FailureProps) {
   }
   const hz = s.xo[group] ?? 80;
   const rec = s.xo_rec[group];
-  const recs = groups.filter((g) => s.xo_rec[g]).map((g) => t("calibrate.xo.rec_item", { group: groupName(t, g), hz: number(s.xo_rec[g]!) }));
+  const recommended = groups.some((g) => s.xo_rec[g] !== undefined);
   const busy = view.running !== null;
   const include = xoRecInclude(s);
   return (
@@ -559,7 +575,7 @@ function XoSection({ view, actions, onSampleRateSettings }: FailureProps) {
         id="calibrate.xo_rec_include"
         label={t("calibrate.xo_rec_include")}
         help={t("calibrate.xo_rec_include.help")}
-        hint={view.xoRecTurnedOffByEdit && !include ? t("calibrate.xo_rec_include.off_manual") : undefined}
+        hint={xoRecOffByEdit(s, !!view.xoRecTurnedOffByEdit) ? t("calibrate.xo_rec_include.off_manual") : undefined}
         checked={include}
         onChange={(on) => actions.changeSetting({ kind: "xo_rec_include", on })}
       />
@@ -575,15 +591,9 @@ function XoSection({ view, actions, onSampleRateSettings }: FailureProps) {
         </Button>
         <JobFailure view={view} actions={actions} onSampleRateSettings={onSampleRateSettings} job="recommend_xo" id="calibrate.xo" />
       </div>
-      {recs.length > 0 && view.running !== "recommend_xo" && (
-        <p className="calibrate-line tabular" data-ui="calibrate.xo.state">
-          {t("calibrate.xo.rec_done", { list: recs.join(" · ") })}
-          {view.xoRecommendation &&
-            ` ${t("calibrate.xo.rec_candidates", { list: view.xoRecommendation.candidates.map((c) => number(c)).join(", ") })}`}
-        </p>
-      )}
+      <XoRecommendation view={view} actions={actions} groups={groups} selected={group} />
       {/* The values stay; this says they were recommended for inputs that have changed since. */}
-      {recs.length > 0 && view.running !== "recommend_xo" && view.results.xo_rec_stale && (
+      {recommended && view.running !== "recommend_xo" && view.results.xo_rec_stale && (
         <p className="calibrate-hint calibrate-hint--warning" data-ui="calibrate.xo.rec_stale">
           {t("calibrate.xo.rec_stale")}
         </p>

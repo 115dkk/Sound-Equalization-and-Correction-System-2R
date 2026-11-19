@@ -196,6 +196,12 @@ html[data-gallery-page] body {
   background: var(--rail-bg);
 }
 
+/* The rail's status section alone: the rail's width and face, no border. */
+.gal-rail-status {
+  width: var(--rail-w);
+  border-right: 0;
+}
+
 /* The settings popover drawn in place is wider than the rail. */
 .gal-rail-sample--popover {
   width: 352px;

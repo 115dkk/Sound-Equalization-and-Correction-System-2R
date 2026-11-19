@@ -594,7 +594,15 @@ export function createMockService(options: MockOptions = {}): MockService {
         break;
       }
       case "xo_rec_include": settings.xo_rec_include = edit.on; break;
-      case "xo": settings.xo[edit.group] = Math.round(value ?? edit.hz); settings.xo_rec_include = false; break;
+      case "xo": {
+        // As the service: an edit to the value already set changes nothing, the toggle included.
+        const hz = Math.round(value ?? edit.hz);
+        if (settings.xo[edit.group] !== hz) {
+          settings.xo[edit.group] = hz;
+          settings.xo_rec_include = false;
+        }
+        break;
+      }
       case "xo_peq":
         if (edit.on !== undefined) settings.xo_peq_on = edit.on;
         if (edit.lo !== undefined) settings.xo_peq_lo = clamp(edit.lo, LIMITS.xo_peq);
@@ -931,7 +939,8 @@ export function createMockService(options: MockOptions = {}): MockService {
           dirty("settings", false);
           settings.xo_rec_key = `mock-recommendation-${inputRevision}`;
           results = { ...results, xo_rec_stale: false };
-          return { kind: "xo", data: { best, candidates: [60, 80, 100, 120] } };
+          const candidates = [60, 80, 100, 120];
+          return { kind: "xo", data: { best, candidates, table: fx.xoScoreTable(best, candidates) } };
         }) };
       case "mimo": {
         needProject();

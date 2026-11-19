@@ -1400,6 +1400,24 @@ fn oracle_project_calibrates_recommends_xo_and_exports() {
     .unwrap();
     assert_eq!(recommendation.best, direct_xo.best);
     assert_eq!(recommendation.candidates, direct_xo.candidates);
+    // The comparison behind the choice reaches the screen row for row.
+    assert_eq!(recommendation.table.len(), direct_xo.table.len());
+    for (sent, (group, rows)) in recommendation.table.iter().zip(&direct_xo.table) {
+        assert_eq!(&sent.group, group);
+        assert_eq!(sent.rows.len(), rows.len());
+        for (sent, row) in sent.rows.iter().zip(rows) {
+            assert_eq!(
+                (sent.hz, sent.flat_pct, sent.gd_ms, sent.late_db, sent.score),
+                (
+                    row.fc,
+                    row.scores.flat,
+                    row.scores.gd,
+                    row.scores.late,
+                    row.score
+                )
+            );
+        }
+    }
     let Response::CalibrationSettingsGet(applied) = call_ok(
         &service,
         Request::CalibrationSettingsGet,

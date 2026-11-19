@@ -5,7 +5,7 @@ import { isActiveJob, isMonitorJob } from "../../state/jobRetention";
 import type { CalibrateActions, CalibrateJob, CalibrateView } from "./types";
 import { groupOf, xoGroups } from "./text";
 import { DESIGN_RATE, countedRate } from "../system/outputRate";
-import { mimoIncluded } from "./settingsView";
+import { mimoIncluded, xoDiffering } from "./settingsView";
 import { startCalibration } from "../../state/calibration";
 
 const withoutStage = ({ stage: _stage, ...params }: Record<string, string>): Record<string, string> => params;
@@ -59,6 +59,14 @@ export function useCalibrateScreen(goToMeasurements?: () => void, openPolarity?:
       calibrate: () => session.run(() => startCalibration(session)),
       calibrateSubs: () => session.run(() => session.call({ method: "calibrate", params: { settings: null, subs_only: true } })),
       recommendXo: () => session.run(() => session.call({ method: "recommend_xo" })),
+      applyXoRecommendation: async () => {
+        const settings = session.stores.settings.getSnapshot();
+        const config = session.stores.config.getSnapshot();
+        if (!settings || !config) return;
+        for (const group of xoDiffering(settings, xoGroups(config))) {
+          if (!(await session.editSetting({ kind: "xo", group, hz: settings.xo_rec[group]! }))) return;
+        }
+      },
       computeMimo: () => session.run(() => session.call({ method: "mimo", params: { settings: null } })),
       selectTab: (tab) => {
         session.host.set({ tab, previewHz: null, ...(tab === "xo" ? { xoGroup: selectedGroup(session.host.getSnapshot().channel) } : {}) });

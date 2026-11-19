@@ -110,6 +110,8 @@ describe("recommendation and app options", () => {
       await mock.request({ method: "calibrate", params: { settings: null, subs_only: false, background: true } }); mock.drain();
       expect((await mock.request({ method: "results" })).calibration?.stale).toBe(false);
       expect((await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "xo_rec_include", on: true } } })).xo_rec_include).toBe(true);
+      // As the service: an xo edit to the value already set changes nothing, the switch included.
+      expect(await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "xo", group: "프론트", hz: 95 } } })).toMatchObject({ xo_rec_include: true, xo: { 프론트: 95 } });
     } finally { mock.dispose(); }
   });
 });

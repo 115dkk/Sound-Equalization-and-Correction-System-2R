@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { ipcError } from "../../ipc/mock";
 import { baseSettings, refusedBandEdit } from "./fixtures";
-import { infraState, nextBand, normalizeSub, rangeRejection, rejectionPlace, roomVolume, subOf, upperChoice, upperEdits, withBandEdge, type RangeRejection } from "./settingsView";
+import { infraState, nextBand, normalizeSub, rangeRejection, rejectionPlace, roomVolume, subOf, upperChoice, upperEdits, withBandEdge, xoDiffering, xoRecOffByEdit, type RangeRejection } from "./settingsView";
 
 // The edit rules themselves live in the service (calibration_settings_edit,
 // checked against upstream by the service_settings_edit oracle); these are the
@@ -107,5 +107,21 @@ describe("extra correction bands (ADR 0024)", () => {
     // Too many bands, or a band past the rows shown: at the add action.
     expect(rejectionPlace(refusal({ kind: "rc_bands", bands: [] }, { reason: "rc_band_count", max: "4" }), two)).toEqual({ at: "add" });
     expect(rejectionPlace(refusal({ kind: "rc_bands", bands: [] }, { reason: "rc_band_range", index: "3", lo_hz: "10", hi_hz: "50" }), two)).toEqual({ at: "add" });
+  });
+
+  it("lists the groups off their recommendation and names the manual edit only while one is left", () => {
+    const rec = { 프론트: 80, 센터: 100 };
+    const groups = ["프론트", "센터", "서라운드"];
+    expect(xoDiffering({ xo: { 프론트: 80, 센터: 100 }, xo_rec: rec }, groups)).toEqual([]);
+    expect(xoDiffering({ xo: { 프론트: 90, 센터: 120 }, xo_rec: rec }, groups)).toEqual(["프론트", "센터"]);
+    // A missing value is the default 80 Hz; a group without a recommendation never differs.
+    expect(xoDiffering({ xo: {}, xo_rec: rec }, groups)).toEqual(["센터"]);
+    const off = { xo_rec: rec, xo_rec_include: false };
+    expect(xoRecOffByEdit({ ...off, xo: { 프론트: 90, 센터: 100 } }, true)).toBe(true);
+    expect(xoRecOffByEdit({ ...off, xo: { 프론트: 80, 센터: 100 } }, true)).toBe(false);
+    expect(xoRecOffByEdit({ ...off, xo: { 프론트: 90 } }, false)).toBe(false);
+    expect(xoRecOffByEdit({ ...off, xo_rec_include: true, xo: { 프론트: 90 } }, true)).toBe(false);
+    // Nothing recommended yet: the edit is all there is to name.
+    expect(xoRecOffByEdit({ xo: { 프론트: 90 }, xo_rec: {}, xo_rec_include: false }, true)).toBe(true);
   });
 });

@@ -187,7 +187,7 @@
 | XO PEQ, 기본 켬 | `calibrate.xo.peq` | 없음 | P31b |
 | XO PEQ 하한·상한 0–1000 Hz(0 = 자동: XO ½, XO × 4) | `calibrate.xo.peq_lo`, `calibrate.xo.peq_hi` | 없음 | P31b |
 | "추천 N Hz" | `calibrate.xo.recommended` | 없음 | P31b |
-| [XO 추천 계산](60/80/100/120 Hz), 자체 취소와 상태 | `calibrate.xo.recommend`, `calibrate.xo.state`, `jobs.cancel.recommend_xo` | U8 | P31b |
+| [XO 추천 계산](60/80/100/120 Hz), 자체 취소와 상태 | `calibrate.xo.recommend`, `calibrate.xo.rec`, `jobs.cancel.recommend_xo` | U8 | P31b |
 | 서브가 없으면 "서브가 없어 XO가 없습니다" | `calibrate.xo.none` | 없음 | P31b |
 | 인프라 서브(없음 또는 서브), 인프라 XO 10–300 Hz(처음 25), 종류 LR24/LR12/LR48/BW12/BW24, 인프라 최대 부스트 0–24 dB | `calibrate.ba.infra`, `calibrate.ba.infra_hz`, `calibrate.ba.infra_type`, `calibrate.ba.infra_boost`, `calibrate.ba.infra_note` | 없음 | P31b |
 | 서브마다 방식: 자동, 고정, 묶음 A, 묶음 B | `calibrate.ba.mode.<role>` | 없음 | P31b |
