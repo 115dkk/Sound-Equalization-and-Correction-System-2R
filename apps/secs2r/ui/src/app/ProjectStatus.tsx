@@ -1,6 +1,11 @@
 // Project status summary in the rail: setup, measured positions,
-// correction state, measurement path and file. Each state is a noun
-// phrase; the dot's hue repeats the word, never replaces it. Under it, the
+// correction state, measurement path and file. Each row is a label over
+// lines, and the layout tells the parts apart, never a separator character:
+// the value in the row's weight, the facts about it (the setup's sub and
+// output counts, the measurement device) quieter on the line below, and a
+// state on its own line after them. Each state is a noun phrase with a dot
+// before it; the dot's hue repeats that word, never replaces it. Every line
+// keeps the dot's column, so the words of all rows start on one edge. Under it, the
 // app's settings notice (ADR 0051), with or without a project, closed for
 // the session; then the warnings raised while reading the project (F5):
 // they stay until closed, and a closed list comes back with the next
@@ -43,15 +48,30 @@ function presetName(t: Translate, preset: string): string {
   return preset === "custom" ? t("system.preset.custom") : preset;
 }
 
-function Value({ tone, children }: { tone?: Tone | undefined; children: ReactNode }) {
+/**
+ * One line of a row's value. Every line keeps the dot's column at its start,
+ * so the words of all rows begin on one edge whether a dot is drawn or not;
+ * the dot stands before the very words it repeats. `kind` sets the line's
+ * weight: the value itself, a quieter fact about it, or a state.
+ */
+function Line({ tone, kind = "value", children }: { tone?: Tone | undefined; kind?: "value" | "fact" | "state"; children: ReactNode }) {
   return (
-    <dd className="status-row__value">
+    <span className={`status-line status-line--${kind}`}>
       {tone === "busy" ? (
         <Spinner size={12} className="status-dot status-dot--busy" />
       ) : tone ? (
         <span className={`status-dot status-dot--${tone}`} aria-hidden="true" />
       ) : null}
-      <span className="status-row__text">{children}</span>
+      <span className="status-line__text">{children}</span>
+    </span>
+  );
+}
+
+/** A one-line value: the row's words, with the dot when they are a state. */
+function Value({ tone, children }: { tone?: Tone | undefined; children: ReactNode }) {
+  return (
+    <dd className="status-row__value">
+      <Line tone={tone}>{children}</Line>
     </dd>
   );
 }
@@ -238,11 +258,17 @@ export function ProjectStatus({
       <dl className="project-status" data-ui="frame.status" aria-label={t("frame.status")}>
         <div className="status-row" data-ui="frame.status.config">
           <dt>{t("frame.status.config")}</dt>
-          <Value>
-            {project.preset
-              ? t("frame.status.config.value", { preset: presetName(t, project.preset), subs: project.subCount, outputs: project.outputs })
-              : t("frame.status.config.none")}
-          </Value>
+          {project.preset ? (
+            <dd className="status-row__value">
+              <Line>{presetName(t, project.preset)}</Line>
+              <Line kind="fact">
+                <span className="status-fact tabular">{t("frame.status.config.subs", { subs: project.subCount })}</span>
+                <span className="status-fact tabular">{t("frame.status.config.outputs", { outputs: project.outputs })}</span>
+              </Line>
+            </dd>
+          ) : (
+            <Value>{t("frame.status.config.none")}</Value>
+          )}
         </div>
         <div className="status-row" data-ui="frame.status.positions">
           <dt>{t("frame.status.positions")}</dt>
@@ -260,23 +286,36 @@ export function ProjectStatus({
         </div>
         <div className="status-row" data-ui="frame.status.path">
           <dt>{t("frame.status.path")}</dt>
-          <Value tone={pathState?.tone ?? "neutral"}>
-            {project.path.kind === "none"
-              ? t(PATH_KIND.none)
-              : t("frame.status.path.value", {
-                  kind: project.path.device ? `${t(PATH_KIND[project.path.kind])} · ${project.path.device}` : t(PATH_KIND[project.path.kind]),
-                  state: t(pathState?.key ?? "frame.status.path.ok"),
-                })}
-          </Value>
+          {pathState ? (
+            <dd className="status-row__value">
+              <Line>{t(PATH_KIND[project.path.kind])}</Line>
+              {project.path.device && (
+                <Line kind="fact">
+                  <span className="status-fact status-fact--name">{project.path.device}</span>
+                </Line>
+              )}
+              <Line kind="state" tone={pathState.tone}>
+                {t(pathState.key)}
+              </Line>
+            </dd>
+          ) : (
+            <Value>{t(PATH_KIND.none)}</Value>
+          )}
         </div>
         <div className="status-row" data-ui="frame.status.file">
           <dt>{t("frame.status.file")}</dt>
-          <Value tone={project.dirty ? "warning" : undefined}>
-            <span className="status-row__file">
-              {project.fileName ?? t("frame.status.file.unsaved")}
-            </span>
-            {project.dirty && project.fileName && <span className="status-row__note">{t("frame.status.file.changed")}</span>}
-          </Value>
+          {project.fileName ? (
+            <dd className="status-row__value">
+              <Line>{project.fileName}</Line>
+              {project.dirty && (
+                <Line kind="state" tone="warning">
+                  {t("frame.status.file.changed")}
+                </Line>
+              )}
+            </dd>
+          ) : (
+            <Value tone={project.dirty ? "warning" : undefined}>{t("frame.status.file.unsaved")}</Value>
+          )}
         </div>
       </dl>
       {project.settingsNotice && <SettingsNotice notice={project.settingsNotice} />}

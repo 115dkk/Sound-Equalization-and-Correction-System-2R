@@ -1796,6 +1796,39 @@ pub struct XoRecommendation {
     pub best: Vec<(String, f64)>,
     /// Evaluated crossover frequencies in Hz.
     pub candidates: Vec<f64>,
+    /// The comparison behind `best`: groups in configuration order, each with
+    /// one row per candidate in candidate order.
+    #[serde(default)]
+    pub table: Vec<XoGroupScores>,
+}
+
+/// One group's crossover candidates and how each scored.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct XoGroupScores {
+    /// Speaker group name.
+    pub group: String,
+    /// One row per candidate, in candidate order.
+    pub rows: Vec<XoCandidateScore>,
+}
+
+/// How one crossover candidate scored for a group.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct XoCandidateScore {
+    /// Crossover frequency in Hz.
+    pub hz: f64,
+    /// Position-weighted share of 20–200 Hz within ±1 dB of the target, in
+    /// percent (higher is better).
+    pub flat_pct: f64,
+    /// Group-delay span over 20–100 Hz at the reference position, in ms
+    /// (lower is better).
+    pub gd_ms: f64,
+    /// Late-to-early energy ratio over 20–150 Hz, in dB (lower is better).
+    pub late_db: f64,
+    /// `flat_pct` minus the group-delay and late-energy penalties (higher is
+    /// better); `best` holds the candidate with the highest.
+    pub score: f64,
 }
 
 /// The supported export bundle.

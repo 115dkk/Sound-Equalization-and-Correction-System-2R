@@ -221,25 +221,47 @@ describe("app frame", () => {
     expect(handlers.onHelp).toHaveBeenCalledOnce();
   });
 
-  it("shows the project status as words", () => {
+  /** A row's value as its lines' words, in reading order. */
+  const lines = (row: string) => [...document.querySelectorAll(`[data-ui="frame.status.${row}"] .status-line`)].map((line) => line.textContent);
+  const facts = (row: string) => [...document.querySelectorAll(`[data-ui="frame.status.${row}"] .status-fact`)].map((fact) => fact.textContent);
+
+  it("shows the project status as words, its parts told apart by the layout and never by a separator", () => {
     setup("measure");
     const status = document.querySelector('[data-ui="frame.status"]')!;
-    expect(status.textContent).toContain("7.1.4 · 서브 2 · 출력 13");
+    expect(lines("config")).toEqual(["7.1.4", "서브 2출력 13"]);
+    expect(facts("config")).toEqual(["서브 2", "출력 13"]);
     expect(status.textContent).toContain("3/9");
     expect(status.textContent).toContain("다시 계산 필요");
-    expect(status.textContent).toContain("REW · 연결됨");
-    expect(status.textContent).toContain("거실.secs");
-    expect(status.textContent).toContain("미저장 변경 사항");
+    expect(lines("path")).toEqual(["REW", "연결됨"]);
+    expect(lines("file")).toEqual(["거실.secs", "미저장 변경 사항"]);
+    expect(status.textContent).not.toContain("·");
+  });
+
+  it("puts the dot before the state it repeats: the connection, not the measurement kind", () => {
+    renderWith(<ProjectStatus project={{ ...model("system").project, path: { kind: "native", state: "warning", device: "UMIK-1" } }} />);
+    const rows = [...document.querySelectorAll('[data-ui="frame.status.path"] .status-line')];
+    expect(rows.map((row) => row.textContent)).toEqual(["자체 측정", "UMIK-1", "확인 필요"]);
+    expect(rows.map((row) => row.querySelector(".status-dot")?.className ?? null)).toEqual([null, null, "status-dot status-dot--warning"]);
+    expect(rows[0]!.className).toContain("status-line--value");
+    expect(rows[1]!.className).toContain("status-line--fact");
+    expect(rows[2]!.className).toContain("status-line--state");
+  });
+
+  it("draws no state for a measurement method not chosen yet", () => {
+    renderWith(<ProjectStatus project={{ ...model("system").project, path: { kind: "none", state: "warning" } }} />);
+    expect(lines("path")).toEqual(["고르지 않음"]);
+    expect(document.querySelector('[data-ui="frame.status.path"] .status-dot')).toBeNull();
   });
 
   it("names an edited setup with the word 시스템 uses, not the raw preset value", () => {
-    for (const [locale, text] of [
-      ["ko", "사용자 지정 · 서브 2 · 출력 13"],
-      ["en", "Custom · Subs: 2 · Outputs: 13"],
+    for (const [locale, preset, subs, outputs] of [
+      ["ko", "사용자 지정", "서브 2", "출력 13"],
+      ["en", "Custom", "Subs 2", "Outputs 13"],
     ] as const) {
       const { unmount } = renderWith(<ProjectStatus project={{ ...model("system").project, preset: "custom" }} />, { locale });
       const config = document.querySelector('[data-ui="frame.status.config"]')!;
-      expect(config.textContent).toContain(text);
+      expect(lines("config")[0]).toBe(preset);
+      expect(facts("config")).toEqual([subs, outputs]);
       expect(config.textContent).not.toContain("custom");
       unmount();
     }

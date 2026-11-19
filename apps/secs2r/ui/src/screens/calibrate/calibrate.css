@@ -558,6 +558,219 @@
   color: var(--warning);
 }
 
+/* The XO recommendation: a group per row, a candidate per column. Each cell
+   is a button holding the score, its mark and a bar scaled within the row;
+   the recommended cell takes the accent's soft fill and the word 추천, the
+   current one is pressed (a ring and a check). */
+.calibrate-xo-rec {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.calibrate-xo-rec__table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: var(--text-ui);
+}
+
+.calibrate-xo-rec__table caption {
+  padding-bottom: var(--space-2);
+  text-align: left;
+}
+
+.calibrate-xo-rec__caption {
+  display: block;
+  font-weight: var(--weight-semibold);
+}
+
+.calibrate-xo-rec__hint {
+  display: block;
+  margin-top: var(--space-0-5);
+  color: var(--text-muted);
+}
+
+.calibrate-xo-rec__table th {
+  padding: var(--space-1) var(--space-1-5);
+  color: var(--text-muted);
+  font-weight: var(--weight-medium);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.calibrate-xo-rec__table thead th {
+  border-bottom: var(--border-w) solid var(--border);
+}
+
+/* A candidate's heading starts where its cells' scores start (cell inset + button padding). */
+.calibrate-xo-rec__table thead th:not(:first-child) {
+  padding-left: calc(var(--space-0-5) + var(--space-2));
+}
+
+.calibrate-xo-rec__table thead th:first-child {
+  width: 6.5em;
+}
+
+/* Without the comparison: two short columns, as wide as their values. */
+.calibrate-xo-rec__table--values {
+  align-self: flex-start;
+  width: auto;
+  table-layout: auto;
+}
+
+.calibrate-xo-rec__table--values .calibrate-xo-rec__cell {
+  width: 10em;
+}
+
+.calibrate-xo-rec__table tbody th {
+  overflow: hidden;
+  color: var(--text);
+  text-overflow: ellipsis;
+}
+
+.calibrate-xo-rec__table td {
+  padding: var(--space-0-5);
+  border-bottom: var(--border-w) solid var(--border-subtle);
+  vertical-align: middle;
+}
+
+/* The group chosen in the editor above: the selected-row stripe of the kit's table. */
+.calibrate-xo-rec__row--selected th {
+  box-shadow: inset 3px 0 0 var(--accent);
+  font-weight: var(--weight-semibold);
+}
+
+.calibrate-xo-rec__table .ui-tooltip-anchor {
+  display: block;
+}
+
+.calibrate-xo-rec__cell {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-1) var(--space-1-5);
+  width: 100%;
+  min-height: var(--control-h-sm);
+  padding: var(--space-1-5) var(--space-2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out);
+}
+
+button.calibrate-xo-rec__cell:hover:not(:disabled) {
+  background: var(--surface-hover);
+}
+
+button.calibrate-xo-rec__cell:active:not(:disabled) {
+  background: var(--surface-pressed);
+}
+
+button.calibrate-xo-rec__cell:disabled {
+  cursor: default;
+}
+
+.calibrate-xo-rec__cell--static {
+  cursor: default;
+}
+
+.calibrate-xo-rec__cell[aria-pressed="true"] {
+  box-shadow: inset 0 0 0 1.5px var(--border-control);
+}
+
+.calibrate-xo-rec__cell--best,
+button.calibrate-xo-rec__cell--best:hover:not(:disabled) {
+  background: var(--accent-soft);
+}
+
+button.calibrate-xo-rec__cell--best:active:not(:disabled) {
+  background: color-mix(in oklch, var(--accent-soft) 80%, var(--accent));
+}
+
+.calibrate-xo-rec__cell--best[aria-pressed="true"],
+.calibrate-xo-rec__cell--best.calibrate-xo-rec__cell--static {
+  box-shadow: inset 0 0 0 1.5px var(--accent);
+}
+
+.calibrate-xo-rec__score {
+  font-weight: var(--weight-medium);
+}
+
+.calibrate-xo-rec__mark {
+  display: inline-flex;
+  align-items: center;
+  justify-self: end;
+  gap: var(--space-0-5);
+  min-width: 0;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.calibrate-xo-rec__cell--best .calibrate-xo-rec__mark {
+  color: var(--accent);
+  font-weight: var(--weight-semibold);
+}
+
+.calibrate-xo-rec__bar {
+  grid-column: 1 / -1;
+  height: 4px;
+  overflow: hidden;
+  border-radius: var(--radius-pill);
+  background: var(--border-subtle);
+}
+
+.calibrate-xo-rec__fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--text-faint);
+}
+
+.calibrate-xo-rec__cell--best .calibrate-xo-rec__fill {
+  background: var(--accent);
+}
+
+.calibrate-xo-rec__off {
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.calibrate-xo-rec__off .calibrate-xo-rec__mark {
+  justify-self: start;
+  padding: 0 var(--space-1-5);
+}
+
+.calibrate-xo-rec__metrics {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Out of date: the grid stays, quieter, with the warning under it. */
+.calibrate-xo-rec--stale .calibrate-xo-rec__table tbody th,
+.calibrate-xo-rec--stale .calibrate-xo-rec__cell,
+.calibrate-xo-rec--stale .calibrate-xo-rec__cell--best .calibrate-xo-rec__mark {
+  color: var(--text-muted);
+}
+
+.calibrate-xo-rec--stale .calibrate-xo-rec__cell--best,
+.calibrate-xo-rec--stale button.calibrate-xo-rec__cell--best:hover:not(:disabled) {
+  background: var(--surface-sunken);
+}
+
+.calibrate-xo-rec--stale .calibrate-xo-rec__cell--best[aria-pressed="true"] {
+  box-shadow: inset 0 0 0 1.5px var(--border-control);
+}
+
+.calibrate-xo-rec--stale .calibrate-xo-rec__cell--best .calibrate-xo-rec__fill {
+  background: var(--text-faint);
+}
+
 /* The mode's channel FIR does not fit the DSP: the icon carries the warning with the words, not the hue alone. */
 .calibrate-fir-over {
   display: flex;

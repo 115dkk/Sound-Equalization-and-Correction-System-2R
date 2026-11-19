@@ -13,6 +13,7 @@ import { installFakeCanvas } from "../../test/canvas";
 import { renderWith } from "../../test/render";
 import { CalibrateScreen } from "./CalibrateScreen";
 import { useCalibrateScreen } from "./useCalibrateScreen";
+import { xoGroups } from "./text";
 
 let mock: ReturnType<typeof createMockService>;
 let session: ReturnType<typeof createSession>;
@@ -99,6 +100,40 @@ describe("useCalibrateScreen", () => {
     // The second click reads the saved value rather than the original render's polarity.
     await perform(() => fireEvent.click(at("calibrate.polarity.flip.Rs")!));
     expect(mock.calls.filter((call) => call.method === "config_set_speaker").at(-1)?.params.pol).toBe("+");
+  });
+
+  it("applies the XO recommendation: one xo edit per differing group in configuration order, stopping at a refused one", async () => {
+    const { result } = renderHook(useCalibrateScreen, { wrapper });
+    await perform(() => session.call({ method: "recommend_xo" }));
+    await perform(mock.drain);
+    const groups = xoGroups(session.stores.config.getSnapshot()!);
+    const rec = session.stores.settings.getSnapshot()!.xo_rec;
+    expect(groups.length).toBeGreaterThan(2);
+    const [first, second, third] = groups as [string, string, string];
+    const edits = () => mock.calls.flatMap((call) => (call.method === "calibration_settings_edit" ? [call.params.edit] : []));
+    // Two groups moved off their recommendation, the later one first.
+    await perform(() => result.current.actions.changeSetting({ kind: "xo", group: third, hz: 120 }));
+    await perform(() => result.current.actions.changeSetting({ kind: "xo", group: first, hz: 60 }));
+    expect(session.stores.settings.getSnapshot()?.xo_rec_include).toBe(false);
+    mock.calls.length = 0;
+    await perform(() => result.current.actions.applyXoRecommendation());
+    expect(edits()).toEqual([
+      { kind: "xo", group: first, hz: rec[first] },
+      { kind: "xo", group: third, hz: rec[third] },
+    ]);
+    expect(session.stores.settings.getSnapshot()?.xo).toMatchObject(rec);
+    // Nothing differs: nothing is sent.
+    mock.calls.length = 0;
+    await perform(() => result.current.actions.applyXoRecommendation());
+    expect(edits()).toEqual([]);
+    // The first edit refused: the second is never sent.
+    await perform(() => result.current.actions.changeSetting({ kind: "xo", group: first, hz: 60 }));
+    await perform(() => result.current.actions.changeSetting({ kind: "xo", group: second, hz: 120 }));
+    mock.calls.length = 0;
+    mock.failNext("calibration_settings_edit", "project_io");
+    await perform(() => result.current.actions.applyXoRecommendation());
+    expect(edits()).toEqual([{ kind: "xo", group: first, hz: rec[first] }]);
+    expect(session.stores.settings.getSnapshot()?.xo[second]).toBe(120);
   });
 
   it("ignores an absent polarity role and reports read or write failures without recalculating", async () => {

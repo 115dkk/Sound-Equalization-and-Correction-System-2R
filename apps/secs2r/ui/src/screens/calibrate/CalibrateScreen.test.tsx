@@ -66,6 +66,7 @@ function mockActions(): MockActions {
     calibrate: vi.fn(),
     calibrateSubs: vi.fn(),
     recommendXo: vi.fn(),
+    applyXoRecommendation: vi.fn(async () => {}),
     computeMimo: vi.fn(),
     changeCompute: vi.fn(),
     refreshCompute: vi.fn(),
@@ -317,8 +318,8 @@ describe("보정 screen", () => {
     actions = setup({ ...fx.emptyView, settings: { ...fx.emptyView.settings, peq_analytic_derivatives: true } });
     expect(must("calibrate.range.advanced").getAttribute("aria-expanded")).toBe("true");
     expect(must("calibrate.analytic.peq").getAttribute("aria-checked")).toBe("true");
-    // MIMO is off in this view; only a choice that includes MIMO IIR says that part waits.
-    expect(screen.queryByText(translate("ko", "calibrate.analytic.mimo_unused"))).toBeNull();
+    // MIMO is off in this view; only a choice that includes MIMO IIR says that part does not apply.
+    expect(screen.queryByText(translate("ko", "calibrate.analytic.mimo_off"))).toBeNull();
     fireEvent.click(must("calibrate.analytic.both"));
     expect(actions.changeSetting).toHaveBeenLastCalledWith({ kind: "analytic_derivatives", peq: true, mimo_iir: true });
     fireEvent.click(must("calibrate.analytic.off"));
@@ -327,7 +328,30 @@ describe("보정 screen", () => {
     cleanup();
     setup({ ...fx.emptyView, settings: { ...fx.emptyView.settings, mimo_iir_analytic_derivatives: true } });
     expect(must("calibrate.analytic.mimo").getAttribute("aria-checked")).toBe("true");
-    expect(screen.getByText(translate("ko", "calibrate.analytic.mimo_unused"))).toBeTruthy();
+    expect(screen.getByText(translate("ko", "calibrate.analytic.mimo_off"))).toBeTruthy();
+  });
+
+  it.each([
+    ["MIMO off", { mimo_on: false, mimo_fir: false }, "calibrate.analytic.mimo_off"],
+    ["supports as FIR", { mimo_on: true, mimo_fir: true }, "calibrate.analytic.mimo_fir"],
+    ["MIMO IIR applies", { mimo_on: true, mimo_fir: false }, null],
+  ] as const)("names the one cause that keeps the MIMO IIR part from applying: %s", (_, mimo, key) => {
+    for (const scope of ["mimo", "both"] as const) {
+      setup({ ...fx.emptyView, settings: { ...fx.emptyView.settings, ...mimo, peq_analytic_derivatives: scope === "both", mimo_iir_analytic_derivatives: true } });
+      const group = must("calibrate.analytic");
+      const hint = document.getElementById("calibrate.analytic-hint");
+      if (key === null) {
+        expect(hint).toBeNull();
+        expect(group.getAttribute("aria-describedby") ?? "").not.toContain("calibrate.analytic-hint");
+      } else {
+        expect(hint?.textContent).toBe(translate("ko", key));
+        expect(group.getAttribute("aria-describedby")).toContain("calibrate.analytic-hint");
+      }
+      for (const other of ["calibrate.analytic.mimo_off", "calibrate.analytic.mimo_fir"] as const) {
+        if (other !== key) expect(screen.queryByText(translate("ko", other))).toBeNull();
+      }
+      cleanup();
+    }
   });
 
   it("puts the boost limit in the range card's body above 딥 보정 제한 and leaves 고급 one setting (ADR 0038)", () => {
@@ -1010,13 +1034,131 @@ describe("XO 추천 포함", () => {
   it("keeps a stale recommendation's values and says to recommend again", () => {
     setup(fx.xoRecStaleView);
     expect(must("calibrate.xo.recommended").textContent).toBe("추천 80 Hz");
-    expect(must("calibrate.xo.state").textContent).toContain("추천: 프론트 80 Hz");
+    // The grid stays, quieter, with the warning under it.
+    const grid = must("calibrate.xo.rec");
+    expect(grid.tagName).toBe("TABLE");
+    expect(grid.closest(".calibrate-xo-rec")?.className).toContain("calibrate-xo-rec--stale");
     const stale = must("calibrate.xo.rec_stale");
     expect(stale.textContent).toBe(translate("ko", "calibrate.xo.rec_stale"));
     expect(stale.className).toContain("calibrate-hint--warning");
+    expect(grid.compareDocumentPosition(stale) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     cleanupAll();
     setup(fx.splView);
     expect(ui("calibrate.xo.rec_stale")).toBeNull();
+    expect(must("calibrate.xo.rec").closest(".calibrate-xo-rec")?.className).not.toContain("--stale");
+  });
+});
+
+/* ── XO recommendation grid ─────────────────────────────────────────────── */
+
+describe("XO recommendation grid", () => {
+  const cellOf = (group: string, hz: number) => must(`calibrate.xo.rec.${group}.${hz}`);
+  const rowOf = (group: string) => must("calibrate.xo.rec").querySelector<HTMLElement>(`tr[data-group="${group}"]`)!;
+  const frontScores = () => fx.splView.xoRecommendation!.table[0]!.rows;
+
+  it("compares every candidate of every group in a table: a caption, column and row headers, each score as a number and a bar", () => {
+    setup(fx.splView);
+    const table = must("calibrate.xo.rec");
+    expect(table.querySelector("caption")?.textContent).toContain(translate("ko", "calibrate.xo.rec.caption"));
+    const heads = [...table.querySelectorAll("thead th")];
+    expect(heads.map((th) => th.textContent)).toEqual(["그룹", "60 Hz", "80 Hz", "100 Hz", "120 Hz"]);
+    expect(heads.every((th) => th.getAttribute("scope") === "col")).toBe(true);
+    const rows = [...table.querySelectorAll("tbody tr")];
+    expect(rows.map((tr) => tr.querySelector('th[scope="row"]')?.textContent)).toEqual(["프론트", "센터", "서라운드", "백", "탑"]);
+    expect([...rowOf("프론트").querySelectorAll(".calibrate-xo-rec__score")].map((n) => n.textContent)).toEqual(frontScores().map((row) => row.score.toFixed(1)));
+    // The bar is scaled within the row: the best fills it, the lowest keeps a sliver.
+    const widths = [...rowOf("프론트").querySelectorAll<HTMLElement>(".calibrate-xo-rec__fill")].map((n) => parseFloat(n.style.width));
+    expect(Math.max(...widths)).toBe(100);
+    expect(Math.min(...widths)).toBe(12);
+    expect(table.textContent).not.toContain("·");
+  });
+
+  it("marks the recommended cell with the accent and the word, and a group on it as one pressed cell, not two marks", () => {
+    setup(fx.splView);
+    const best = cellOf("프론트", 80);
+    expect(best.className).toContain("calibrate-xo-rec__cell--best");
+    expect(best.getAttribute("aria-pressed")).toBe("true");
+    expect(best.querySelectorAll(".calibrate-xo-rec__mark")).toHaveLength(1);
+    expect(best.querySelector(".calibrate-xo-rec__mark")?.textContent).toBe("추천");
+    expect(best.getAttribute("aria-label")).toBe(`프론트 80 Hz, 점수 ${frontScores()[1]!.score.toFixed(1)}, 추천, 현재`);
+    expect(cellOf("프론트", 100).getAttribute("aria-pressed")).toBe("false");
+    expect(cellOf("프론트", 100).querySelector(".calibrate-xo-rec__mark")).toBeNull();
+    // The metrics behind a score ride on the cell as its description.
+    const tip = document.getElementById(cellOf("프론트", 100).getAttribute("aria-describedby")!.split(" ").at(-1)!);
+    expect(tip?.textContent).toContain("평탄도");
+    expect(tip?.textContent).toContain("군지연 폭");
+    expect(tip?.textContent).toContain("후기 에너지");
+    // Every group on its recommendation: no apply button.
+    expect(ui("calibrate.xo.rec.apply")).toBeNull();
+    // The group chosen above is the highlighted row.
+    expect(rowOf("프론트").className).toContain("calibrate-xo-rec__row--selected");
+    expect(rowOf("센터").className).not.toContain("--selected");
+  });
+
+  it("presses another chosen candidate with the word 현재 and offers 추천값 적용 as a secondary action", () => {
+    const actions = setup(fx.xoRecOtherCandidateView);
+    const current = cellOf("프론트", 100);
+    expect(current.getAttribute("aria-pressed")).toBe("true");
+    expect(current.querySelector(".calibrate-xo-rec__mark")?.textContent).toBe("현재");
+    expect(cellOf("프론트", 80).getAttribute("aria-pressed")).toBe("false");
+    expect(cellOf("프론트", 80).querySelector(".calibrate-xo-rec__mark")?.textContent).toBe("추천");
+    const apply = must("calibrate.xo.rec.apply");
+    expect(apply.textContent).toBe("추천값 적용");
+    expect(apply.className).not.toContain("primary");
+    fireEvent.click(apply);
+    expect(actions.applyXoRecommendation).toHaveBeenCalledOnce();
+  });
+
+  it("names a crossover typed in between the candidates at the row's end", () => {
+    setup(fx.xoRecManualOffView);
+    const heads = [...must("calibrate.xo.rec").querySelectorAll("thead th")].map((th) => th.textContent);
+    expect(heads.at(-1)).toBe("현재");
+    expect(rowOf("프론트").querySelector(".calibrate-xo-rec__off")?.textContent).toBe("90 Hz");
+    expect(rowOf("센터").querySelector(".calibrate-xo-rec__off")?.textContent).toBe("");
+    expect([...rowOf("프론트").querySelectorAll("button")].every((cell) => cell.getAttribute("aria-pressed") === "false")).toBe(true);
+    expect(ui("calibrate.xo.rec.apply")).not.toBeNull();
+  });
+
+  it("sets a group's crossover from its cell, the recommended one included", () => {
+    const actions = setup(fx.xoRecOtherCandidateView);
+    fireEvent.click(cellOf("센터", 120));
+    expect(actions.changeSetting).toHaveBeenLastCalledWith({ kind: "xo", group: "센터", hz: 120 });
+    fireEvent.click(cellOf("프론트", 80));
+    expect(actions.changeSetting).toHaveBeenLastCalledWith({ kind: "xo", group: "프론트", hz: 80 });
+  });
+
+  it("waits while a job runs: the cells and 추천값 적용 are off; hidden while recommending", () => {
+    setup({ ...fx.xoRecOtherCandidateView, running: "calibrate" });
+    expect((must("calibrate.xo.rec.apply") as HTMLButtonElement).disabled).toBe(true);
+    expect((cellOf("센터", 120) as HTMLButtonElement).disabled).toBe(true);
+    cleanupAll();
+    setup({ ...fx.xoRecOtherCandidateView, running: "recommend_xo" });
+    expect(ui("calibrate.xo.rec")).toBeNull();
+    expect(ui("calibrate.xo.rec.apply")).toBeNull();
+  });
+
+  it("falls back to the stored values after a reopen: the same rows, the value a button only where it differs", () => {
+    const actions = setup(fx.xoRecReopenedView);
+    const table = must("calibrate.xo.rec");
+    expect(table.querySelector("caption")?.textContent).toBe(translate("ko", "calibrate.xo.rec.caption.values"));
+    expect([...table.querySelectorAll("thead th")].map((th) => th.textContent)).toEqual(["그룹", "추천", "현재"]);
+    expect([...table.querySelectorAll("tbody th")].map((th) => th.textContent)).toEqual(["프론트", "센터", "서라운드", "백", "탑"]);
+    expect(table.querySelectorAll("button")).toHaveLength(1);
+    expect(rowOf("프론트").querySelector(".calibrate-xo-rec__off")?.textContent).toBe("90 Hz");
+    expect(rowOf("센터").querySelector(".calibrate-xo-rec__mark")?.textContent).toBe("현재");
+    expect(table.textContent).not.toMatch(/[·()]/);
+    fireEvent.click(cellOf("프론트", 80));
+    expect(actions.changeSetting).toHaveBeenLastCalledWith({ kind: "xo", group: "프론트", hz: 80 });
+    expect(ui("calibrate.xo.rec.apply")).not.toBeNull();
+  });
+
+  it("drops the manual-edit line once every recommended group is back on its value", () => {
+    setup({ ...fx.xoRecManualOffView, settings: { ...fx.xoRecManualOffView.settings, xo: fx.xoRecManualOffView.settings.xo_rec } });
+    for (const id of ["calibrate.run.xo_rec_include", "calibrate.xo_rec_include"]) {
+      expect(document.getElementById(`${id}-hint`), id).toBeNull();
+      expect(must(id).getAttribute("aria-checked"), id).toBe("false");
+    }
+    expect(ui("calibrate.xo.rec.apply")).toBeNull();
   });
 });
 
@@ -1312,7 +1454,7 @@ const REACH_IDS = [
   "calibrate.xo.hz",
   "calibrate.xo.recommended",
   "calibrate.xo.recommend",
-  "calibrate.xo.state",
+  "calibrate.xo.rec",
   "calibrate.xo.none",
   "calibrate.xo.peq",
   "calibrate.xo.peq_lo",

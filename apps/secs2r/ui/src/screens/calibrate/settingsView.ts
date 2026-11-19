@@ -45,6 +45,26 @@ export const mimoIncluded = (settings: Pick<CalibrationSettings, "mimo_on">, pos
 /** 'XO 추천 포함' (ADR 0028) as the switches show it: a missing value means on. */
 export const xoRecInclude = (settings: Pick<CalibrationSettings, "xo_rec_include">) => settings.xo_rec_include !== false;
 
+/** A group's crossover as the card shows it: a missing value is the default 80 Hz. */
+export const XO_DEFAULT_HZ = 80;
+export const xoCurrent = (settings: Pick<CalibrationSettings, "xo">, group: string) => settings.xo[group] ?? XO_DEFAULT_HZ;
+
+/** The groups, in the order given, that have a recommendation and a crossover set to something else. */
+export const xoDiffering = (settings: Pick<CalibrationSettings, "xo" | "xo_rec">, groups: readonly string[]) =>
+  groups.filter((group) => settings.xo_rec[group] !== undefined && xoCurrent(settings, group) !== settings.xo_rec[group]);
+
+/**
+ * Whether to say 'XO를 직접 바꿔 꺼짐' under the switches: a manual XO edit
+ * turned 'XO 추천 포함' off, and some crossover still differs from its
+ * recommendation. Once every recommended group is back on its value (the
+ * card's 추천값 적용 or its cells), nothing typed by hand is left to name.
+ */
+export const xoRecOffByEdit = (settings: Pick<CalibrationSettings, "xo" | "xo_rec" | "xo_rec_include">, turnedOffByEdit: boolean) => {
+  if (!turnedOffByEdit || xoRecInclude(settings)) return false;
+  const recommended = Object.keys(settings.xo_rec);
+  return recommended.length === 0 || xoDiffering(settings, recommended).length > 0;
+};
+
 /* ── RC upper limit (ADR 0021) ──────────────────────────────────────────── */
 
 /** The upper limit as the range card offers it: an automatic basis, or 직접 입력 (`rc_hi` set). */

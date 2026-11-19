@@ -156,6 +156,12 @@ export type CalibrateActions = {
   calibrateSubs: () => void;
   /** recommend_xo */
   recommendXo: () => void;
+  /**
+   * calibration_settings_edit { edit: { kind: "xo", group, hz: xo_rec[group] } }
+   * for each group whose crossover differs from its recommendation, in
+   * configuration order, one after another; stops at the first refused edit.
+   */
+  applyXoRecommendation: () => Promise<void>;
   /** mimo { settings: null } */
   computeMimo: () => void;
   /** result_curves { tab, channel, group: xoGroup }: P33 keeps `tab` */

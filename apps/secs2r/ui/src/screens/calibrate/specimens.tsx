@@ -12,6 +12,7 @@ import { Card } from "../../ui";
 import { CalibrateScreen, calibrateHeader, type CalibrateScreenProps } from "./CalibrateScreen";
 import * as fx from "./fixtures";
 import { noticeText } from "./text";
+import { RangeSection, XoSection } from "./Settings";
 import { calibrateStepState, type CalibrateActions, type CalibrateView } from "./types";
 
 const noop = () => {};
@@ -23,6 +24,7 @@ export const noActions: CalibrateActions = {
   calibrate: noop,
   calibrateSubs: noop,
   recommendXo: noop,
+  applyXoRecommendation: async () => {},
   computeMimo: noop,
   changeCompute: noop,
   refreshCompute: noop,
@@ -255,9 +257,58 @@ export const calibrateSpecimens: SpecimenDef[] = [
   frame("xo-rec-manual-card", "a manual XO edit turned XO 추천 포함 off: the crossover card's switch under the value, the reason under it", () => (
     <CalibrateFrame view={fx.xoRecManualOffView} scrollTo="calibrate.settings.xo" />
   )),
-  frame("xo-rec-stale", "the recommendation computed for other settings: the values stay, a warning after them", () => (
+  frame("xo-rec-stale", "the recommendation computed for other settings: the grid stays, quieter, a warning after it", () => (
     <CalibrateFrame view={fx.xoRecStaleView} scrollTo="calibrate.settings.xo" />
   )),
+  frame("xo-rec-applied", "the XO candidate grid with every group on its recommendation: one mark per row, no 추천값 적용", () => (
+    <CalibrateFrame view={fx.splView} scrollTo="calibrate.settings.xo" />
+  )),
+  frame("xo-rec-candidate", "the XO candidate grid with another candidate chosen for the front: its cell pressed, 추천값 적용 offered", () => (
+    <CalibrateFrame view={fx.xoRecOtherCandidateView} scrollTo="calibrate.settings.xo" />
+  )),
+  frame("xo-rec-reopened", "a reopened project: the recommended value per group, a button where the crossover differs", () => (
+    <CalibrateFrame view={fx.xoRecReopenedView} scrollTo="calibrate.settings.xo" />
+  )),
+  // The range card with 해석적 미분 (실험) on MIMO IIR: the line under it names the one cause that keeps that part from applying, or nothing.
+  ...([
+    ["applies", "MIMO on, supports as IIR: the MIMO IIR part applies, nothing under the control", { mimo_on: true, mimo_fir: false }],
+    ["mimo-off", "MIMO off: the line names it", { mimo_on: false, mimo_fir: false }],
+    ["mimo-fir", "supports calculated as FIR: the line names it", { mimo_on: true, mimo_fir: true }],
+  ] as const).map(([id, title, mimo]): SpecimenDef => ({
+    id: `screen.calibrate.analytic.${id}`,
+    title: `보정 · 해석적 미분 (실험) on MIMO IIR, ${title}`,
+    width: 720,
+    render: () => (
+      <div className="calibrate-settings">
+        <RangeSection view={{ ...fx.splView, settings: { ...fx.splView.settings, ...mimo, peq_analytic_derivatives: false, mimo_iir_analytic_derivatives: true } }} actions={noActions} advancedOpen />
+      </div>
+    ),
+  })),
+  // The crossover card alone at the settings column's width at the smallest window, every recommendation state.
+  ...([
+    ["applied", "every group on its recommendation: one mark per row, no 추천값 적용", fx.splView],
+    ["candidate", "another candidate chosen for the front: its cell pressed, 추천값 적용 offered", fx.xoRecOtherCandidateView],
+    ["typed", "the front typed in at 90 Hz, between the candidates: named in the 현재 column", fx.xoRecManualOffView],
+    ["reopened", "a reopened project: the recommended value per group, a button where it differs", fx.xoRecReopenedView],
+    ["stale", "computed for other settings: the grid quieter, the warning under it", fx.xoRecStaleView],
+    ["running", "a calculation running: the cells and 추천값 적용 wait", { ...fx.xoRecOtherCandidateView, running: "calibrate" }],
+  ] as const).map(([id, title, view]): SpecimenDef => ({
+    id: `screen.calibrate.xo-card.${id}`,
+    title: `보정 · XO card: ${title}`,
+    width: 720,
+    render: () => (
+      <div className="calibrate-settings">
+        <XoSection view={view as CalibrateView} actions={noActions} onSampleRateSettings={() => {}} />
+      </div>
+    ),
+  })),
+  {
+    id: "screen.calibrate.xo-rec-grid.min",
+    title: "보정 · the XO candidate grid at the smallest window (1024 × 700), the front typed in at 90 Hz",
+    width: 1024,
+    height: 700,
+    render: () => <CalibrateFrame view={fx.xoRecManualOffView} scrollTo="calibrate.settings.xo" />,
+  },
   {
     id: "screen.calibrate.xo-rec-manual.min",
     title: "보정 · XO 추천 포함 turned off by a manual edit at the smallest window (1024 × 700): the run wraps as a unit",

@@ -9,7 +9,7 @@ import { roleCode } from "../../ui/maps/geometry";
 import { Stat } from "./controls";
 import { availableTabs } from "./ResultGraph";
 import { scorecardModel, type ChangeValues, type LatePositions, type ScoreRow } from "./scorecard";
-import { MIMO_MIN_POSITIONS, mimoIncluded, xoRecInclude } from "./settingsView";
+import { MIMO_MIN_POSITIONS, mimoIncluded, xoRecInclude, xoRecOffByEdit as offByEdit } from "./settingsView";
 import { FAILED_TEXT, LOW_PROTECT_NEXT, POLARITY_NEXT, type PolarityCode, groupOf, lowProtectFailures, modeName, noteLines, noticeText, polarityRole, polarityWarnings, subRoles } from "./text";
 import type { CalibrateActions, CalibrateView, StaleReason } from "./types";
 
@@ -87,8 +87,8 @@ function MimoChoice({ view, actions }: { view: CalibrateView; actions: Calibrate
 /** The project has subs, so it has crossovers to recommend (upstream `xo_group_names`). */
 const hasSubs = (view: CalibrateView) => subRoles(view.config).length > 0;
 
-/** The manual-edit line under 'XO 추천 포함': shown while a manual XO edit is what turned it off. */
-const xoRecOffByEdit = (view: CalibrateView) => !!view.xoRecTurnedOffByEdit && !xoRecInclude(view.settings);
+/** The manual-edit line under 'XO 추천 포함': shown while a manual XO edit is what turned it off and a value still differs (`xoRecOffByEdit`). */
+const xoRecOffByEdit = (view: CalibrateView) => offByEdit(view.settings, !!view.xoRecTurnedOffByEdit);
 
 /**
  * XO 추천 포함 (ADR 0028): whether 보정 계산 first recommends the
