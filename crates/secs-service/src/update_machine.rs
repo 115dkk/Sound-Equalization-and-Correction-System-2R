@@ -179,7 +179,7 @@ impl UpdateMachine {
                 Ok(Vec::new())
             }
             UpdateEvent::CheckResult { result, .. } => {
-                self.status.checked_at = Some(chrono::Utc::now().to_rfc3339());
+                self.status.checked_at = Some(crate::utc_rfc3339(std::time::SystemTime::now()));
                 match result {
                     Ok(Some(release)) => {
                         self.found = Some(release.clone());

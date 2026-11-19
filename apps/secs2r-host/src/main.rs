@@ -1605,7 +1605,7 @@ fn repair_eqapo_work(
             format!("read repaired {}: {error}", config.display()),
         )
     })?;
-    let timestamp = chrono::Utc::now().to_rfc3339();
+    let timestamp = secs_service::utc_rfc3339(std::time::SystemTime::now());
     Ok(RepairWorkResult {
         include_state: include_state(&repaired),
         repaired: Some(RepairRecord {

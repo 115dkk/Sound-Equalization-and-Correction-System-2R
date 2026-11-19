@@ -67,12 +67,6 @@ ignore = true
 # bindings that RustSec lists as unmaintained).
 unmaintained = "workspace"
 yanked = "deny"
-ignore = [
-    # chrono was declared unmaintained on 2026-11-17 with no fixed version.
-    # secs-service, secs-sys and secs2r-host use it for timestamps; this entry
-    # goes when they have moved to another date crate.
-    { id = "RUSTSEC-2026-0543", reason = "chrono is unmaintained, not vulnerable; its replacement is a change of its own" },
-]
 
 [bans]
 multiple-versions = "warn"
